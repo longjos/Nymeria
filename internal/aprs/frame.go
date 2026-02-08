@@ -33,3 +33,13 @@ type APRSFrame struct {
 	Path        []Address
 	Payload     string
 }
+
+// String returns the frame in TNC2 format: SOURCE>DESTINATION,PATH:payload
+func (f APRSFrame) String() string {
+	s := f.Source.String() + ">" + f.Destination.String()
+	for _, p := range f.Path {
+		s += "," + p.String()
+	}
+	s += ":" + f.Payload
+	return s
+}
