@@ -61,6 +61,22 @@ func main() {
 	// Start tracker sweep
 	tracker.Start(ctx, time.Minute)
 
+	// Hydrate tracker from database
+	if stations, err := db.LoadStations(); err != nil {
+		log.Printf("warning: failed to load stations from db: %v", err)
+	} else {
+		for _, s := range stations {
+			key := aprs.Address{Call: s.Callsign, SSID: s.SSID}.String()
+			if tracks, err := db.LoadTrackPoints(key, cfg.Station.TrackMaxPoints); err == nil {
+				s.Track = tracks
+			}
+			tracker.Update(s)
+		}
+		if len(stations) > 0 {
+			log.Printf("loaded %d stations from database", len(stations))
+		}
+	}
+
 	// Configure transports from config
 	for i, tc := range cfg.Transports {
 		switch tc.Type {
@@ -82,6 +98,16 @@ func main() {
 		message.DefaultRetryConfig(),
 	)
 	defer msgEngine.Close()
+
+	// Hydrate message engine from database
+	if msgs, err := db.LoadMessages(); err != nil {
+		log.Printf("warning: failed to load messages from db: %v", err)
+	} else {
+		msgEngine.Import(msgs)
+		if len(msgs) > 0 {
+			log.Printf("loaded %d messages from database", len(msgs))
+		}
+	}
 
 	// Connect all transports
 	if err := tm.ConnectAll(ctx); err != nil {
@@ -114,7 +140,7 @@ func main() {
 	}
 
 	// Create and start server
-	srv := server.New(tracker, tm, msgEngine)
+	srv := server.New(tracker, tm, msgEngine, db)
 
 	httpSrv := &http.Server{
 		Addr:    cfg.Server.Listen,

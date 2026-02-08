@@ -29,6 +29,9 @@ type Engine interface {
 	// Events returns a channel that emits message lifecycle events.
 	Events() <-chan Event
 
+	// Import loads historical messages into the engine (e.g. from DB on startup).
+	Import(msgs []Message)
+
 	// Close shuts down the engine and cancels pending retries.
 	Close()
 }
