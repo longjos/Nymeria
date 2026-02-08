@@ -1,3 +1,5 @@
+import { connectionState } from './stores/ui';
+
 type MessageHandler = (data: Record<string, unknown>) => void;
 
 export class WSClient {
@@ -9,7 +11,12 @@ export class WSClient {
 	connect(url?: string): void {
 		this._url = url;
 		const wsUrl = url ?? `ws://${window.location.host}/ws`;
+		connectionState.set('reconnecting');
 		this.ws = new WebSocket(wsUrl);
+
+		this.ws.onopen = () => {
+			connectionState.set('connected');
+		};
 
 		this.ws.onmessage = (event) => {
 			try {
@@ -31,6 +38,7 @@ export class WSClient {
 		};
 
 		this.ws.onclose = () => {
+			connectionState.set('disconnected');
 			this.reconnectTimer = setTimeout(() => this.connect(this._url), 3000);
 		};
 
@@ -58,5 +66,6 @@ export class WSClient {
 		this.reconnectTimer = null;
 		this.ws?.close();
 		this.ws = null;
+		connectionState.set('disconnected');
 	}
 }

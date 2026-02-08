@@ -1,7 +1,7 @@
 <script lang="ts">
 	import { sendMessage } from '$lib/stores/messages';
 
-	let { to }: { to: string } = $props();
+	let { to, onSent }: { to: string; onSent?: () => void } = $props();
 	let body = $state('');
 	let sending = $state(false);
 	let error = $state('');
@@ -16,6 +16,7 @@
 		try {
 			await sendMessage(to, text);
 			body = '';
+			onSent?.();
 		} catch (err) {
 			error = err instanceof Error ? err.message : 'Send failed';
 		} finally {
@@ -56,6 +57,7 @@
 		padding: 0.75rem;
 		border-top: 1px solid var(--color-primary);
 		background: var(--color-surface);
+		flex-shrink: 0;
 	}
 
 	.input-row {

@@ -4,7 +4,17 @@
 	import { timeAgo, stationDisplayName, stationKey, formatCoord, formatSpeed } from '$lib/utils';
 	import { symbolInfo } from '$lib/symbols';
 
-	let { station, compact = false }: { station: Station; compact?: boolean } = $props();
+	let {
+		station,
+		compact = false,
+		selected = false,
+		onclick
+	}: {
+		station: Station;
+		compact?: boolean;
+		selected?: boolean;
+		onclick?: (e: MouseEvent) => void;
+	} = $props();
 
 	let key = $derived(stationKey(station));
 	let displayName = $derived(stationDisplayName(station.callsign, station.ssid));
@@ -15,31 +25,59 @@
 	let speed = $derived(station.position ? formatSpeed(station.position.speed) : '');
 </script>
 
-<a href="/stations/{key}" class="station-card" class:compact>
-	<div class="card-left">
-		<APRSIcon symbol={station.symbol} size={compact ? 28 : 36} />
-	</div>
-	<div class="card-body">
-		<div class="card-header">
-			<span class="callsign">{displayName}</span>
-			<span class="time">{timeAgo(station.lastHeard)}</span>
+{#if onclick}
+	<button class="station-card" class:compact class:selected onclick={onclick}>
+		<div class="card-left">
+			<APRSIcon symbol={station.symbol} size={compact ? 28 : 36} />
 		</div>
-		{#if !compact}
-			<div class="card-meta">
-				<span class="symbol-label">{info.label}</span>
-				{#if coords}
-					<span class="coords">{coords}</span>
-				{/if}
-				{#if speed}
-					<span class="speed">{speed}</span>
-				{/if}
+		<div class="card-body">
+			<div class="card-header">
+				<span class="callsign">{displayName}</span>
+				<span class="time">{timeAgo(station.lastHeard)}</span>
 			</div>
-			{#if station.comment}
-				<div class="comment">{station.comment}</div>
+			{#if !compact}
+				<div class="card-meta">
+					<span class="symbol-label">{info.label}</span>
+					{#if coords}
+						<span class="coords">{coords}</span>
+					{/if}
+					{#if speed}
+						<span class="speed">{speed}</span>
+					{/if}
+				</div>
+				{#if station.comment}
+					<div class="comment">{station.comment}</div>
+				{/if}
 			{/if}
-		{/if}
-	</div>
-</a>
+		</div>
+	</button>
+{:else}
+	<a href="/stations/{key}" class="station-card" class:compact class:selected>
+		<div class="card-left">
+			<APRSIcon symbol={station.symbol} size={compact ? 28 : 36} />
+		</div>
+		<div class="card-body">
+			<div class="card-header">
+				<span class="callsign">{displayName}</span>
+				<span class="time">{timeAgo(station.lastHeard)}</span>
+			</div>
+			{#if !compact}
+				<div class="card-meta">
+					<span class="symbol-label">{info.label}</span>
+					{#if coords}
+						<span class="coords">{coords}</span>
+					{/if}
+					{#if speed}
+						<span class="speed">{speed}</span>
+					{/if}
+				</div>
+				{#if station.comment}
+					<div class="comment">{station.comment}</div>
+				{/if}
+			{/if}
+		</div>
+	</a>
+{/if}
 
 <style>
 	.station-card {
@@ -52,6 +90,10 @@
 		text-decoration: none;
 		color: var(--color-text);
 		transition: border-color 0.15s;
+		width: 100%;
+		text-align: left;
+		font: inherit;
+		cursor: pointer;
 	}
 
 	.station-card:hover {
@@ -60,6 +102,11 @@
 
 	.station-card.compact {
 		padding: 0.5rem 0.75rem;
+	}
+
+	.station-card.selected {
+		border-color: var(--color-accent);
+		background: rgba(233, 69, 96, 0.08);
 	}
 
 	.card-left {
