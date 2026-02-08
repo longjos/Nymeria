@@ -2,6 +2,7 @@ package config
 
 import (
 	"os"
+	"time"
 
 	"gopkg.in/yaml.v3"
 
@@ -21,10 +22,13 @@ type ServerConfig struct {
 	Listen string `yaml:"listen"`
 }
 
-// StationConfig holds the operator's station identity.
+// StationConfig holds the operator's station identity and tracker tuning.
 type StationConfig struct {
-	Callsign string `yaml:"callsign"`
-	SSID     int    `yaml:"ssid"`
+	Callsign       string        `yaml:"callsign"`
+	SSID           int           `yaml:"ssid"`
+	TrackMaxPoints int           `yaml:"track_max_points"`
+	StaleTimeout   time.Duration `yaml:"stale_timeout"`
+	DedupWindow    time.Duration `yaml:"dedup_window"`
 }
 
 // StoreConfig holds storage settings.
@@ -39,7 +43,10 @@ func DefaultConfig() Config {
 			Listen: ":8080",
 		},
 		Station: StationConfig{
-			Callsign: "N0CALL",
+			Callsign:       "N0CALL",
+			TrackMaxPoints: 100,
+			StaleTimeout:   80 * time.Minute,
+			DedupWindow:    30 * time.Second,
 		},
 		Store: StoreConfig{
 			Path: "./nymeria.db",
