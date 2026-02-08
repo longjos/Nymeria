@@ -5,12 +5,15 @@ import (
 	"io/fs"
 	"log"
 	"net/http"
+	"time"
 
 	"github.com/go-chi/chi/v5"
 	"github.com/go-chi/chi/v5/middleware"
 
 	"github.com/narvel/nymeria/internal/aprs"
+	"github.com/narvel/nymeria/internal/beacon"
 	"github.com/narvel/nymeria/internal/message"
+	"github.com/narvel/nymeria/internal/object"
 	"github.com/narvel/nymeria/internal/server/ws"
 	"github.com/narvel/nymeria/internal/station"
 	"github.com/narvel/nymeria/internal/store"
@@ -25,11 +28,13 @@ type Server struct {
 	tracker    station.Tracker
 	transports *transport.Manager
 	msgEngine  message.Engine
+	objManager *object.Manager
+	beaconMgr  *beacon.Manager
 	store      store.Store
 }
 
 // New creates a new Server.
-func New(tracker station.Tracker, tm *transport.Manager, eng message.Engine, db store.Store) *Server {
+func New(tracker station.Tracker, tm *transport.Manager, eng message.Engine, db store.Store, opts ...Option) *Server {
 	s := &Server{
 		router:     chi.NewRouter(),
 		hub:        ws.NewHub(),
@@ -37,6 +42,9 @@ func New(tracker station.Tracker, tm *transport.Manager, eng message.Engine, db 
 		transports: tm,
 		msgEngine:  eng,
 		store:      db,
+	}
+	for _, opt := range opts {
+		opt(s)
 	}
 
 	s.router.Use(middleware.Logger)
@@ -50,8 +58,29 @@ func New(tracker station.Tracker, tm *transport.Manager, eng message.Engine, db 
 	if eng != nil {
 		go s.bridgeMessageEvents()
 	}
+	if s.objManager != nil {
+		go s.bridgeObjectEvents()
+	}
+	go s.bridgeTransportStatus()
 
 	return s
+}
+
+// Option configures the server.
+type Option func(*Server)
+
+// WithObjectManager sets the object/item manager on the server.
+func WithObjectManager(mgr *object.Manager) Option {
+	return func(s *Server) {
+		s.objManager = mgr
+	}
+}
+
+// WithBeaconManager sets the beacon manager on the server.
+func WithBeaconManager(mgr *beacon.Manager) Option {
+	return func(s *Server) {
+		s.beaconMgr = mgr
+	}
 }
 
 // ServeHTTP implements http.Handler.
@@ -151,6 +180,41 @@ func (s *Server) bridgeMessageEvents() {
 		data, err := json.Marshal(msg)
 		if err != nil {
 			log.Printf("[server] marshal message event: %v", err)
+			continue
+		}
+		s.hub.Broadcast(data)
+	}
+}
+
+// bridgeObjectEvents reads object manager events and broadcasts via WebSocket.
+func (s *Server) bridgeObjectEvents() {
+	for evt := range s.objManager.Events() {
+		msg := map[string]any{
+			"type": evt.Type,
+			"data": evt.Data,
+		}
+		data, err := json.Marshal(msg)
+		if err != nil {
+			log.Printf("[server] marshal object event: %v", err)
+			continue
+		}
+		s.hub.Broadcast(data)
+	}
+}
+
+// bridgeTransportStatus periodically broadcasts transport statuses via WebSocket.
+func (s *Server) bridgeTransportStatus() {
+	ticker := time.NewTicker(5 * time.Second)
+	defer ticker.Stop()
+	for range ticker.C {
+		statuses := s.transports.Statuses()
+		msg := map[string]any{
+			"type":       "transport_status",
+			"transports": statuses,
+		}
+		data, err := json.Marshal(msg)
+		if err != nil {
+			log.Printf("[server] marshal transport status: %v", err)
 			continue
 		}
 		s.hub.Broadcast(data)

@@ -66,14 +66,20 @@ func ParseFrame(raw string) (APRSFrame, error) {
 	}, nil
 }
 
-// parseAddress parses "CALL" or "CALL-SSID" into an Address.
+// parseAddress parses "CALL", "CALL-SSID", or "CALL*"/"CALL-SSID*" into an Address.
+// The trailing "*" indicates the H-bit (has-been-digipeated) in TNC2 format.
 func parseAddress(s string) (Address, error) {
 	if s == "" {
 		return Address{}, fmt.Errorf("empty address")
 	}
+	var hbit bool
+	if strings.HasSuffix(s, "*") {
+		hbit = true
+		s = s[:len(s)-1]
+	}
 	dashIdx := strings.LastIndexByte(s, '-')
 	if dashIdx < 0 {
-		return Address{Call: s}, nil
+		return Address{Call: s, HBit: hbit}, nil
 	}
 	call := s[:dashIdx]
 	ssidStr := s[dashIdx+1:]
@@ -81,5 +87,5 @@ func parseAddress(s string) (Address, error) {
 	if err != nil {
 		return Address{}, fmt.Errorf("invalid SSID %q: %w", ssidStr, err)
 	}
-	return Address{Call: call, SSID: ssid}, nil
+	return Address{Call: call, SSID: ssid, HBit: hbit}, nil
 }

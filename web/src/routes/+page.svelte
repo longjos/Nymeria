@@ -8,13 +8,15 @@
 	import StationList from '$lib/components/StationList.svelte';
 	import StationDetail from '$lib/components/StationDetail.svelte';
 	import ConvoList from '$lib/components/ConvoList.svelte';
+	import TransportPanel from '$lib/components/TransportPanel.svelte';
 	import ConnectionStatus from '$lib/components/ConnectionStatus.svelte';
 	import SearchOverlay from '$lib/components/SearchOverlay.svelte';
 	import { stations, stationList, initStationStore } from '$lib/stores/stations';
 	import { initMessageStore, conversationList } from '$lib/stores/messages';
+	import { initTransportStore } from '$lib/stores/transports';
 	import {
 		selectedStation, panelMode, detailTab, searchOpen, sheetState,
-		selectStation, closePanel, openStationList, openMessages, openConversation
+		selectStation, closePanel, openStationList, openMessages, openConversation, openTransports
 	} from '$lib/stores/ui';
 	import type { SheetState, DetailTab } from '$lib/stores/ui';
 
@@ -34,6 +36,7 @@
 	onMount(() => {
 		initStationStore();
 		initMessageStore();
+		initTransportStore();
 
 		if (browser) {
 			const mq = window.matchMedia('(min-width: 769px)');
@@ -101,6 +104,7 @@
 		onSearchOpen={() => searchOpen.set(true)}
 		onStationsOpen={openStationList}
 		onMessagesOpen={openMessages}
+		onTransportsOpen={openTransports}
 		onSelectStation={handleSearchSelect}
 	/>
 
@@ -136,6 +140,8 @@
 					onClose={closePanel}
 					onFlyTo={handleFlyTo}
 				/>
+			{:else if $panelMode === 'transports'}
+				<TransportPanel />
 			{/if}
 		</SidePanel>
 	{/if}
@@ -178,6 +184,8 @@
 					onClose={closePanel}
 					onFlyTo={handleFlyTo}
 				/>
+			{:else if $panelMode === 'transports'}
+				<TransportPanel />
 			{/if}
 		</BottomSheet>
 	{/if}

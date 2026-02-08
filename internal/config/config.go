@@ -11,6 +11,13 @@ import (
 	"github.com/narvel/nymeria/internal/transport"
 )
 
+// BeaconConfig holds beaconing settings.
+type BeaconConfig struct {
+	Enabled  bool          `yaml:"enabled"`
+	Interval time.Duration `yaml:"interval"`
+	Comment  string        `yaml:"comment"`
+}
+
 // Config holds the application configuration.
 type Config struct {
 	Server     ServerConfig               `yaml:"server"`
@@ -18,6 +25,7 @@ type Config struct {
 	Transports []transport.TransportConfig `yaml:"transports"`
 	Store      StoreConfig                `yaml:"store"`
 	Logging    LoggingConfig              `yaml:"logging"`
+	Beacon     BeaconConfig               `yaml:"beacon"`
 }
 
 // ServerConfig holds HTTP server settings.
@@ -66,6 +74,10 @@ func DefaultConfig() Config {
 		},
 		Logging: LoggingConfig{
 			Level: "info",
+		},
+		Beacon: BeaconConfig{
+			Enabled:  false,
+			Interval: 10 * time.Minute,
 		},
 	}
 }
@@ -127,6 +139,17 @@ func (c *Config) Validate() error {
 			}
 			if t.Port == 0 {
 				return fmt.Errorf("transports[%d].port is required for aprsis", i)
+			}
+		case "kisstcp":
+			if t.Host == "" {
+				return fmt.Errorf("transports[%d].host is required for kisstcp", i)
+			}
+			if t.Port == 0 {
+				return fmt.Errorf("transports[%d].port is required for kisstcp", i)
+			}
+		case "serial":
+			if t.Device == "" {
+				return fmt.Errorf("transports[%d].device is required for serial", i)
 			}
 		}
 	}

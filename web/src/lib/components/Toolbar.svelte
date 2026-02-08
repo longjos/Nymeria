@@ -8,12 +8,14 @@
 		onSearchOpen,
 		onStationsOpen,
 		onMessagesOpen,
+		onTransportsOpen,
 		onSelectStation
 	}: {
 		unreadCount?: number;
 		onSearchOpen?: () => void;
 		onStationsOpen?: () => void;
 		onMessagesOpen?: () => void;
+		onTransportsOpen?: () => void;
 		onSelectStation?: (key: string) => void;
 	} = $props();
 
@@ -86,6 +88,13 @@
 		{/if}
 	</button>
 
+	<button class="toolbar-btn" onclick={onTransportsOpen} title="Transports">
+		<svg width="14" height="14" viewBox="0 0 16 16" fill="none">
+			<path d="M8 1v4M8 11v4M1 8h4M11 8h4" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/>
+			<circle cx="8" cy="8" r="3" stroke="currentColor" stroke-width="1.5"/>
+		</svg>
+	</button>
+
 	<ConnectionStatus />
 </div>
 
@@ -104,6 +113,12 @@
 		{#if unreadCount > 0}
 			<span class="fab-badge">{unreadCount}</span>
 		{/if}
+	</button>
+	<button class="fab" onclick={onTransportsOpen} title="Transports">
+		<svg width="18" height="18" viewBox="0 0 16 16" fill="none">
+			<path d="M8 1v4M8 11v4M1 8h4M11 8h4" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/>
+			<circle cx="8" cy="8" r="3" stroke="currentColor" stroke-width="1.5"/>
+		</svg>
 	</button>
 </div>
 

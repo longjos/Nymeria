@@ -47,4 +47,12 @@ type TransportStatus struct {
 	Connected    bool      `json:"connected"`
 	LastActivity time.Time `json:"lastActivity,omitempty"`
 	Error        string    `json:"error,omitempty"`
+	PacketsRx    int64     `json:"packetsRx"`
+	PacketsTx    int64     `json:"packetsTx"`
+}
+
+// TransportFrame wraps an APRSFrame with metadata about which transport delivered it.
+type TransportFrame struct {
+	Frame  aprs.APRSFrame
+	Source string // Transport ID that received this frame
 }
