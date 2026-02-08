@@ -10,11 +10,14 @@ import (
 	"github.com/go-chi/chi/v5"
 	"github.com/go-chi/chi/v5/middleware"
 
+	"github.com/narvel/nymeria/internal/activity"
+	"github.com/narvel/nymeria/internal/annotation"
 	"github.com/narvel/nymeria/internal/aprs"
 	"github.com/narvel/nymeria/internal/beacon"
 	"github.com/narvel/nymeria/internal/message"
 	"github.com/narvel/nymeria/internal/object"
 	"github.com/narvel/nymeria/internal/server/ws"
+	"github.com/narvel/nymeria/internal/session"
 	"github.com/narvel/nymeria/internal/station"
 	"github.com/narvel/nymeria/internal/store"
 	"github.com/narvel/nymeria/internal/transport"
@@ -31,6 +34,9 @@ type Server struct {
 	objManager *object.Manager
 	beaconMgr  *beacon.Manager
 	store      store.Store
+	sessions   session.Manager
+	actLogger  activity.Logger
+	annMgr     *annotation.Manager
 }
 
 // New creates a new Server.
@@ -49,6 +55,9 @@ func New(tracker station.Tracker, tm *transport.Manager, eng message.Engine, db 
 
 	s.router.Use(middleware.Logger)
 	s.router.Use(middleware.Recoverer)
+	if s.sessions != nil {
+		s.router.Use(SessionMiddleware(s.sessions))
+	}
 
 	s.routes()
 	s.serveFrontend()
@@ -62,6 +71,12 @@ func New(tracker station.Tracker, tm *transport.Manager, eng message.Engine, db 
 		go s.bridgeObjectEvents()
 	}
 	go s.bridgeTransportStatus()
+	if s.annMgr != nil {
+		go s.bridgeAnnotationEvents()
+	}
+	if s.actLogger != nil {
+		go s.bridgeActivityEvents()
+	}
 
 	return s
 }
@@ -80,6 +95,27 @@ func WithObjectManager(mgr *object.Manager) Option {
 func WithBeaconManager(mgr *beacon.Manager) Option {
 	return func(s *Server) {
 		s.beaconMgr = mgr
+	}
+}
+
+// WithSessionManager sets the session manager on the server.
+func WithSessionManager(mgr session.Manager) Option {
+	return func(s *Server) {
+		s.sessions = mgr
+	}
+}
+
+// WithActivityLogger sets the activity logger on the server.
+func WithActivityLogger(l activity.Logger) Option {
+	return func(s *Server) {
+		s.actLogger = l
+	}
+}
+
+// WithAnnotationManager sets the annotation manager on the server.
+func WithAnnotationManager(mgr *annotation.Manager) Option {
+	return func(s *Server) {
+		s.annMgr = mgr
 	}
 }
 
@@ -196,6 +232,38 @@ func (s *Server) bridgeObjectEvents() {
 		data, err := json.Marshal(msg)
 		if err != nil {
 			log.Printf("[server] marshal object event: %v", err)
+			continue
+		}
+		s.hub.Broadcast(data)
+	}
+}
+
+// bridgeAnnotationEvents reads annotation events and broadcasts via WebSocket.
+func (s *Server) bridgeAnnotationEvents() {
+	for evt := range s.annMgr.Events() {
+		msg := map[string]any{
+			"type": evt.Type,
+			"data": evt.Data,
+		}
+		data, err := json.Marshal(msg)
+		if err != nil {
+			log.Printf("[server] marshal annotation event: %v", err)
+			continue
+		}
+		s.hub.Broadcast(data)
+	}
+}
+
+// bridgeActivityEvents reads activity events and broadcasts via WebSocket.
+func (s *Server) bridgeActivityEvents() {
+	for entry := range s.actLogger.Events() {
+		msg := map[string]any{
+			"type":  "activity_logged",
+			"entry": entry,
+		}
+		data, err := json.Marshal(msg)
+		if err != nil {
+			log.Printf("[server] marshal activity event: %v", err)
 			continue
 		}
 		s.hub.Broadcast(data)

@@ -18,6 +18,12 @@ type BeaconConfig struct {
 	Comment  string        `yaml:"comment"`
 }
 
+// SessionConfig holds multi-user session settings.
+type SessionConfig struct {
+	PIN               string        `yaml:"pin"`
+	InactivityTimeout time.Duration `yaml:"inactivity_timeout"`
+}
+
 // Config holds the application configuration.
 type Config struct {
 	Server     ServerConfig               `yaml:"server"`
@@ -26,6 +32,7 @@ type Config struct {
 	Store      StoreConfig                `yaml:"store"`
 	Logging    LoggingConfig              `yaml:"logging"`
 	Beacon     BeaconConfig               `yaml:"beacon"`
+	Session    SessionConfig              `yaml:"session"`
 }
 
 // ServerConfig holds HTTP server settings.
@@ -78,6 +85,9 @@ func DefaultConfig() Config {
 		Beacon: BeaconConfig{
 			Enabled:  false,
 			Interval: 10 * time.Minute,
+		},
+		Session: SessionConfig{
+			InactivityTimeout: 30 * time.Minute,
 		},
 	}
 }

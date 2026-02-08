@@ -1,5 +1,7 @@
 <script lang="ts">
 	import { conversationList } from '$lib/stores/messages';
+	import { claimConversation, unclaimConversation } from '$lib/stores/messages';
+	import { currentUser, canOperate } from '$lib/stores/session';
 	import { timeAgo } from '$lib/utils';
 	import { STATE_ACKED, STATE_FAILED, STATE_REJECTED } from '$lib/types';
 
@@ -47,12 +49,15 @@
 	<div class="list-body">
 		{#each $conversationList as convo (convo.callsign)}
 			{@const lastMsg = convo.messages[convo.messages.length - 1]}
-			<button class="convo-row" onclick={() => onSelectConvo?.(convo.callsign)}>
+			<div class="convo-row" role="button" tabindex="0" onclick={() => onSelectConvo?.(convo.callsign)} onkeydown={(e) => { if (e.key === 'Enter') onSelectConvo?.(convo.callsign); }}>
 				<div class="convo-info">
 					<div class="convo-header">
 						<span class="callsign">{convo.callsign}</span>
 						{#if convo.unreadCount > 0}
 							<span class="badge">{convo.unreadCount}</span>
+						{/if}
+						{#if convo.claimedName}
+							<span class="claim-tag">{convo.claimedName}</span>
 						{/if}
 					</div>
 					{#if lastMsg}
@@ -73,8 +78,19 @@
 							<span class="state failed">Failed</span>
 						{/if}
 					{/if}
+					{#if $canOperate && $currentUser}
+						{#if convo.claimedBy === $currentUser.id}
+							<button class="claim-btn unclaim" onmousedown={(e) => { e.stopPropagation(); unclaimConversation(convo.callsign); }}>
+								Release
+							</button>
+						{:else if !convo.claimedBy}
+							<button class="claim-btn" onmousedown={(e) => { e.stopPropagation(); claimConversation(convo.callsign, $currentUser.id, $currentUser.name); }}>
+								Claim
+							</button>
+						{/if}
+					{/if}
 				</div>
-			</button>
+			</div>
 		{:else}
 			<p class="empty">
 				No conversations yet. Tap "New" to start one.
@@ -242,6 +258,41 @@
 
 	.state.failed {
 		color: var(--color-accent);
+	}
+
+	.claim-tag {
+		font-size: 0.6rem;
+		padding: 0.1rem 0.35rem;
+		border-radius: var(--radius-sm);
+		background: var(--color-primary);
+		color: var(--color-text-muted);
+		font-weight: 500;
+	}
+
+	.claim-btn {
+		padding: 0.15rem 0.4rem;
+		font-size: 0.65rem;
+		border: 1px solid var(--color-primary);
+		border-radius: var(--radius-sm);
+		background: none;
+		color: var(--color-text-muted);
+		cursor: pointer;
+		transition: background var(--duration-fast), color var(--duration-fast);
+	}
+
+	.claim-btn:hover {
+		background: var(--color-primary);
+		color: var(--color-text);
+	}
+
+	.claim-btn.unclaim {
+		border-color: var(--color-accent);
+		color: var(--color-accent);
+	}
+
+	.claim-btn.unclaim:hover {
+		background: var(--color-accent);
+		color: white;
 	}
 
 	.empty {

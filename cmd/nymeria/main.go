@@ -11,12 +11,15 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/narvel/nymeria/internal/activity"
+	"github.com/narvel/nymeria/internal/annotation"
 	"github.com/narvel/nymeria/internal/aprs"
 	"github.com/narvel/nymeria/internal/beacon"
 	"github.com/narvel/nymeria/internal/config"
 	"github.com/narvel/nymeria/internal/message"
 	"github.com/narvel/nymeria/internal/object"
 	"github.com/narvel/nymeria/internal/server"
+	"github.com/narvel/nymeria/internal/session"
 	"github.com/narvel/nymeria/internal/station"
 	"github.com/narvel/nymeria/internal/store"
 	"github.com/narvel/nymeria/internal/transport"
@@ -185,6 +188,31 @@ func main() {
 		log.Printf("beaconing enabled (interval %s)", bcnCfg.Interval)
 	}
 
+	// Create session manager
+	sessCfg := session.MemoryManagerConfig{
+		PIN:               cfg.Session.PIN,
+		InactivityTimeout: cfg.Session.InactivityTimeout,
+	}
+	sessMgr := session.NewMemoryManager(sessCfg)
+	sessMgr.Start(ctx, time.Minute)
+	log.Printf("session manager started (PIN %s, timeout %s)",
+		func() string {
+			if cfg.Session.PIN != "" {
+				return "configured"
+			}
+			return "disabled"
+		}(),
+		cfg.Session.InactivityTimeout)
+
+	// Create activity logger
+	actLogger := activity.NewStoreLogger(db)
+
+	// Create annotation manager
+	annMgr := annotation.NewManager(db)
+	if err := annMgr.Load(); err != nil {
+		log.Printf("warning: failed to load annotations: %v", err)
+	}
+
 	// Override listen address if provided
 	if *listenAddr != "" {
 		cfg.Server.Listen = *listenAddr
@@ -194,6 +222,9 @@ func main() {
 	srv := server.New(tracker, tm, msgEngine, db,
 		server.WithBeaconManager(bcn),
 		server.WithObjectManager(objMgr),
+		server.WithSessionManager(sessMgr),
+		server.WithActivityLogger(actLogger),
+		server.WithAnnotationManager(annMgr),
 	)
 
 	httpSrv := &http.Server{

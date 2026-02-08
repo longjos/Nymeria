@@ -13,7 +13,7 @@ import (
 	_ "modernc.org/sqlite"
 )
 
-const currentSchemaVersion = 1
+const currentSchemaVersion = 2
 
 // SQLiteStore implements Store using modernc.org/sqlite.
 type SQLiteStore struct {
@@ -66,6 +66,12 @@ func (s *SQLiteStore) migrate() error {
 
 	if version < 1 {
 		if err := s.migrateV1(); err != nil {
+			return err
+		}
+	}
+
+	if version < 2 {
+		if err := s.migrateV2(); err != nil {
 			return err
 		}
 	}
@@ -368,6 +374,295 @@ func (s *SQLiteStore) LoadTrackPoints(callsign string, limit int) ([]station.Tra
 	}
 
 	return points, nil
+}
+
+func (s *SQLiteStore) migrateV2() error {
+	ddl := `
+CREATE TABLE IF NOT EXISTS activity_log (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    timestamp DATETIME NOT NULL,
+    user_id TEXT,
+    user_name TEXT,
+    action TEXT NOT NULL,
+    target TEXT,
+    details TEXT
+);
+CREATE INDEX IF NOT EXISTS idx_activity_timestamp ON activity_log(timestamp);
+CREATE INDEX IF NOT EXISTS idx_activity_user ON activity_log(user_id);
+
+CREATE TABLE IF NOT EXISTS annotations (
+    id TEXT PRIMARY KEY,
+    type TEXT NOT NULL,
+    label TEXT NOT NULL DEFAULT '',
+    description TEXT NOT NULL DEFAULT '',
+    geometry TEXT NOT NULL,
+    style TEXT NOT NULL DEFAULT '{}',
+    created_by TEXT,
+    created_by_name TEXT,
+    created_at DATETIME NOT NULL,
+    updated_at DATETIME NOT NULL
+);
+`
+	if _, err := s.db.Exec(ddl); err != nil {
+		return fmt.Errorf("create v2 tables: %w", err)
+	}
+
+	// Add claim columns to messages table.
+	// ALTER TABLE ADD COLUMN is idempotent if run multiple times in some SQLite
+	// versions, but we guard against errors for columns that already exist.
+	for _, col := range []string{
+		"ALTER TABLE messages ADD COLUMN claimed_by TEXT DEFAULT NULL",
+		"ALTER TABLE messages ADD COLUMN claimed_at DATETIME DEFAULT NULL",
+	} {
+		if _, err := s.db.Exec(col); err != nil {
+			// Ignore "duplicate column" errors for idempotency.
+			if !isDuplicateColumnError(err) {
+				return fmt.Errorf("alter messages: %w", err)
+			}
+		}
+	}
+
+	// Update schema version.
+	if _, err := s.db.Exec("DELETE FROM schema_version"); err != nil {
+		return fmt.Errorf("clear schema_version: %w", err)
+	}
+	if _, err := s.db.Exec("INSERT INTO schema_version (version) VALUES (?)", 2); err != nil {
+		return fmt.Errorf("set schema_version: %w", err)
+	}
+
+	return nil
+}
+
+func isDuplicateColumnError(err error) bool {
+	return err != nil && (contains(err.Error(), "duplicate column") || contains(err.Error(), "already exists"))
+}
+
+func contains(s, substr string) bool {
+	return len(s) >= len(substr) && searchString(s, substr)
+}
+
+func searchString(s, substr string) bool {
+	for i := 0; i <= len(s)-len(substr); i++ {
+		if s[i:i+len(substr)] == substr {
+			return true
+		}
+	}
+	return false
+}
+
+func (s *SQLiteStore) LogActivity(entry ActivityLogEntry) error {
+	_, err := s.db.Exec(`
+		INSERT INTO activity_log (timestamp, user_id, user_name, action, target, details)
+		VALUES (?, ?, ?, ?, ?, ?)`,
+		entry.Timestamp.UTC(), entry.UserID, entry.UserName,
+		entry.Action, entry.Target, entry.Details,
+	)
+	if err != nil {
+		return fmt.Errorf("log activity: %w", err)
+	}
+	return nil
+}
+
+func (s *SQLiteStore) QueryActivity(filter ActivityFilter) ([]ActivityLogEntry, int, error) {
+	where := ""
+	args := []interface{}{}
+
+	addFilter := func(clause string, val interface{}) {
+		if where == "" {
+			where = " WHERE "
+		} else {
+			where += " AND "
+		}
+		where += clause
+		args = append(args, val)
+	}
+
+	if filter.Since != nil {
+		addFilter("timestamp >= ?", filter.Since.UTC())
+	}
+	if filter.Until != nil {
+		addFilter("timestamp <= ?", filter.Until.UTC())
+	}
+	if filter.UserID != "" {
+		addFilter("user_id = ?", filter.UserID)
+	}
+	if filter.Action != "" {
+		addFilter("action = ?", filter.Action)
+	}
+
+	// Count total matching entries.
+	var total int
+	countQuery := "SELECT COUNT(*) FROM activity_log" + where
+	if err := s.db.QueryRow(countQuery, args...).Scan(&total); err != nil {
+		return nil, 0, fmt.Errorf("count activity: %w", err)
+	}
+
+	// Fetch entries with pagination.
+	query := "SELECT id, timestamp, user_id, user_name, action, target, details FROM activity_log" +
+		where + " ORDER BY timestamp DESC"
+	if filter.Limit > 0 {
+		query += fmt.Sprintf(" LIMIT %d", filter.Limit)
+	}
+	if filter.Offset > 0 {
+		query += fmt.Sprintf(" OFFSET %d", filter.Offset)
+	}
+
+	rows, err := s.db.Query(query, args...)
+	if err != nil {
+		return nil, 0, fmt.Errorf("query activity: %w", err)
+	}
+	defer rows.Close()
+
+	var entries []ActivityLogEntry
+	for rows.Next() {
+		var e ActivityLogEntry
+		var ts string
+		var userID, userName, target, details sql.NullString
+
+		if err := rows.Scan(&e.ID, &ts, &userID, &userName, &e.Action, &target, &details); err != nil {
+			return nil, 0, fmt.Errorf("scan activity: %w", err)
+		}
+
+		e.Timestamp, err = parseTime(ts)
+		if err != nil {
+			return nil, 0, fmt.Errorf("parse activity timestamp %q: %w", ts, err)
+		}
+
+		if userID.Valid {
+			e.UserID = userID.String
+		}
+		if userName.Valid {
+			e.UserName = userName.String
+		}
+		if target.Valid {
+			e.Target = target.String
+		}
+		if details.Valid {
+			e.Details = details.String
+		}
+
+		entries = append(entries, e)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, 0, fmt.Errorf("iterate activity: %w", err)
+	}
+
+	return entries, total, nil
+}
+
+func (s *SQLiteStore) SaveAnnotation(a Annotation) error {
+	_, err := s.db.Exec(`
+		INSERT OR REPLACE INTO annotations
+			(id, type, label, description, geometry, style, created_by, created_by_name, created_at, updated_at)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		a.ID, a.Type, a.Label, a.Description, a.Geometry, a.Style,
+		a.CreatedBy, a.CreatedByName, a.CreatedAt.UTC(), a.UpdatedAt.UTC(),
+	)
+	if err != nil {
+		return fmt.Errorf("save annotation: %w", err)
+	}
+	return nil
+}
+
+func (s *SQLiteStore) LoadAnnotations() ([]Annotation, error) {
+	rows, err := s.db.Query(`
+		SELECT id, type, label, description, geometry, style,
+		       created_by, created_by_name, created_at, updated_at
+		FROM annotations
+		ORDER BY created_at ASC`)
+	if err != nil {
+		return nil, fmt.Errorf("query annotations: %w", err)
+	}
+	defer rows.Close()
+
+	var annotations []Annotation
+	for rows.Next() {
+		var a Annotation
+		var createdAt, updatedAt string
+		var description, style, createdBy, createdByName sql.NullString
+
+		if err := rows.Scan(
+			&a.ID, &a.Type, &a.Label, &description,
+			&a.Geometry, &style, &createdBy, &createdByName,
+			&createdAt, &updatedAt,
+		); err != nil {
+			return nil, fmt.Errorf("scan annotation: %w", err)
+		}
+
+		a.CreatedAt, err = parseTime(createdAt)
+		if err != nil {
+			return nil, fmt.Errorf("parse annotation created_at %q: %w", createdAt, err)
+		}
+		a.UpdatedAt, err = parseTime(updatedAt)
+		if err != nil {
+			return nil, fmt.Errorf("parse annotation updated_at %q: %w", updatedAt, err)
+		}
+
+		if description.Valid {
+			a.Description = description.String
+		}
+		if style.Valid {
+			a.Style = style.String
+		}
+		if createdBy.Valid {
+			a.CreatedBy = createdBy.String
+		}
+		if createdByName.Valid {
+			a.CreatedByName = createdByName.String
+		}
+
+		annotations = append(annotations, a)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("iterate annotations: %w", err)
+	}
+
+	return annotations, nil
+}
+
+func (s *SQLiteStore) DeleteAnnotation(id string) error {
+	_, err := s.db.Exec("DELETE FROM annotations WHERE id = ?", id)
+	if err != nil {
+		return fmt.Errorf("delete annotation: %w", err)
+	}
+	return nil
+}
+
+func (s *SQLiteStore) UpdateMessageClaim(messageID string, claimedBy string, claimedAt *time.Time) error {
+	var claimedAtVal interface{}
+	if claimedAt != nil {
+		claimedAtVal = claimedAt.UTC()
+	}
+
+	var claimedByVal interface{}
+	if claimedBy != "" {
+		claimedByVal = claimedBy
+	}
+
+	_, err := s.db.Exec(
+		"UPDATE messages SET claimed_by = ?, claimed_at = ? WHERE id = ?",
+		claimedByVal, claimedAtVal, messageID,
+	)
+	if err != nil {
+		return fmt.Errorf("update message claim: %w", err)
+	}
+	return nil
+}
+
+// parseTime tries multiple time formats that SQLite might produce.
+func parseTime(s string) (time.Time, error) {
+	for _, layout := range []string{
+		time.RFC3339Nano,
+		"2006-01-02 15:04:05-07:00",
+		"2006-01-02T15:04:05Z",
+		"2006-01-02 15:04:05+00:00",
+		"2006-01-02 15:04:05",
+	} {
+		if t, err := time.Parse(layout, s); err == nil {
+			return t, nil
+		}
+	}
+	return time.Time{}, fmt.Errorf("unrecognized time format: %s", s)
 }
 
 // Compile-time check that SQLiteStore implements Store.

@@ -104,3 +104,25 @@ export async function loadMessages(callsign: string): Promise<void> {
 		return new Map(map);
 	});
 }
+
+export async function claimConversation(callsign: string, userId: string, userName: string): Promise<void> {
+	await api.claimConversation(callsign, userId, userName);
+	conversations.update((map) => {
+		const convo = map.get(callsign);
+		if (convo) {
+			map.set(callsign, { ...convo, claimedBy: userId, claimedName: userName });
+		}
+		return new Map(map);
+	});
+}
+
+export async function unclaimConversation(callsign: string): Promise<void> {
+	await api.unclaimConversation(callsign);
+	conversations.update((map) => {
+		const convo = map.get(callsign);
+		if (convo) {
+			map.set(callsign, { ...convo, claimedBy: undefined, claimedName: undefined });
+		}
+		return new Map(map);
+	});
+}
