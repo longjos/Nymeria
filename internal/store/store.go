@@ -24,4 +24,10 @@ type Store interface {
 
 	// LoadMessages loads all messages.
 	LoadMessages() ([]message.Message, error)
+
+	// SaveTrackPoint persists a single track point for a callsign.
+	SaveTrackPoint(callsign string, tp station.TrackPoint) error
+
+	// LoadTrackPoints loads the last N track points for a callsign.
+	LoadTrackPoints(callsign string, limit int) ([]station.TrackPoint, error)
 }
