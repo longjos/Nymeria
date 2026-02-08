@@ -12,22 +12,52 @@ var freqRe = regexp.MustCompile(`(\d{2,3}\.\d{2,3})\s*[Mm][Hh][Zz]`)
 
 // parseFrequency extracts APRS 1.2 frequency data from a position comment.
 // Returns nil if no frequency is found.
+// Supports microwave band prefixes A-E before the frequency:
+//
+//	A = +1200 MHz (23cm band)
+//	B = +2300 MHz (13cm band)
+//	C = +3400 MHz (9cm band)
+//	D = +5600 MHz (6cm band)
+//	E = +10000 MHz (3cm band)
 func parseFrequency(comment string) *FrequencyData {
-	m := freqRe.FindStringSubmatchIndex(comment)
+	// Check for microwave band prefix (A-E) before the frequency
+	var microwaveOffset float64
+	freqComment := comment
+	if len(freqComment) > 0 {
+		switch freqComment[0] {
+		case 'A':
+			microwaveOffset = 1200.0
+			freqComment = freqComment[1:]
+		case 'B':
+			microwaveOffset = 2300.0
+			freqComment = freqComment[1:]
+		case 'C':
+			microwaveOffset = 3400.0
+			freqComment = freqComment[1:]
+		case 'D':
+			microwaveOffset = 5600.0
+			freqComment = freqComment[1:]
+		case 'E':
+			microwaveOffset = 10000.0
+			freqComment = freqComment[1:]
+		}
+	}
+
+	m := freqRe.FindStringSubmatchIndex(freqComment)
 	if m == nil {
 		return nil
 	}
 
-	freqStr := comment[m[2]:m[3]]
+	freqStr := freqComment[m[2]:m[3]]
 	freq, err := strconv.ParseFloat(freqStr, 64)
 	if err != nil {
 		return nil
 	}
 
-	fd := &FrequencyData{Freq: freq}
+	fd := &FrequencyData{Freq: freq + microwaveOffset}
 
 	// Parse optional fields after the frequency match
-	rest := comment[m[1]:]
+	rest := freqComment[m[1]:]
 	rest = strings.TrimLeft(rest, " ")
 
 	// Parse space-separated fields: Tnnn, Cnnn, Dnnn, +/-nnn, Rnnm/Rnnk

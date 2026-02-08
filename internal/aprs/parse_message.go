@@ -55,5 +55,11 @@ func parseMessagePayload(payload string) (*MessageData, error) {
 	}
 
 	msg.Text = text
+
+	// Check for auto-answer convention: message starts with "AA:" prefix
+	if strings.HasPrefix(msg.Text, "AA:") {
+		msg.IsAutoAnswer = true
+	}
+
 	return msg, nil
 }
