@@ -3,10 +3,18 @@
 server:
   listen: ":8080"
 
-# Station identity
+# Station identity and tracker tuning
 station:
   callsign: "N0CALL"
   ssid: 0
+  # lat: 35.0
+  # lon: -106.0
+  # symbol_table: "/"
+  # symbol_code: "-"
+  # comment: "Nymeria APRS Client"
+  track_max_points: 100
+  stale_timeout: 80m
+  dedup_window: 30s
 
 # Transport connections
 transports:
@@ -29,3 +37,7 @@ transports:
 # Storage
 store:
   path: "./nymeria.db"
+
+# Logging
+logging:
+  level: "info"  # debug, info, warn, error
