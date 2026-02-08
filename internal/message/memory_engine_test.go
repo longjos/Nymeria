@@ -298,3 +298,51 @@ func TestEventsChannel(t *testing.T) {
 		t.Error("timeout waiting for event")
 	}
 }
+
+func TestImport(t *testing.T) {
+	eng, _ := newTestEngine()
+	defer eng.Close()
+
+	now := time.Now()
+	msgs := []Message{
+		{ID: "a", From: "W3ADO", To: "N0CALL", Body: "Hello", MsgNo: "1", State: StateAcked, Inbound: true, Timestamp: now.Add(-2 * time.Minute)},
+		{ID: "b", From: "N0CALL", To: "W3ADO", Body: "Hi back", MsgNo: "1", State: StateAcked, Inbound: false, Timestamp: now.Add(-time.Minute)},
+		{ID: "c", From: "KJ4ERJ", To: "N0CALL", Body: "CQ", MsgNo: "5", State: StateAcked, Inbound: true, Timestamp: now},
+	}
+
+	eng.Import(msgs)
+
+	// Check conversations are populated
+	convos := eng.Conversations()
+	if len(convos) != 2 {
+		t.Fatalf("got %d conversations, want 2", len(convos))
+	}
+
+	// Check W3ADO conversation has 2 messages
+	w3ado := eng.Messages("W3ADO")
+	if len(w3ado) != 2 {
+		t.Errorf("W3ADO messages = %d, want 2", len(w3ado))
+	}
+
+	// Check KJ4ERJ conversation has 1 message
+	kj4erj := eng.Messages("KJ4ERJ")
+	if len(kj4erj) != 1 {
+		t.Errorf("KJ4ERJ messages = %d, want 1", len(kj4erj))
+	}
+
+	// Check dedup: re-receiving the same inbound message should be ignored
+	frame := aprs.APRSFrame{
+		Source:      aprs.Address{Call: "W3ADO"},
+		Destination: aprs.Address{Call: "N0CALL"},
+		Payload:     ":N0CALL   :Hello{1",
+	}
+	parser := aprs.NewParser()
+	pkt, _ := parser.Parse(frame)
+	eng.HandlePacket(pkt)
+
+	// Still 2 messages for W3ADO (the duplicate was ignored)
+	w3ado = eng.Messages("W3ADO")
+	if len(w3ado) != 2 {
+		t.Errorf("after dedup W3ADO messages = %d, want 2", len(w3ado))
+	}
+}

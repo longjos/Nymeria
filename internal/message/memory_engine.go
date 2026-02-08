@@ -220,6 +220,28 @@ func (e *MemoryEngine) Events() <-chan Event {
 	return e.events
 }
 
+// Import loads historical messages into the engine's conversation store.
+// It populates conversation maps and dedup state without emitting events.
+func (e *MemoryEngine) Import(msgs []Message) {
+	e.mu.Lock()
+	defer e.mu.Unlock()
+
+	for _, m := range msgs {
+		// Key by remote callsign (same logic as runtime message handling)
+		convKey := m.From
+		if !m.Inbound {
+			convKey = m.To
+		}
+		e.messages[convKey] = append(e.messages[convKey], m)
+
+		// Populate dedup for inbound messages so we don't re-ack them
+		if m.Inbound && m.MsgNo != "" {
+			dedupKey := m.From + ":" + m.MsgNo
+			e.seen[dedupKey] = m.Timestamp
+		}
+	}
+}
+
 // Close shuts down the engine and cancels pending retries.
 func (e *MemoryEngine) Close() {
 	select {
