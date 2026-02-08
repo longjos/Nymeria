@@ -1,0 +1,32 @@
+# Go
+/nymeria
+*.exe
+*.test
+*.out
+*.prof
+
+# Dependencies
+/vendor/
+
+# Node / Frontend
+web/node_modules/
+web/build/
+web/.svelte-kit/
+
+# IDE
+.idea/
+.vscode/
+*.swp
+*.swo
+*~
+.DS_Store
+
+# Config (keep example)
+nymeria.yaml
+nymeria.yml
+*.db
+*.sqlite
+
+# Environment
+.env
+.env.*

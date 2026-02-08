@@ -1,0 +1,21 @@
+services:
+  nymeria:
+    build: .
+    ports:
+      - "8080:8080"
+    volumes:
+      - ./nymeria.yaml:/app/nymeria.yaml:ro
+      - nymeria-data:/app/data
+    restart: unless-stopped
+
+  # Optional: Direwolf software TNC
+  # direwolf:
+  #   image: wb2osz/direwolf:latest
+  #   devices:
+  #     - /dev/snd:/dev/snd
+  #   volumes:
+  #     - ./direwolf.conf:/etc/direwolf.conf
+  #   restart: unless-stopped
+
+volumes:
+  nymeria-data:
