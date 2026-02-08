@@ -51,6 +51,7 @@ type MemoryTracker struct {
 
 	cfg    config.StationConfig
 	events chan Event
+	done   chan struct{}
 
 	dedupMu  sync.Mutex
 	dedupBuf []dedupEntry
@@ -62,6 +63,7 @@ func NewMemoryTracker(cfg config.StationConfig) *MemoryTracker {
 		stations:  make(map[string]Station),
 		cfg:       cfg,
 		events:    make(chan Event, 256),
+		done:      make(chan struct{}),
 		dedupBuf:  make([]dedupEntry, 0, 256),
 	}
 }
@@ -199,6 +201,8 @@ func (t *MemoryTracker) Start(ctx context.Context, sweepInterval time.Duration) 
 	go func() {
 		ticker := time.NewTicker(sweepInterval)
 		defer ticker.Stop()
+		defer close(t.events)
+		defer close(t.done)
 		for {
 			select {
 			case <-ctx.Done():
@@ -336,6 +340,11 @@ func (t *MemoryTracker) mergeSource(existing, incoming string) string {
 
 // emit sends an event on the channel without blocking.
 func (t *MemoryTracker) emit(e Event) {
+	select {
+	case <-t.done:
+		return
+	default:
+	}
 	select {
 	case t.events <- e:
 	default:
