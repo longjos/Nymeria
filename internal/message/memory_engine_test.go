@@ -445,6 +445,41 @@ func TestUnclaimNonexistentConversation(t *testing.T) {
 	}
 }
 
+func TestInboundWithoutMsgNoUniqueIDs(t *testing.T) {
+	eng, _ := newTestEngine()
+	defer eng.Close()
+
+	parser := aprs.NewParser()
+
+	// Two messages from the same station with no message number
+	frame1 := aprs.APRSFrame{
+		Source:      aprs.Address{Call: "KG4YFA", SSID: 10},
+		Destination: aprs.Address{Call: "N0CALL"},
+		Payload:     ":N0CALL   :First message",
+	}
+	frame2 := aprs.APRSFrame{
+		Source:      aprs.Address{Call: "KG4YFA", SSID: 10},
+		Destination: aprs.Address{Call: "N0CALL"},
+		Payload:     ":N0CALL   :Second message",
+	}
+
+	pkt1, _ := parser.Parse(frame1)
+	pkt2, _ := parser.Parse(frame2)
+
+	eng.HandlePacket(pkt1)
+	eng.HandlePacket(pkt2)
+
+	msgs := eng.Messages("KG4YFA-10")
+	if len(msgs) != 2 {
+		t.Fatalf("got %d messages, want 2", len(msgs))
+	}
+
+	// IDs must be unique — this is what causes the Svelte each_key_duplicate crash
+	if msgs[0].ID == msgs[1].ID {
+		t.Errorf("duplicate message IDs: %q", msgs[0].ID)
+	}
+}
+
 func TestImport(t *testing.T) {
 	eng, _ := newTestEngine()
 	defer eng.Close()
