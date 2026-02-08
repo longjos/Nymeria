@@ -163,6 +163,27 @@ func parseWeatherString(data string, wx *WeatherData) {
 				}
 				i += 3
 			}
+		case 'X':
+			if len(remaining) >= 3 {
+				if val, err := strconv.ParseFloat(remaining[:3], 64); err == nil {
+					wx.Radiation = &val // nanosieverts/hour
+				}
+				i += 3
+			}
+		case 'V':
+			if len(remaining) >= 3 {
+				if val, err := strconv.ParseFloat(remaining[:3], 64); err == nil {
+					wx.Voltage = &val // volts
+				}
+				i += 3
+			}
+		case 'F':
+			if len(remaining) >= 3 {
+				if val, err := strconv.ParseFloat(remaining[:3], 64); err == nil {
+					wx.FloodLevel = &val // feet
+				}
+				i += 3
+			}
 		}
 	}
 }

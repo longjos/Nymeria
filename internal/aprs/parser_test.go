@@ -306,19 +306,69 @@ func TestParsePositionCompressed(t *testing.T) {
 	}
 }
 
+func TestParseCompressedSupersonicSpeed(t *testing.T) {
+	parser := NewParser()
+
+	// Build a compressed position with high s value to verify supersonic speeds.
+	// Using the same lat/lon as existing compressed test: /5L!!<*e7
+	// Symbol table '/', symbol code '>'
+	// c=45 -> course = 180 degrees. c byte = 45+33 = 78 = 'N'
+	// s=90 -> speed = 1.08^90 - 1 = ~917 knots = ~1699 km/h (supersonic)
+	// s byte = 90+33 = 123 = '{'
+	// type byte: nmeaSrc=0 (bits 3-4 = 00), so type = 0x20 = 32+33 = 65 = 'A'
+	// But we need nmeaSrc != 2 for course/speed. nmeaSrc = (t>>3)&0x03.
+	// type=0x20 (32 decimal): bits 4-3 = 10 -> nmeaSrc=2 -> skips course/speed!
+	// Let's use type=0x30 (48): bits 4-3 = 01 -> nmeaSrc=1. 48+33=81='Q'
+	// Actually let's compute: we want nmeaSrc=0. t byte should have bits 4-3 = 00.
+	// t=0 -> 0+33=33='!'. nmeaSrc=(0>>3)&3=0. Good.
+	// So: c='N', s='{', type='!'
+	payload := "!/5L!!<*e7>N{!"
+
+	frame := APRSFrame{
+		Source:      Address{Call: "N0CALL"},
+		Destination: Address{Call: "APRS"},
+		Payload:     payload,
+	}
+	pkt, err := parser.Parse(frame)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if pkt.Position == nil {
+		t.Fatal("position is nil")
+	}
+
+	// Expected course: 45 * 4.0 = 180 degrees
+	if !approxEqual(pkt.Position.Course, 180.0, 0.1) {
+		t.Errorf("course = %f, want 180.0", pkt.Position.Course)
+	}
+
+	// Expected speed: (1.08^90 - 1) * 1.852 km/h
+	// 1.08^90 ≈ 917.6, so speed ≈ 917.6 * 1.852 ≈ 1699.3 km/h
+	expectedSpeed := (math.Pow(1.08, 90) - 1.0) * 1.852
+	if !approxEqual(pkt.Position.Speed, expectedSpeed, 1.0) {
+		t.Errorf("speed = %f, want %f (supersonic)", pkt.Position.Speed, expectedSpeed)
+	}
+
+	// Verify it's actually supersonic (> speed of sound ~1235 km/h)
+	if pkt.Position.Speed < 1235.0 {
+		t.Errorf("speed %f km/h is not supersonic (< 1235 km/h)", pkt.Position.Speed)
+	}
+}
+
 func TestParseMessage(t *testing.T) {
 	parser := NewParser()
 
 	tests := []struct {
-		name          string
-		payload       string
-		wantAddressee string
-		wantText      string
-		wantMsgNo     string
-		wantIsAck     bool
-		wantIsRej     bool
-		wantAckMsgNo  string
-		wantType      PacketType
+		name             string
+		payload          string
+		wantAddressee    string
+		wantText         string
+		wantMsgNo        string
+		wantIsAck        bool
+		wantIsRej        bool
+		wantAckMsgNo     string
+		wantIsAutoAnswer bool
+		wantType         PacketType
 	}{
 		{
 			name:          "regular message with number",
@@ -358,6 +408,15 @@ func TestParseMessage(t *testing.T) {
 			wantText:      "Weather bulletin text",
 			wantType:      PacketTypeMessage,
 		},
+		{
+			name:             "auto-answer message",
+			payload:          ":N0CALL-5 :AA:I am away from the radio{456",
+			wantAddressee:    "N0CALL-5",
+			wantText:         "AA:I am away from the radio",
+			wantMsgNo:        "456",
+			wantIsAutoAnswer: true,
+			wantType:         PacketTypeMessage,
+		},
 	}
 
 	for _, tt := range tests {
@@ -394,6 +453,9 @@ func TestParseMessage(t *testing.T) {
 			}
 			if tt.wantAckMsgNo != "" && pkt.Message.AckMsgNo != tt.wantAckMsgNo {
 				t.Errorf("ackMsgNo = %q, want %q", pkt.Message.AckMsgNo, tt.wantAckMsgNo)
+			}
+			if pkt.Message.IsAutoAnswer != tt.wantIsAutoAnswer {
+				t.Errorf("isAutoAnswer = %v, want %v", pkt.Message.IsAutoAnswer, tt.wantIsAutoAnswer)
 			}
 		})
 	}
@@ -638,15 +700,18 @@ func TestParseWeather(t *testing.T) {
 	parser := NewParser()
 
 	tests := []struct {
-		name        string
-		payload     string
-		wantWindDir *float64
-		wantWindSpd *float64
-		wantGust    *float64
-		wantTemp    *float64
-		wantHumid   *int
-		wantPress   *float64
-		wantType    PacketType
+		name          string
+		payload       string
+		wantWindDir   *float64
+		wantWindSpd   *float64
+		wantGust      *float64
+		wantTemp      *float64
+		wantHumid     *int
+		wantPress     *float64
+		wantRadiation *float64
+		wantVoltage   *float64
+		wantFlood     *float64
+		wantType      PacketType
 	}{
 		{
 			name:        "positionless weather",
@@ -667,6 +732,18 @@ func TestParseWeather(t *testing.T) {
 			wantGust:    ptrFloat(5 * 0.44704),
 			wantTemp:    ptrFloat((77 - 32) * 5.0 / 9.0),
 			wantType:    PacketTypeWeather,
+		},
+		{
+			name:          "positionless weather with radiation/voltage/flood",
+			payload:       "_10090556c220s004g005t077X123V045F010",
+			wantWindDir:   ptrFloat(220),
+			wantWindSpd:   ptrFloat(4 * 0.44704),
+			wantGust:      ptrFloat(5 * 0.44704),
+			wantTemp:      ptrFloat((77 - 32) * 5.0 / 9.0),
+			wantRadiation: ptrFloat(123),
+			wantVoltage:   ptrFloat(45),
+			wantFlood:     ptrFloat(10),
+			wantType:      PacketTypeWeather,
 		},
 	}
 
@@ -727,6 +804,27 @@ func TestParseWeather(t *testing.T) {
 					t.Error("pressure is nil")
 				} else if !approxEqual(*pkt.Weather.Pressure, *tt.wantPress, 0.1) {
 					t.Errorf("pressure = %f, want %f", *pkt.Weather.Pressure, *tt.wantPress)
+				}
+			}
+			if tt.wantRadiation != nil {
+				if pkt.Weather.Radiation == nil {
+					t.Error("radiation is nil")
+				} else if !approxEqual(*pkt.Weather.Radiation, *tt.wantRadiation, 0.1) {
+					t.Errorf("radiation = %f, want %f", *pkt.Weather.Radiation, *tt.wantRadiation)
+				}
+			}
+			if tt.wantVoltage != nil {
+				if pkt.Weather.Voltage == nil {
+					t.Error("voltage is nil")
+				} else if !approxEqual(*pkt.Weather.Voltage, *tt.wantVoltage, 0.1) {
+					t.Errorf("voltage = %f, want %f", *pkt.Weather.Voltage, *tt.wantVoltage)
+				}
+			}
+			if tt.wantFlood != nil {
+				if pkt.Weather.FloodLevel == nil {
+					t.Error("floodLevel is nil")
+				} else if !approxEqual(*pkt.Weather.FloodLevel, *tt.wantFlood, 0.1) {
+					t.Errorf("floodLevel = %f, want %f", *pkt.Weather.FloodLevel, *tt.wantFlood)
 				}
 			}
 		})
@@ -1035,6 +1133,36 @@ func TestParseFrequency(t *testing.T) {
 			name:     "no frequency in comment",
 			payload:  "!4903.50N/07201.75W-just a comment",
 			wantFreq: 0,
+			wantType: PacketTypePosition,
+		},
+		{
+			name:     "microwave A prefix (23cm band)",
+			payload:  "!4903.50N/07201.75W-A96.000 MHz",
+			wantFreq: 1296.0,
+			wantType: PacketTypePosition,
+		},
+		{
+			name:     "microwave B prefix (13cm band)",
+			payload:  "!4903.50N/07201.75W-B20.000 MHz",
+			wantFreq: 2320.0,
+			wantType: PacketTypePosition,
+		},
+		{
+			name:     "microwave C prefix (9cm band)",
+			payload:  "!4903.50N/07201.75W-C56.000 MHz",
+			wantFreq: 3456.0,
+			wantType: PacketTypePosition,
+		},
+		{
+			name:     "microwave D prefix (6cm band)",
+			payload:  "!4903.50N/07201.75W-D60.000 MHz",
+			wantFreq: 5660.0,
+			wantType: PacketTypePosition,
+		},
+		{
+			name:     "microwave E prefix (3cm band)",
+			payload:  "!4903.50N/07201.75W-E50.000 MHz",
+			wantFreq: 10050.0,
 			wantType: PacketTypePosition,
 		},
 	}

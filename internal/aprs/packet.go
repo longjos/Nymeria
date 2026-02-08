@@ -4,12 +4,13 @@ import "time"
 
 // MessageData holds parsed APRS message data.
 type MessageData struct {
-	Addressee string
-	Text      string
-	MessageNo string // message number for ack/rej
-	IsAck     bool
-	IsRej     bool
-	AckMsgNo  string // the message number being acked/rejected
+	Addressee    string
+	Text         string
+	MessageNo    string // message number for ack/rej
+	IsAck        bool
+	IsRej        bool
+	AckMsgNo     string // the message number being acked/rejected
+	IsAutoAnswer bool   // true if message starts with "AA:" prefix
 }
 
 // ObjectData holds parsed APRS object data.
@@ -32,6 +33,9 @@ type WeatherData struct {
 	Rain24h     *float64 // mm
 	RainToday   *float64 // mm
 	Luminosity  *int
+	Radiation   *float64 // nanosieverts/hour
+	Voltage     *float64 // volts
+	FloodLevel  *float64 // feet (raw from APRS)
 }
 
 // StatusData holds parsed APRS status data.
