@@ -1,6 +1,8 @@
 package store
 
 import (
+	"database/sql"
+	"fmt"
 	"os"
 	"path/filepath"
 	"testing"
@@ -443,6 +445,492 @@ func TestLoadTrackPointsIsolation(t *testing.T) {
 	}
 	if loaded[0].Lat != 34.0 {
 		t.Errorf("expected lat 34.0, got %f", loaded[0].Lat)
+	}
+}
+
+// --- V2 Migration Tests ---
+
+func TestV2MigrationCreatesActivityLogTable(t *testing.T) {
+	s, _ := newTestStore(t)
+	defer s.Close()
+
+	// Verify activity_log table exists by inserting and querying.
+	_, err := s.db.Exec(`INSERT INTO activity_log (timestamp, action) VALUES (?, ?)`,
+		time.Now().UTC(), "test")
+	if err != nil {
+		t.Fatalf("activity_log table not created: %v", err)
+	}
+}
+
+func TestV2MigrationCreatesAnnotationsTable(t *testing.T) {
+	s, _ := newTestStore(t)
+	defer s.Close()
+
+	_, err := s.db.Exec(`INSERT INTO annotations (id, type, label, geometry, created_at, updated_at)
+		VALUES (?, ?, ?, ?, ?, ?)`,
+		"ann-1", "point", "test", `{"type":"Point"}`, time.Now().UTC(), time.Now().UTC())
+	if err != nil {
+		t.Fatalf("annotations table not created: %v", err)
+	}
+}
+
+func TestV2MigrationAddsClaimColumnsToMessages(t *testing.T) {
+	s, _ := newTestStore(t)
+	defer s.Close()
+
+	// The claimed_by and claimed_at columns should exist on the messages table.
+	_, err := s.db.Exec(`UPDATE messages SET claimed_by = NULL, claimed_at = NULL WHERE 1=0`)
+	if err != nil {
+		t.Fatalf("claimed_by/claimed_at columns not added to messages: %v", err)
+	}
+}
+
+func TestV2SchemaVersion(t *testing.T) {
+	s, _ := newTestStore(t)
+	defer s.Close()
+
+	var version int
+	err := s.db.QueryRow("SELECT version FROM schema_version LIMIT 1").Scan(&version)
+	if err != nil {
+		t.Fatalf("query schema_version: %v", err)
+	}
+	if version != 2 {
+		t.Errorf("expected schema version 2, got %d", version)
+	}
+}
+
+// --- Activity Log Tests ---
+
+func TestLogAndQueryActivity(t *testing.T) {
+	s, _ := newTestStore(t)
+	defer s.Close()
+
+	now := time.Now().Truncate(time.Second).UTC()
+
+	entry := ActivityLogEntry{
+		Timestamp: now,
+		UserID:    "user-1",
+		UserName:  "Alice",
+		Action:    "login",
+		Target:    "session",
+		Details:   "logged in from mobile",
+	}
+	if err := s.LogActivity(entry); err != nil {
+		t.Fatalf("LogActivity failed: %v", err)
+	}
+
+	entries, total, err := s.QueryActivity(ActivityFilter{Limit: 10})
+	if err != nil {
+		t.Fatalf("QueryActivity failed: %v", err)
+	}
+	if total != 1 {
+		t.Fatalf("expected total 1, got %d", total)
+	}
+	if len(entries) != 1 {
+		t.Fatalf("expected 1 entry, got %d", len(entries))
+	}
+
+	got := entries[0]
+	if got.ID == 0 {
+		t.Error("expected non-zero ID")
+	}
+	if !got.Timestamp.Equal(now) {
+		t.Errorf("timestamp: got %v, want %v", got.Timestamp, now)
+	}
+	if got.UserID != "user-1" {
+		t.Errorf("userID: got %q, want %q", got.UserID, "user-1")
+	}
+	if got.UserName != "Alice" {
+		t.Errorf("userName: got %q, want %q", got.UserName, "Alice")
+	}
+	if got.Action != "login" {
+		t.Errorf("action: got %q, want %q", got.Action, "login")
+	}
+	if got.Target != "session" {
+		t.Errorf("target: got %q, want %q", got.Target, "session")
+	}
+	if got.Details != "logged in from mobile" {
+		t.Errorf("details: got %q, want %q", got.Details, "logged in from mobile")
+	}
+}
+
+func TestQueryActivityFilterByTimeRange(t *testing.T) {
+	s, _ := newTestStore(t)
+	defer s.Close()
+
+	base := time.Now().Truncate(time.Second).UTC()
+
+	for i := 0; i < 5; i++ {
+		if err := s.LogActivity(ActivityLogEntry{
+			Timestamp: base.Add(time.Duration(i) * time.Hour),
+			Action:    "action",
+			Details:   fmt.Sprintf("entry %d", i),
+		}); err != nil {
+			t.Fatalf("LogActivity(%d) failed: %v", i, err)
+		}
+	}
+
+	// Query entries between hour 1 and hour 3 (inclusive).
+	since := base.Add(1 * time.Hour)
+	until := base.Add(3 * time.Hour)
+	entries, total, err := s.QueryActivity(ActivityFilter{
+		Since: &since,
+		Until: &until,
+		Limit: 10,
+	})
+	if err != nil {
+		t.Fatalf("QueryActivity failed: %v", err)
+	}
+	if total != 3 {
+		t.Errorf("expected total 3, got %d", total)
+	}
+	if len(entries) != 3 {
+		t.Errorf("expected 3 entries, got %d", len(entries))
+	}
+}
+
+func TestQueryActivityFilterByUser(t *testing.T) {
+	s, _ := newTestStore(t)
+	defer s.Close()
+
+	now := time.Now().Truncate(time.Second).UTC()
+
+	s.LogActivity(ActivityLogEntry{Timestamp: now, UserID: "user-1", Action: "login"})
+	s.LogActivity(ActivityLogEntry{Timestamp: now, UserID: "user-2", Action: "login"})
+	s.LogActivity(ActivityLogEntry{Timestamp: now, UserID: "user-1", Action: "logout"})
+
+	entries, total, err := s.QueryActivity(ActivityFilter{UserID: "user-1", Limit: 10})
+	if err != nil {
+		t.Fatalf("QueryActivity failed: %v", err)
+	}
+	if total != 2 {
+		t.Errorf("expected total 2, got %d", total)
+	}
+	if len(entries) != 2 {
+		t.Errorf("expected 2 entries, got %d", len(entries))
+	}
+}
+
+func TestQueryActivityFilterByAction(t *testing.T) {
+	s, _ := newTestStore(t)
+	defer s.Close()
+
+	now := time.Now().Truncate(time.Second).UTC()
+
+	s.LogActivity(ActivityLogEntry{Timestamp: now, Action: "login"})
+	s.LogActivity(ActivityLogEntry{Timestamp: now, Action: "logout"})
+	s.LogActivity(ActivityLogEntry{Timestamp: now, Action: "login"})
+
+	entries, total, err := s.QueryActivity(ActivityFilter{Action: "login", Limit: 10})
+	if err != nil {
+		t.Fatalf("QueryActivity failed: %v", err)
+	}
+	if total != 2 {
+		t.Errorf("expected total 2, got %d", total)
+	}
+	if len(entries) != 2 {
+		t.Errorf("expected 2 entries, got %d", len(entries))
+	}
+}
+
+func TestQueryActivityPagination(t *testing.T) {
+	s, _ := newTestStore(t)
+	defer s.Close()
+
+	now := time.Now().Truncate(time.Second).UTC()
+
+	for i := 0; i < 10; i++ {
+		s.LogActivity(ActivityLogEntry{
+			Timestamp: now.Add(time.Duration(i) * time.Minute),
+			Action:    "tick",
+		})
+	}
+
+	// Page 1: first 3
+	entries, total, err := s.QueryActivity(ActivityFilter{Limit: 3, Offset: 0})
+	if err != nil {
+		t.Fatalf("QueryActivity page 1 failed: %v", err)
+	}
+	if total != 10 {
+		t.Errorf("expected total 10, got %d", total)
+	}
+	if len(entries) != 3 {
+		t.Errorf("expected 3 entries, got %d", len(entries))
+	}
+
+	// Page 2: next 3
+	entries2, total2, err := s.QueryActivity(ActivityFilter{Limit: 3, Offset: 3})
+	if err != nil {
+		t.Fatalf("QueryActivity page 2 failed: %v", err)
+	}
+	if total2 != 10 {
+		t.Errorf("expected total 10, got %d", total2)
+	}
+	if len(entries2) != 3 {
+		t.Errorf("expected 3 entries, got %d", len(entries2))
+	}
+
+	// Entries on page 2 should be different from page 1.
+	if entries2[0].ID == entries[0].ID {
+		t.Error("page 2 should have different entries than page 1")
+	}
+}
+
+func TestQueryActivityDefaultLimit(t *testing.T) {
+	s, _ := newTestStore(t)
+	defer s.Close()
+
+	now := time.Now().Truncate(time.Second).UTC()
+	for i := 0; i < 5; i++ {
+		s.LogActivity(ActivityLogEntry{Timestamp: now, Action: "test"})
+	}
+
+	// Limit 0 should default to returning all entries (or a sensible default).
+	entries, total, err := s.QueryActivity(ActivityFilter{})
+	if err != nil {
+		t.Fatalf("QueryActivity failed: %v", err)
+	}
+	if total != 5 {
+		t.Errorf("expected total 5, got %d", total)
+	}
+	if len(entries) != 5 {
+		t.Errorf("expected 5 entries, got %d", len(entries))
+	}
+}
+
+// --- Annotation Tests ---
+
+func TestSaveAndLoadAnnotations(t *testing.T) {
+	s, _ := newTestStore(t)
+	defer s.Close()
+
+	now := time.Now().Truncate(time.Second).UTC()
+
+	ann := Annotation{
+		ID:            "ann-1",
+		Type:          "point",
+		Label:         "My Point",
+		Description:   "A test annotation",
+		Geometry:      `{"type":"Point","coordinates":[-118.24,34.05]}`,
+		Style:         `{"color":"red"}`,
+		CreatedBy:     "user-1",
+		CreatedByName: "Alice",
+		CreatedAt:     now,
+		UpdatedAt:     now,
+	}
+
+	if err := s.SaveAnnotation(ann); err != nil {
+		t.Fatalf("SaveAnnotation failed: %v", err)
+	}
+
+	loaded, err := s.LoadAnnotations()
+	if err != nil {
+		t.Fatalf("LoadAnnotations failed: %v", err)
+	}
+	if len(loaded) != 1 {
+		t.Fatalf("expected 1 annotation, got %d", len(loaded))
+	}
+
+	got := loaded[0]
+	if got.ID != ann.ID {
+		t.Errorf("id: got %q, want %q", got.ID, ann.ID)
+	}
+	if got.Type != ann.Type {
+		t.Errorf("type: got %q, want %q", got.Type, ann.Type)
+	}
+	if got.Label != ann.Label {
+		t.Errorf("label: got %q, want %q", got.Label, ann.Label)
+	}
+	if got.Description != ann.Description {
+		t.Errorf("description: got %q, want %q", got.Description, ann.Description)
+	}
+	if got.Geometry != ann.Geometry {
+		t.Errorf("geometry: got %q, want %q", got.Geometry, ann.Geometry)
+	}
+	if got.Style != ann.Style {
+		t.Errorf("style: got %q, want %q", got.Style, ann.Style)
+	}
+	if got.CreatedBy != ann.CreatedBy {
+		t.Errorf("createdBy: got %q, want %q", got.CreatedBy, ann.CreatedBy)
+	}
+	if got.CreatedByName != ann.CreatedByName {
+		t.Errorf("createdByName: got %q, want %q", got.CreatedByName, ann.CreatedByName)
+	}
+	if !got.CreatedAt.Equal(ann.CreatedAt) {
+		t.Errorf("createdAt: got %v, want %v", got.CreatedAt, ann.CreatedAt)
+	}
+	if !got.UpdatedAt.Equal(ann.UpdatedAt) {
+		t.Errorf("updatedAt: got %v, want %v", got.UpdatedAt, ann.UpdatedAt)
+	}
+}
+
+func TestSaveAnnotationUpsert(t *testing.T) {
+	s, _ := newTestStore(t)
+	defer s.Close()
+
+	now := time.Now().Truncate(time.Second).UTC()
+
+	ann := Annotation{
+		ID:        "ann-1",
+		Type:      "point",
+		Label:     "Original",
+		Geometry:  `{"type":"Point","coordinates":[0,0]}`,
+		CreatedAt: now,
+		UpdatedAt: now,
+	}
+	if err := s.SaveAnnotation(ann); err != nil {
+		t.Fatalf("SaveAnnotation failed: %v", err)
+	}
+
+	// Update label.
+	ann.Label = "Updated"
+	ann.UpdatedAt = now.Add(time.Minute)
+	if err := s.SaveAnnotation(ann); err != nil {
+		t.Fatalf("SaveAnnotation (update) failed: %v", err)
+	}
+
+	loaded, err := s.LoadAnnotations()
+	if err != nil {
+		t.Fatalf("LoadAnnotations failed: %v", err)
+	}
+	if len(loaded) != 1 {
+		t.Fatalf("expected 1 annotation after upsert, got %d", len(loaded))
+	}
+	if loaded[0].Label != "Updated" {
+		t.Errorf("label: got %q, want %q", loaded[0].Label, "Updated")
+	}
+}
+
+func TestDeleteAnnotation(t *testing.T) {
+	s, _ := newTestStore(t)
+	defer s.Close()
+
+	now := time.Now().Truncate(time.Second).UTC()
+
+	s.SaveAnnotation(Annotation{
+		ID: "ann-1", Type: "point", Label: "A", Geometry: "{}", CreatedAt: now, UpdatedAt: now,
+	})
+	s.SaveAnnotation(Annotation{
+		ID: "ann-2", Type: "line", Label: "B", Geometry: "{}", CreatedAt: now, UpdatedAt: now,
+	})
+
+	if err := s.DeleteAnnotation("ann-1"); err != nil {
+		t.Fatalf("DeleteAnnotation failed: %v", err)
+	}
+
+	loaded, err := s.LoadAnnotations()
+	if err != nil {
+		t.Fatalf("LoadAnnotations failed: %v", err)
+	}
+	if len(loaded) != 1 {
+		t.Fatalf("expected 1 annotation after delete, got %d", len(loaded))
+	}
+	if loaded[0].ID != "ann-2" {
+		t.Errorf("expected remaining annotation ann-2, got %q", loaded[0].ID)
+	}
+}
+
+func TestLoadAnnotationsOrderedByCreatedAt(t *testing.T) {
+	s, _ := newTestStore(t)
+	defer s.Close()
+
+	base := time.Now().Truncate(time.Second).UTC()
+
+	// Insert out of order.
+	s.SaveAnnotation(Annotation{
+		ID: "ann-2", Type: "point", Label: "B", Geometry: "{}",
+		CreatedAt: base.Add(time.Minute), UpdatedAt: base.Add(time.Minute),
+	})
+	s.SaveAnnotation(Annotation{
+		ID: "ann-1", Type: "point", Label: "A", Geometry: "{}",
+		CreatedAt: base, UpdatedAt: base,
+	})
+
+	loaded, err := s.LoadAnnotations()
+	if err != nil {
+		t.Fatalf("LoadAnnotations failed: %v", err)
+	}
+	if len(loaded) != 2 {
+		t.Fatalf("expected 2 annotations, got %d", len(loaded))
+	}
+	if loaded[0].ID != "ann-1" {
+		t.Errorf("first annotation: got %q, want %q", loaded[0].ID, "ann-1")
+	}
+	if loaded[1].ID != "ann-2" {
+		t.Errorf("second annotation: got %q, want %q", loaded[1].ID, "ann-2")
+	}
+}
+
+// --- Message Claim Tests ---
+
+func TestUpdateMessageClaim(t *testing.T) {
+	s, _ := newTestStore(t)
+	defer s.Close()
+
+	now := time.Now().Truncate(time.Second).UTC()
+
+	msg := message.Message{
+		ID:        "msg-claim-1",
+		From:      "N0CALL",
+		To:        "W1AW",
+		Body:      "test",
+		State:     message.StatePending,
+		Timestamp: now,
+	}
+	if err := s.SaveMessage(msg); err != nil {
+		t.Fatalf("SaveMessage failed: %v", err)
+	}
+
+	claimTime := now.Add(time.Minute)
+	if err := s.UpdateMessageClaim("msg-claim-1", "user-1", &claimTime); err != nil {
+		t.Fatalf("UpdateMessageClaim failed: %v", err)
+	}
+
+	// Verify by reading raw DB.
+	var claimedBy sql.NullString
+	var claimedAt sql.NullString
+	err := s.db.QueryRow("SELECT claimed_by, claimed_at FROM messages WHERE id = ?", "msg-claim-1").
+		Scan(&claimedBy, &claimedAt)
+	if err != nil {
+		t.Fatalf("query claimed columns: %v", err)
+	}
+	if !claimedBy.Valid || claimedBy.String != "user-1" {
+		t.Errorf("claimed_by: got %v, want user-1", claimedBy)
+	}
+	if !claimedAt.Valid {
+		t.Error("claimed_at should not be NULL")
+	}
+}
+
+func TestUpdateMessageClaimClear(t *testing.T) {
+	s, _ := newTestStore(t)
+	defer s.Close()
+
+	now := time.Now().Truncate(time.Second).UTC()
+
+	msg := message.Message{
+		ID:        "msg-claim-2",
+		From:      "N0CALL",
+		To:        "W1AW",
+		Body:      "test",
+		State:     message.StatePending,
+		Timestamp: now,
+	}
+	s.SaveMessage(msg)
+
+	// Claim then clear.
+	claimTime := now
+	s.UpdateMessageClaim("msg-claim-2", "user-1", &claimTime)
+	if err := s.UpdateMessageClaim("msg-claim-2", "", nil); err != nil {
+		t.Fatalf("UpdateMessageClaim (clear) failed: %v", err)
+	}
+
+	var claimedBy sql.NullString
+	var claimedAt sql.NullString
+	s.db.QueryRow("SELECT claimed_by, claimed_at FROM messages WHERE id = ?", "msg-claim-2").
+		Scan(&claimedBy, &claimedAt)
+	if claimedBy.Valid && claimedBy.String != "" {
+		t.Errorf("claimed_by should be empty/null after clear, got %q", claimedBy.String)
 	}
 }
 

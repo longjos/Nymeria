@@ -2,6 +2,7 @@
 	import { stationList } from '$lib/stores/stations';
 	import { stationKey as getStationKey } from '$lib/utils';
 	import ConnectionStatus from './ConnectionStatus.svelte';
+	import UserMenu from './UserMenu.svelte';
 
 	let {
 		unreadCount = 0,
@@ -9,6 +10,7 @@
 		onStationsOpen,
 		onMessagesOpen,
 		onTransportsOpen,
+		onActivityOpen,
 		onSelectStation
 	}: {
 		unreadCount?: number;
@@ -16,6 +18,7 @@
 		onStationsOpen?: () => void;
 		onMessagesOpen?: () => void;
 		onTransportsOpen?: () => void;
+		onActivityOpen?: () => void;
 		onSelectStation?: (key: string) => void;
 	} = $props();
 
@@ -95,7 +98,14 @@
 		</svg>
 	</button>
 
+	<button class="toolbar-btn" onclick={onActivityOpen} title="Activity Log">
+		<svg width="14" height="14" viewBox="0 0 16 16" fill="none">
+			<path d="M2 2v12h12M5 10l3-3 2 2 4-4" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/>
+		</svg>
+	</button>
+
 	<ConnectionStatus />
+	<UserMenu />
 </div>
 
 <!-- Mobile floating buttons -->

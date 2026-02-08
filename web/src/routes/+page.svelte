@@ -9,19 +9,23 @@
 	import StationDetail from '$lib/components/StationDetail.svelte';
 	import ConvoList from '$lib/components/ConvoList.svelte';
 	import TransportPanel from '$lib/components/TransportPanel.svelte';
+	import ActivityPanel from '$lib/components/ActivityPanel.svelte';
 	import ConnectionStatus from '$lib/components/ConnectionStatus.svelte';
 	import SearchOverlay from '$lib/components/SearchOverlay.svelte';
+	import LoginOverlay from '$lib/components/LoginOverlay.svelte';
 	import { stations, stationList, initStationStore } from '$lib/stores/stations';
 	import { initMessageStore, conversationList } from '$lib/stores/messages';
 	import { initTransportStore } from '$lib/stores/transports';
+	import { isLoggedIn, initSession } from '$lib/stores/session';
 	import {
 		selectedStation, panelMode, detailTab, searchOpen, sheetState,
-		selectStation, closePanel, openStationList, openMessages, openConversation, openTransports
+		selectStation, closePanel, openStationList, openMessages, openConversation, openTransports, openActivity
 	} from '$lib/stores/ui';
 	import type { SheetState, DetailTab } from '$lib/stores/ui';
 
 	let isDesktop = $state(true);
 	let flyToTarget = $state<{ lat: number; lon: number; zoom?: number } | null>(null);
+	let sessionReady = $state(false);
 
 	let stationsWithPosition = $derived(
 		$stationList.filter((s) => s.position)
@@ -33,10 +37,18 @@
 
 	let panelIsOpen = $derived($panelMode !== 'closed');
 
-	onMount(() => {
-		initStationStore();
-		initMessageStore();
-		initTransportStore();
+	// Watch login state — init data stores when user logs in
+	$effect(() => {
+		if ($isLoggedIn) {
+			initStationStore();
+			initMessageStore();
+			initTransportStore();
+		}
+	});
+
+	onMount(async () => {
+		await initSession();
+		sessionReady = true;
 
 		if (browser) {
 			const mq = window.matchMedia('(min-width: 769px)');
@@ -87,6 +99,11 @@
 </svelte:head>
 
 <div class="app-container">
+	<!-- Login gate -->
+	{#if sessionReady && !$isLoggedIn}
+		<LoginOverlay />
+	{/if}
+
 	<!-- Full-screen map -->
 	<div class="map-layer">
 		<Map
@@ -105,6 +122,7 @@
 		onStationsOpen={openStationList}
 		onMessagesOpen={openMessages}
 		onTransportsOpen={openTransports}
+		onActivityOpen={openActivity}
 		onSelectStation={handleSearchSelect}
 	/>
 
@@ -142,6 +160,8 @@
 				/>
 			{:else if $panelMode === 'transports'}
 				<TransportPanel />
+			{:else if $panelMode === 'activity'}
+				<ActivityPanel />
 			{/if}
 		</SidePanel>
 	{/if}
@@ -186,6 +206,8 @@
 				/>
 			{:else if $panelMode === 'transports'}
 				<TransportPanel />
+			{:else if $panelMode === 'activity'}
+				<ActivityPanel />
 			{/if}
 		</BottomSheet>
 	{/if}

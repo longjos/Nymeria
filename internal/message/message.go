@@ -28,8 +28,11 @@ type Message struct {
 
 // Conversation groups messages with a single remote station.
 type Conversation struct {
-	Callsign    string    `json:"callsign"`
-	Messages    []Message `json:"messages"`
-	UnreadCount int       `json:"unreadCount"`
-	LastActive  time.Time `json:"lastActive"`
+	Callsign    string     `json:"callsign"`
+	Messages    []Message  `json:"messages"`
+	UnreadCount int        `json:"unreadCount"`
+	LastActive  time.Time  `json:"lastActive"`
+	ClaimedBy   string     `json:"claimedBy,omitempty"`
+	ClaimedName string     `json:"claimedName,omitempty"`
+	ClaimedAt   *time.Time `json:"claimedAt,omitempty"`
 }

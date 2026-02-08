@@ -52,10 +52,64 @@ export interface Conversation {
 	messages: Message[];
 	unreadCount: number;
 	lastActive: string;
+	claimedBy?: string;
+	claimedName?: string;
 }
 
 export interface HealthResponse {
 	status: string;
+}
+
+export type Role = 'observer' | 'plotter' | 'operator' | 'admin';
+
+export interface SessionUser {
+	id: string;
+	name: string;
+	role: Role;
+	callsign?: string;
+	token: string;
+	connectedAt: string;
+	lastActivity: string;
+}
+
+export interface PublicUser {
+	id: string;
+	name: string;
+	role: Role;
+	callsign?: string;
+	connectedAt: string;
+}
+
+export interface ConfigResponse {
+	transports: number;
+	wsClients: number;
+	pinRequired: boolean;
+}
+
+export interface Annotation {
+	id: string;
+	type: 'point' | 'line' | 'area';
+	label: string;
+	geometry: string;
+	style?: string;
+	createdBy?: string;
+	createdAt: string;
+	updatedAt: string;
+}
+
+export interface ActivityEntry {
+	id: number;
+	timestamp: string;
+	userId?: string;
+	userName?: string;
+	action: string;
+	target?: string;
+	details?: string;
+}
+
+export interface ActivityResponse {
+	entries: ActivityEntry[];
+	total: number;
 }
 
 export interface TransportStatus {

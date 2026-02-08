@@ -299,6 +299,152 @@ func TestEventsChannel(t *testing.T) {
 	}
 }
 
+func TestClaimConversation(t *testing.T) {
+	eng, _ := newTestEngine()
+	defer eng.Close()
+
+	// Claim before any messages exist (pre-claim) should succeed
+	err := eng.ClaimConversation("W3ADO", "user1", "Alice")
+	if err != nil {
+		t.Fatalf("ClaimConversation: %v", err)
+	}
+
+	// Verify claim shows up in Conversations after a message arrives
+	eng.Send("W3ADO", "Hello")
+	convos := eng.Conversations()
+	var found *Conversation
+	for i := range convos {
+		if convos[i].Callsign == "W3ADO" {
+			found = &convos[i]
+			break
+		}
+	}
+	if found == nil {
+		t.Fatal("W3ADO conversation not found")
+	}
+	if found.ClaimedBy != "user1" {
+		t.Errorf("ClaimedBy = %q, want user1", found.ClaimedBy)
+	}
+	if found.ClaimedName != "Alice" {
+		t.Errorf("ClaimedName = %q, want Alice", found.ClaimedName)
+	}
+	if found.ClaimedAt == nil {
+		t.Error("ClaimedAt should not be nil")
+	}
+}
+
+func TestUnclaimConversation(t *testing.T) {
+	eng, _ := newTestEngine()
+	defer eng.Close()
+
+	eng.Send("W3ADO", "Hello")
+	eng.ClaimConversation("W3ADO", "user1", "Alice")
+	eng.UnclaimConversation("W3ADO")
+
+	convos := eng.Conversations()
+	for _, c := range convos {
+		if c.Callsign == "W3ADO" {
+			if c.ClaimedBy != "" {
+				t.Errorf("ClaimedBy = %q after unclaim, want empty", c.ClaimedBy)
+			}
+			if c.ClaimedAt != nil {
+				t.Error("ClaimedAt should be nil after unclaim")
+			}
+			return
+		}
+	}
+	t.Fatal("W3ADO conversation not found")
+}
+
+func TestUnclaimByUser(t *testing.T) {
+	eng, _ := newTestEngine()
+	defer eng.Close()
+
+	eng.Send("W3ADO", "Hello")
+	eng.Send("KJ4ERJ", "Hi")
+
+	eng.ClaimConversation("W3ADO", "user1", "Alice")
+	eng.ClaimConversation("KJ4ERJ", "user1", "Alice")
+
+	// Unclaim all conversations owned by user1
+	eng.UnclaimByUser("user1")
+
+	convos := eng.Conversations()
+	for _, c := range convos {
+		if c.ClaimedBy != "" {
+			t.Errorf("conversation %q still claimed by %q after UnclaimByUser", c.Callsign, c.ClaimedBy)
+		}
+	}
+}
+
+func TestClaimEvents(t *testing.T) {
+	eng, _ := newTestEngine()
+	defer eng.Close()
+
+	// Drain the events channel from Send
+	eng.Send("W3ADO", "Hello")
+	select {
+	case <-eng.Events():
+	case <-time.After(time.Second):
+	}
+
+	eng.ClaimConversation("W3ADO", "user1", "Alice")
+
+	select {
+	case evt := <-eng.Events():
+		if evt.Type != "conversation_claimed" {
+			t.Errorf("event type = %q, want conversation_claimed", evt.Type)
+		}
+		if evt.Conversation == nil {
+			t.Fatal("event Conversation should not be nil")
+		}
+		if evt.Conversation.ClaimedBy != "user1" {
+			t.Errorf("event ClaimedBy = %q, want user1", evt.Conversation.ClaimedBy)
+		}
+	case <-time.After(time.Second):
+		t.Error("timeout waiting for claim event")
+	}
+
+	eng.UnclaimConversation("W3ADO")
+
+	select {
+	case evt := <-eng.Events():
+		if evt.Type != "conversation_unclaimed" {
+			t.Errorf("event type = %q, want conversation_unclaimed", evt.Type)
+		}
+		if evt.Conversation == nil {
+			t.Fatal("event Conversation should not be nil")
+		}
+		if evt.Conversation.Callsign != "W3ADO" {
+			t.Errorf("event Callsign = %q, want W3ADO", evt.Conversation.Callsign)
+		}
+	case <-time.After(time.Second):
+		t.Error("timeout waiting for unclaim event")
+	}
+}
+
+func TestClaimNonexistentConversation(t *testing.T) {
+	eng, _ := newTestEngine()
+	defer eng.Close()
+
+	// Pre-claiming a conversation before any messages exist should be OK
+	err := eng.ClaimConversation("NOCALL", "user1", "Alice")
+	if err != nil {
+		t.Errorf("pre-claiming nonexistent conversation should not error, got: %v", err)
+	}
+}
+
+func TestUnclaimNonexistentConversation(t *testing.T) {
+	eng, _ := newTestEngine()
+	defer eng.Close()
+
+	// Unclaiming a conversation that doesn't exist should not error
+	err := eng.UnclaimConversation("NOCALL")
+	if err != nil {
+		t.Errorf("unclaiming nonexistent conversation should not error, got: %v", err)
+	}
+}
+
 func TestImport(t *testing.T) {
 	eng, _ := newTestEngine()
 	defer eng.Close()

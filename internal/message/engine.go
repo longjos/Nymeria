@@ -8,8 +8,9 @@ type SendFunc func(frame aprs.APRSFrame) error
 
 // Event represents a message engine event for WebSocket broadcast.
 type Event struct {
-	Type    string  `json:"type"`
-	Message Message `json:"message"`
+	Type         string        `json:"type"`
+	Message      Message       `json:"message,omitempty"`
+	Conversation *Conversation `json:"conversation,omitempty"`
 }
 
 // Engine manages APRS message sending, receiving, and acknowledgements.
@@ -31,6 +32,15 @@ type Engine interface {
 
 	// Import loads historical messages into the engine (e.g. from DB on startup).
 	Import(msgs []Message)
+
+	// ClaimConversation assigns an operator to a conversation.
+	ClaimConversation(callsign, userID, userName string) error
+
+	// UnclaimConversation removes the operator assignment from a conversation.
+	UnclaimConversation(callsign string) error
+
+	// UnclaimByUser removes all claims held by the given user.
+	UnclaimByUser(userID string)
 
 	// Close shuts down the engine and cancels pending retries.
 	Close()

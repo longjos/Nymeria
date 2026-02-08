@@ -33,6 +33,13 @@ type pendingMsg struct {
 	retries int
 }
 
+// claimInfo tracks which operator has claimed a conversation.
+type claimInfo struct {
+	UserID    string
+	UserName  string
+	ClaimedAt time.Time
+}
+
 // MemoryEngine is an in-memory message engine with retry support.
 type MemoryEngine struct {
 	mu       sync.Mutex
@@ -40,9 +47,10 @@ type MemoryEngine struct {
 	sendFn   SendFunc
 	retryCfg RetryConfig
 
-	messages map[string][]Message // keyed by remote callsign
+	messages map[string][]Message   // keyed by remote callsign
 	pending  map[string]*pendingMsg // keyed by msgno
 	seen     map[string]time.Time   // dedup: keyed by "from:msgno"
+	claims   map[string]*claimInfo  // keyed by remote callsign
 	events   chan Event
 
 	msgCounter atomic.Int64
@@ -58,6 +66,7 @@ func NewMemoryEngine(callsign string, sendFn SendFunc, cfg RetryConfig) *MemoryE
 		messages: make(map[string][]Message),
 		pending:  make(map[string]*pendingMsg),
 		seen:     make(map[string]time.Time),
+		claims:   make(map[string]*claimInfo),
 		events:   make(chan Event, 64),
 		closed:   make(chan struct{}),
 	}
@@ -205,14 +214,64 @@ func (e *MemoryEngine) Conversations() []Conversation {
 		}
 		msgsCopy := make([]Message, len(msgs))
 		copy(msgsCopy, msgs)
-		convos = append(convos, Conversation{
+		conv := Conversation{
 			Callsign:    callsign,
 			Messages:    msgsCopy,
 			UnreadCount: unread,
 			LastActive:  lastActive,
-		})
+		}
+		if ci, ok := e.claims[callsign]; ok {
+			conv.ClaimedBy = ci.UserID
+			conv.ClaimedName = ci.UserName
+			t := ci.ClaimedAt
+			conv.ClaimedAt = &t
+		}
+		convos = append(convos, conv)
 	}
 	return convos
+}
+
+// ClaimConversation assigns an operator to a conversation.
+func (e *MemoryEngine) ClaimConversation(callsign, userID, userName string) error {
+	now := time.Now()
+	e.mu.Lock()
+	e.claims[callsign] = &claimInfo{
+		UserID:    userID,
+		UserName:  userName,
+		ClaimedAt: now,
+	}
+	e.mu.Unlock()
+
+	conv := Conversation{
+		Callsign:    callsign,
+		ClaimedBy:   userID,
+		ClaimedName: userName,
+		ClaimedAt:   &now,
+	}
+	e.emit(Event{Type: "conversation_claimed", Conversation: &conv})
+	return nil
+}
+
+// UnclaimConversation removes the operator assignment from a conversation.
+func (e *MemoryEngine) UnclaimConversation(callsign string) error {
+	e.mu.Lock()
+	delete(e.claims, callsign)
+	e.mu.Unlock()
+
+	conv := Conversation{Callsign: callsign}
+	e.emit(Event{Type: "conversation_unclaimed", Conversation: &conv})
+	return nil
+}
+
+// UnclaimByUser removes all claims held by the given user.
+func (e *MemoryEngine) UnclaimByUser(userID string) {
+	e.mu.Lock()
+	for callsign, ci := range e.claims {
+		if ci.UserID == userID {
+			delete(e.claims, callsign)
+		}
+	}
+	e.mu.Unlock()
 }
 
 // Events returns a channel that emits message lifecycle events.
