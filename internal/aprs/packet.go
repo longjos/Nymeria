@@ -36,6 +36,29 @@ type WeatherData struct {
 
 // StatusData holds parsed APRS status data.
 type StatusData struct {
-	Text      string
-	Timestamp time.Time
+	Text       string
+	Timestamp  time.Time
+	Maidenhead string
+}
+
+// ItemData holds parsed APRS item data.
+type ItemData struct {
+	Name     string
+	Live     bool // true = live item, false = killed
+	Position PositionData
+}
+
+// TelemetryData holds parsed APRS telemetry data.
+type TelemetryData struct {
+	Seq     int
+	Analog  [5]float64
+	Digital byte
+	Comment string
+}
+
+// MicEData holds parsed Mic-E position data.
+type MicEData struct {
+	Position   PositionData
+	MicEMsg    string // Mic-E message type (e.g., "Off Duty", "En Route")
+	RadioModel string
 }
