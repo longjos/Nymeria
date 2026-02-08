@@ -44,7 +44,7 @@ func main() {
 	defer db.Close()
 
 	// Initialize tracker and transport manager
-	tracker := station.NewMemoryTracker()
+	tracker := station.NewMemoryTracker(cfg.Station)
 	tm := transport.NewManager()
 
 	// Override listen address if provided

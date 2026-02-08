@@ -24,11 +24,27 @@ type TrackPoint struct {
 
 // Station represents a tracked APRS station.
 type Station struct {
-	Callsign  string      `json:"callsign"`
-	SSID      int         `json:"ssid"`
-	LastHeard time.Time   `json:"lastHeard"`
-	Position  *Position   `json:"position,omitempty"`
-	Symbol    aprs.Symbol `json:"symbol"`
-	Comment   string      `json:"comment,omitempty"`
+	Callsign  string       `json:"callsign"`
+	SSID      int          `json:"ssid"`
+	LastHeard time.Time    `json:"lastHeard"`
+	Position  *Position    `json:"position,omitempty"`
+	Symbol    aprs.Symbol  `json:"symbol"`
+	Comment   string       `json:"comment,omitempty"`
 	Track     []TrackPoint `json:"track"`
+	Source    string       `json:"source"`
+}
+
+// EventType identifies the kind of station event.
+type EventType int
+
+const (
+	EventNewStation    EventType = iota // A station was seen for the first time.
+	EventStationUpdate                  // An existing station was updated.
+	EventStationExpired                 // A station was removed due to age.
+)
+
+// Event represents a change in station tracking state.
+type Event struct {
+	Type    EventType `json:"type"`
+	Station Station   `json:"station"`
 }
