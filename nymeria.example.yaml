@@ -1,0 +1,31 @@
+# Nymeria APRS Client Configuration
+
+server:
+  listen: ":8080"
+
+# Station identity
+station:
+  callsign: "N0CALL"
+  ssid: 0
+
+# Transport connections
+transports:
+  # APRS-IS connection
+  # - type: aprsis
+  #   host: rotate.aprs2.net
+  #   port: 14580
+  #   filter: "r/35.0/-106.0/100"
+
+  # KISS TCP (e.g., Direwolf)
+  # - type: kisstcp
+  #   host: localhost
+  #   port: 8001
+
+  # Serial KISS TNC
+  # - type: serial
+  #   device: /dev/ttyUSB0
+  #   baud: 9600
+
+# Storage
+store:
+  path: "./nymeria.db"
