@@ -230,13 +230,15 @@ func (e *MemoryEngine) Close() {
 	close(e.closed)
 
 	e.mu.Lock()
-	defer e.mu.Unlock()
 	for _, pm := range e.pending {
 		if pm.timer != nil {
 			pm.timer.Stop()
 		}
 	}
 	e.pending = make(map[string]*pendingMsg)
+	e.mu.Unlock()
+
+	close(e.events)
 }
 
 // --- internal ---
@@ -396,6 +398,11 @@ func (e *MemoryEngine) updateMessageStateLocked(pm *pendingMsg, msgNo string, st
 }
 
 func (e *MemoryEngine) emit(evt Event) {
+	select {
+	case <-e.closed:
+		return
+	default:
+	}
 	select {
 	case e.events <- evt:
 	default:

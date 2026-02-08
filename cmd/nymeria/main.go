@@ -116,18 +116,29 @@ func main() {
 	// Create and start server
 	srv := server.New(tracker, tm, msgEngine)
 
+	httpSrv := &http.Server{
+		Addr:    cfg.Server.Listen,
+		Handler: srv,
+	}
+
 	// Graceful shutdown on signal
 	go func() {
 		sigCh := make(chan os.Signal, 1)
 		signal.Notify(sigCh, syscall.SIGINT, syscall.SIGTERM)
 		<-sigCh
 		log.Println("shutting down...")
-		cancel()
+
+		shutdownCtx, shutdownCancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer shutdownCancel()
+
+		httpSrv.Shutdown(shutdownCtx)
 		tm.CloseAll()
+		cancel()
 	}()
 
 	log.Printf("nymeria %s listening on %s", version, cfg.Server.Listen)
-	if err := http.ListenAndServe(cfg.Server.Listen, srv); err != nil {
+	if err := httpSrv.ListenAndServe(); err != nil && err != http.ErrServerClosed {
 		log.Fatalf("server error: %v", err)
 	}
+	log.Println("stopped")
 }
