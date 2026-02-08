@@ -2,16 +2,22 @@ package aprs
 
 // Address represents an AX.25 address (callsign + SSID).
 type Address struct {
-	Call string
-	SSID int
+	Call string `json:"call"`
+	SSID int    `json:"ssid,omitempty"`
+	HBit bool   `json:"hBit,omitempty"` // Has-been-digipeated flag (AX.25)
 }
 
 // String returns the address as "CALL-SSID" or just "CALL" if SSID is 0.
+// If HBit is set, appends "*" (TNC2 convention for has-been-digipeated).
 func (a Address) String() string {
-	if a.SSID == 0 {
-		return a.Call
+	s := a.Call
+	if a.SSID != 0 {
+		s += "-" + itoa(a.SSID)
 	}
-	return a.Call + "-" + itoa(a.SSID)
+	if a.HBit {
+		s += "*"
+	}
+	return s
 }
 
 func itoa(n int) string {

@@ -12,13 +12,17 @@ import (
 	"time"
 
 	"github.com/narvel/nymeria/internal/aprs"
+	"github.com/narvel/nymeria/internal/beacon"
 	"github.com/narvel/nymeria/internal/config"
 	"github.com/narvel/nymeria/internal/message"
+	"github.com/narvel/nymeria/internal/object"
 	"github.com/narvel/nymeria/internal/server"
 	"github.com/narvel/nymeria/internal/station"
 	"github.com/narvel/nymeria/internal/store"
 	"github.com/narvel/nymeria/internal/transport"
 	"github.com/narvel/nymeria/internal/transport/aprsis"
+	"github.com/narvel/nymeria/internal/transport/kisstcp"
+	"github.com/narvel/nymeria/internal/transport/serial"
 )
 
 var version = "dev"
@@ -81,12 +85,19 @@ func main() {
 	for i, tc := range cfg.Transports {
 		switch tc.Type {
 		case "aprsis":
-			// Use station callsign if transport doesn't have one
 			if tc.Callsign == "" {
 				tc.Callsign = cfg.Station.Callsign
 			}
 			t := aprsis.New(tc)
 			tm.Add(fmt.Sprintf("aprsis-%d", i), t)
+		case "kisstcp":
+			t := kisstcp.New(tc)
+			tm.Add(fmt.Sprintf("kisstcp-%d", i), t)
+		case "serial":
+			t := serial.New(tc)
+			tm.Add(fmt.Sprintf("serial-%d", i), t)
+		default:
+			log.Printf("warning: unknown transport type %q, skipping", tc.Type)
 		}
 	}
 
@@ -109,30 +120,70 @@ func main() {
 		}
 	}
 
+	// Create object manager
+	objMgr := object.NewManager(
+		cfg.Station.Callsign,
+		cfg.Station.SSID,
+		func(frame aprs.APRSFrame) error { return tm.Send(frame) },
+		object.ManagerConfig{
+			RetransmitInterval: 10 * time.Minute,
+		},
+	)
+	objMgr.Start(ctx)
+	defer objMgr.Close()
+
 	// Connect all transports
 	if err := tm.ConnectAll(ctx); err != nil {
 		log.Printf("warning: transport connect failed: %v", err)
 	}
 
-	// Frame processing loop: parse frames → tracker + message engine
+	// Frame processing loop: parse frames → tracker + message engine + object manager
 	go func() {
 		for {
 			select {
 			case <-ctx.Done():
 				return
-			case frame, ok := <-tm.Frames():
+			case tf, ok := <-tm.TaggedFrames():
 				if !ok {
 					return
 				}
-				pkt, err := parser.Parse(frame)
+				pkt, err := parser.Parse(tf.Frame)
 				if err != nil {
 					continue
 				}
-				tracker.HandlePacket(pkt, "aprsis")
+				tracker.HandlePacket(pkt, tf.Source)
 				msgEngine.HandlePacket(pkt)
+				objMgr.HandlePacket(pkt)
 			}
 		}
 	}()
+
+	// Create beacon manager
+	bcnCfg := beacon.Config{
+		Enabled:  cfg.Beacon.Enabled,
+		Interval: cfg.Beacon.Interval,
+		Comment:  cfg.Beacon.Comment,
+	}
+	if bcnCfg.Interval == 0 {
+		bcnCfg.Interval = 10 * time.Minute
+	}
+	if bcnCfg.Comment == "" {
+		bcnCfg.Comment = cfg.Station.Comment
+	}
+	bcn := beacon.New(bcnCfg, beacon.StationInfo{
+		Callsign:    cfg.Station.Callsign,
+		SSID:        cfg.Station.SSID,
+		Lat:         cfg.Station.Lat,
+		Lon:         cfg.Station.Lon,
+		SymbolTable: cfg.Station.SymbolTable,
+		SymbolCode:  cfg.Station.SymbolCode,
+	}, func(f aprs.APRSFrame) error {
+		return tm.Send(f)
+	})
+	if bcnCfg.Enabled {
+		bcn.Start(ctx)
+		log.Printf("beaconing enabled (interval %s)", bcnCfg.Interval)
+	}
 
 	// Override listen address if provided
 	if *listenAddr != "" {
@@ -140,7 +191,10 @@ func main() {
 	}
 
 	// Create and start server
-	srv := server.New(tracker, tm, msgEngine, db)
+	srv := server.New(tracker, tm, msgEngine, db,
+		server.WithBeaconManager(bcn),
+		server.WithObjectManager(objMgr),
+	)
 
 	httpSrv := &http.Server{
 		Addr:    cfg.Server.Listen,
@@ -158,6 +212,7 @@ func main() {
 		defer shutdownCancel()
 
 		httpSrv.Shutdown(shutdownCtx)
+		bcn.Stop()
 		tm.CloseAll()
 		cancel()
 	}()

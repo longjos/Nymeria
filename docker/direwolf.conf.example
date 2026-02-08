@@ -1,0 +1,38 @@
+# Direwolf configuration for use with Nymeria
+# Copy this file to direwolf.conf and edit with your settings.
+#
+# Documentation: https://github.com/wb2osz/direwolf/tree/master/doc
+
+# Audio device — adjust for your soundcard interface
+# Common options:
+#   plughw:0,0          — First ALSA device (most USB interfaces)
+#   plughw:1,0          — Second ALSA device
+#   default             — ALSA default
+ADEVICE plughw:0,0
+
+# Channel 0 configuration
+CHANNEL 0
+
+# Your callsign — CHANGE THIS
+MYCALL N0CALL-5
+
+# Modem type: 1200 baud AFSK (standard VHF APRS)
+MODEM 1200
+
+# PTT control — adjust for your radio interface
+# Examples:
+#   PTT RIG 2 localhost:4532    — hamlib rigctld
+#   PTT CM108                    — CM108/CM119 USB GPIO (Digirig, etc.)
+#   PTT /dev/ttyUSB0 RTS         — Serial port RTS
+#   PTT GPIO 25                  — Raspberry Pi GPIO pin
+# PTT CM108
+
+# KISS TCP server — Nymeria connects here
+KISSPORT 8001
+
+# Uncomment for IGate operation (requires APRS-IS passcode)
+# IGSERVER noam.aprs2.net
+# IGLOGIN N0CALL-5 12345
+
+# Digipeater (uncomment to enable)
+# DIGIPEAT 0 0 ^WIDE[3-7]-[1-7]$|^TEST$ ^WIDE[12]-[12]$ TRACE

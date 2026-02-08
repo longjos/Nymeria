@@ -1,21 +1,52 @@
-services:
-  nymeria:
-    build: .
-    ports:
-      - "8080:8080"
-    volumes:
-      - ./nymeria.yaml:/app/nymeria.yaml:ro
-      - nymeria-data:/app/data
-    restart: unless-stopped
+# Nymeria + Direwolf: Turnkey RF APRS Station
+#
+# Usage:
+#   1. Copy docker/direwolf.conf.example to docker/direwolf.conf
+#   2. Edit docker/direwolf.conf with your callsign and audio device
+#   3. Copy docker/nymeria.yaml.example to docker/nymeria.yaml
+#   4. Edit docker/nymeria.yaml with your station config
+#   5. Run: docker compose up -d
+#
+# Soundcard passthrough:
+#   The Direwolf container needs access to your soundcard.
+#   On Linux, this is typically /dev/snd. Adjust the devices section below.
+#
+# Raspberry Pi:
+#   This compose file works on both amd64 and arm64 (Pi 4+).
 
-  # Optional: Direwolf software TNC
-  # direwolf:
-  #   image: wb2osz/direwolf:latest
-  #   devices:
-  #     - /dev/snd:/dev/snd
-  #   volumes:
-  #     - ./direwolf.conf:/etc/direwolf.conf
-  #   restart: unless-stopped
+services:
+  direwolf:
+    image: wb2osz/direwolf:latest
+    container_name: nymeria-direwolf
+    restart: unless-stopped
+    devices:
+      - /dev/snd:/dev/snd
+    volumes:
+      - ./docker/direwolf.conf:/etc/direwolf/direwolf.conf:ro
+    ports:
+      - "8001:8001"
+    command: ["direwolf", "-t", "0", "-c", "/etc/direwolf/direwolf.conf"]
+
+  nymeria:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: nymeria
+    restart: unless-stopped
+    ports:
+      - "${NYMERIA_PORT:-8080}:8080"
+    volumes:
+      - ./docker/nymeria.yaml:/app/nymeria.yaml:ro
+      - nymeria-data:/data
+    environment:
+      - NYMERIA_DB_PATH=/data/nymeria.db
+    depends_on:
+      - direwolf
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://localhost:8080/api/health"]
+      interval: 30s
+      timeout: 3s
+      start_period: 10s
 
 volumes:
   nymeria-data:

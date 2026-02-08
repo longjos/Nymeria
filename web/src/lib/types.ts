@@ -59,8 +59,11 @@ export interface HealthResponse {
 }
 
 export interface TransportStatus {
-	name: string;
+	id: string;
 	type: string;
-	state: string;
-	reconnects: number;
+	connected: boolean;
+	lastActivity?: string;
+	error?: string;
+	packetsRx: number;
+	packetsTx: number;
 }

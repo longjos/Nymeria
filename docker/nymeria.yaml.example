@@ -1,0 +1,37 @@
+# Nymeria configuration for Docker Compose deployment
+# Copy this file to nymeria.yaml and edit with your settings.
+
+station:
+  callsign: N0CALL
+  ssid: 5
+  lat: 35.9285
+  lon: -84.3110
+  symbol_table: "/"
+  symbol_code: "-"   # House symbol
+  comment: "Nymeria APRS Client"
+
+server:
+  listen: ":8080"
+
+store:
+  path: "/data/nymeria.db"
+
+# Transports — both RF (via Direwolf) and APRS-IS active simultaneously
+transports:
+  - type: kisstcp
+    host: direwolf        # Docker service name resolves automatically
+    port: 8001
+
+  - type: aprsis
+    host: rotate.aprs2.net
+    port: 14580
+    filter: "r/35.93/-84.31/100"   # 100km radius around station
+
+# Beaconing
+beacon:
+  enabled: true
+  interval: 10m
+  comment: "Nymeria APRS Client via Docker"
+
+logging:
+  level: info
