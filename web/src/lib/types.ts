@@ -4,7 +4,9 @@ export interface Station {
 	lastHeard: string;
 	position?: Position;
 	symbol: APRSSymbol;
+	comment?: string;
 	track: TrackPoint[];
+	source: string;
 }
 
 export interface Position {
@@ -22,8 +24,8 @@ export interface TrackPoint {
 }
 
 export interface APRSSymbol {
-	table: string;
-	code: string;
+	table: number; // byte value: 47 = '/', 92 = '\'
+	code: number;  // byte value of symbol code
 }
 
 export interface Message {
@@ -31,15 +33,25 @@ export interface Message {
 	from: string;
 	to: string;
 	body: string;
-	ackRequired: boolean;
+	msgNo?: string;
+	state: MessageState;
+	retries: number;
+	inbound: boolean;
 	timestamp: string;
-	acked: boolean;
 }
+
+export type MessageState = 0 | 1 | 2 | 3 | 4;
+export const STATE_PENDING: MessageState = 0;
+export const STATE_SENT: MessageState = 1;
+export const STATE_ACKED: MessageState = 2;
+export const STATE_REJECTED: MessageState = 3;
+export const STATE_FAILED: MessageState = 4;
 
 export interface Conversation {
 	callsign: string;
 	messages: Message[];
 	unreadCount: number;
+	lastActive: string;
 }
 
 export interface HealthResponse {
@@ -47,8 +59,8 @@ export interface HealthResponse {
 }
 
 export interface TransportStatus {
-	id: string;
+	name: string;
 	type: string;
-	connected: boolean;
-	lastActivity?: string;
+	state: string;
+	reconnects: number;
 }

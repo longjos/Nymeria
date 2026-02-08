@@ -1,4 +1,4 @@
-import type { Station, Message, HealthResponse, TransportStatus } from './types';
+import type { Station, Message, Conversation, HealthResponse, TransportStatus } from './types';
 
 const BASE = '/api';
 
@@ -21,8 +21,12 @@ async function post<T>(path: string, body: unknown): Promise<T> {
 export const api = {
 	health: () => get<HealthResponse>('/health'),
 	stations: () => get<Station[]>('/stations'),
-	station: (callsign: string) => get<Station>(`/stations/${callsign}`),
-	messages: () => get<Message[]>('/messages'),
+	stationsInBounds: (s: number, w: number, n: number, e: number) =>
+		get<Station[]>(`/stations?bounds=${s},${w},${n},${e}`),
+	searchStations: (q: string) => get<Station[]>(`/stations?q=${encodeURIComponent(q)}`),
+	station: (callsign: string) => get<Station>(`/stations/${encodeURIComponent(callsign)}`),
+	conversations: () => get<Conversation[]>('/messages'),
+	messages: (callsign: string) => get<Message[]>(`/messages/${encodeURIComponent(callsign)}`),
 	sendMessage: (to: string, body: string) => post<Message>('/messages', { to, body }),
 	transports: () => get<TransportStatus[]>('/transports')
 };
