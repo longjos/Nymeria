@@ -50,22 +50,21 @@ export function initMessageStore(): void {
 function addMessageToConversation(m: Message): void {
 	const remote = m.inbound ? m.from : m.to;
 	conversations.update((map) => {
-		const convo = map.get(remote) ?? {
-			callsign: remote,
-			messages: [],
-			unreadCount: 0,
-			lastActive: m.timestamp
-		};
+		const existing = map.get(remote);
+		const msgs = existing?.messages ?? [];
 		// Avoid duplicates
-		if (!convo.messages.find((msg) => msg.id === m.id)) {
-			convo.messages.push(m);
-			convo.messages.sort(
-				(a, b) => new Date(a.timestamp).getTime() - new Date(b.timestamp).getTime()
-			);
+		if (msgs.find((msg) => msg.id === m.id)) {
+			return map;
 		}
-		if (m.inbound) convo.unreadCount++;
-		convo.lastActive = m.timestamp;
-		map.set(remote, convo);
+		const newMsgs = [...msgs, m].sort(
+			(a, b) => new Date(a.timestamp).getTime() - new Date(b.timestamp).getTime()
+		);
+		map.set(remote, {
+			callsign: remote,
+			messages: newMsgs,
+			unreadCount: (existing?.unreadCount ?? 0) + (m.inbound ? 1 : 0),
+			lastActive: m.timestamp
+		});
 		return new Map(map);
 	});
 }
@@ -75,9 +74,11 @@ function updateMessageInConversation(m: Message): void {
 	conversations.update((map) => {
 		const convo = map.get(remote);
 		if (!convo) return map;
-		const idx = convo.messages.findIndex((msg) => msg.id === m.id);
-		if (idx >= 0) convo.messages[idx] = m;
-		map.set(remote, convo);
+		const newMsgs = convo.messages.map((msg) => msg.id === m.id ? m : msg);
+		map.set(remote, {
+			...convo,
+			messages: newMsgs
+		});
 		return new Map(map);
 	});
 }
