@@ -1,11 +1,12 @@
 <script lang="ts">
 	import type { Station } from '$lib/types';
 	import APRSIcon from './APRSIcon.svelte';
-	import { timeAgo, stationDisplayName, formatCoord, formatSpeed } from '$lib/utils';
+	import { timeAgo, stationDisplayName, stationKey, formatCoord, formatSpeed } from '$lib/utils';
 	import { symbolInfo } from '$lib/symbols';
 
 	let { station, compact = false }: { station: Station; compact?: boolean } = $props();
 
+	let key = $derived(stationKey(station));
 	let displayName = $derived(stationDisplayName(station.callsign, station.ssid));
 	let info = $derived(symbolInfo(station.symbol));
 	let coords = $derived(
@@ -14,7 +15,7 @@
 	let speed = $derived(station.position ? formatSpeed(station.position.speed) : '');
 </script>
 
-<a href="/stations/{station.callsign}" class="station-card" class:compact>
+<a href="/stations/{key}" class="station-card" class:compact>
 	<div class="card-left">
 		<APRSIcon symbol={station.symbol} size={compact ? 28 : 36} />
 	</div>

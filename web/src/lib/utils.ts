@@ -38,3 +38,7 @@ export function formatCourse(deg: number | undefined): string {
 export function stationDisplayName(callsign: string, ssid: number): string {
 	return ssid > 0 ? `${callsign}-${ssid}` : callsign;
 }
+
+export function stationKey(station: { callsign: string; ssid: number }): string {
+	return station.ssid > 0 ? `${station.callsign}-${station.ssid}` : station.callsign;
+}

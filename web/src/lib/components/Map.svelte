@@ -94,7 +94,7 @@
 						<div style="font-size: 12px; color: #888;">${info.label}</div>
 						${st.comment ? `<div style="font-size: 12px; margin-top: 4px; color: #ccc;">${st.comment}</div>` : ''}
 						<div style="font-size: 11px; margin-top: 4px;">
-							<a href="/stations/${st.callsign}" style="color: #e94560;">Details</a>
+							<a href="/stations/${key}" style="color: #e94560;">Details</a>
 						</div>
 					</div>
 				`;
