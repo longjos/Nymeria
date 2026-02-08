@@ -1,17 +1,24 @@
 package main
 
 import (
+	"context"
 	"flag"
 	"fmt"
 	"log"
 	"net/http"
 	"os"
+	"os/signal"
+	"syscall"
+	"time"
 
+	"github.com/narvel/nymeria/internal/aprs"
 	"github.com/narvel/nymeria/internal/config"
+	"github.com/narvel/nymeria/internal/message"
 	"github.com/narvel/nymeria/internal/server"
 	"github.com/narvel/nymeria/internal/station"
 	"github.com/narvel/nymeria/internal/store"
 	"github.com/narvel/nymeria/internal/transport"
+	"github.com/narvel/nymeria/internal/transport/aprsis"
 )
 
 var version = "dev"
@@ -47,13 +54,77 @@ func main() {
 	tracker := station.NewMemoryTracker(cfg.Station)
 	tm := transport.NewManager()
 
+	// Create context for graceful shutdown
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	// Start tracker sweep
+	tracker.Start(ctx, time.Minute)
+
+	// Configure transports from config
+	for i, tc := range cfg.Transports {
+		switch tc.Type {
+		case "aprsis":
+			// Use station callsign if transport doesn't have one
+			if tc.Callsign == "" {
+				tc.Callsign = cfg.Station.Callsign
+			}
+			t := aprsis.New(tc)
+			tm.Add(fmt.Sprintf("aprsis-%d", i), t)
+		}
+	}
+
+	// Create message engine
+	parser := aprs.NewParser()
+	msgEngine := message.NewMemoryEngine(
+		cfg.Station.Callsign,
+		func(frame aprs.APRSFrame) error { return tm.Send(frame) },
+		message.DefaultRetryConfig(),
+	)
+	defer msgEngine.Close()
+
+	// Connect all transports
+	if err := tm.ConnectAll(ctx); err != nil {
+		log.Printf("warning: transport connect failed: %v", err)
+	}
+
+	// Frame processing loop: parse frames → tracker + message engine
+	go func() {
+		for {
+			select {
+			case <-ctx.Done():
+				return
+			case frame, ok := <-tm.Frames():
+				if !ok {
+					return
+				}
+				pkt, err := parser.Parse(frame)
+				if err != nil {
+					continue
+				}
+				tracker.HandlePacket(pkt, "aprsis")
+				msgEngine.HandlePacket(pkt)
+			}
+		}
+	}()
+
 	// Override listen address if provided
 	if *listenAddr != "" {
 		cfg.Server.Listen = *listenAddr
 	}
 
 	// Create and start server
-	srv := server.New(tracker, tm)
+	srv := server.New(tracker, tm, msgEngine)
+
+	// Graceful shutdown on signal
+	go func() {
+		sigCh := make(chan os.Signal, 1)
+		signal.Notify(sigCh, syscall.SIGINT, syscall.SIGTERM)
+		<-sigCh
+		log.Println("shutting down...")
+		cancel()
+		tm.CloseAll()
+	}()
 
 	log.Printf("nymeria %s listening on %s", version, cfg.Server.Listen)
 	if err := http.ListenAndServe(cfg.Server.Listen, srv); err != nil {
