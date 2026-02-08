@@ -91,6 +91,13 @@ export async function sendMessage(to: string, body: string): Promise<Message> {
 
 export async function loadMessages(callsign: string): Promise<void> {
 	const msgs = await api.messages(callsign);
+	// Deduplicate by ID to prevent Svelte each_key_duplicate errors from legacy data
+	const seen = new Set<string>();
+	const unique = msgs.filter((m) => {
+		if (seen.has(m.id)) return false;
+		seen.add(m.id);
+		return true;
+	});
 	conversations.update((map) => {
 		const convo = map.get(callsign) ?? {
 			callsign,
@@ -98,7 +105,7 @@ export async function loadMessages(callsign: string): Promise<void> {
 			unreadCount: 0,
 			lastActive: new Date().toISOString()
 		};
-		convo.messages = msgs;
+		convo.messages = unique;
 		convo.unreadCount = 0;
 		map.set(callsign, convo);
 		return new Map(map);

@@ -7,6 +7,7 @@ import (
 	"sync/atomic"
 	"time"
 
+	"github.com/google/uuid"
 	"github.com/narvel/nymeria/internal/aprs"
 )
 
@@ -77,7 +78,7 @@ func (e *MemoryEngine) Send(to, body string) (*Message, error) {
 	msgNo := e.nextMsgNo()
 
 	msg := Message{
-		ID:        fmt.Sprintf("%s-%s-%s", e.callsign, to, msgNo),
+		ID:        uuid.NewString(),
 		From:      e.callsign,
 		To:        to,
 		Body:      body,
@@ -163,7 +164,7 @@ func (e *MemoryEngine) HandlePacket(pkt *aprs.Packet) {
 	}
 
 	msg := Message{
-		ID:        fmt.Sprintf("%s-%s-%s", from, e.callsign, msgData.MessageNo),
+		ID:        uuid.NewString(),
 		From:      from,
 		To:        msgData.Addressee,
 		Body:      msgData.Text,
