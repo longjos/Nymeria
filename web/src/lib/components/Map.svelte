@@ -5,7 +5,19 @@
 	import { stationDisplayName } from '$lib/utils';
 	import L from 'leaflet';
 
-	let { stations = [], selectedCallsign = '' }: { stations?: Station[]; selectedCallsign?: string } = $props();
+	let {
+		stations = [],
+		selectedCallsign = '',
+		onStationClick,
+		flyToTarget,
+		panelOpen = false
+	}: {
+		stations?: Station[];
+		selectedCallsign?: string;
+		onStationClick?: (stationKey: string) => void;
+		flyToTarget?: { lat: number; lon: number; zoom?: number } | null;
+		panelOpen?: boolean;
+	} = $props();
 
 	let mapEl: HTMLDivElement;
 	let map: L.Map;
@@ -42,6 +54,22 @@
 		if (map) updateMarkers();
 	});
 
+	// Fly to target when it changes
+	$effect(() => {
+		if (map && flyToTarget) {
+			map.flyTo([flyToTarget.lat, flyToTarget.lon], flyToTarget.zoom ?? 14);
+		}
+	});
+
+	// Invalidate map size when panel opens/closes
+	$effect(() => {
+		// Read panelOpen to subscribe to changes
+		const _open = panelOpen;
+		if (map) {
+			setTimeout(() => map.invalidateSize(), 400);
+		}
+	});
+
 	function stationKey(s: Station): string {
 		return s.ssid > 0 ? `${s.callsign}-${s.ssid}` : s.callsign;
 	}
@@ -67,16 +95,18 @@
 				marker.setLatLng([st.position.lat, st.position.lon]);
 				marker.setStyle({
 					fillColor: info.color,
+					radius: isSelected ? 12 : 7,
 					weight: isSelected ? 3 : 1,
 					color: isSelected ? '#fff' : info.color,
+					fillOpacity: isSelected ? 1 : 0.9,
 				});
 			} else {
 				marker = L.circleMarker([st.position.lat, st.position.lon], {
-					radius: isSelected ? 10 : 7,
+					radius: isSelected ? 12 : 7,
 					fillColor: info.color,
 					color: isSelected ? '#fff' : info.color,
 					weight: isSelected ? 3 : 1,
-					fillOpacity: 0.9,
+					fillOpacity: isSelected ? 1 : 0.9,
 				}).addTo(map);
 
 				marker.bindTooltip(name, {
@@ -85,20 +115,10 @@
 					className: 'station-tooltip',
 				});
 
-				const popupHtml = `
-					<div style="font-family: monospace; min-width: 140px;">
-						<div style="font-weight: 700; font-size: 14px; margin-bottom: 4px;">
-							<span style="display: inline-block; width: 18px; height: 18px; border-radius: 50%; background: ${info.color}; color: #fff; text-align: center; line-height: 18px; font-size: 10px; margin-right: 4px;">${char}</span>
-							${name}
-						</div>
-						<div style="font-size: 12px; color: #888;">${info.label}</div>
-						${st.comment ? `<div style="font-size: 12px; margin-top: 4px; color: #ccc;">${st.comment}</div>` : ''}
-						<div style="font-size: 11px; margin-top: 4px;">
-							<a href="/stations/${key}" style="color: #e94560;">Details</a>
-						</div>
-					</div>
-				`;
-				marker.bindPopup(popupHtml);
+				marker.on('click', () => {
+					onStationClick?.(key);
+				});
+
 				markers.set(key, marker);
 			}
 
@@ -134,10 +154,6 @@
 			}
 		}
 	}
-
-	export function flyTo(lat: number, lon: number, zoom = 14): void {
-		map?.flyTo([lat, lon], zoom);
-	}
 </script>
 
 <div class="map-container" bind:this={mapEl}></div>
@@ -146,7 +162,6 @@
 	.map-container {
 		width: 100%;
 		height: 100%;
-		min-height: 400px;
 	}
 
 	:global(.station-tooltip) {

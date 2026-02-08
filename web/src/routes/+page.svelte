@@ -1,161 +1,235 @@
 <script lang="ts">
 	import { onMount } from 'svelte';
-	import { api } from '$lib/api';
-	import { initStationStore, stations } from '$lib/stores/stations';
+	import { browser } from '$app/environment';
+	import Map from '$lib/components/Map.svelte';
+	import Toolbar from '$lib/components/Toolbar.svelte';
+	import SidePanel from '$lib/components/SidePanel.svelte';
+	import BottomSheet from '$lib/components/BottomSheet.svelte';
+	import StationList from '$lib/components/StationList.svelte';
+	import StationDetail from '$lib/components/StationDetail.svelte';
+	import ConvoList from '$lib/components/ConvoList.svelte';
+	import ConnectionStatus from '$lib/components/ConnectionStatus.svelte';
+	import SearchOverlay from '$lib/components/SearchOverlay.svelte';
+	import { stations, stationList, initStationStore } from '$lib/stores/stations';
+	import { initMessageStore, conversationList } from '$lib/stores/messages';
+	import {
+		selectedStation, panelMode, detailTab, searchOpen, sheetState,
+		selectStation, closePanel, openStationList, openMessages, openConversation
+	} from '$lib/stores/ui';
+	import type { SheetState, DetailTab } from '$lib/stores/ui';
 
-	let status = $state('checking...');
-	let transportCount = $state(0);
-	let stationCount = $derived($stations.size);
+	let isDesktop = $state(true);
+	let flyToTarget = $state<{ lat: number; lon: number; zoom?: number } | null>(null);
 
-	onMount(async () => {
+	let stationsWithPosition = $derived(
+		$stationList.filter((s) => s.position)
+	);
+
+	let totalUnread = $derived(
+		$conversationList.reduce((sum, c) => sum + c.unreadCount, 0)
+	);
+
+	let panelIsOpen = $derived($panelMode !== 'closed');
+
+	onMount(() => {
 		initStationStore();
-		try {
-			const health = await api.health();
-			status = health.status;
-		} catch {
-			status = 'unreachable';
+		initMessageStore();
+
+		if (browser) {
+			const mq = window.matchMedia('(min-width: 769px)');
+			isDesktop = mq.matches;
+			const handler = (e: MediaQueryListEvent) => { isDesktop = e.matches; };
+			mq.addEventListener('change', handler);
+			return () => mq.removeEventListener('change', handler);
 		}
-		try {
-			const transports = await api.transports();
-			transportCount = transports.length;
-		} catch { /* ignore */ }
 	});
+
+	function handleStationClick(key: string) {
+		selectStation(key);
+		// Fly to the station
+		const st = $stations.get(key);
+		if (st?.position) {
+			flyToTarget = { lat: st.position.lat, lon: st.position.lon };
+		}
+	}
+
+	function handleSearchSelect(key: string) {
+		selectStation(key);
+		searchOpen.set(false);
+		const st = $stations.get(key);
+		if (st?.position) {
+			flyToTarget = { lat: st.position.lat, lon: st.position.lon };
+		}
+	}
+
+	function handleFlyTo(lat: number, lon: number) {
+		flyToTarget = { lat, lon };
+	}
+
+	function handleTabChange(tab: DetailTab) {
+		detailTab.set(tab);
+	}
+
+	function handleSheetStateChange(s: SheetState) {
+		sheetState.set(s);
+	}
+
+	function handleConvoSelect(callsign: string) {
+		openConversation(callsign);
+	}
 </script>
 
 <svelte:head>
 	<title>Nymeria - APRS Client</title>
 </svelte:head>
 
-<div class="home">
-	<div class="hero">
-		<h1>Nymeria</h1>
-		<p class="subtitle">Amateur Radio APRS Client</p>
+<div class="app-container">
+	<!-- Full-screen map -->
+	<div class="map-layer">
+		<Map
+			stations={stationsWithPosition}
+			selectedCallsign={$selectedStation ?? ''}
+			onStationClick={handleStationClick}
+			{flyToTarget}
+			panelOpen={panelIsOpen}
+		/>
 	</div>
 
-	<div class="status-bar">
-		<div class="status-item">
-			<span class="status-label">Server</span>
-			<span class="status-value" class:ok={status === 'ok'} class:err={status === 'unreachable'}>
-				{status}
-			</span>
-		</div>
-		<div class="status-item">
-			<span class="status-label">Transports</span>
-			<span class="status-value">{transportCount}</span>
-		</div>
-		<div class="status-item">
-			<span class="status-label">Stations</span>
-			<span class="status-value">{stationCount}</span>
-		</div>
-	</div>
+	<!-- Toolbar -->
+	<Toolbar
+		unreadCount={totalUnread}
+		onSearchOpen={() => searchOpen.set(true)}
+		onStationsOpen={openStationList}
+		onMessagesOpen={openMessages}
+		onSelectStation={handleSearchSelect}
+	/>
 
-	<div class="features">
-		<a href="/map" class="card">
-			<h3>Map</h3>
-			<p>Real-time APRS station tracking on an interactive map with track history</p>
-		</a>
-		<a href="/stations" class="card">
-			<h3>Stations</h3>
-			<p>Browse and search all heard stations with position, symbol, and status</p>
-		</a>
-		<a href="/messages" class="card">
-			<h3>Messages</h3>
-			<p>Send and receive APRS messages with delivery confirmation</p>
-		</a>
-	</div>
+	<!-- Desktop: Side Panel -->
+	{#if isDesktop}
+		<SidePanel
+			open={panelIsOpen}
+			onClose={closePanel}
+			onTransitionEnd={() => {}}
+		>
+			{#if $panelMode === 'stations'}
+				<StationList
+					onSelect={handleStationClick}
+					selectedKey={$selectedStation}
+				/>
+			{:else if $panelMode === 'detail' && $selectedStation}
+				<StationDetail
+					stationKey={$selectedStation}
+					activeTab={$detailTab}
+					onTabChange={handleTabChange}
+					onClose={closePanel}
+					onFlyTo={handleFlyTo}
+				/>
+			{:else if $panelMode === 'messages'}
+				<ConvoList
+					onSelectConvo={handleConvoSelect}
+				/>
+			{:else if $panelMode === 'convo' && $selectedStation}
+				<StationDetail
+					stationKey={$selectedStation}
+					activeTab={$detailTab}
+					onTabChange={handleTabChange}
+					onClose={closePanel}
+					onFlyTo={handleFlyTo}
+				/>
+			{/if}
+		</SidePanel>
+	{/if}
+
+	<!-- Mobile: Bottom Sheet -->
+	{#if !isDesktop}
+		<BottomSheet
+			sheetLevel={$sheetState}
+			onStateChange={handleSheetStateChange}
+		>
+			{#snippet peekContent()}
+				<div class="sheet-peek-row">
+					<ConnectionStatus />
+					<span class="station-count">{$stationList.length} stations</span>
+				</div>
+			{/snippet}
+
+			{#if $panelMode === 'closed' || $panelMode === 'stations'}
+				<StationList
+					onSelect={handleStationClick}
+					selectedKey={$selectedStation}
+				/>
+			{:else if $panelMode === 'detail' && $selectedStation}
+				<StationDetail
+					stationKey={$selectedStation}
+					activeTab={$detailTab}
+					onTabChange={handleTabChange}
+					onClose={closePanel}
+					onFlyTo={handleFlyTo}
+				/>
+			{:else if $panelMode === 'messages'}
+				<ConvoList
+					onSelectConvo={handleConvoSelect}
+				/>
+			{:else if $panelMode === 'convo' && $selectedStation}
+				<StationDetail
+					stationKey={$selectedStation}
+					activeTab={$detailTab}
+					onTabChange={handleTabChange}
+					onClose={closePanel}
+					onFlyTo={handleFlyTo}
+				/>
+			{/if}
+		</BottomSheet>
+	{/if}
+
+	<!-- Desktop: Connection Status (bottom-left) -->
+	{#if isDesktop}
+		<div class="desktop-status desktop-only">
+			<ConnectionStatus />
+		</div>
+	{/if}
+
+	<!-- Mobile: Search Overlay -->
+	{#if $searchOpen && !isDesktop}
+		<SearchOverlay
+			onClose={() => searchOpen.set(false)}
+			onSelect={handleSearchSelect}
+		/>
+	{/if}
 </div>
 
 <style>
-	.home {
-		max-width: 700px;
-		margin: 0 auto;
+	.app-container {
+		position: relative;
+		width: 100vw;
+		height: 100vh;
+		height: 100dvh;
+		overflow: hidden;
 	}
 
-	.hero {
-		text-align: center;
-		padding: 2.5rem 0 1.5rem;
+	.map-layer {
+		position: absolute;
+		inset: 0;
+		z-index: var(--z-map);
 	}
 
-	h1 {
-		font-size: 2.25rem;
-		color: var(--color-accent);
-		letter-spacing: 0.02em;
+	.desktop-status {
+		position: fixed;
+		bottom: var(--space-md);
+		left: var(--space-md);
+		z-index: var(--z-toolbar);
+		pointer-events: auto;
 	}
 
-	.subtitle {
-		color: var(--color-text-muted);
-		margin-top: 0.375rem;
-		font-size: 1rem;
-	}
-
-	.status-bar {
+	.sheet-peek-row {
 		display: flex;
-		justify-content: center;
-		gap: 2rem;
-		padding: 0.75rem 1rem;
-		background: var(--color-surface);
-		border: 1px solid var(--color-primary);
-		border-radius: 8px;
-		margin-bottom: 2rem;
-	}
-
-	.status-item {
-		display: flex;
-		flex-direction: column;
 		align-items: center;
-		gap: 0.125rem;
+		gap: var(--space-sm);
+		padding-bottom: var(--space-xs);
 	}
 
-	.status-label {
-		font-size: 0.7rem;
-		text-transform: uppercase;
-		letter-spacing: 0.05em;
+	.station-count {
+		font-size: 0.8rem;
 		color: var(--color-text-muted);
-	}
-
-	.status-value {
-		font-size: 1rem;
-		font-weight: 600;
-		font-family: monospace;
-	}
-
-	.ok {
-		color: #4ade80;
-	}
-
-	.err {
-		color: var(--color-accent);
-	}
-
-	.features {
-		display: grid;
-		grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
-		gap: 0.75rem;
-	}
-
-	.card {
-		background: var(--color-surface);
-		padding: 1.25rem;
-		border-radius: 8px;
-		border: 1px solid var(--color-primary);
-		text-decoration: none;
-		color: var(--color-text);
-		transition: border-color 0.15s;
-	}
-
-	.card:hover {
-		border-color: var(--color-accent);
-	}
-
-	.card h3 {
-		color: var(--color-accent);
-		margin-bottom: 0.375rem;
-		font-size: 1.05rem;
-	}
-
-	.card p {
-		font-size: 0.85rem;
-		color: var(--color-text-muted);
-		line-height: 1.4;
 	}
 </style>
