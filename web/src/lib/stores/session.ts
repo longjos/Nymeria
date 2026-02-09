@@ -1,6 +1,6 @@
 import { writable, derived, get } from 'svelte/store';
 import type { SessionUser, Role } from '$lib/types';
-import { api, setAuthToken } from '$lib/api';
+import { api, setAuthToken, loadSavedToken } from '$lib/api';
 
 export const currentUser = writable<SessionUser | null>(null);
 export const pinRequired = writable<boolean>(false);
@@ -35,13 +35,26 @@ export const canPlot = canRole('plotter');
 export const canOperate = canRole('operator');
 export const canAdmin = canRole('admin');
 
-/** Fetch server config to check if PIN is required. */
+/** Fetch server config and restore saved session if token exists. */
 export async function initSession() {
 	try {
 		const cfg = await api.config();
 		pinRequired.set(cfg.pinRequired);
 	} catch {
 		pinRequired.set(false);
+	}
+
+	// Restore session from saved token
+	const saved = loadSavedToken();
+	if (saved) {
+		setAuthToken(saved);
+		try {
+			const user = await api.session();
+			currentUser.set(user);
+		} catch {
+			// Token expired or invalid — clear it
+			setAuthToken(null);
+		}
 	}
 }
 
