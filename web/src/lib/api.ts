@@ -5,10 +5,29 @@ import type {
 
 const BASE = '/api';
 
+const TOKEN_KEY = 'nymeria_token';
+
 let authToken: string | null = null;
 
 export function setAuthToken(token: string | null) {
 	authToken = token;
+	try {
+		if (token) {
+			localStorage.setItem(TOKEN_KEY, token);
+		} else {
+			localStorage.removeItem(TOKEN_KEY);
+		}
+	} catch {
+		// localStorage may be unavailable (SSR, privacy mode)
+	}
+}
+
+export function loadSavedToken(): string | null {
+	try {
+		return localStorage.getItem(TOKEN_KEY);
+	} catch {
+		return null;
+	}
 }
 
 function headers(): Record<string, string> {
