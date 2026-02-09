@@ -62,6 +62,10 @@
 	// Highlighted check-in (dedup flash)
 	let highlightedCheckInId = $state<string | null>(null);
 
+	// Tracked devices
+	let expandedDeviceId = $state<string | null>(null);
+	let addDeviceCallsign = $state('');
+
 	// Inline note
 	let noteCheckInId = $state<string | null>(null);
 	let noteContent = $state('');
@@ -336,6 +340,30 @@
 		}
 	}
 
+	function toggleDeviceList(ciId: string) {
+		expandedDeviceId = expandedDeviceId === ciId ? null : ciId;
+		addDeviceCallsign = '';
+	}
+
+	async function handleAddTrackedStation(ciId: string) {
+		if (!$activeNet || !addDeviceCallsign.trim()) return;
+		try {
+			await api.addTrackedStation($activeNet.id, ciId, addDeviceCallsign.trim().toUpperCase());
+			addDeviceCallsign = '';
+		} catch (e) {
+			console.error('Add tracked station failed:', e);
+		}
+	}
+
+	async function handleRemoveTrackedStation(ciId: string, callsign: string) {
+		if (!$activeNet) return;
+		try {
+			await api.removeTrackedStation($activeNet.id, ciId, callsign);
+		} catch (e) {
+			console.error('Remove tracked station failed:', e);
+		}
+	}
+
 	async function handleAddNote(checkInId?: string) {
 		if (!$activeNet || !noteContent.trim()) return;
 		try {
@@ -594,6 +622,9 @@
 									{#if ci.source === 'voice'}
 										<span class="source-badge vox">VOX</span>
 									{/if}
+									{#if ci.trackedStations?.length > 0}
+										<button class="device-badge" onclick={() => toggleDeviceList(ci.id)}>{ci.trackedStations.length} dev</button>
+									{/if}
 									{#if ci.traffic && ci.traffic !== 'none'}
 										<span class="traffic-badge" style="background: {trafficColors[ci.traffic]}">{trafficLabels[ci.traffic as TrafficType]}</span>
 									{/if}
@@ -624,6 +655,29 @@
 								{/if}
 								{#if ci.missedRollCalls > 0}
 									<div class="missed-badge">Missed {ci.missedRollCalls} roll call{ci.missedRollCalls > 1 ? 's' : ''}</div>
+								{/if}
+
+								<!-- Tracked devices list -->
+								{#if expandedDeviceId === ci.id}
+									<div class="device-list">
+										{#each ci.trackedStations || [] as dev}
+											<div class="device-chip">
+												<span class="device-call">{dev.callsign}</span>
+												<span class="device-type">{dev.autoLinked ? 'SSID' : 'manual'}</span>
+												<button class="device-remove" onclick={() => handleRemoveTrackedStation(ci.id, dev.callsign)} title="Remove">×</button>
+											</div>
+										{/each}
+										<div class="device-add">
+											<input
+												type="text"
+												bind:value={addDeviceCallsign}
+												placeholder="Callsign"
+												class="device-add-input"
+												onkeydown={(e) => { if (e.key === 'Enter') handleAddTrackedStation(ci.id); if (e.key === 'Escape') { expandedDeviceId = null; } }}
+											/>
+											<button class="device-add-btn" onclick={() => handleAddTrackedStation(ci.id)} disabled={!addDeviceCallsign.trim()}>+</button>
+										</div>
+									</div>
 								{/if}
 
 								<!-- Mission assignment picker -->
@@ -676,6 +730,7 @@
 											<svg width="10" height="10" viewBox="0 0 16 16" fill="none"><path d="M8 1v14M8 1l-3 3M8 1l3 3M1 8h14" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/></svg>
 										</button>
 									{/if}
+									<button class="op-btn" class:active={expandedDeviceId === ci.id} title="Tracked Devices" onclick={() => toggleDeviceList(ci.id)}>📡</button>
 									<button class="op-btn" title="Assign Mission" onclick={() => { assigningCheckInId = assigningCheckInId === ci.id ? null : ci.id; }}>🎯</button>
 									<button class="op-btn" title="Note" onclick={() => { noteCheckInId = noteCheckInId === ci.id ? null : ci.id; noteContent = ''; }}>📝</button>
 									<button class="op-btn" title="Check Out" onclick={() => handleCheckOut(ci)}>✕</button>
@@ -1286,6 +1341,112 @@
 		margin-top: 2px;
 	}
 
+	.device-badge {
+		font-size: 0.5rem;
+		font-weight: 700;
+		padding: 1px 4px;
+		border-radius: 2px;
+		background: var(--color-primary);
+		color: var(--color-text-muted);
+		border: 1px solid var(--color-primary);
+		cursor: pointer;
+		letter-spacing: 0.03em;
+		transition: all var(--duration-fast);
+	}
+
+	.device-badge:hover {
+		border-color: var(--color-accent);
+		color: var(--color-text);
+	}
+
+	.device-list {
+		display: flex;
+		flex-direction: column;
+		gap: 3px;
+		margin-top: var(--space-xs);
+		padding: var(--space-xs);
+		background: var(--color-bg);
+		border: 1px solid var(--color-primary);
+		border-radius: var(--radius-sm);
+	}
+
+	.device-chip {
+		display: inline-flex;
+		align-items: center;
+		gap: 4px;
+		font-size: 0.7rem;
+	}
+
+	.device-call {
+		font-family: monospace;
+		font-weight: 600;
+	}
+
+	.device-type {
+		font-size: 0.55rem;
+		color: var(--color-text-muted);
+		padding: 0 3px;
+		border: 1px solid var(--color-primary);
+		border-radius: 2px;
+	}
+
+	.device-remove {
+		background: none;
+		border: none;
+		color: var(--color-text-muted);
+		font-size: 0.8rem;
+		cursor: pointer;
+		padding: 0 2px;
+		line-height: 1;
+	}
+
+	.device-remove:hover {
+		color: #ef4444;
+	}
+
+	.device-add {
+		display: flex;
+		gap: var(--space-xs);
+		margin-top: 2px;
+	}
+
+	.device-add-input {
+		flex: 1;
+		background: var(--color-surface);
+		border: 1px solid var(--color-primary);
+		border-radius: var(--radius-sm);
+		color: var(--color-text);
+		font-family: monospace;
+		font-size: 0.7rem;
+		padding: 2px 6px;
+		outline: none;
+		text-transform: uppercase;
+	}
+
+	.device-add-input:focus {
+		border-color: var(--color-accent);
+	}
+
+	.device-add-input::placeholder {
+		text-transform: none;
+		color: var(--color-text-muted);
+	}
+
+	.device-add-btn {
+		width: 22px;
+		background: var(--color-primary);
+		border: none;
+		border-radius: var(--radius-sm);
+		color: var(--color-text);
+		font-size: 0.85rem;
+		cursor: pointer;
+	}
+
+	.device-add-btn:disabled {
+		opacity: 0.4;
+		cursor: default;
+	}
+
 	.inline-note {
 		display: flex;
 		gap: var(--space-xs);
@@ -1351,6 +1512,11 @@
 	.op-btn:hover {
 		border-color: var(--color-accent);
 		color: var(--color-text);
+	}
+
+	.op-btn.active {
+		border-color: var(--color-accent);
+		color: var(--color-accent);
 	}
 
 	/* Missions */

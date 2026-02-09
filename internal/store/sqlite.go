@@ -2,6 +2,7 @@ package store
 
 import (
 	"database/sql"
+	"encoding/json"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -13,7 +14,7 @@ import (
 	_ "modernc.org/sqlite"
 )
 
-const currentSchemaVersion = 4
+const currentSchemaVersion = 5
 
 // SQLiteStore implements Store using modernc.org/sqlite.
 type SQLiteStore struct {
@@ -84,6 +85,12 @@ func (s *SQLiteStore) migrate() error {
 
 	if version < 4 {
 		if err := s.migrateV4(); err != nil {
+			return err
+		}
+	}
+
+	if version < 5 {
+		if err := s.migrateV5(); err != nil {
 			return err
 		}
 	}
@@ -907,16 +914,25 @@ func (s *SQLiteStore) SaveNetCheckIn(ci NetCheckIn) error {
 		source = "voice"
 	}
 
+	trackedJSON := "[]"
+	if len(ci.TrackedStations) > 0 {
+		b, err := json.Marshal(ci.TrackedStations)
+		if err != nil {
+			return fmt.Errorf("marshal tracked stations: %w", err)
+		}
+		trackedJSON = string(b)
+	}
+
 	_, err := s.db.Exec(`
 		INSERT OR REPLACE INTO net_check_ins
 			(id, net_id, callsign, tactical_call, operator_name, status, traffic,
 			 source, location, lat, lon, assignment, assignment_lat, assignment_lon,
-			 mission_id, checked_in_at, checked_out_at, last_heard, missed_roll_calls)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+			 mission_id, tracked_stations, checked_in_at, checked_out_at, last_heard, missed_roll_calls)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
 		ci.ID, ci.NetID, ci.Callsign, ci.TacticalCall, ci.OperatorName,
 		ci.Status, ci.Traffic, source, ci.Location,
 		lat, lon, ci.Assignment, assignLat, assignLon,
-		missionID, ci.CheckedInAt.UTC(), checkedOutAt, ci.LastHeard.UTC(), ci.MissedRollCalls,
+		missionID, trackedJSON, ci.CheckedInAt.UTC(), checkedOutAt, ci.LastHeard.UTC(), ci.MissedRollCalls,
 	)
 	if err != nil {
 		return fmt.Errorf("save net check-in: %w", err)
@@ -928,7 +944,7 @@ func (s *SQLiteStore) LoadNetCheckIns(netID string) ([]NetCheckIn, error) {
 	rows, err := s.db.Query(`
 		SELECT id, net_id, callsign, tactical_call, operator_name, status, traffic,
 		       source, location, lat, lon, assignment, assignment_lat, assignment_lon,
-		       mission_id, checked_in_at, checked_out_at, last_heard, missed_roll_calls
+		       mission_id, tracked_stations, checked_in_at, checked_out_at, last_heard, missed_roll_calls
 		FROM net_check_ins WHERE net_id = ? ORDER BY checked_in_at ASC`, netID)
 	if err != nil {
 		return nil, fmt.Errorf("query net check-ins: %w", err)
@@ -941,17 +957,24 @@ func (s *SQLiteStore) LoadNetCheckIns(netID string) ([]NetCheckIn, error) {
 		var lat, lon, assignLat, assignLon sql.NullFloat64
 		var checkedInAt, lastHeard string
 		var checkedOutAt, missionID sql.NullString
+		var trackedJSON string
 
 		if err := rows.Scan(
 			&ci.ID, &ci.NetID, &ci.Callsign, &ci.TacticalCall, &ci.OperatorName,
 			&ci.Status, &ci.Traffic, &ci.Source, &ci.Location,
 			&lat, &lon, &ci.Assignment, &assignLat, &assignLon,
-			&missionID, &checkedInAt, &checkedOutAt, &lastHeard, &ci.MissedRollCalls,
+			&missionID, &trackedJSON, &checkedInAt, &checkedOutAt, &lastHeard, &ci.MissedRollCalls,
 		); err != nil {
 			return nil, fmt.Errorf("scan net check-in: %w", err)
 		}
 		if missionID.Valid {
 			ci.MissionID = missionID.String
+		}
+
+		// Unmarshal tracked stations JSON.
+		ci.TrackedStations = []TrackedStation{}
+		if trackedJSON != "" {
+			json.Unmarshal([]byte(trackedJSON), &ci.TrackedStations)
 		}
 
 		ci.CheckedInAt, err = parseTime(checkedInAt)
@@ -1221,6 +1244,28 @@ func (s *SQLiteStore) migrateV4() error {
 		return fmt.Errorf("clear schema_version: %w", err)
 	}
 	if _, err := s.db.Exec("INSERT INTO schema_version (version) VALUES (?)", 4); err != nil {
+		return fmt.Errorf("set schema_version: %w", err)
+	}
+
+	return nil
+}
+
+func (s *SQLiteStore) migrateV5() error {
+	for _, stmt := range []string{
+		"ALTER TABLE net_check_ins ADD COLUMN tracked_stations TEXT NOT NULL DEFAULT '[]'",
+	} {
+		if _, err := s.db.Exec(stmt); err != nil {
+			if !isDuplicateColumnError(err) {
+				return fmt.Errorf("migrate v5: %w", err)
+			}
+		}
+	}
+
+	// Update schema version.
+	if _, err := s.db.Exec("DELETE FROM schema_version"); err != nil {
+		return fmt.Errorf("clear schema_version: %w", err)
+	}
+	if _, err := s.db.Exec("INSERT INTO schema_version (version) VALUES (?)", 5); err != nil {
 		return fmt.Errorf("set schema_version: %w", err)
 	}
 

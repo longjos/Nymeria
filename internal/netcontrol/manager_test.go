@@ -729,6 +729,336 @@ func TestExportRosterCSV(t *testing.T) {
 	}
 }
 
+// --- Tracked Devices Tests ---
+
+func TestDiscoverDevicesSSID(t *testing.T) {
+	mgr := newTestManager(t)
+
+	// Add multiple SSID variants.
+	mgr.tracker.Update(station.Station{
+		Callsign: "KG4YFA", SSID: 0, LastHeard: time.Now(),
+		Position: &station.Position{Lat: 34.0, Lon: -118.0},
+	})
+	mgr.tracker.Update(station.Station{
+		Callsign: "KG4YFA", SSID: 4, LastHeard: time.Now(),
+		Position: &station.Position{Lat: 34.1, Lon: -118.1},
+	})
+	mgr.tracker.Update(station.Station{
+		Callsign: "KG4YFA", SSID: 7, LastHeard: time.Now().Add(time.Minute),
+		Position: &station.Position{Lat: 34.2, Lon: -118.2},
+	})
+
+	n, _ := mgr.CreateNet(store.Net{Name: "Test Net"})
+	mgr.OpenNet(n.ID)
+
+	ci, err := mgr.CheckIn(n.ID, "KG4YFA", "")
+	if err != nil {
+		t.Fatalf("CheckIn failed: %v", err)
+	}
+
+	if len(ci.TrackedStations) != 3 {
+		t.Fatalf("expected 3 auto-linked devices, got %d", len(ci.TrackedStations))
+	}
+	for _, ts := range ci.TrackedStations {
+		if !ts.AutoLinked {
+			t.Errorf("expected all devices to be auto-linked, got %+v", ts)
+		}
+	}
+}
+
+func TestDiscoverDevicesNone(t *testing.T) {
+	mgr := newTestManager(t)
+
+	n, _ := mgr.CreateNet(store.Net{Name: "Test Net"})
+	mgr.OpenNet(n.ID)
+
+	ci, err := mgr.CheckIn(n.ID, "UNKNOWN", "")
+	if err != nil {
+		t.Fatalf("CheckIn failed: %v", err)
+	}
+
+	if len(ci.TrackedStations) != 0 {
+		t.Errorf("expected 0 tracked stations for unknown callsign, got %d", len(ci.TrackedStations))
+	}
+}
+
+func TestAddTrackedStationManual(t *testing.T) {
+	mgr := newTestManager(t)
+
+	n, _ := mgr.CreateNet(store.Net{Name: "Test Net"})
+	mgr.OpenNet(n.ID)
+
+	ci, _ := mgr.CheckIn(n.ID, "KD7BBC", "")
+	drainEvents(mgr)
+
+	updated, err := mgr.AddTrackedStation(n.ID, ci.ID, "A2SV-4")
+	if err != nil {
+		t.Fatalf("AddTrackedStation failed: %v", err)
+	}
+
+	if len(updated.TrackedStations) != 1 {
+		t.Fatalf("expected 1 tracked station, got %d", len(updated.TrackedStations))
+	}
+	ts := updated.TrackedStations[0]
+	if ts.Callsign != "A2SV-4" {
+		t.Errorf("callsign: got %q, want %q", ts.Callsign, "A2SV-4")
+	}
+	if ts.AutoLinked {
+		t.Error("manually added station should not be auto-linked")
+	}
+}
+
+func TestAddTrackedStationDuplicate(t *testing.T) {
+	mgr := newTestManager(t)
+
+	n, _ := mgr.CreateNet(store.Net{Name: "Test Net"})
+	mgr.OpenNet(n.ID)
+
+	ci, _ := mgr.CheckIn(n.ID, "KD7BBC", "")
+	drainEvents(mgr)
+
+	mgr.AddTrackedStation(n.ID, ci.ID, "A2SV-4")
+	_, err := mgr.AddTrackedStation(n.ID, ci.ID, "A2SV-4")
+	if err == nil {
+		t.Error("expected error for duplicate station")
+	}
+}
+
+func TestRemoveTrackedStation(t *testing.T) {
+	mgr := newTestManager(t)
+
+	n, _ := mgr.CreateNet(store.Net{Name: "Test Net"})
+	mgr.OpenNet(n.ID)
+
+	ci, _ := mgr.CheckIn(n.ID, "KD7BBC", "")
+	drainEvents(mgr)
+
+	mgr.AddTrackedStation(n.ID, ci.ID, "A2SV-4")
+	mgr.AddTrackedStation(n.ID, ci.ID, "KD7BBC-7")
+	drainEvents(mgr)
+
+	updated, err := mgr.RemoveTrackedStation(n.ID, ci.ID, "A2SV-4")
+	if err != nil {
+		t.Fatalf("RemoveTrackedStation failed: %v", err)
+	}
+
+	if len(updated.TrackedStations) != 1 {
+		t.Fatalf("expected 1 tracked station after removal, got %d", len(updated.TrackedStations))
+	}
+	if updated.TrackedStations[0].Callsign != "KD7BBC-7" {
+		t.Errorf("remaining station: got %q, want %q", updated.TrackedStations[0].Callsign, "KD7BBC-7")
+	}
+
+	// Verify index cleanup.
+	mgr.mu.RLock()
+	_, inIndex := mgr.trackedIndex["A2SV-4"]
+	mgr.mu.RUnlock()
+	if inIndex {
+		t.Error("removed station should not be in trackedIndex")
+	}
+}
+
+func TestOnStationUpdatePosition(t *testing.T) {
+	mgr := newTestManager(t)
+
+	mgr.tracker.Update(station.Station{
+		Callsign: "KG4YFA", SSID: 4, LastHeard: time.Now(),
+		Position: &station.Position{Lat: 34.0, Lon: -118.0},
+	})
+
+	n, _ := mgr.CreateNet(store.Net{Name: "Test Net"})
+	mgr.OpenNet(n.ID)
+
+	ci, _ := mgr.CheckIn(n.ID, "KG4YFA", "")
+	drainEvents(mgr)
+
+	// Update the tracked station in the tracker.
+	newTime := time.Now().Add(5 * time.Minute)
+	mgr.tracker.Update(station.Station{
+		Callsign: "KG4YFA", SSID: 4, LastHeard: newTime,
+		Position: &station.Position{Lat: 35.0, Lon: -119.0},
+	})
+
+	mgr.OnStationUpdate("KG4YFA-4", &station.Position{Lat: 35.0, Lon: -119.0}, newTime)
+	drainEvents(mgr)
+
+	cis := mgr.GetCheckIns(n.ID)
+	found := false
+	for _, c := range cis {
+		if c.ID == ci.ID {
+			found = true
+			if c.Lat == nil || *c.Lat != 35.0 {
+				t.Errorf("lat should be updated to 35.0, got %v", c.Lat)
+			}
+			if c.Lon == nil || *c.Lon != -119.0 {
+				t.Errorf("lon should be updated to -119.0, got %v", c.Lon)
+			}
+		}
+	}
+	if !found {
+		t.Fatal("check-in not found after station update")
+	}
+}
+
+func TestOnStationUpdateBestPosition(t *testing.T) {
+	mgr := newTestManager(t)
+
+	older := time.Now()
+	newer := time.Now().Add(time.Minute)
+
+	mgr.tracker.Update(station.Station{
+		Callsign: "KG4YFA", SSID: 0, LastHeard: older,
+		Position: &station.Position{Lat: 34.0, Lon: -118.0},
+	})
+	mgr.tracker.Update(station.Station{
+		Callsign: "KG4YFA", SSID: 7, LastHeard: newer,
+		Position: &station.Position{Lat: 35.0, Lon: -119.0},
+	})
+
+	n, _ := mgr.CreateNet(store.Net{Name: "Test Net"})
+	mgr.OpenNet(n.ID)
+
+	ci, _ := mgr.CheckIn(n.ID, "KG4YFA", "")
+	drainEvents(mgr)
+
+	// The best position should be from the most recently heard device.
+	if ci.Lat == nil || *ci.Lat != 35.0 {
+		t.Errorf("lat should be 35.0 (most recent), got %v", ci.Lat)
+	}
+}
+
+func TestOnStationUpdateIgnoresUntracked(t *testing.T) {
+	mgr := newTestManager(t)
+
+	n, _ := mgr.CreateNet(store.Net{Name: "Test Net"})
+	mgr.OpenNet(n.ID)
+	mgr.CheckIn(n.ID, "KD7BBC", "")
+	drainEvents(mgr)
+
+	// Call with an untracked station — should be a no-op (no panic).
+	mgr.OnStationUpdate("UNKNOWN-5", &station.Position{Lat: 40.0, Lon: -80.0}, time.Now())
+}
+
+func TestOnStationUpdateIgnoresReleased(t *testing.T) {
+	mgr := newTestManager(t)
+
+	mgr.tracker.Update(station.Station{
+		Callsign: "KG4YFA", SSID: 0, LastHeard: time.Now(),
+		Position: &station.Position{Lat: 34.0, Lon: -118.0},
+	})
+
+	n, _ := mgr.CreateNet(store.Net{Name: "Test Net"})
+	mgr.OpenNet(n.ID)
+
+	ci, _ := mgr.CheckIn(n.ID, "KG4YFA", "")
+	drainEvents(mgr)
+
+	mgr.CheckOut(n.ID, ci.ID)
+	drainEvents(mgr)
+
+	// Update tracked station after checkout — should be no-op.
+	mgr.tracker.Update(station.Station{
+		Callsign: "KG4YFA", SSID: 0, LastHeard: time.Now().Add(10 * time.Minute),
+		Position: &station.Position{Lat: 99.0, Lon: -99.0},
+	})
+	mgr.OnStationUpdate("KG4YFA", &station.Position{Lat: 99.0, Lon: -99.0}, time.Now().Add(10*time.Minute))
+
+	cis := mgr.GetCheckIns(n.ID)
+	for _, c := range cis {
+		if c.ID == ci.ID && c.Lat != nil && *c.Lat == 99.0 {
+			t.Error("position should NOT be updated for released operator")
+		}
+	}
+}
+
+func TestCheckOutCleansIndex(t *testing.T) {
+	mgr := newTestManager(t)
+
+	mgr.tracker.Update(station.Station{
+		Callsign: "KG4YFA", SSID: 0, LastHeard: time.Now(),
+		Position: &station.Position{Lat: 34.0, Lon: -118.0},
+	})
+	mgr.tracker.Update(station.Station{
+		Callsign: "KG4YFA", SSID: 4, LastHeard: time.Now(),
+		Position: &station.Position{Lat: 34.1, Lon: -118.1},
+	})
+
+	n, _ := mgr.CreateNet(store.Net{Name: "Test Net"})
+	mgr.OpenNet(n.ID)
+
+	ci, _ := mgr.CheckIn(n.ID, "KG4YFA", "")
+	drainEvents(mgr)
+
+	// Verify index has entries.
+	mgr.mu.RLock()
+	preCount := len(mgr.trackedIndex)
+	mgr.mu.RUnlock()
+	if preCount == 0 {
+		t.Fatal("trackedIndex should have entries before checkout")
+	}
+
+	mgr.CheckOut(n.ID, ci.ID)
+	drainEvents(mgr)
+
+	// Verify index is cleaned.
+	mgr.mu.RLock()
+	postCount := len(mgr.trackedIndex)
+	mgr.mu.RUnlock()
+	if postCount != 0 {
+		t.Errorf("expected 0 tracked index entries after checkout, got %d", postCount)
+	}
+}
+
+func TestTrackedStationsRoundtrip(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "test.db")
+	s := store.NewSQLiteStore(path)
+	if err := s.Init(); err != nil {
+		t.Fatalf("Init failed: %v", err)
+	}
+	defer s.Close()
+
+	tracker := station.NewMemoryTracker(config.StationConfig{
+		StaleTimeout:   time.Hour,
+		TrackMaxPoints: 10,
+		DedupWindow:    30 * time.Second,
+	})
+
+	// Add tracked station.
+	tracker.Update(station.Station{
+		Callsign: "KG4YFA", SSID: 0, LastHeard: time.Now(),
+		Position: &station.Position{Lat: 34.0, Lon: -118.0},
+	})
+
+	// Create and populate.
+	mgr1 := NewManager(s, tracker)
+	n, _ := mgr1.CreateNet(store.Net{Name: "Roundtrip"})
+	mgr1.OpenNet(n.ID)
+	ci, _ := mgr1.CheckIn(n.ID, "KG4YFA", "")
+	mgr1.AddTrackedStation(n.ID, ci.ID, "A2SV-4")
+
+	// Create new manager and load.
+	mgr2 := NewManager(s, tracker)
+	if err := mgr2.Load(); err != nil {
+		t.Fatalf("Load failed: %v", err)
+	}
+
+	cis := mgr2.GetCheckIns(n.ID)
+	if len(cis) != 1 {
+		t.Fatalf("expected 1 check-in, got %d", len(cis))
+	}
+	if len(cis[0].TrackedStations) < 2 {
+		t.Fatalf("expected at least 2 tracked stations after reload, got %d", len(cis[0].TrackedStations))
+	}
+
+	// Verify index was rebuilt.
+	mgr2.mu.RLock()
+	_, inIndex := mgr2.trackedIndex["A2SV-4"]
+	mgr2.mu.RUnlock()
+	if !inIndex {
+		t.Error("A2SV-4 should be in trackedIndex after reload")
+	}
+}
+
 // drainEvents reads all pending events from the channel.
 func drainEvents(mgr *Manager) {
 	for {

@@ -92,6 +92,8 @@ func (s *Server) routes() {
 			r.Post("/nets/{id}/rollcall/{ciId}", s.handleRecordRollCallResponse)
 			r.Post("/nets/{id}/checkin/{ciId}/assign", s.handleAssignMission)
 			r.Delete("/nets/{id}/checkin/{ciId}/assign", s.handleUnassignMission)
+			r.Post("/nets/{id}/checkin/{ciId}/devices", s.handleAddTrackedStation)
+			r.Delete("/nets/{id}/checkin/{ciId}/devices/{callsign}", s.handleRemoveTrackedStation)
 		})
 
 		// Admin endpoints — user management
@@ -1224,6 +1226,51 @@ func (s *Server) handleUnassignMission(w http.ResponseWriter, r *http.Request) {
 	ciId := chi.URLParam(r, "ciId")
 
 	ci, err := s.netMgr.UnassignMission(id, ciId)
+	if err != nil {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
+		return
+	}
+
+	writeJSON(w, http.StatusOK, ci)
+}
+
+func (s *Server) handleAddTrackedStation(w http.ResponseWriter, r *http.Request) {
+	if s.netMgr == nil {
+		writeJSON(w, http.StatusServiceUnavailable, map[string]string{"error": "net control not available"})
+		return
+	}
+
+	id := chi.URLParam(r, "id")
+	ciId := chi.URLParam(r, "ciId")
+
+	var req struct {
+		Callsign string `json:"callsign"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid request body"})
+		return
+	}
+
+	ci, err := s.netMgr.AddTrackedStation(id, ciId, req.Callsign)
+	if err != nil {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
+		return
+	}
+
+	writeJSON(w, http.StatusOK, ci)
+}
+
+func (s *Server) handleRemoveTrackedStation(w http.ResponseWriter, r *http.Request) {
+	if s.netMgr == nil {
+		writeJSON(w, http.StatusServiceUnavailable, map[string]string{"error": "net control not available"})
+		return
+	}
+
+	id := chi.URLParam(r, "id")
+	ciId := chi.URLParam(r, "ciId")
+	callsign := chi.URLParam(r, "callsign")
+
+	ci, err := s.netMgr.RemoveTrackedStation(id, ciId, callsign)
 	if err != nil {
 		writeJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
 		return
