@@ -14,7 +14,7 @@ import (
 	_ "modernc.org/sqlite"
 )
 
-const currentSchemaVersion = 7
+const currentSchemaVersion = 8
 
 // SQLiteStore implements Store using modernc.org/sqlite.
 type SQLiteStore struct {
@@ -103,6 +103,12 @@ func (s *SQLiteStore) migrate() error {
 
 	if version < 7 {
 		if err := s.migrateV7(); err != nil {
+			return err
+		}
+	}
+
+	if version < 8 {
+		if err := s.migrateV8(); err != nil {
 			return err
 		}
 	}
@@ -1456,6 +1462,112 @@ func (s *SQLiteStore) migrateV7() error {
 	}
 
 	return nil
+}
+
+func (s *SQLiteStore) migrateV8() error {
+	ddl := `
+CREATE TABLE IF NOT EXISTS operations (
+    id TEXT PRIMARY KEY,
+    name TEXT NOT NULL,
+    description TEXT DEFAULT '',
+    status TEXT NOT NULL DEFAULT 'active',
+    created_by TEXT DEFAULT '',
+    created_at DATETIME NOT NULL,
+    archived_at DATETIME
+);
+CREATE INDEX IF NOT EXISTS idx_operations_status ON operations(status);
+`
+	if _, err := s.db.Exec(ddl); err != nil {
+		return fmt.Errorf("migrate v8 create operations: %w", err)
+	}
+
+	if _, err := s.db.Exec("DELETE FROM schema_version"); err != nil {
+		return fmt.Errorf("clear schema_version: %w", err)
+	}
+	if _, err := s.db.Exec("INSERT INTO schema_version (version) VALUES (?)", 8); err != nil {
+		return fmt.Errorf("set schema_version: %w", err)
+	}
+
+	return nil
+}
+
+// --- Operation CRUD ---
+
+func (s *SQLiteStore) SaveOperation(op Operation) error {
+	_, err := s.db.Exec(`
+		INSERT OR REPLACE INTO operations (id, name, description, status, created_by, created_at, archived_at)
+		VALUES (?, ?, ?, ?, ?, ?, ?)`,
+		op.ID, op.Name, op.Description, op.Status, op.CreatedBy, op.CreatedAt.UTC(), nullTimePtr(op.ArchivedAt),
+	)
+	if err != nil {
+		return fmt.Errorf("save operation: %w", err)
+	}
+	return nil
+}
+
+func (s *SQLiteStore) LoadOperations() ([]Operation, error) {
+	rows, err := s.db.Query(`
+		SELECT id, name, description, status, created_by, created_at, archived_at
+		FROM operations ORDER BY created_at DESC`)
+	if err != nil {
+		return nil, fmt.Errorf("query operations: %w", err)
+	}
+	defer rows.Close()
+
+	var ops []Operation
+	for rows.Next() {
+		var op Operation
+		var createdAt string
+		var archivedAt sql.NullString
+		if err := rows.Scan(&op.ID, &op.Name, &op.Description, &op.Status, &op.CreatedBy, &createdAt, &archivedAt); err != nil {
+			return nil, fmt.Errorf("scan operation: %w", err)
+		}
+		op.CreatedAt, _ = parseTime(createdAt)
+		if archivedAt.Valid {
+			t, _ := parseTime(archivedAt.String)
+			op.ArchivedAt = &t
+		}
+		ops = append(ops, op)
+	}
+	return ops, rows.Err()
+}
+
+func (s *SQLiteStore) LoadOperation(id string) (*Operation, error) {
+	var op Operation
+	var createdAt string
+	var archivedAt sql.NullString
+	err := s.db.QueryRow(`
+		SELECT id, name, description, status, created_by, created_at, archived_at
+		FROM operations WHERE id = ?`, id).Scan(
+		&op.ID, &op.Name, &op.Description, &op.Status, &op.CreatedBy, &createdAt, &archivedAt,
+	)
+	if err == sql.ErrNoRows {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, fmt.Errorf("load operation: %w", err)
+	}
+	op.CreatedAt, _ = parseTime(createdAt)
+	if archivedAt.Valid {
+		t, _ := parseTime(archivedAt.String)
+		op.ArchivedAt = &t
+	}
+	return &op, nil
+}
+
+func (s *SQLiteStore) DeleteOperation(id string) error {
+	_, err := s.db.Exec("DELETE FROM operations WHERE id = ?", id)
+	if err != nil {
+		return fmt.Errorf("delete operation: %w", err)
+	}
+	return nil
+}
+
+func nullTimePtr(t *time.Time) any {
+	if t == nil {
+		return nil
+	}
+	return t.UTC()
 }
 
 // --- Tactical Alias CRUD ---

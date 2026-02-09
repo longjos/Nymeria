@@ -26,6 +26,8 @@ const (
 	ActionTransportConnect    Action = "transport_connect"
 	ActionTransportDisconnect      Action = "transport_disconnect"
 	ActionAnnotationStatusChanged  Action = "annotation_status_changed"
+	ActionAnnotationTransmitted    Action = "annotation_transmitted"
+	ActionAnnotationStopTransmit   Action = "annotation_stop_transmit"
 )
 
 // Entry represents a single activity log entry.

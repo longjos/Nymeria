@@ -144,6 +144,17 @@ type Annotation struct {
 	ExpiresAt     *time.Time `json:"expiresAt,omitempty"`
 }
 
+// Operation represents a named grouping of annotations for a specific event or mission.
+type Operation struct {
+	ID          string     `json:"id"`
+	Name        string     `json:"name"`
+	Description string     `json:"description,omitempty"`
+	Status      string     `json:"status"`
+	CreatedBy   string     `json:"createdBy,omitempty"`
+	CreatedAt   time.Time  `json:"createdAt"`
+	ArchivedAt  *time.Time `json:"archivedAt,omitempty"`
+}
+
 // AnnotationFilter controls filtered annotation queries.
 type AnnotationFilter struct {
 	Category       string
@@ -218,6 +229,12 @@ type Store interface {
 
 	SaveNetEvent(e NetEvent) error
 	LoadNetEvents(netID string) ([]NetEvent, error)
+
+	// Operations
+	SaveOperation(op Operation) error
+	LoadOperations() ([]Operation, error)
+	LoadOperation(id string) (*Operation, error)
+	DeleteOperation(id string) error
 
 	// Tactical Aliases
 	SaveTacticalAlias(a TacticalAlias) error

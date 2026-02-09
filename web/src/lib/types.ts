@@ -119,6 +119,7 @@ export interface Annotation {
 	reportedAt?: string;
 	resolvedAt?: string;
 	expiresAt?: string;
+	transmitting?: boolean;
 }
 
 export interface ActivityEntry {
@@ -236,6 +237,26 @@ export interface TacticalAlias {
 	alias: string;
 	assignedBy: string;
 	updatedAt: string;
+}
+
+export interface AnnotationTemplate {
+	id: string;
+	name: string;
+	pack: string;
+	category: AnnotationCategory;
+	type: 'point' | 'line' | 'area';
+	defaultPriority: AnnotationPriority;
+	description: string;
+}
+
+export interface Operation {
+	id: string;
+	name: string;
+	description?: string;
+	status: string;
+	createdBy?: string;
+	createdAt: string;
+	archivedAt?: string;
 }
 
 export interface NetSummary {

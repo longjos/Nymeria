@@ -1,9 +1,11 @@
 import { writable, derived } from 'svelte/store';
-import type { Annotation, AnnotationCategory } from '$lib/types';
+import type { Annotation, AnnotationCategory, Operation } from '$lib/types';
 import { api } from '$lib/api';
 import { wsClient } from './stations';
 
 export const annotations = writable<Map<string, Annotation>>(new Map());
+export const operations = writable<Operation[]>([]);
+export const activeOperationId = writable<string>('');
 export const annotationList = derived(annotations, ($annotations) =>
 	Array.from($annotations.values()).sort(
 		(a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime()
@@ -29,6 +31,10 @@ export function initAnnotationStore(): void {
 
 	api.annotations().then((list) => {
 		annotations.set(new Map(list.map((a) => [a.id, a])));
+	}).catch(() => {});
+
+	api.operations().then((list) => {
+		operations.set(list || []);
 	}).catch(() => {});
 
 	wsClient.on('annotation_created', (msg) => {

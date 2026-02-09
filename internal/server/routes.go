@@ -37,6 +37,9 @@ func (s *Server) routes() {
 		r.Get("/objects", s.handleGetObjects)
 		r.Get("/items", s.handleGetItems)
 		r.Get("/annotations", s.handleGetAnnotations)
+		r.Get("/annotation-templates", s.handleGetAnnotationTemplates)
+		r.Get("/operations", s.handleGetOperations)
+		r.Get("/operations/{id}", s.handleGetOperation)
 		r.Get("/activity", s.handleGetActivity)
 		r.Get("/activity/export", s.handleExportActivityCSV)
 
@@ -55,13 +58,19 @@ func (s *Server) routes() {
 			r.Put("/annotations/{id}", s.handleUpdateAnnotation)
 			r.Delete("/annotations/{id}", s.handleDeleteAnnotation)
 			r.Post("/annotations/{id}/status", s.handleChangeAnnotationStatus)
+			r.Post("/annotations/{id}/promote", s.handlePromoteAnnotationToMission)
+			r.Delete("/annotations/{id}/link", s.handleUnlinkAnnotation)
+			r.Post("/operations", s.handleCreateOperation)
+			r.Post("/operations/{id}/archive", s.handleArchiveOperation)
 			r.Put("/tactical/{callsign}", s.handleSetTacticalAlias)
 			r.Delete("/tactical/{callsign}", s.handleDeleteTacticalAlias)
 		})
 
-		// Operator endpoints — messages, objects, beacon
+		// Operator endpoints — messages, objects, beacon, annotation transmit
 		r.Group(func(r chi.Router) {
 			r.Use(RequireRole(session.RoleOperator))
+			r.Post("/annotations/{id}/transmit", s.handleTransmitAnnotation)
+			r.Delete("/annotations/{id}/transmit", s.handleStopTransmitAnnotation)
 			r.Post("/messages", s.handleSendMessage)
 			r.Post("/messages/{callsign}/claim", s.handleClaimConversation)
 			r.Delete("/messages/{callsign}/claim", s.handleUnclaimConversation)
@@ -664,6 +673,23 @@ func (s *Server) handleKillItem(w http.ResponseWriter, r *http.Request) {
 
 // --- Annotation handlers ---
 
+// annotationWithTx wraps an annotation with runtime transmitting state.
+type annotationWithTx struct {
+	store.Annotation
+	Transmitting bool `json:"transmitting"`
+}
+
+func (s *Server) addTransmitState(anns []annotation.Annotation) []annotationWithTx {
+	result := make([]annotationWithTx, len(anns))
+	for i, a := range anns {
+		result[i] = annotationWithTx{
+			Annotation:   a,
+			Transmitting: s.annMgr.IsTransmitting(a.ID),
+		}
+	}
+	return result
+}
+
 func (s *Server) handleGetAnnotations(w http.ResponseWriter, r *http.Request) {
 	if s.annMgr == nil {
 		writeJSON(w, http.StatusOK, []any{})
@@ -681,11 +707,11 @@ func (s *Server) handleGetAnnotations(w http.ResponseWriter, r *http.Request) {
 
 	// Use filtered query if any filter param is set.
 	if filter.Category != "" || filter.Status != "" || filter.Priority != "" || filter.OperationID != "" || filter.IncludeExpired {
-		writeJSON(w, http.StatusOK, s.annMgr.AllFiltered(filter))
+		writeJSON(w, http.StatusOK, s.addTransmitState(s.annMgr.AllFiltered(filter)))
 		return
 	}
 
-	writeJSON(w, http.StatusOK, s.annMgr.All())
+	writeJSON(w, http.StatusOK, s.addTransmitState(s.annMgr.All()))
 }
 
 func (s *Server) handleCreateAnnotation(w http.ResponseWriter, r *http.Request) {
@@ -820,6 +846,224 @@ func (s *Server) handleChangeAnnotationStatus(w http.ResponseWriter, r *http.Req
 			Action:    activity.ActionAnnotationStatusChanged,
 			Target:    ann.Label,
 			Details:   req.Status,
+		})
+	}
+}
+
+func (s *Server) handlePromoteAnnotationToMission(w http.ResponseWriter, r *http.Request) {
+	if s.annMgr == nil || s.netMgr == nil {
+		writeJSON(w, http.StatusServiceUnavailable, map[string]string{"error": "annotations or net control not available"})
+		return
+	}
+
+	id := chi.URLParam(r, "id")
+	ann, found := s.annMgr.Get(id)
+	if !found {
+		writeJSON(w, http.StatusNotFound, map[string]string{"error": "annotation not found"})
+		return
+	}
+
+	if ann.MissionID != "" {
+		writeJSON(w, http.StatusConflict, map[string]string{"error": "annotation already linked to a mission"})
+		return
+	}
+
+	// Find an active net to create the mission in.
+	nets := s.netMgr.GetNets()
+	var activeNet *store.Net
+	for _, n := range nets {
+		if n.Status == "open" {
+			activeNet = &n
+			break
+		}
+	}
+	if activeNet == nil {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "no active net for mission creation"})
+		return
+	}
+
+	// Extract lat/lon from GeoJSON geometry.
+	type geomCoords struct {
+		Coordinates []float64 `json:"coordinates"`
+	}
+	var gc geomCoords
+	if err := json.Unmarshal([]byte(ann.Geometry), &gc); err != nil || len(gc.Coordinates) < 2 {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "cannot extract coordinates from annotation geometry"})
+		return
+	}
+	lon, lat := gc.Coordinates[0], gc.Coordinates[1]
+
+	mission, err := s.netMgr.CreateMission(store.NetMission{
+		NetID:       activeNet.ID,
+		Title:       ann.Label,
+		Description: ann.Description,
+		Priority:    ann.Priority,
+		Status:      "open",
+		Lat:         &lat,
+		Lon:         &lon,
+	})
+	if err != nil {
+		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
+		return
+	}
+
+	// Link the annotation to the new mission.
+	existing := *ann
+	existing.MissionID = mission.ID
+	updated, err := s.annMgr.Update(existing)
+	if err != nil {
+		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
+		return
+	}
+
+	writeJSON(w, http.StatusOK, map[string]any{"annotation": updated, "mission": mission})
+
+	if s.actLogger != nil {
+		user, _ := UserFromContext(r.Context())
+		s.actLogger.Log(activity.Entry{
+			Timestamp: time.Now(),
+			UserID:    user.ID,
+			UserName:  user.Name,
+			Action:    "annotation_promoted",
+			Target:    ann.Label,
+			Details:   mission.ID,
+		})
+	}
+}
+
+func (s *Server) handleUnlinkAnnotation(w http.ResponseWriter, r *http.Request) {
+	if s.annMgr == nil {
+		writeJSON(w, http.StatusServiceUnavailable, map[string]string{"error": "annotations not available"})
+		return
+	}
+
+	id := chi.URLParam(r, "id")
+	ann, err := s.annMgr.ClearMissionLink(id)
+	if err != nil {
+		writeJSON(w, http.StatusNotFound, map[string]string{"error": err.Error()})
+		return
+	}
+
+	writeJSON(w, http.StatusOK, ann)
+}
+
+func (s *Server) handleGetAnnotationTemplates(w http.ResponseWriter, _ *http.Request) {
+	writeJSON(w, http.StatusOK, annotation.AllTemplates())
+}
+
+func (s *Server) handleGetOperations(w http.ResponseWriter, _ *http.Request) {
+	if s.annMgr == nil {
+		writeJSON(w, http.StatusOK, []any{})
+		return
+	}
+	writeJSON(w, http.StatusOK, s.annMgr.AllOperations())
+}
+
+func (s *Server) handleGetOperation(w http.ResponseWriter, r *http.Request) {
+	if s.annMgr == nil {
+		writeJSON(w, http.StatusServiceUnavailable, map[string]string{"error": "annotations not available"})
+		return
+	}
+
+	id := chi.URLParam(r, "id")
+	op, ok := s.annMgr.GetOperation(id)
+	if !ok {
+		writeJSON(w, http.StatusNotFound, map[string]string{"error": "operation not found"})
+		return
+	}
+	writeJSON(w, http.StatusOK, op)
+}
+
+func (s *Server) handleCreateOperation(w http.ResponseWriter, r *http.Request) {
+	if s.annMgr == nil {
+		writeJSON(w, http.StatusServiceUnavailable, map[string]string{"error": "annotations not available"})
+		return
+	}
+
+	var req store.Operation
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid request body"})
+		return
+	}
+
+	if user, ok := UserFromContext(r.Context()); ok {
+		req.CreatedBy = user.ID
+	}
+
+	op, err := s.annMgr.CreateOperation(req)
+	if err != nil {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
+		return
+	}
+
+	writeJSON(w, http.StatusCreated, op)
+}
+
+func (s *Server) handleArchiveOperation(w http.ResponseWriter, r *http.Request) {
+	if s.annMgr == nil {
+		writeJSON(w, http.StatusServiceUnavailable, map[string]string{"error": "annotations not available"})
+		return
+	}
+
+	id := chi.URLParam(r, "id")
+	if err := s.annMgr.ArchiveOperation(id); err != nil {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
+		return
+	}
+
+	op, _ := s.annMgr.GetOperation(id)
+	writeJSON(w, http.StatusOK, op)
+}
+
+func (s *Server) handleTransmitAnnotation(w http.ResponseWriter, r *http.Request) {
+	if s.annMgr == nil {
+		writeJSON(w, http.StatusServiceUnavailable, map[string]string{"error": "annotations not available"})
+		return
+	}
+
+	id := chi.URLParam(r, "id")
+	ann, err := s.annMgr.PromoteToObject(id)
+	if err != nil {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
+		return
+	}
+
+	writeJSON(w, http.StatusOK, annotationWithTx{Annotation: *ann, Transmitting: true})
+
+	if s.actLogger != nil {
+		user, _ := UserFromContext(r.Context())
+		s.actLogger.Log(activity.Entry{
+			Timestamp: time.Now(),
+			UserID:    user.ID,
+			UserName:  user.Name,
+			Action:    activity.ActionAnnotationTransmitted,
+			Target:    ann.Label,
+		})
+	}
+}
+
+func (s *Server) handleStopTransmitAnnotation(w http.ResponseWriter, r *http.Request) {
+	if s.annMgr == nil {
+		writeJSON(w, http.StatusServiceUnavailable, map[string]string{"error": "annotations not available"})
+		return
+	}
+
+	id := chi.URLParam(r, "id")
+	if err := s.annMgr.StopTransmitting(id); err != nil {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
+		return
+	}
+
+	writeJSON(w, http.StatusOK, map[string]string{"status": "stopped"})
+
+	if s.actLogger != nil {
+		user, _ := UserFromContext(r.Context())
+		s.actLogger.Log(activity.Entry{
+			Timestamp: time.Now(),
+			UserID:    user.ID,
+			UserName:  user.Name,
+			Action:    activity.ActionAnnotationStopTransmit,
+			Target:    id,
 		})
 	}
 }
