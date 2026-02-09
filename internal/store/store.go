@@ -122,16 +122,35 @@ type TacticalAlias struct {
 
 // Annotation represents a local map annotation.
 type Annotation struct {
-	ID            string    `json:"id"`
-	Type          string    `json:"type"`
-	Label         string    `json:"label"`
-	Description   string    `json:"description,omitempty"`
-	Geometry      string    `json:"geometry"`
-	Style         string    `json:"style,omitempty"`
-	CreatedBy     string    `json:"createdBy,omitempty"`
-	CreatedByName string    `json:"createdByName,omitempty"`
-	CreatedAt     time.Time `json:"createdAt"`
-	UpdatedAt     time.Time `json:"updatedAt"`
+	ID            string     `json:"id"`
+	Type          string     `json:"type"`
+	Label         string     `json:"label"`
+	Description   string     `json:"description,omitempty"`
+	Geometry      string     `json:"geometry"`
+	Style         string     `json:"style,omitempty"`
+	CreatedBy     string     `json:"createdBy,omitempty"`
+	CreatedByName string     `json:"createdByName,omitempty"`
+	CreatedAt     time.Time  `json:"createdAt"`
+	UpdatedAt     time.Time  `json:"updatedAt"`
+	Category      string     `json:"category"`
+	Status        string     `json:"status"`
+	Priority      string     `json:"priority"`
+	OperationID   string     `json:"operationId,omitempty"`
+	MissionID     string     `json:"missionId,omitempty"`
+	Resources     string     `json:"resources,omitempty"`
+	ReportedBy    string     `json:"reportedBy,omitempty"`
+	ReportedAt    *time.Time `json:"reportedAt,omitempty"`
+	ResolvedAt    *time.Time `json:"resolvedAt,omitempty"`
+	ExpiresAt     *time.Time `json:"expiresAt,omitempty"`
+}
+
+// AnnotationFilter controls filtered annotation queries.
+type AnnotationFilter struct {
+	Category       string
+	Status         string
+	Priority       string
+	OperationID    string
+	IncludeExpired bool
 }
 
 // Store provides persistent storage for stations, messages, and configuration.
@@ -174,6 +193,9 @@ type Store interface {
 
 	// DeleteAnnotation removes an annotation by ID.
 	DeleteAnnotation(id string) error
+
+	// LoadAnnotationsFiltered loads annotations matching the given filter.
+	LoadAnnotationsFiltered(filter AnnotationFilter) ([]Annotation, error)
 
 	// UpdateMessageClaim sets the claimed_by and claimed_at fields on a message.
 	UpdateMessageClaim(messageID string, claimedBy string, claimedAt *time.Time) error

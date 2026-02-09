@@ -30,6 +30,7 @@ func (s *Server) routes() {
 		// Read-only endpoints — observers and above
 		r.Get("/stations", s.handleGetStations)
 		r.Get("/stations/{callsign}", s.handleGetStation)
+		r.Get("/bulletins", s.handleGetBulletins)
 		r.Get("/messages", s.handleGetMessages)
 		r.Get("/messages/{callsign}", s.handleGetMessagesForCallsign)
 		r.Get("/transports", s.handleGetTransports)
@@ -53,6 +54,7 @@ func (s *Server) routes() {
 			r.Post("/annotations", s.handleCreateAnnotation)
 			r.Put("/annotations/{id}", s.handleUpdateAnnotation)
 			r.Delete("/annotations/{id}", s.handleDeleteAnnotation)
+			r.Post("/annotations/{id}/status", s.handleChangeAnnotationStatus)
 			r.Put("/tactical/{callsign}", s.handleSetTacticalAlias)
 			r.Delete("/tactical/{callsign}", s.handleDeleteTacticalAlias)
 		})
@@ -178,6 +180,14 @@ func (s *Server) handleGetMessagesForCallsign(w http.ResponseWriter, r *http.Req
 	}
 	msgs := s.msgEngine.Messages(callsign)
 	writeJSON(w, http.StatusOK, msgs)
+}
+
+func (s *Server) handleGetBulletins(w http.ResponseWriter, _ *http.Request) {
+	if s.msgEngine == nil {
+		writeJSON(w, http.StatusOK, []any{})
+		return
+	}
+	writeJSON(w, http.StatusOK, s.msgEngine.Bulletins())
 }
 
 func (s *Server) handleSendMessage(w http.ResponseWriter, r *http.Request) {
@@ -654,11 +664,27 @@ func (s *Server) handleKillItem(w http.ResponseWriter, r *http.Request) {
 
 // --- Annotation handlers ---
 
-func (s *Server) handleGetAnnotations(w http.ResponseWriter, _ *http.Request) {
+func (s *Server) handleGetAnnotations(w http.ResponseWriter, r *http.Request) {
 	if s.annMgr == nil {
 		writeJSON(w, http.StatusOK, []any{})
 		return
 	}
+
+	q := r.URL.Query()
+	filter := store.AnnotationFilter{
+		Category:       q.Get("category"),
+		Status:         q.Get("status"),
+		Priority:       q.Get("priority"),
+		OperationID:    q.Get("operationId"),
+		IncludeExpired: q.Get("includeExpired") == "true",
+	}
+
+	// Use filtered query if any filter param is set.
+	if filter.Category != "" || filter.Status != "" || filter.Priority != "" || filter.OperationID != "" || filter.IncludeExpired {
+		writeJSON(w, http.StatusOK, s.annMgr.AllFiltered(filter))
+		return
+	}
+
 	writeJSON(w, http.StatusOK, s.annMgr.All())
 }
 
@@ -753,6 +779,47 @@ func (s *Server) handleDeleteAnnotation(w http.ResponseWriter, r *http.Request) 
 			UserName:  user.Name,
 			Action:    activity.ActionAnnotationDeleted,
 			Target:    id,
+		})
+	}
+}
+
+func (s *Server) handleChangeAnnotationStatus(w http.ResponseWriter, r *http.Request) {
+	if s.annMgr == nil {
+		writeJSON(w, http.StatusServiceUnavailable, map[string]string{"error": "annotations not available"})
+		return
+	}
+
+	id := chi.URLParam(r, "id")
+
+	var req struct {
+		Status string `json:"status"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid request body"})
+		return
+	}
+	if strings.TrimSpace(req.Status) == "" {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "status is required"})
+		return
+	}
+
+	ann, err := s.annMgr.ChangeStatus(id, req.Status)
+	if err != nil {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
+		return
+	}
+
+	writeJSON(w, http.StatusOK, ann)
+
+	if s.actLogger != nil {
+		user, _ := UserFromContext(r.Context())
+		s.actLogger.Log(activity.Entry{
+			Timestamp: time.Now(),
+			UserID:    user.ID,
+			UserName:  user.Name,
+			Action:    activity.ActionAnnotationStatusChanged,
+			Target:    ann.Label,
+			Details:   req.Status,
 		})
 	}
 }

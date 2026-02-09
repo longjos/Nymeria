@@ -494,8 +494,8 @@ func TestV2SchemaVersion(t *testing.T) {
 	if err != nil {
 		t.Fatalf("query schema_version: %v", err)
 	}
-	if version != 6 {
-		t.Errorf("expected schema version 6, got %d", version)
+	if version != 7 {
+		t.Errorf("expected schema version 7, got %d", version)
 	}
 }
 
@@ -994,8 +994,8 @@ func TestV3SchemaVersion(t *testing.T) {
 	if err != nil {
 		t.Fatalf("query schema_version: %v", err)
 	}
-	if version != 6 {
-		t.Errorf("expected schema version 6, got %d", version)
+	if version != 7 {
+		t.Errorf("expected schema version 7, got %d", version)
 	}
 }
 
@@ -1616,8 +1616,8 @@ func TestV5MigrationAddsTrackedStationsColumn(t *testing.T) {
 
 	var version int
 	s.db.QueryRow("SELECT version FROM schema_version LIMIT 1").Scan(&version)
-	if version != 6 {
-		t.Errorf("expected schema version 6, got %d", version)
+	if version != 7 {
+		t.Errorf("expected schema version 7, got %d", version)
 	}
 }
 
@@ -1723,8 +1723,8 @@ func TestV6MigrationCreatesTacticalAliasesTable(t *testing.T) {
 
 	var version int
 	s.db.QueryRow("SELECT version FROM schema_version LIMIT 1").Scan(&version)
-	if version != 6 {
-		t.Errorf("expected schema version 6, got %d", version)
+	if version != 7 {
+		t.Errorf("expected schema version 7, got %d", version)
 	}
 }
 
@@ -1873,5 +1873,239 @@ func TestMultipleTacticalAliasesOrderedByCallsign(t *testing.T) {
 	}
 	if loaded[2].Callsign != "W4ABC-9" {
 		t.Errorf("third: got %q, want W4ABC-9", loaded[2].Callsign)
+	}
+}
+
+// --- V7 Migration & Annotation Extended Fields Tests ---
+
+func TestV7MigrationAddsAnnotationColumns(t *testing.T) {
+	s, _ := newTestStore(t)
+	defer s.Close()
+
+	// Verify all new columns exist.
+	_, err := s.db.Exec(`SELECT category, status, priority, operation_id, mission_id, resources,
+		reported_by, reported_at, resolved_at, expires_at FROM annotations WHERE 1=0`)
+	if err != nil {
+		t.Errorf("annotations missing v7 columns: %v", err)
+	}
+
+	var version int
+	s.db.QueryRow("SELECT version FROM schema_version LIMIT 1").Scan(&version)
+	if version != 7 {
+		t.Errorf("expected schema version 7, got %d", version)
+	}
+}
+
+func TestSaveAndLoadAnnotationNewFields(t *testing.T) {
+	s, _ := newTestStore(t)
+	defer s.Close()
+
+	now := time.Now().Truncate(time.Second).UTC()
+	reportedAt := now.Add(-time.Hour)
+	expiresAt := now.Add(24 * time.Hour)
+
+	ann := Annotation{
+		ID:          "ann-ext",
+		Type:        "point",
+		Label:       "Aid Station Alpha",
+		Description: "Primary medical aid station",
+		Geometry:    `{"type":"Point","coordinates":[-118.24,34.05]}`,
+		Style:       `{"color":"#ff0000"}`,
+		CreatedBy:   "user-1",
+		CreatedAt:   now,
+		UpdatedAt:   now,
+		Category:    "resource",
+		Status:      "active",
+		Priority:    "priority",
+		OperationID: "op-42",
+		MissionID:   "mission-7",
+		Resources:   `[{"type":"medical","qty":2}]`,
+		ReportedBy:  "KD7BBC",
+		ReportedAt:  &reportedAt,
+		ExpiresAt:   &expiresAt,
+	}
+
+	if err := s.SaveAnnotation(ann); err != nil {
+		t.Fatalf("SaveAnnotation failed: %v", err)
+	}
+
+	loaded, err := s.LoadAnnotations()
+	if err != nil {
+		t.Fatalf("LoadAnnotations failed: %v", err)
+	}
+	if len(loaded) != 1 {
+		t.Fatalf("expected 1 annotation, got %d", len(loaded))
+	}
+
+	got := loaded[0]
+	if got.Category != "resource" {
+		t.Errorf("category: got %q, want %q", got.Category, "resource")
+	}
+	if got.Status != "active" {
+		t.Errorf("status: got %q, want %q", got.Status, "active")
+	}
+	if got.Priority != "priority" {
+		t.Errorf("priority: got %q, want %q", got.Priority, "priority")
+	}
+	if got.OperationID != "op-42" {
+		t.Errorf("operationId: got %q, want %q", got.OperationID, "op-42")
+	}
+	if got.MissionID != "mission-7" {
+		t.Errorf("missionId: got %q, want %q", got.MissionID, "mission-7")
+	}
+	if got.Resources != `[{"type":"medical","qty":2}]` {
+		t.Errorf("resources: got %q", got.Resources)
+	}
+	if got.ReportedBy != "KD7BBC" {
+		t.Errorf("reportedBy: got %q, want %q", got.ReportedBy, "KD7BBC")
+	}
+	if got.ReportedAt == nil || !got.ReportedAt.Equal(reportedAt) {
+		t.Errorf("reportedAt: got %v, want %v", got.ReportedAt, reportedAt)
+	}
+	if got.ResolvedAt != nil {
+		t.Errorf("resolvedAt: expected nil, got %v", got.ResolvedAt)
+	}
+	if got.ExpiresAt == nil || !got.ExpiresAt.Equal(expiresAt) {
+		t.Errorf("expiresAt: got %v, want %v", got.ExpiresAt, expiresAt)
+	}
+}
+
+func TestAnnotationDefaultsOnV7(t *testing.T) {
+	s, _ := newTestStore(t)
+	defer s.Close()
+
+	now := time.Now().Truncate(time.Second).UTC()
+
+	// Save annotation without setting new fields — should get defaults.
+	ann := Annotation{
+		ID:        "ann-def",
+		Type:      "point",
+		Label:     "Plain Marker",
+		Geometry:  `{"type":"Point","coordinates":[0,0]}`,
+		CreatedAt: now,
+		UpdatedAt: now,
+	}
+	if err := s.SaveAnnotation(ann); err != nil {
+		t.Fatalf("SaveAnnotation failed: %v", err)
+	}
+
+	loaded, err := s.LoadAnnotations()
+	if err != nil {
+		t.Fatalf("LoadAnnotations failed: %v", err)
+	}
+	if len(loaded) != 1 {
+		t.Fatalf("expected 1, got %d", len(loaded))
+	}
+
+	got := loaded[0]
+	// Empty strings are acceptable — defaults are applied at the annotation manager level.
+	// The store itself stores whatever is passed.
+	if got.ID != "ann-def" {
+		t.Errorf("id: got %q, want %q", got.ID, "ann-def")
+	}
+}
+
+func TestLoadAnnotationsFiltered(t *testing.T) {
+	s, _ := newTestStore(t)
+	defer s.Close()
+
+	now := time.Now().Truncate(time.Second).UTC()
+
+	anns := []Annotation{
+		{ID: "a1", Type: "point", Label: "Incident 1", Geometry: "{}", CreatedAt: now, UpdatedAt: now, Category: "incident", Status: "reported", Priority: "urgent", OperationID: "op-1"},
+		{ID: "a2", Type: "point", Label: "Resource 1", Geometry: "{}", CreatedAt: now, UpdatedAt: now, Category: "resource", Status: "active", Priority: "routine", OperationID: "op-1"},
+		{ID: "a3", Type: "area", Label: "Boundary 1", Geometry: "{}", CreatedAt: now, UpdatedAt: now, Category: "boundary", Status: "active", Priority: "routine", OperationID: "op-2"},
+	}
+	for _, a := range anns {
+		if err := s.SaveAnnotation(a); err != nil {
+			t.Fatalf("SaveAnnotation(%s) failed: %v", a.ID, err)
+		}
+	}
+
+	// Filter by category.
+	results, err := s.LoadAnnotationsFiltered(AnnotationFilter{Category: "incident"})
+	if err != nil {
+		t.Fatalf("LoadAnnotationsFiltered(category=incident) failed: %v", err)
+	}
+	if len(results) != 1 {
+		t.Errorf("expected 1 incident, got %d", len(results))
+	}
+
+	// Filter by status.
+	results, err = s.LoadAnnotationsFiltered(AnnotationFilter{Status: "active"})
+	if err != nil {
+		t.Fatalf("LoadAnnotationsFiltered(status=active) failed: %v", err)
+	}
+	if len(results) != 2 {
+		t.Errorf("expected 2 active, got %d", len(results))
+	}
+
+	// Filter by priority.
+	results, err = s.LoadAnnotationsFiltered(AnnotationFilter{Priority: "urgent"})
+	if err != nil {
+		t.Fatalf("LoadAnnotationsFiltered(priority=urgent) failed: %v", err)
+	}
+	if len(results) != 1 {
+		t.Errorf("expected 1 urgent, got %d", len(results))
+	}
+
+	// Filter by operationId.
+	results, err = s.LoadAnnotationsFiltered(AnnotationFilter{OperationID: "op-1"})
+	if err != nil {
+		t.Fatalf("LoadAnnotationsFiltered(operationId=op-1) failed: %v", err)
+	}
+	if len(results) != 2 {
+		t.Errorf("expected 2 for op-1, got %d", len(results))
+	}
+
+	// Combined filter.
+	results, err = s.LoadAnnotationsFiltered(AnnotationFilter{Category: "resource", OperationID: "op-1"})
+	if err != nil {
+		t.Fatalf("LoadAnnotationsFiltered(category=resource,op=op-1) failed: %v", err)
+	}
+	if len(results) != 1 {
+		t.Errorf("expected 1 resource in op-1, got %d", len(results))
+	}
+}
+
+func TestLoadAnnotationsFilteredExcludesExpired(t *testing.T) {
+	s, _ := newTestStore(t)
+	defer s.Close()
+
+	now := time.Now().Truncate(time.Second).UTC()
+	past := now.Add(-time.Hour)
+	future := now.Add(time.Hour)
+
+	s.SaveAnnotation(Annotation{
+		ID: "exp-past", Type: "point", Label: "Expired", Geometry: "{}",
+		CreatedAt: now, UpdatedAt: now, Category: "general", Status: "active",
+		ExpiresAt: &past,
+	})
+	s.SaveAnnotation(Annotation{
+		ID: "exp-future", Type: "point", Label: "Not Expired", Geometry: "{}",
+		CreatedAt: now, UpdatedAt: now, Category: "general", Status: "active",
+		ExpiresAt: &future,
+	})
+	s.SaveAnnotation(Annotation{
+		ID: "no-expiry", Type: "point", Label: "No Expiry", Geometry: "{}",
+		CreatedAt: now, UpdatedAt: now, Category: "general", Status: "active",
+	})
+
+	// Without IncludeExpired — should exclude past expiry.
+	results, err := s.LoadAnnotationsFiltered(AnnotationFilter{Category: "general"})
+	if err != nil {
+		t.Fatalf("LoadAnnotationsFiltered failed: %v", err)
+	}
+	if len(results) != 2 {
+		t.Errorf("expected 2 (excluding expired), got %d", len(results))
+	}
+
+	// With IncludeExpired — should include all 3.
+	results, err = s.LoadAnnotationsFiltered(AnnotationFilter{Category: "general", IncludeExpired: true})
+	if err != nil {
+		t.Fatalf("LoadAnnotationsFiltered(includeExpired) failed: %v", err)
+	}
+	if len(results) != 3 {
+		t.Errorf("expected 3 (including expired), got %d", len(results))
 	}
 }

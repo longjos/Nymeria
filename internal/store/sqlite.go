@@ -14,7 +14,7 @@ import (
 	_ "modernc.org/sqlite"
 )
 
-const currentSchemaVersion = 6
+const currentSchemaVersion = 7
 
 // SQLiteStore implements Store using modernc.org/sqlite.
 type SQLiteStore struct {
@@ -97,6 +97,12 @@ func (s *SQLiteStore) migrate() error {
 
 	if version < 6 {
 		if err := s.migrateV6(); err != nil {
+			return err
+		}
+	}
+
+	if version < 7 {
+		if err := s.migrateV7(); err != nil {
 			return err
 		}
 	}
@@ -576,12 +582,27 @@ func (s *SQLiteStore) QueryActivity(filter ActivityFilter) ([]ActivityLogEntry, 
 }
 
 func (s *SQLiteStore) SaveAnnotation(a Annotation) error {
+	var reportedAt, resolvedAt, expiresAt interface{}
+	if a.ReportedAt != nil {
+		reportedAt = a.ReportedAt.UTC()
+	}
+	if a.ResolvedAt != nil {
+		resolvedAt = a.ResolvedAt.UTC()
+	}
+	if a.ExpiresAt != nil {
+		expiresAt = a.ExpiresAt.UTC()
+	}
+
 	_, err := s.db.Exec(`
 		INSERT OR REPLACE INTO annotations
-			(id, type, label, description, geometry, style, created_by, created_by_name, created_at, updated_at)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+			(id, type, label, description, geometry, style, created_by, created_by_name,
+			 created_at, updated_at, category, status, priority, operation_id, mission_id,
+			 resources, reported_by, reported_at, resolved_at, expires_at)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
 		a.ID, a.Type, a.Label, a.Description, a.Geometry, a.Style,
 		a.CreatedBy, a.CreatedByName, a.CreatedAt.UTC(), a.UpdatedAt.UTC(),
+		a.Category, a.Status, a.Priority, a.OperationID, a.MissionID,
+		a.Resources, a.ReportedBy, reportedAt, resolvedAt, expiresAt,
 	)
 	if err != nil {
 		return fmt.Errorf("save annotation: %w", err)
@@ -590,11 +611,60 @@ func (s *SQLiteStore) SaveAnnotation(a Annotation) error {
 }
 
 func (s *SQLiteStore) LoadAnnotations() ([]Annotation, error) {
-	rows, err := s.db.Query(`
+	return s.loadAnnotationsQuery(`
 		SELECT id, type, label, description, geometry, style,
-		       created_by, created_by_name, created_at, updated_at
+		       created_by, created_by_name, created_at, updated_at,
+		       category, status, priority, operation_id, mission_id,
+		       resources, reported_by, reported_at, resolved_at, expires_at
 		FROM annotations
 		ORDER BY created_at ASC`)
+}
+
+func (s *SQLiteStore) LoadAnnotationsFiltered(filter AnnotationFilter) ([]Annotation, error) {
+	where := ""
+	args := []interface{}{}
+
+	addFilter := func(clause string, val interface{}) {
+		if where == "" {
+			where = " WHERE "
+		} else {
+			where += " AND "
+		}
+		where += clause
+		args = append(args, val)
+	}
+
+	if filter.Category != "" {
+		addFilter("category = ?", filter.Category)
+	}
+	if filter.Status != "" {
+		addFilter("status = ?", filter.Status)
+	}
+	if filter.Priority != "" {
+		addFilter("priority = ?", filter.Priority)
+	}
+	if filter.OperationID != "" {
+		addFilter("operation_id = ?", filter.OperationID)
+	}
+	if !filter.IncludeExpired {
+		addFilter("(expires_at IS NULL OR expires_at > ?)", time.Now().UTC())
+	}
+
+	query := `SELECT id, type, label, description, geometry, style,
+		       created_by, created_by_name, created_at, updated_at,
+		       category, status, priority, operation_id, mission_id,
+		       resources, reported_by, reported_at, resolved_at, expires_at
+		FROM annotations` + where + ` ORDER BY created_at ASC`
+
+	return s.loadAnnotationsQueryArgs(query, args...)
+}
+
+func (s *SQLiteStore) loadAnnotationsQuery(query string) ([]Annotation, error) {
+	return s.loadAnnotationsQueryArgs(query)
+}
+
+func (s *SQLiteStore) loadAnnotationsQueryArgs(query string, args ...interface{}) ([]Annotation, error) {
+	rows, err := s.db.Query(query, args...)
 	if err != nil {
 		return nil, fmt.Errorf("query annotations: %w", err)
 	}
@@ -605,11 +675,16 @@ func (s *SQLiteStore) LoadAnnotations() ([]Annotation, error) {
 		var a Annotation
 		var createdAt, updatedAt string
 		var description, style, createdBy, createdByName sql.NullString
+		var category, status, priority, operationID, missionID sql.NullString
+		var resources, reportedBy sql.NullString
+		var reportedAt, resolvedAt, expiresAt sql.NullString
 
 		if err := rows.Scan(
 			&a.ID, &a.Type, &a.Label, &description,
 			&a.Geometry, &style, &createdBy, &createdByName,
 			&createdAt, &updatedAt,
+			&category, &status, &priority, &operationID, &missionID,
+			&resources, &reportedBy, &reportedAt, &resolvedAt, &expiresAt,
 		); err != nil {
 			return nil, fmt.Errorf("scan annotation: %w", err)
 		}
@@ -634,6 +709,45 @@ func (s *SQLiteStore) LoadAnnotations() ([]Annotation, error) {
 		}
 		if createdByName.Valid {
 			a.CreatedByName = createdByName.String
+		}
+		if category.Valid {
+			a.Category = category.String
+		}
+		if status.Valid {
+			a.Status = status.String
+		}
+		if priority.Valid {
+			a.Priority = priority.String
+		}
+		if operationID.Valid {
+			a.OperationID = operationID.String
+		}
+		if missionID.Valid {
+			a.MissionID = missionID.String
+		}
+		if resources.Valid {
+			a.Resources = resources.String
+		}
+		if reportedBy.Valid {
+			a.ReportedBy = reportedBy.String
+		}
+		if reportedAt.Valid {
+			t, err := parseTime(reportedAt.String)
+			if err == nil {
+				a.ReportedAt = &t
+			}
+		}
+		if resolvedAt.Valid {
+			t, err := parseTime(resolvedAt.String)
+			if err == nil {
+				a.ResolvedAt = &t
+			}
+		}
+		if expiresAt.Valid {
+			t, err := parseTime(expiresAt.String)
+			if err == nil {
+				a.ExpiresAt = &t
+			}
 		}
 
 		annotations = append(annotations, a)
@@ -1296,6 +1410,48 @@ CREATE TABLE IF NOT EXISTS tactical_aliases (
 		return fmt.Errorf("clear schema_version: %w", err)
 	}
 	if _, err := s.db.Exec("INSERT INTO schema_version (version) VALUES (?)", 6); err != nil {
+		return fmt.Errorf("set schema_version: %w", err)
+	}
+
+	return nil
+}
+
+func (s *SQLiteStore) migrateV7() error {
+	for _, stmt := range []string{
+		"ALTER TABLE annotations ADD COLUMN category TEXT NOT NULL DEFAULT 'general'",
+		"ALTER TABLE annotations ADD COLUMN status TEXT NOT NULL DEFAULT 'active'",
+		"ALTER TABLE annotations ADD COLUMN priority TEXT NOT NULL DEFAULT 'routine'",
+		"ALTER TABLE annotations ADD COLUMN operation_id TEXT DEFAULT ''",
+		"ALTER TABLE annotations ADD COLUMN mission_id TEXT DEFAULT ''",
+		"ALTER TABLE annotations ADD COLUMN resources TEXT DEFAULT '[]'",
+		"ALTER TABLE annotations ADD COLUMN reported_by TEXT DEFAULT ''",
+		"ALTER TABLE annotations ADD COLUMN reported_at DATETIME",
+		"ALTER TABLE annotations ADD COLUMN resolved_at DATETIME",
+		"ALTER TABLE annotations ADD COLUMN expires_at DATETIME",
+	} {
+		if _, err := s.db.Exec(stmt); err != nil {
+			if !isDuplicateColumnError(err) {
+				return fmt.Errorf("migrate v7: %w", err)
+			}
+		}
+	}
+
+	// Create indexes.
+	for _, idx := range []string{
+		"CREATE INDEX IF NOT EXISTS idx_annotations_category ON annotations(category)",
+		"CREATE INDEX IF NOT EXISTS idx_annotations_status ON annotations(status)",
+		"CREATE INDEX IF NOT EXISTS idx_annotations_operation ON annotations(operation_id)",
+	} {
+		if _, err := s.db.Exec(idx); err != nil {
+			return fmt.Errorf("migrate v7 index: %w", err)
+		}
+	}
+
+	// Update schema version.
+	if _, err := s.db.Exec("DELETE FROM schema_version"); err != nil {
+		return fmt.Errorf("clear schema_version: %w", err)
+	}
+	if _, err := s.db.Exec("INSERT INTO schema_version (version) VALUES (?)", 7); err != nil {
 		return fmt.Errorf("set schema_version: %w", err)
 	}
 
