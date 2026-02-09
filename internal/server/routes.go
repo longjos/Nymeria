@@ -15,6 +15,7 @@ import (
 	"github.com/narvel/nymeria/internal/object"
 	"github.com/narvel/nymeria/internal/server/ws"
 	"github.com/narvel/nymeria/internal/session"
+	"github.com/narvel/nymeria/internal/station"
 	"github.com/narvel/nymeria/internal/store"
 )
 
@@ -63,6 +64,30 @@ func (s *Server) routes() {
 			r.Post("/items", s.handleCreateItem)
 			r.Delete("/items/{id}", s.handleDeleteItem)
 			r.Post("/items/{id}/kill", s.handleKillItem)
+		})
+
+		// Net Control — read endpoints (observer+)
+		r.Get("/nets", s.handleGetNets)
+		r.Get("/nets/search", s.handleSearchOperators)
+		r.Get("/nets/{id}", s.handleGetNet)
+		r.Get("/nets/{id}/events", s.handleGetNetEvents)
+		r.Get("/nets/{id}/notes", s.handleGetNetNotes)
+
+		// Net Control — write endpoints (operator+)
+		r.Group(func(r chi.Router) {
+			r.Use(RequireRole(session.RoleOperator))
+			r.Post("/nets", s.handleCreateNet)
+			r.Post("/nets/{id}/open", s.handleOpenNet)
+			r.Post("/nets/{id}/close", s.handleCloseNet)
+			r.Post("/nets/{id}/transfer", s.handleTransferNCS)
+			r.Post("/nets/{id}/checkin", s.handleCheckIn)
+			r.Put("/nets/{id}/checkin/{ciId}", s.handleUpdateCheckIn)
+			r.Post("/nets/{id}/checkout/{ciId}", s.handleCheckOut)
+			r.Post("/nets/{id}/missions", s.handleCreateMission)
+			r.Put("/nets/{id}/missions/{mId}", s.handleUpdateMission)
+			r.Post("/nets/{id}/notes", s.handleAddNetNote)
+			r.Post("/nets/{id}/rollcall", s.handleInitiateRollCall)
+			r.Post("/nets/{id}/rollcall/{ciId}", s.handleRecordRollCallResponse)
 		})
 
 		// Admin endpoints — user management
@@ -804,6 +829,377 @@ func (s *Server) handleExportActivityCSV(w http.ResponseWriter, r *http.Request)
 	w.Header().Set("Content-Type", "text/csv")
 	w.Header().Set("Content-Disposition", "attachment; filename=activity.csv")
 	activity.ExportCSV(w, entries)
+}
+
+// --- Net Control handlers ---
+
+func (s *Server) handleGetNets(w http.ResponseWriter, _ *http.Request) {
+	if s.netMgr == nil {
+		writeJSON(w, http.StatusOK, []any{})
+		return
+	}
+	writeJSON(w, http.StatusOK, s.netMgr.GetNets())
+}
+
+func (s *Server) handleGetNet(w http.ResponseWriter, r *http.Request) {
+	if s.netMgr == nil {
+		writeJSON(w, http.StatusServiceUnavailable, map[string]string{"error": "net control not available"})
+		return
+	}
+
+	id := chi.URLParam(r, "id")
+	n, ok := s.netMgr.GetNet(id)
+	if !ok {
+		writeJSON(w, http.StatusNotFound, map[string]string{"error": "net not found"})
+		return
+	}
+
+	writeJSON(w, http.StatusOK, map[string]any{
+		"net":      n,
+		"checkIns": s.netMgr.GetCheckIns(id),
+		"missions": s.netMgr.GetMissions(id),
+	})
+}
+
+func (s *Server) handleCreateNet(w http.ResponseWriter, r *http.Request) {
+	if s.netMgr == nil {
+		writeJSON(w, http.StatusServiceUnavailable, map[string]string{"error": "net control not available"})
+		return
+	}
+
+	var req store.Net
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid request body"})
+		return
+	}
+
+	// Set NCS from session user if not provided.
+	if user, ok := UserFromContext(r.Context()); ok && req.NCSUserID == "" {
+		req.NCSUserID = user.ID
+		if req.NCSCallsign == "" {
+			req.NCSCallsign = user.Callsign
+		}
+	}
+
+	n, err := s.netMgr.CreateNet(req)
+	if err != nil {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
+		return
+	}
+
+	writeJSON(w, http.StatusCreated, n)
+}
+
+func (s *Server) handleOpenNet(w http.ResponseWriter, r *http.Request) {
+	if s.netMgr == nil {
+		writeJSON(w, http.StatusServiceUnavailable, map[string]string{"error": "net control not available"})
+		return
+	}
+
+	id := chi.URLParam(r, "id")
+	if err := s.netMgr.OpenNet(id); err != nil {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
+		return
+	}
+
+	n, _ := s.netMgr.GetNet(id)
+	writeJSON(w, http.StatusOK, n)
+}
+
+func (s *Server) handleCloseNet(w http.ResponseWriter, r *http.Request) {
+	if s.netMgr == nil {
+		writeJSON(w, http.StatusServiceUnavailable, map[string]string{"error": "net control not available"})
+		return
+	}
+
+	id := chi.URLParam(r, "id")
+	n, summary, err := s.netMgr.CloseNet(id)
+	if err != nil {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
+		return
+	}
+
+	writeJSON(w, http.StatusOK, map[string]any{"net": n, "summary": summary})
+}
+
+func (s *Server) handleTransferNCS(w http.ResponseWriter, r *http.Request) {
+	if s.netMgr == nil {
+		writeJSON(w, http.StatusServiceUnavailable, map[string]string{"error": "net control not available"})
+		return
+	}
+
+	id := chi.URLParam(r, "id")
+	var req struct {
+		Callsign string `json:"callsign"`
+		UserID   string `json:"userId"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid request body"})
+		return
+	}
+
+	if err := s.netMgr.TransferNCS(id, req.Callsign, req.UserID); err != nil {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
+		return
+	}
+
+	n, _ := s.netMgr.GetNet(id)
+	writeJSON(w, http.StatusOK, n)
+}
+
+func (s *Server) handleCheckIn(w http.ResponseWriter, r *http.Request) {
+	if s.netMgr == nil {
+		writeJSON(w, http.StatusServiceUnavailable, map[string]string{"error": "net control not available"})
+		return
+	}
+
+	id := chi.URLParam(r, "id")
+	var req struct {
+		Callsign string `json:"callsign"`
+		Traffic  string `json:"traffic"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid request body"})
+		return
+	}
+
+	ci, err := s.netMgr.CheckIn(id, req.Callsign, req.Traffic)
+	if err != nil {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
+		return
+	}
+
+	writeJSON(w, http.StatusCreated, ci)
+}
+
+func (s *Server) handleUpdateCheckIn(w http.ResponseWriter, r *http.Request) {
+	if s.netMgr == nil {
+		writeJSON(w, http.StatusServiceUnavailable, map[string]string{"error": "net control not available"})
+		return
+	}
+
+	id := chi.URLParam(r, "id")
+	ciId := chi.URLParam(r, "ciId")
+
+	// Get the existing check-in.
+	existing := findCheckIn(s.netMgr.GetCheckIns(id), ciId)
+	if existing == nil {
+		writeJSON(w, http.StatusNotFound, map[string]string{"error": "check-in not found"})
+		return
+	}
+
+	updated := *existing
+	if err := json.NewDecoder(r.Body).Decode(&updated); err != nil {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid request body"})
+		return
+	}
+	updated.ID = ciId
+	updated.NetID = id
+
+	ci, err := s.netMgr.UpdateCheckIn(updated)
+	if err != nil {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
+		return
+	}
+
+	writeJSON(w, http.StatusOK, ci)
+}
+
+func (s *Server) handleCheckOut(w http.ResponseWriter, r *http.Request) {
+	if s.netMgr == nil {
+		writeJSON(w, http.StatusServiceUnavailable, map[string]string{"error": "net control not available"})
+		return
+	}
+
+	id := chi.URLParam(r, "id")
+	ciId := chi.URLParam(r, "ciId")
+
+	if err := s.netMgr.CheckOut(id, ciId); err != nil {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
+		return
+	}
+
+	writeJSON(w, http.StatusOK, map[string]string{"status": "checked out"})
+}
+
+func (s *Server) handleCreateMission(w http.ResponseWriter, r *http.Request) {
+	if s.netMgr == nil {
+		writeJSON(w, http.StatusServiceUnavailable, map[string]string{"error": "net control not available"})
+		return
+	}
+
+	id := chi.URLParam(r, "id")
+	var req store.NetMission
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid request body"})
+		return
+	}
+	req.NetID = id
+
+	m, err := s.netMgr.CreateMission(req)
+	if err != nil {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
+		return
+	}
+
+	writeJSON(w, http.StatusCreated, m)
+}
+
+func (s *Server) handleUpdateMission(w http.ResponseWriter, r *http.Request) {
+	if s.netMgr == nil {
+		writeJSON(w, http.StatusServiceUnavailable, map[string]string{"error": "net control not available"})
+		return
+	}
+
+	id := chi.URLParam(r, "id")
+	mId := chi.URLParam(r, "mId")
+
+	// Get the existing mission.
+	existing := findMission(s.netMgr.GetMissions(id), mId)
+	if existing == nil {
+		writeJSON(w, http.StatusNotFound, map[string]string{"error": "mission not found"})
+		return
+	}
+
+	updated := *existing
+	if err := json.NewDecoder(r.Body).Decode(&updated); err != nil {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid request body"})
+		return
+	}
+	updated.ID = mId
+	updated.NetID = id
+
+	m, err := s.netMgr.UpdateMission(updated)
+	if err != nil {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
+		return
+	}
+
+	writeJSON(w, http.StatusOK, m)
+}
+
+func (s *Server) handleAddNetNote(w http.ResponseWriter, r *http.Request) {
+	if s.netMgr == nil {
+		writeJSON(w, http.StatusServiceUnavailable, map[string]string{"error": "net control not available"})
+		return
+	}
+
+	id := chi.URLParam(r, "id")
+	var req store.NetNote
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid request body"})
+		return
+	}
+	req.NetID = id
+
+	if user, ok := UserFromContext(r.Context()); ok {
+		req.AuthorID = user.ID
+		req.AuthorName = user.Name
+	}
+
+	note, err := s.netMgr.AddNote(req)
+	if err != nil {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
+		return
+	}
+
+	writeJSON(w, http.StatusCreated, note)
+}
+
+func (s *Server) handleGetNetEvents(w http.ResponseWriter, r *http.Request) {
+	if s.netMgr == nil {
+		writeJSON(w, http.StatusOK, []any{})
+		return
+	}
+
+	id := chi.URLParam(r, "id")
+	events, err := s.netMgr.GetEvents(id)
+	if err != nil {
+		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
+		return
+	}
+
+	writeJSON(w, http.StatusOK, events)
+}
+
+func (s *Server) handleGetNetNotes(w http.ResponseWriter, r *http.Request) {
+	if s.netMgr == nil {
+		writeJSON(w, http.StatusOK, []any{})
+		return
+	}
+
+	id := chi.URLParam(r, "id")
+	notes, err := s.netMgr.GetNotes(id)
+	if err != nil {
+		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
+		return
+	}
+
+	writeJSON(w, http.StatusOK, notes)
+}
+
+func (s *Server) handleInitiateRollCall(w http.ResponseWriter, r *http.Request) {
+	if s.netMgr == nil {
+		writeJSON(w, http.StatusServiceUnavailable, map[string]string{"error": "net control not available"})
+		return
+	}
+
+	id := chi.URLParam(r, "id")
+	if err := s.netMgr.InitiateRollCall(id); err != nil {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
+		return
+	}
+
+	writeJSON(w, http.StatusOK, map[string]string{"status": "roll call initiated"})
+}
+
+func (s *Server) handleRecordRollCallResponse(w http.ResponseWriter, r *http.Request) {
+	if s.netMgr == nil {
+		writeJSON(w, http.StatusServiceUnavailable, map[string]string{"error": "net control not available"})
+		return
+	}
+
+	id := chi.URLParam(r, "id")
+	ciId := chi.URLParam(r, "ciId")
+
+	if err := s.netMgr.RecordRollCallResponse(id, ciId); err != nil {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
+		return
+	}
+
+	writeJSON(w, http.StatusOK, map[string]string{"status": "response recorded"})
+}
+
+func (s *Server) handleSearchOperators(w http.ResponseWriter, r *http.Request) {
+	if s.netMgr == nil {
+		writeJSON(w, http.StatusOK, []any{})
+		return
+	}
+
+	q := r.URL.Query().Get("q")
+	results := s.netMgr.SearchOperators(q)
+	if results == nil {
+		results = []station.Station{}
+	}
+	writeJSON(w, http.StatusOK, results)
+}
+
+func findCheckIn(cis []store.NetCheckIn, id string) *store.NetCheckIn {
+	for _, ci := range cis {
+		if ci.ID == id {
+			return &ci
+		}
+	}
+	return nil
+}
+
+func findMission(missions []store.NetMission, id string) *store.NetMission {
+	for _, m := range missions {
+		if m.ID == id {
+			return &m
+		}
+	}
+	return nil
 }
 
 func writeJSON(w http.ResponseWriter, status int, v any) {

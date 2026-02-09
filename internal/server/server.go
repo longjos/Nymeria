@@ -15,6 +15,7 @@ import (
 	"github.com/narvel/nymeria/internal/aprs"
 	"github.com/narvel/nymeria/internal/beacon"
 	"github.com/narvel/nymeria/internal/message"
+	"github.com/narvel/nymeria/internal/netcontrol"
 	"github.com/narvel/nymeria/internal/object"
 	"github.com/narvel/nymeria/internal/server/ws"
 	"github.com/narvel/nymeria/internal/session"
@@ -37,6 +38,7 @@ type Server struct {
 	sessions   session.Manager
 	actLogger  activity.Logger
 	annMgr     *annotation.Manager
+	netMgr     *netcontrol.Manager
 }
 
 // New creates a new Server.
@@ -77,6 +79,9 @@ func New(tracker station.Tracker, tm *transport.Manager, eng message.Engine, db 
 	if s.actLogger != nil {
 		go s.bridgeActivityEvents()
 	}
+	if s.netMgr != nil {
+		go s.bridgeNetControlEvents()
+	}
 
 	return s
 }
@@ -116,6 +121,13 @@ func WithActivityLogger(l activity.Logger) Option {
 func WithAnnotationManager(mgr *annotation.Manager) Option {
 	return func(s *Server) {
 		s.annMgr = mgr
+	}
+}
+
+// WithNetControlManager sets the net control manager on the server.
+func WithNetControlManager(mgr *netcontrol.Manager) Option {
+	return func(s *Server) {
+		s.netMgr = mgr
 	}
 }
 
@@ -264,6 +276,22 @@ func (s *Server) bridgeActivityEvents() {
 		data, err := json.Marshal(msg)
 		if err != nil {
 			log.Printf("[server] marshal activity event: %v", err)
+			continue
+		}
+		s.hub.Broadcast(data)
+	}
+}
+
+// bridgeNetControlEvents reads net control events and broadcasts via WebSocket.
+func (s *Server) bridgeNetControlEvents() {
+	for evt := range s.netMgr.Events() {
+		msg := map[string]any{
+			"type": evt.Type,
+			"data": evt.Data,
+		}
+		data, err := json.Marshal(msg)
+		if err != nil {
+			log.Printf("[server] marshal net control event: %v", err)
 			continue
 		}
 		s.hub.Broadcast(data)

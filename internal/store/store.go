@@ -28,6 +28,76 @@ type ActivityFilter struct {
 	Limit  int
 }
 
+// Net represents a net control session.
+type Net struct {
+	ID          string     `json:"id"`
+	Name        string     `json:"name"`
+	Type        string     `json:"type"`
+	Frequency   string     `json:"frequency"`
+	NCSCallsign string     `json:"ncsCallsign"`
+	NCSUserID   string     `json:"ncsUserId"`
+	Status      string     `json:"status"`
+	OpenedAt    *time.Time `json:"openedAt,omitempty"`
+	ClosedAt    *time.Time `json:"closedAt,omitempty"`
+	Notes       string     `json:"notes"`
+}
+
+// NetCheckIn represents an operator check-in to a net.
+type NetCheckIn struct {
+	ID              string     `json:"id"`
+	NetID           string     `json:"netId"`
+	Callsign        string     `json:"callsign"`
+	TacticalCall    string     `json:"tacticalCall"`
+	OperatorName    string     `json:"operatorName"`
+	Status          string     `json:"status"`
+	Traffic         string     `json:"traffic"`
+	Location        string     `json:"location"`
+	Lat             *float64   `json:"lat,omitempty"`
+	Lon             *float64   `json:"lon,omitempty"`
+	Assignment      string     `json:"assignment"`
+	AssignmentLat   *float64   `json:"assignmentLat,omitempty"`
+	AssignmentLon   *float64   `json:"assignmentLon,omitempty"`
+	CheckedInAt     time.Time  `json:"checkedInAt"`
+	CheckedOutAt    *time.Time `json:"checkedOutAt,omitempty"`
+	LastHeard       time.Time  `json:"lastHeard"`
+	MissedRollCalls int        `json:"missedRollCalls"`
+}
+
+// NetMission represents a task assigned during a net.
+type NetMission struct {
+	ID          string     `json:"id"`
+	NetID       string     `json:"netId"`
+	Title       string     `json:"title"`
+	Description string     `json:"description"`
+	Priority    string     `json:"priority"`
+	Status      string     `json:"status"`
+	AssignedTo  string     `json:"assignedTo"`
+	CreatedAt   time.Time  `json:"createdAt"`
+	CompletedAt *time.Time `json:"completedAt,omitempty"`
+}
+
+// NetNote represents a note attached to a net or check-in.
+type NetNote struct {
+	ID         string    `json:"id"`
+	NetID      string    `json:"netId"`
+	CheckInID  string    `json:"checkInId,omitempty"`
+	AuthorID   string    `json:"authorId"`
+	AuthorName string    `json:"authorName"`
+	Content    string    `json:"content"`
+	CreatedAt  time.Time `json:"createdAt"`
+}
+
+// NetEvent represents a timeline event in a net.
+type NetEvent struct {
+	ID        string    `json:"id"`
+	NetID     string    `json:"netId"`
+	Type      string    `json:"type"`
+	Callsign  string    `json:"callsign"`
+	Summary   string    `json:"summary"`
+	Details   string    `json:"details"`
+	CreatedAt time.Time `json:"createdAt"`
+}
+
 // Annotation represents a local map annotation.
 type Annotation struct {
 	ID            string    `json:"id"`
@@ -85,4 +155,23 @@ type Store interface {
 
 	// UpdateMessageClaim sets the claimed_by and claimed_at fields on a message.
 	UpdateMessageClaim(messageID string, claimedBy string, claimedAt *time.Time) error
+
+	// Net Control
+	SaveNet(n Net) error
+	LoadNet(id string) (*Net, error)
+	LoadNets() ([]Net, error)
+	DeleteNet(id string) error
+
+	SaveNetCheckIn(ci NetCheckIn) error
+	LoadNetCheckIns(netID string) ([]NetCheckIn, error)
+	DeleteNetCheckIn(id string) error
+
+	SaveNetMission(m NetMission) error
+	LoadNetMissions(netID string) ([]NetMission, error)
+
+	SaveNetNote(n NetNote) error
+	LoadNetNotes(netID string) ([]NetNote, error)
+
+	SaveNetEvent(e NetEvent) error
+	LoadNetEvents(netID string) ([]NetEvent, error)
 }

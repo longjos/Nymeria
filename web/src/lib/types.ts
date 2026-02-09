@@ -123,3 +123,84 @@ export interface TransportStatus {
 	packetsRx: number;
 	packetsTx: number;
 }
+
+// --- Net Control ---
+
+export type NetStatus = 'draft' | 'open' | 'closed' | 'archived';
+export type OperatorStatus = 'available' | 'assigned' | 'enroute' | 'onscene' | 'brb' | 'missing' | 'released';
+export type TrafficType = 'none' | 'routine' | 'priority' | 'welfare' | 'emergency';
+export type MissionStatus = 'open' | 'active' | 'complete';
+
+export interface Net {
+	id: string;
+	name: string;
+	type: string;
+	frequency: string;
+	ncsCallsign: string;
+	ncsUserId: string;
+	status: NetStatus;
+	openedAt?: string;
+	closedAt?: string;
+	notes: string;
+}
+
+export interface NetCheckIn {
+	id: string;
+	netId: string;
+	callsign: string;
+	tacticalCall: string;
+	operatorName: string;
+	status: OperatorStatus;
+	traffic: TrafficType;
+	location: string;
+	lat?: number;
+	lon?: number;
+	assignment: string;
+	assignmentLat?: number;
+	assignmentLon?: number;
+	checkedInAt: string;
+	checkedOutAt?: string;
+	lastHeard: string;
+	missedRollCalls: number;
+}
+
+export interface NetMission {
+	id: string;
+	netId: string;
+	title: string;
+	description: string;
+	priority: string;
+	status: MissionStatus;
+	assignedTo: string;
+	createdAt: string;
+	completedAt?: string;
+}
+
+export interface NetNote {
+	id: string;
+	netId: string;
+	checkInId?: string;
+	authorId: string;
+	authorName: string;
+	content: string;
+	createdAt: string;
+}
+
+export interface NetEvent {
+	id: string;
+	netId: string;
+	type: string;
+	callsign: string;
+	summary: string;
+	details: string;
+	createdAt: string;
+}
+
+export interface NetSummary {
+	netId: string;
+	name: string;
+	duration: string;
+	totalCheckIns: number;
+	totalMissions: number;
+	trafficCounts: Record<string, number>;
+}

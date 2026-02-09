@@ -494,8 +494,8 @@ func TestV2SchemaVersion(t *testing.T) {
 	if err != nil {
 		t.Fatalf("query schema_version: %v", err)
 	}
-	if version != 2 {
-		t.Errorf("expected schema version 2, got %d", version)
+	if version != 3 {
+		t.Errorf("expected schema version 3, got %d", version)
 	}
 }
 
@@ -965,5 +965,452 @@ func TestInitCreatesParentDir(t *testing.T) {
 	// Verify the file exists.
 	if _, err := os.Stat(path); os.IsNotExist(err) {
 		t.Error("database file was not created")
+	}
+}
+
+// --- V3 Migration & Net Control Tests ---
+
+func TestV3MigrationCreatesNetTables(t *testing.T) {
+	s, _ := newTestStore(t)
+	defer s.Close()
+
+	// Verify all net control tables exist.
+	tables := []string{"nets", "net_check_ins", "net_missions", "net_notes", "net_events"}
+	for _, table := range tables {
+		var count int
+		err := s.db.QueryRow(fmt.Sprintf("SELECT COUNT(*) FROM %s", table)).Scan(&count)
+		if err != nil {
+			t.Errorf("table %s not created: %v", table, err)
+		}
+	}
+}
+
+func TestV3SchemaVersion(t *testing.T) {
+	s, _ := newTestStore(t)
+	defer s.Close()
+
+	var version int
+	err := s.db.QueryRow("SELECT version FROM schema_version LIMIT 1").Scan(&version)
+	if err != nil {
+		t.Fatalf("query schema_version: %v", err)
+	}
+	if version != 3 {
+		t.Errorf("expected schema version 3, got %d", version)
+	}
+}
+
+func TestSaveAndLoadNetRoundtrip(t *testing.T) {
+	s, _ := newTestStore(t)
+	defer s.Close()
+
+	now := time.Now().Truncate(time.Second).UTC()
+
+	n := Net{
+		ID:          "net-1",
+		Name:        "Emergency Net",
+		Type:        "tactical",
+		Frequency:   "146.520 MHz",
+		NCSCallsign: "KD7BBC",
+		NCSUserID:   "user-1",
+		Status:      "open",
+		OpenedAt:    &now,
+		Notes:       "Wildfire response",
+	}
+
+	if err := s.SaveNet(n); err != nil {
+		t.Fatalf("SaveNet failed: %v", err)
+	}
+
+	loaded, err := s.LoadNet("net-1")
+	if err != nil {
+		t.Fatalf("LoadNet failed: %v", err)
+	}
+
+	if loaded.ID != n.ID {
+		t.Errorf("id: got %q, want %q", loaded.ID, n.ID)
+	}
+	if loaded.Name != n.Name {
+		t.Errorf("name: got %q, want %q", loaded.Name, n.Name)
+	}
+	if loaded.Frequency != n.Frequency {
+		t.Errorf("frequency: got %q, want %q", loaded.Frequency, n.Frequency)
+	}
+	if loaded.NCSCallsign != n.NCSCallsign {
+		t.Errorf("ncsCallsign: got %q, want %q", loaded.NCSCallsign, n.NCSCallsign)
+	}
+	if loaded.Status != n.Status {
+		t.Errorf("status: got %q, want %q", loaded.Status, n.Status)
+	}
+	if loaded.OpenedAt == nil || !loaded.OpenedAt.Equal(now) {
+		t.Errorf("openedAt: got %v, want %v", loaded.OpenedAt, now)
+	}
+	if loaded.ClosedAt != nil {
+		t.Errorf("closedAt: expected nil, got %v", loaded.ClosedAt)
+	}
+	if loaded.Notes != n.Notes {
+		t.Errorf("notes: got %q, want %q", loaded.Notes, n.Notes)
+	}
+}
+
+func TestLoadNetNotFound(t *testing.T) {
+	s, _ := newTestStore(t)
+	defer s.Close()
+
+	_, err := s.LoadNet("nonexistent")
+	if err == nil {
+		t.Fatal("expected error for nonexistent net")
+	}
+}
+
+func TestLoadNetsMultiple(t *testing.T) {
+	s, _ := newTestStore(t)
+	defer s.Close()
+
+	s.SaveNet(Net{ID: "net-1", Name: "Net A", Type: "tactical", Status: "open"})
+	s.SaveNet(Net{ID: "net-2", Name: "Net B", Type: "resource", Status: "draft"})
+
+	nets, err := s.LoadNets()
+	if err != nil {
+		t.Fatalf("LoadNets failed: %v", err)
+	}
+	if len(nets) != 2 {
+		t.Fatalf("expected 2 nets, got %d", len(nets))
+	}
+}
+
+func TestDeleteNet(t *testing.T) {
+	s, _ := newTestStore(t)
+	defer s.Close()
+
+	s.SaveNet(Net{ID: "net-1", Name: "Net A", Type: "tactical", Status: "draft"})
+
+	if err := s.DeleteNet("net-1"); err != nil {
+		t.Fatalf("DeleteNet failed: %v", err)
+	}
+
+	nets, _ := s.LoadNets()
+	if len(nets) != 0 {
+		t.Errorf("expected 0 nets after delete, got %d", len(nets))
+	}
+}
+
+func TestSaveAndLoadNetCheckInRoundtrip(t *testing.T) {
+	s, _ := newTestStore(t)
+	defer s.Close()
+
+	s.SaveNet(Net{ID: "net-1", Name: "Test", Type: "tactical", Status: "open"})
+
+	now := time.Now().Truncate(time.Second).UTC()
+	lat, lon := 34.0522, -118.2437
+
+	ci := NetCheckIn{
+		ID:           "ci-1",
+		NetID:        "net-1",
+		Callsign:     "KD7BBC",
+		TacticalCall: "Shelter-1",
+		OperatorName: "Bob Smith",
+		Status:       "available",
+		Traffic:      "routine",
+		Location:     "Red Cross Shelter",
+		Lat:          &lat,
+		Lon:          &lon,
+		CheckedInAt:  now,
+		LastHeard:    now,
+	}
+
+	if err := s.SaveNetCheckIn(ci); err != nil {
+		t.Fatalf("SaveNetCheckIn failed: %v", err)
+	}
+
+	loaded, err := s.LoadNetCheckIns("net-1")
+	if err != nil {
+		t.Fatalf("LoadNetCheckIns failed: %v", err)
+	}
+	if len(loaded) != 1 {
+		t.Fatalf("expected 1 check-in, got %d", len(loaded))
+	}
+
+	got := loaded[0]
+	if got.ID != ci.ID {
+		t.Errorf("id: got %q, want %q", got.ID, ci.ID)
+	}
+	if got.Callsign != ci.Callsign {
+		t.Errorf("callsign: got %q, want %q", got.Callsign, ci.Callsign)
+	}
+	if got.TacticalCall != ci.TacticalCall {
+		t.Errorf("tacticalCall: got %q, want %q", got.TacticalCall, ci.TacticalCall)
+	}
+	if got.Status != ci.Status {
+		t.Errorf("status: got %q, want %q", got.Status, ci.Status)
+	}
+	if got.Traffic != ci.Traffic {
+		t.Errorf("traffic: got %q, want %q", got.Traffic, ci.Traffic)
+	}
+	if got.Lat == nil || *got.Lat != lat {
+		t.Errorf("lat: got %v, want %f", got.Lat, lat)
+	}
+	if got.Lon == nil || *got.Lon != lon {
+		t.Errorf("lon: got %v, want %f", got.Lon, lon)
+	}
+	if !got.CheckedInAt.Equal(now) {
+		t.Errorf("checkedInAt: got %v, want %v", got.CheckedInAt, now)
+	}
+	if got.CheckedOutAt != nil {
+		t.Errorf("checkedOutAt: expected nil, got %v", got.CheckedOutAt)
+	}
+}
+
+func TestNetCheckInWithNullableFields(t *testing.T) {
+	s, _ := newTestStore(t)
+	defer s.Close()
+
+	s.SaveNet(Net{ID: "net-1", Name: "Test", Type: "tactical", Status: "open"})
+
+	now := time.Now().Truncate(time.Second).UTC()
+
+	// Check-in without lat/lon (voice-only operator).
+	ci := NetCheckIn{
+		ID:          "ci-v",
+		NetID:       "net-1",
+		Callsign:    "W1AW",
+		Status:      "available",
+		Traffic:     "none",
+		CheckedInAt: now,
+		LastHeard:   now,
+	}
+	if err := s.SaveNetCheckIn(ci); err != nil {
+		t.Fatalf("SaveNetCheckIn failed: %v", err)
+	}
+
+	loaded, _ := s.LoadNetCheckIns("net-1")
+	if len(loaded) != 1 {
+		t.Fatalf("expected 1, got %d", len(loaded))
+	}
+	if loaded[0].Lat != nil {
+		t.Errorf("lat should be nil for voice-only operator")
+	}
+	if loaded[0].Lon != nil {
+		t.Errorf("lon should be nil for voice-only operator")
+	}
+}
+
+func TestDeleteNetCheckIn(t *testing.T) {
+	s, _ := newTestStore(t)
+	defer s.Close()
+
+	s.SaveNet(Net{ID: "net-1", Name: "Test", Type: "tactical", Status: "open"})
+
+	now := time.Now().Truncate(time.Second).UTC()
+	s.SaveNetCheckIn(NetCheckIn{ID: "ci-1", NetID: "net-1", Callsign: "A", Status: "available", Traffic: "none", CheckedInAt: now, LastHeard: now})
+
+	if err := s.DeleteNetCheckIn("ci-1"); err != nil {
+		t.Fatalf("DeleteNetCheckIn failed: %v", err)
+	}
+
+	loaded, _ := s.LoadNetCheckIns("net-1")
+	if len(loaded) != 0 {
+		t.Errorf("expected 0 check-ins after delete, got %d", len(loaded))
+	}
+}
+
+func TestSaveAndLoadNetMissionRoundtrip(t *testing.T) {
+	s, _ := newTestStore(t)
+	defer s.Close()
+
+	s.SaveNet(Net{ID: "net-1", Name: "Test", Type: "tactical", Status: "open"})
+
+	now := time.Now().Truncate(time.Second).UTC()
+
+	m := NetMission{
+		ID:          "m-1",
+		NetID:       "net-1",
+		Title:       "Deploy to shelter",
+		Description: "Set up comms at Red Cross shelter",
+		Priority:    "priority",
+		Status:      "open",
+		AssignedTo:  "KD7BBC",
+		CreatedAt:   now,
+	}
+
+	if err := s.SaveNetMission(m); err != nil {
+		t.Fatalf("SaveNetMission failed: %v", err)
+	}
+
+	loaded, err := s.LoadNetMissions("net-1")
+	if err != nil {
+		t.Fatalf("LoadNetMissions failed: %v", err)
+	}
+	if len(loaded) != 1 {
+		t.Fatalf("expected 1 mission, got %d", len(loaded))
+	}
+
+	got := loaded[0]
+	if got.Title != m.Title {
+		t.Errorf("title: got %q, want %q", got.Title, m.Title)
+	}
+	if got.Priority != m.Priority {
+		t.Errorf("priority: got %q, want %q", got.Priority, m.Priority)
+	}
+	if got.AssignedTo != m.AssignedTo {
+		t.Errorf("assignedTo: got %q, want %q", got.AssignedTo, m.AssignedTo)
+	}
+	if got.CompletedAt != nil {
+		t.Errorf("completedAt: expected nil, got %v", got.CompletedAt)
+	}
+}
+
+func TestSaveAndLoadNetNoteRoundtrip(t *testing.T) {
+	s, _ := newTestStore(t)
+	defer s.Close()
+
+	s.SaveNet(Net{ID: "net-1", Name: "Test", Type: "tactical", Status: "open"})
+
+	now := time.Now().Truncate(time.Second).UTC()
+
+	note := NetNote{
+		ID:         "note-1",
+		NetID:      "net-1",
+		CheckInID:  "ci-1",
+		AuthorID:   "user-1",
+		AuthorName: "Alice",
+		Content:    "Operator reports good signal",
+		CreatedAt:  now,
+	}
+
+	if err := s.SaveNetNote(note); err != nil {
+		t.Fatalf("SaveNetNote failed: %v", err)
+	}
+
+	loaded, err := s.LoadNetNotes("net-1")
+	if err != nil {
+		t.Fatalf("LoadNetNotes failed: %v", err)
+	}
+	if len(loaded) != 1 {
+		t.Fatalf("expected 1 note, got %d", len(loaded))
+	}
+
+	got := loaded[0]
+	if got.CheckInID != "ci-1" {
+		t.Errorf("checkInId: got %q, want %q", got.CheckInID, "ci-1")
+	}
+	if got.Content != note.Content {
+		t.Errorf("content: got %q, want %q", got.Content, note.Content)
+	}
+}
+
+func TestNetNoteWithNullCheckInID(t *testing.T) {
+	s, _ := newTestStore(t)
+	defer s.Close()
+
+	s.SaveNet(Net{ID: "net-1", Name: "Test", Type: "tactical", Status: "open"})
+
+	now := time.Now().Truncate(time.Second).UTC()
+
+	note := NetNote{
+		ID:        "note-2",
+		NetID:     "net-1",
+		Content:   "General net note",
+		CreatedAt: now,
+	}
+
+	if err := s.SaveNetNote(note); err != nil {
+		t.Fatalf("SaveNetNote failed: %v", err)
+	}
+
+	loaded, _ := s.LoadNetNotes("net-1")
+	if len(loaded) != 1 {
+		t.Fatalf("expected 1, got %d", len(loaded))
+	}
+	if loaded[0].CheckInID != "" {
+		t.Errorf("checkInId should be empty, got %q", loaded[0].CheckInID)
+	}
+}
+
+func TestSaveAndLoadNetEventRoundtrip(t *testing.T) {
+	s, _ := newTestStore(t)
+	defer s.Close()
+
+	s.SaveNet(Net{ID: "net-1", Name: "Test", Type: "tactical", Status: "open"})
+
+	now := time.Now().Truncate(time.Second).UTC()
+
+	evt := NetEvent{
+		ID:        "evt-1",
+		NetID:     "net-1",
+		Type:      "checkin",
+		Callsign:  "KD7BBC",
+		Summary:   "KD7BBC checked in with routine traffic",
+		Details:   `{"traffic":"routine"}`,
+		CreatedAt: now,
+	}
+
+	if err := s.SaveNetEvent(evt); err != nil {
+		t.Fatalf("SaveNetEvent failed: %v", err)
+	}
+
+	loaded, err := s.LoadNetEvents("net-1")
+	if err != nil {
+		t.Fatalf("LoadNetEvents failed: %v", err)
+	}
+	if len(loaded) != 1 {
+		t.Fatalf("expected 1 event, got %d", len(loaded))
+	}
+
+	got := loaded[0]
+	if got.Type != evt.Type {
+		t.Errorf("type: got %q, want %q", got.Type, evt.Type)
+	}
+	if got.Callsign != evt.Callsign {
+		t.Errorf("callsign: got %q, want %q", got.Callsign, evt.Callsign)
+	}
+	if got.Summary != evt.Summary {
+		t.Errorf("summary: got %q, want %q", got.Summary, evt.Summary)
+	}
+	if !got.CreatedAt.Equal(now) {
+		t.Errorf("createdAt: got %v, want %v", got.CreatedAt, now)
+	}
+}
+
+func TestNetEventsOrderedByTime(t *testing.T) {
+	s, _ := newTestStore(t)
+	defer s.Close()
+
+	s.SaveNet(Net{ID: "net-1", Name: "Test", Type: "tactical", Status: "open"})
+
+	base := time.Now().Truncate(time.Second).UTC()
+
+	// Insert out of order.
+	s.SaveNetEvent(NetEvent{ID: "evt-2", NetID: "net-1", Type: "status_change", Summary: "second", CreatedAt: base.Add(time.Minute)})
+	s.SaveNetEvent(NetEvent{ID: "evt-1", NetID: "net-1", Type: "checkin", Summary: "first", CreatedAt: base})
+
+	loaded, _ := s.LoadNetEvents("net-1")
+	if len(loaded) != 2 {
+		t.Fatalf("expected 2 events, got %d", len(loaded))
+	}
+	if loaded[0].ID != "evt-1" {
+		t.Errorf("first event: got %q, want %q", loaded[0].ID, "evt-1")
+	}
+	if loaded[1].ID != "evt-2" {
+		t.Errorf("second event: got %q, want %q", loaded[1].ID, "evt-2")
+	}
+}
+
+func TestCheckInsIsolatedByNetID(t *testing.T) {
+	s, _ := newTestStore(t)
+	defer s.Close()
+
+	s.SaveNet(Net{ID: "net-1", Name: "A", Type: "tactical", Status: "open"})
+	s.SaveNet(Net{ID: "net-2", Name: "B", Type: "tactical", Status: "open"})
+
+	now := time.Now().Truncate(time.Second).UTC()
+	s.SaveNetCheckIn(NetCheckIn{ID: "ci-1", NetID: "net-1", Callsign: "A", Status: "available", Traffic: "none", CheckedInAt: now, LastHeard: now})
+	s.SaveNetCheckIn(NetCheckIn{ID: "ci-2", NetID: "net-2", Callsign: "B", Status: "available", Traffic: "none", CheckedInAt: now, LastHeard: now})
+
+	loaded, _ := s.LoadNetCheckIns("net-1")
+	if len(loaded) != 1 {
+		t.Fatalf("expected 1 check-in for net-1, got %d", len(loaded))
+	}
+	if loaded[0].Callsign != "A" {
+		t.Errorf("expected callsign A, got %q", loaded[0].Callsign)
 	}
 }
