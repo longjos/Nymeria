@@ -494,8 +494,8 @@ func TestV2SchemaVersion(t *testing.T) {
 	if err != nil {
 		t.Fatalf("query schema_version: %v", err)
 	}
-	if version != 7 {
-		t.Errorf("expected schema version 7, got %d", version)
+	if version != 8 {
+		t.Errorf("expected schema version 8, got %d", version)
 	}
 }
 
@@ -994,8 +994,8 @@ func TestV3SchemaVersion(t *testing.T) {
 	if err != nil {
 		t.Fatalf("query schema_version: %v", err)
 	}
-	if version != 7 {
-		t.Errorf("expected schema version 7, got %d", version)
+	if version != 8 {
+		t.Errorf("expected schema version 8, got %d", version)
 	}
 }
 
@@ -1616,8 +1616,8 @@ func TestV5MigrationAddsTrackedStationsColumn(t *testing.T) {
 
 	var version int
 	s.db.QueryRow("SELECT version FROM schema_version LIMIT 1").Scan(&version)
-	if version != 7 {
-		t.Errorf("expected schema version 7, got %d", version)
+	if version != 8 {
+		t.Errorf("expected schema version 8, got %d", version)
 	}
 }
 
@@ -1723,8 +1723,8 @@ func TestV6MigrationCreatesTacticalAliasesTable(t *testing.T) {
 
 	var version int
 	s.db.QueryRow("SELECT version FROM schema_version LIMIT 1").Scan(&version)
-	if version != 7 {
-		t.Errorf("expected schema version 7, got %d", version)
+	if version != 8 {
+		t.Errorf("expected schema version 8, got %d", version)
 	}
 }
 
@@ -1891,8 +1891,8 @@ func TestV7MigrationAddsAnnotationColumns(t *testing.T) {
 
 	var version int
 	s.db.QueryRow("SELECT version FROM schema_version LIMIT 1").Scan(&version)
-	if version != 7 {
-		t.Errorf("expected schema version 7, got %d", version)
+	if version != 8 {
+		t.Errorf("expected schema version 8, got %d", version)
 	}
 }
 
@@ -2107,5 +2107,101 @@ func TestLoadAnnotationsFilteredExcludesExpired(t *testing.T) {
 	}
 	if len(results) != 3 {
 		t.Errorf("expected 3 (including expired), got %d", len(results))
+	}
+}
+
+func TestOperationCRUD(t *testing.T) {
+	s, _ := newTestStore(t)
+	defer s.Close()
+
+	now := time.Now().Truncate(time.Second).UTC()
+
+	op := Operation{
+		ID:          "op-1",
+		Name:        "SAR Event",
+		Description: "Search and rescue operation",
+		Status:      "active",
+		CreatedBy:   "user-1",
+		CreatedAt:   now,
+	}
+
+	if err := s.SaveOperation(op); err != nil {
+		t.Fatalf("SaveOperation: %v", err)
+	}
+
+	// Load all.
+	ops, err := s.LoadOperations()
+	if err != nil {
+		t.Fatalf("LoadOperations: %v", err)
+	}
+	if len(ops) != 1 {
+		t.Fatalf("expected 1, got %d", len(ops))
+	}
+	if ops[0].Name != "SAR Event" {
+		t.Errorf("name: got %q, want %q", ops[0].Name, "SAR Event")
+	}
+
+	// Load by ID.
+	loaded, err := s.LoadOperation("op-1")
+	if err != nil {
+		t.Fatalf("LoadOperation: %v", err)
+	}
+	if loaded == nil {
+		t.Fatal("expected non-nil operation")
+	}
+	if loaded.Status != "active" {
+		t.Errorf("status: got %q, want %q", loaded.Status, "active")
+	}
+
+	// Archive.
+	archived := now.Add(time.Hour)
+	op.Status = "archived"
+	op.ArchivedAt = &archived
+	if err := s.SaveOperation(op); err != nil {
+		t.Fatalf("SaveOperation (archive): %v", err)
+	}
+
+	reloaded, _ := s.LoadOperation("op-1")
+	if reloaded.Status != "archived" {
+		t.Errorf("status after archive: got %q, want %q", reloaded.Status, "archived")
+	}
+	if reloaded.ArchivedAt == nil {
+		t.Error("archivedAt should not be nil")
+	}
+
+	// Load nonexistent.
+	none, err := s.LoadOperation("nonexistent")
+	if err != nil {
+		t.Fatalf("LoadOperation(nonexistent): %v", err)
+	}
+	if none != nil {
+		t.Error("expected nil for nonexistent")
+	}
+
+	// Delete.
+	if err := s.DeleteOperation("op-1"); err != nil {
+		t.Fatalf("DeleteOperation: %v", err)
+	}
+	ops, _ = s.LoadOperations()
+	if len(ops) != 0 {
+		t.Errorf("expected 0 after delete, got %d", len(ops))
+	}
+}
+
+func TestMigrateV8CreatesOperationsTable(t *testing.T) {
+	s, _ := newTestStore(t)
+	defer s.Close()
+
+	var version int
+	s.db.QueryRow("SELECT version FROM schema_version LIMIT 1").Scan(&version)
+	if version != 8 {
+		t.Errorf("expected schema version 8, got %d", version)
+	}
+
+	// Verify operations table exists by doing a query.
+	var count int
+	err := s.db.QueryRow("SELECT COUNT(*) FROM operations").Scan(&count)
+	if err != nil {
+		t.Fatalf("operations table should exist: %v", err)
 	}
 }

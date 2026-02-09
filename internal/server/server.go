@@ -78,6 +78,9 @@ func New(tracker station.Tracker, tm *transport.Manager, eng message.Engine, db 
 	}
 	go s.bridgeTransportStatus()
 	if s.annMgr != nil {
+		if s.objManager != nil {
+			s.annMgr.SetObjectManager(s.objManager)
+		}
 		go s.bridgeAnnotationEvents()
 	}
 	if s.actLogger != nil {
@@ -267,7 +270,8 @@ func (s *Server) bridgeObjectEvents() {
 	}
 }
 
-// bridgeAnnotationEvents reads annotation events and broadcasts via WebSocket.
+// bridgeAnnotationEvents reads annotation events, broadcasts via WebSocket,
+// and syncs status changes to linked net missions.
 func (s *Server) bridgeAnnotationEvents() {
 	for evt := range s.annMgr.Events() {
 		msg := map[string]any{
@@ -280,6 +284,23 @@ func (s *Server) bridgeAnnotationEvents() {
 			continue
 		}
 		s.hub.Broadcast(data)
+
+		// Sync annotation status change → mission status.
+		if evt.Type == annotation.EventAnnotationStatusChanged && s.netMgr != nil && evt.Data.MissionID != "" {
+			missionID, missionStatus, err := s.annMgr.SyncStatusToMission(evt.Data.ID)
+			if err == nil {
+				// Find the mission to get its full state.
+				for _, n := range s.netMgr.GetNets() {
+					for _, m := range s.netMgr.GetMissions(n.ID) {
+						if m.ID == missionID && m.Status != missionStatus {
+							m.Status = missionStatus
+							s.netMgr.UpdateMission(m)
+							break
+						}
+					}
+				}
+			}
+		}
 	}
 }
 
@@ -299,7 +320,8 @@ func (s *Server) bridgeActivityEvents() {
 	}
 }
 
-// bridgeNetControlEvents reads net control events and broadcasts via WebSocket.
+// bridgeNetControlEvents reads net control events, broadcasts via WebSocket,
+// and syncs mission status changes to linked annotations.
 func (s *Server) bridgeNetControlEvents() {
 	for evt := range s.netMgr.Events() {
 		msg := map[string]any{
@@ -312,6 +334,29 @@ func (s *Server) bridgeNetControlEvents() {
 			continue
 		}
 		s.hub.Broadcast(data)
+
+		// Sync mission status change → annotation status.
+		if evt.Type == "mission_updated" && s.annMgr != nil {
+			if mData, ok := evt.Data.(map[string]any); ok {
+				if mID, _ := mData["id"].(string); mID != "" {
+					if mStatus, _ := mData["status"].(string); mStatus != "" {
+						s.annMgr.SyncStatusFromMission(mID, mStatus)
+					}
+				}
+			} else {
+				// Try JSON round-trip for typed data.
+				raw, err := json.Marshal(evt.Data)
+				if err == nil {
+					var m struct {
+						ID     string `json:"id"`
+						Status string `json:"status"`
+					}
+					if json.Unmarshal(raw, &m) == nil && m.ID != "" && m.Status != "" {
+						s.annMgr.SyncStatusFromMission(m.ID, m.Status)
+					}
+				}
+			}
+		}
 	}
 }
 

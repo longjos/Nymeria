@@ -5,6 +5,8 @@ import (
 	"testing"
 	"time"
 
+	"github.com/narvel/nymeria/internal/aprs"
+	"github.com/narvel/nymeria/internal/object"
 	"github.com/narvel/nymeria/internal/store"
 )
 
@@ -834,6 +836,530 @@ func TestAllFilteredByOperationID(t *testing.T) {
 	}
 	if filtered[0].Label != "Op1" {
 		t.Errorf("expected Op1, got %q", filtered[0].Label)
+	}
+}
+
+// --- Phase C (#55): Net Control ↔ Annotation Bridge Tests ---
+
+func TestGetByMissionID(t *testing.T) {
+	mgr := newTestManager(t)
+
+	ann, _ := mgr.Create(Annotation{
+		Type: TypePoint, Label: "Linked", Geometry: `{"type":"Point","coordinates":[0,0]}`,
+		Category: CategoryAssignment, Status: "planned", MissionID: "m-1",
+	})
+
+	found, ok := mgr.GetByMissionID("m-1")
+	if !ok {
+		t.Fatal("expected to find annotation by mission ID")
+	}
+	if found.ID != ann.ID {
+		t.Errorf("got ID %q, want %q", found.ID, ann.ID)
+	}
+
+	_, ok = mgr.GetByMissionID("m-nonexistent")
+	if ok {
+		t.Error("expected not found for nonexistent mission ID")
+	}
+}
+
+func TestCreateFromMission(t *testing.T) {
+	mgr := newTestManager(t)
+
+	lat, lon := 34.05, -118.24
+	mission := store.NetMission{
+		ID:          "m-1",
+		NetID:       "net-1",
+		Title:       "Search Sector Alpha",
+		Description: "Grid search of sector A",
+		Priority:    "urgent",
+		Lat:         &lat,
+		Lon:         &lon,
+	}
+
+	ann, err := mgr.CreateFromMission(mission, "user-1", "Alice")
+	if err != nil {
+		t.Fatalf("CreateFromMission failed: %v", err)
+	}
+
+	if ann.Category != CategoryAssignment {
+		t.Errorf("category: got %q, want %q", ann.Category, CategoryAssignment)
+	}
+	if ann.MissionID != "m-1" {
+		t.Errorf("missionID: got %q, want %q", ann.MissionID, "m-1")
+	}
+	if ann.Label != "Search Sector Alpha" {
+		t.Errorf("label: got %q, want %q", ann.Label, "Search Sector Alpha")
+	}
+	if ann.Priority != "urgent" {
+		t.Errorf("priority: got %q, want %q", ann.Priority, "urgent")
+	}
+	if ann.Type != TypePoint {
+		t.Errorf("type: got %q, want %q", ann.Type, TypePoint)
+	}
+	if ann.CreatedBy != "user-1" {
+		t.Errorf("createdBy: got %q, want %q", ann.CreatedBy, "user-1")
+	}
+}
+
+func TestCreateFromMissionNoLocation(t *testing.T) {
+	mgr := newTestManager(t)
+
+	mission := store.NetMission{
+		ID:    "m-2",
+		NetID: "net-1",
+		Title: "No Location",
+	}
+
+	_, err := mgr.CreateFromMission(mission, "user-1", "Alice")
+	if err == nil {
+		t.Error("expected error for mission without location")
+	}
+}
+
+func TestSyncStatusFromMission(t *testing.T) {
+	mgr := newTestManager(t)
+
+	lat, lon := 34.05, -118.24
+	mission := store.NetMission{
+		ID: "m-sync", NetID: "net-1", Title: "Sync Test",
+		Priority: "routine", Lat: &lat, Lon: &lon,
+	}
+	ann, _ := mgr.CreateFromMission(mission, "user-1", "Alice")
+
+	// mission "active" → annotation "in-progress"
+	if err := mgr.SyncStatusFromMission("m-sync", "active"); err != nil {
+		t.Fatalf("SyncStatusFromMission: %v", err)
+	}
+	updated, _ := mgr.Get(ann.ID)
+	if updated.Status != "in-progress" {
+		t.Errorf("status: got %q, want %q", updated.Status, "in-progress")
+	}
+
+	// mission "complete" → annotation "complete" (terminal, sets ResolvedAt)
+	if err := mgr.SyncStatusFromMission("m-sync", "complete"); err != nil {
+		t.Fatalf("SyncStatusFromMission: %v", err)
+	}
+	updated, _ = mgr.Get(ann.ID)
+	if updated.Status != "complete" {
+		t.Errorf("status: got %q, want %q", updated.Status, "complete")
+	}
+	if updated.ResolvedAt == nil {
+		t.Error("resolvedAt should be set for terminal status")
+	}
+}
+
+func TestSyncStatusFromMissionNotFound(t *testing.T) {
+	mgr := newTestManager(t)
+
+	// No annotations — should return nil (no error)
+	if err := mgr.SyncStatusFromMission("m-nonexistent", "active"); err != nil {
+		t.Fatalf("expected nil for nonexistent mission, got: %v", err)
+	}
+}
+
+func TestSyncStatusLoopGuard(t *testing.T) {
+	mgr := newTestManager(t)
+
+	lat, lon := 34.05, -118.24
+	mission := store.NetMission{
+		ID: "m-guard", NetID: "net-1", Title: "Guard Test",
+		Priority: "routine", Lat: &lat, Lon: &lon,
+	}
+	mgr.CreateFromMission(mission, "user-1", "Alice")
+
+	// Simulate syncing flag being set (as if we're already in a sync)
+	mgr.mu.Lock()
+	mgr.syncing["m-guard"] = true
+	mgr.mu.Unlock()
+
+	// Should return nil immediately due to loop guard
+	if err := mgr.SyncStatusFromMission("m-guard", "complete"); err != nil {
+		t.Fatalf("expected nil from loop-guarded sync: %v", err)
+	}
+
+	// Status should NOT have changed
+	ann, _ := mgr.GetByMissionID("m-guard")
+	if ann.Status == "complete" {
+		t.Error("status should not have changed during loop guard")
+	}
+
+	// Clean up
+	mgr.mu.Lock()
+	delete(mgr.syncing, "m-guard")
+	mgr.mu.Unlock()
+}
+
+func TestSyncStatusToMission(t *testing.T) {
+	mgr := newTestManager(t)
+
+	ann, _ := mgr.Create(Annotation{
+		Type: TypePoint, Label: "Mission Link", Geometry: `{"type":"Point","coordinates":[0,0]}`,
+		Category: CategoryAssignment, Status: "in-progress", MissionID: "m-to",
+	})
+
+	missionID, missionStatus, err := mgr.SyncStatusToMission(ann.ID)
+	if err != nil {
+		t.Fatalf("SyncStatusToMission: %v", err)
+	}
+	if missionID != "m-to" {
+		t.Errorf("missionID: got %q, want %q", missionID, "m-to")
+	}
+	if missionStatus != "active" {
+		t.Errorf("missionStatus: got %q, want %q", missionStatus, "active")
+	}
+}
+
+func TestSyncStatusToMissionNoLink(t *testing.T) {
+	mgr := newTestManager(t)
+
+	ann, _ := mgr.Create(Annotation{
+		Type: TypePoint, Label: "No Link", Geometry: `{"type":"Point","coordinates":[0,0]}`,
+		Category: CategoryGeneral, Status: "active",
+	})
+
+	_, _, err := mgr.SyncStatusToMission(ann.ID)
+	if err == nil {
+		t.Error("expected error for annotation without mission link")
+	}
+}
+
+func TestClearMissionLink(t *testing.T) {
+	mgr := newTestManager(t)
+
+	ann, _ := mgr.Create(Annotation{
+		Type: TypePoint, Label: "Clear Link", Geometry: `{"type":"Point","coordinates":[0,0]}`,
+		Category: CategoryAssignment, Status: "planned", MissionID: "m-clear",
+	})
+
+	updated, err := mgr.ClearMissionLink(ann.ID)
+	if err != nil {
+		t.Fatalf("ClearMissionLink: %v", err)
+	}
+	if updated.MissionID != "" {
+		t.Errorf("missionID should be empty, got %q", updated.MissionID)
+	}
+
+	// Verify persisted
+	reloaded, _ := mgr.Get(ann.ID)
+	if reloaded.MissionID != "" {
+		t.Errorf("persisted missionID should be empty, got %q", reloaded.MissionID)
+	}
+}
+
+func TestClearMissionLinkNotFound(t *testing.T) {
+	mgr := newTestManager(t)
+
+	_, err := mgr.ClearMissionLink("nonexistent")
+	if err == nil {
+		t.Error("expected error for nonexistent annotation")
+	}
+}
+
+// --- Phase D (#56): Templates & Operations Tests ---
+
+func TestCreateOperation(t *testing.T) {
+	mgr := newTestManager(t)
+	if err := mgr.Load(); err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+
+	op, err := mgr.CreateOperation(store.Operation{Name: "SAR Event 2025"})
+	if err != nil {
+		t.Fatalf("CreateOperation: %v", err)
+	}
+	if op.ID == "" {
+		t.Error("expected non-empty ID")
+	}
+	if op.Name != "SAR Event 2025" {
+		t.Errorf("name: got %q, want %q", op.Name, "SAR Event 2025")
+	}
+	if op.Status != "active" {
+		t.Errorf("status: got %q, want %q", op.Status, "active")
+	}
+
+	ops := mgr.AllOperations()
+	if len(ops) != 1 {
+		t.Fatalf("expected 1 operation, got %d", len(ops))
+	}
+}
+
+func TestCreateOperationEmptyName(t *testing.T) {
+	mgr := newTestManager(t)
+	if err := mgr.Load(); err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+
+	_, err := mgr.CreateOperation(store.Operation{Name: ""})
+	if err == nil {
+		t.Error("expected error for empty name")
+	}
+}
+
+func TestGetOperation(t *testing.T) {
+	mgr := newTestManager(t)
+	if err := mgr.Load(); err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+
+	op, _ := mgr.CreateOperation(store.Operation{Name: "Test Op"})
+	got, ok := mgr.GetOperation(op.ID)
+	if !ok {
+		t.Fatal("expected to find operation")
+	}
+	if got.Name != "Test Op" {
+		t.Errorf("name: got %q, want %q", got.Name, "Test Op")
+	}
+
+	_, ok = mgr.GetOperation("nonexistent")
+	if ok {
+		t.Error("expected not found for nonexistent ID")
+	}
+}
+
+func TestArchiveOperationExpiresAnnotations(t *testing.T) {
+	mgr := newTestManager(t)
+	if err := mgr.Load(); err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+
+	op, _ := mgr.CreateOperation(store.Operation{Name: "Archivable"})
+
+	// Create annotations linked to this operation.
+	ann1, _ := mgr.Create(Annotation{
+		Type: TypePoint, Label: "Linked1", Geometry: `{"type":"Point","coordinates":[0,0]}`,
+		Category: CategoryGeneral, Status: "active", OperationID: op.ID,
+	})
+	mgr.Create(Annotation{
+		Type: TypePoint, Label: "Linked2", Geometry: `{"type":"Point","coordinates":[1,1]}`,
+		Category: CategoryGeneral, Status: "active", OperationID: op.ID,
+	})
+	// Unlinked annotation — should NOT be expired.
+	ann3, _ := mgr.Create(Annotation{
+		Type: TypePoint, Label: "Unlinked", Geometry: `{"type":"Point","coordinates":[2,2]}`,
+		Category: CategoryGeneral, Status: "active",
+	})
+
+	if err := mgr.ArchiveOperation(op.ID); err != nil {
+		t.Fatalf("ArchiveOperation: %v", err)
+	}
+
+	// Check operation is archived.
+	archived, _ := mgr.GetOperation(op.ID)
+	if archived.Status != "archived" {
+		t.Errorf("op status: got %q, want %q", archived.Status, "archived")
+	}
+	if archived.ArchivedAt == nil {
+		t.Error("archivedAt should be set")
+	}
+
+	// Linked annotations should be expired.
+	a1, _ := mgr.Get(ann1.ID)
+	if a1.ExpiresAt == nil {
+		t.Error("linked annotation should have ExpiresAt set")
+	}
+
+	// Unlinked should NOT be expired.
+	a3, _ := mgr.Get(ann3.ID)
+	if a3.ExpiresAt != nil {
+		t.Error("unlinked annotation should not be expired")
+	}
+}
+
+func TestArchiveOperationNotFound(t *testing.T) {
+	mgr := newTestManager(t)
+	if err := mgr.Load(); err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+
+	err := mgr.ArchiveOperation("nonexistent")
+	if err == nil {
+		t.Error("expected error for nonexistent operation")
+	}
+}
+
+func TestAnnotationOperationFiltering(t *testing.T) {
+	mgr := newTestManager(t)
+	if err := mgr.Load(); err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+
+	op, _ := mgr.CreateOperation(store.Operation{Name: "Filter Op"})
+
+	mgr.Create(Annotation{
+		Type: TypePoint, Label: "InOp", Geometry: `{"type":"Point","coordinates":[0,0]}`,
+		Category: CategoryGeneral, Status: "active", OperationID: op.ID,
+	})
+	mgr.Create(Annotation{
+		Type: TypePoint, Label: "Outside", Geometry: `{"type":"Point","coordinates":[1,1]}`,
+		Category: CategoryGeneral, Status: "active",
+	})
+
+	filtered := mgr.AllFiltered(store.AnnotationFilter{OperationID: op.ID})
+	if len(filtered) != 1 {
+		t.Fatalf("expected 1 annotation for operation, got %d", len(filtered))
+	}
+	if filtered[0].Label != "InOp" {
+		t.Errorf("expected InOp, got %q", filtered[0].Label)
+	}
+}
+
+// --- Phase E (#57): APRS Object Bridge Tests ---
+
+func newTestObjManager() *object.Manager {
+	noop := func(frame aprs.APRSFrame) error { return nil }
+	return object.NewManager("TEST", 0, noop, object.ManagerConfig{
+		RetransmitInterval: time.Minute,
+	})
+}
+
+func TestPromoteToObject(t *testing.T) {
+	mgr := newTestManager(t)
+	objMgr := newTestObjManager()
+	mgr.SetObjectManager(objMgr)
+
+	ann, err := mgr.Create(Annotation{
+		Type:     TypePoint,
+		Label:    "Aid Stn",
+		Geometry: `{"type":"Point","coordinates":[-118.24,34.05]}`,
+		Category: CategoryResource,
+		Status:   "active",
+	})
+	if err != nil {
+		t.Fatalf("Create: %v", err)
+	}
+
+	result, err := mgr.PromoteToObject(ann.ID)
+	if err != nil {
+		t.Fatalf("PromoteToObject: %v", err)
+	}
+	if result.ID != ann.ID {
+		t.Errorf("ID: got %q, want %q", result.ID, ann.ID)
+	}
+	if !mgr.IsTransmitting(ann.ID) {
+		t.Error("annotation should be transmitting")
+	}
+
+	// Promoting again should fail (already transmitting).
+	_, err = mgr.PromoteToObject(ann.ID)
+	if err == nil {
+		t.Error("expected error for already transmitting annotation")
+	}
+}
+
+func TestPromoteToObjectNonPoint(t *testing.T) {
+	mgr := newTestManager(t)
+	objMgr := newTestObjManager()
+	mgr.SetObjectManager(objMgr)
+
+	ann, err := mgr.Create(Annotation{
+		Type:     TypeLine,
+		Label:    "Route Alpha",
+		Geometry: `{"type":"LineString","coordinates":[[0,0],[1,1]]}`,
+		Category: CategoryRoute,
+		Status:   "planned",
+	})
+	if err != nil {
+		t.Fatalf("Create: %v", err)
+	}
+
+	_, err = mgr.PromoteToObject(ann.ID)
+	if err == nil {
+		t.Error("expected error for non-point annotation")
+	}
+}
+
+func TestStopTransmitting(t *testing.T) {
+	mgr := newTestManager(t)
+	objMgr := newTestObjManager()
+	mgr.SetObjectManager(objMgr)
+
+	ann, _ := mgr.Create(Annotation{
+		Type:     TypePoint,
+		Label:    "Test",
+		Geometry: `{"type":"Point","coordinates":[0,0]}`,
+		Category: CategoryGeneral,
+		Status:   "active",
+	})
+	mgr.PromoteToObject(ann.ID)
+
+	if err := mgr.StopTransmitting(ann.ID); err != nil {
+		t.Fatalf("StopTransmitting: %v", err)
+	}
+	if mgr.IsTransmitting(ann.ID) {
+		t.Error("annotation should not be transmitting after stop")
+	}
+
+	// Stopping again should fail.
+	err := mgr.StopTransmitting(ann.ID)
+	if err == nil {
+		t.Error("expected error for non-transmitting annotation")
+	}
+}
+
+func TestObjectNameTruncation(t *testing.T) {
+	mgr := newTestManager(t)
+	objMgr := newTestObjManager()
+	mgr.SetObjectManager(objMgr)
+
+	// Label longer than 9 chars should be truncated for APRS Object name.
+	ann, _ := mgr.Create(Annotation{
+		Type:     TypePoint,
+		Label:    "VeryLongAidStationName",
+		Geometry: `{"type":"Point","coordinates":[0,0]}`,
+		Category: CategoryResource,
+		Status:   "active",
+	})
+
+	_, err := mgr.PromoteToObject(ann.ID)
+	if err != nil {
+		t.Fatalf("PromoteToObject: %v", err)
+	}
+
+	// Verify the object was created with truncated name.
+	objects := objMgr.OwnObjects()
+	found := false
+	for _, obj := range objects {
+		if obj.Name == "VeryLongA" {
+			found = true
+			break
+		}
+	}
+	if !found {
+		names := make([]string, len(objects))
+		for i, obj := range objects {
+			names[i] = obj.Name
+		}
+		t.Errorf("expected object with truncated name 'VeryLongA', got objects: %v", names)
+	}
+}
+
+func TestPromoteToObjectNoObjectManager(t *testing.T) {
+	mgr := newTestManager(t)
+	// Do NOT set object manager.
+
+	ann, _ := mgr.Create(Annotation{
+		Type:     TypePoint,
+		Label:    "Test",
+		Geometry: `{"type":"Point","coordinates":[0,0]}`,
+		Category: CategoryGeneral,
+		Status:   "active",
+	})
+
+	_, err := mgr.PromoteToObject(ann.ID)
+	if err == nil {
+		t.Error("expected error when object manager is nil")
+	}
+}
+
+func TestPromoteToObjectNotFound(t *testing.T) {
+	mgr := newTestManager(t)
+	objMgr := newTestObjManager()
+	mgr.SetObjectManager(objMgr)
+
+	_, err := mgr.PromoteToObject("nonexistent")
+	if err == nil {
+		t.Error("expected error for nonexistent annotation")
 	}
 }
 

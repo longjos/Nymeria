@@ -1,9 +1,9 @@
 <script lang="ts">
 	import { api } from '$lib/api';
-	import { canPlot } from '$lib/stores/session';
-	import { annotationList } from '$lib/stores/annotations';
+	import { canPlot, canOperate } from '$lib/stores/session';
+	import { annotationList, operations, activeOperationId } from '$lib/stores/annotations';
 	import { timeAgo } from '$lib/utils';
-	import type { Annotation, AnnotationCategory, AnnotationPriority } from '$lib/types';
+	import type { Annotation, AnnotationCategory, AnnotationPriority, AnnotationTemplate } from '$lib/types';
 	import {
 		categoryMeta, statusMeta, priorityMeta, allCategories,
 		statusLabelToValue, statusValueToLabel, statusColor, isTerminalStatus
@@ -36,6 +36,10 @@
 	// Edit mode state
 	let editingId = $state<string | null>(null);
 	let editGeometry = $state<string | null>(null);
+
+	// Template state
+	let templates = $state<AnnotationTemplate[]>([]);
+	let showTemplates = $state(false);
 
 	// Filter state
 	let filterCategory = $state<AnnotationCategory | ''>('');
@@ -95,6 +99,23 @@
 		formDescription = '';
 		formColor = '#e63946';
 		formPriority = 'routine';
+		pendingGeometry = null;
+		waitingForDraw = false;
+		showTemplates = false;
+		// Load templates if needed.
+		if (templates.length === 0) {
+			api.annotationTemplates().then((t) => templates = t).catch(() => {});
+		}
+	}
+
+	function handleSelectTemplate(tmpl: AnnotationTemplate) {
+		formCategory = tmpl.category;
+		formType = tmpl.type;
+		formLabel = tmpl.name;
+		formDescription = tmpl.description;
+		formPriority = tmpl.defaultPriority;
+		formColor = categoryMeta[tmpl.category]?.defaultColor || '#e63946';
+		showTemplates = false;
 		pendingGeometry = null;
 		waitingForDraw = false;
 	}
@@ -160,6 +181,42 @@
 	async function handleStatusChange(ann: Annotation, newStatus: string) {
 		statusDropdownId = null;
 		await api.changeAnnotationStatus(ann.id, newStatus);
+	}
+
+	async function handlePromoteToMission(ann: Annotation, e: MouseEvent) {
+		e.stopPropagation();
+		try {
+			await api.promoteAnnotation(ann.id);
+		} catch (err: any) {
+			console.error('Promote failed:', err.message);
+		}
+	}
+
+	async function handleUnlink(ann: Annotation, e: MouseEvent) {
+		e.stopPropagation();
+		try {
+			await api.unlinkAnnotation(ann.id);
+		} catch (err: any) {
+			console.error('Unlink failed:', err.message);
+		}
+	}
+
+	async function handleTransmit(ann: Annotation, e: MouseEvent) {
+		e.stopPropagation();
+		try {
+			await api.transmitAnnotation(ann.id);
+		} catch (err: any) {
+			console.error('Transmit failed:', err.message);
+		}
+	}
+
+	async function handleStopTransmit(ann: Annotation, e: MouseEvent) {
+		e.stopPropagation();
+		try {
+			await api.stopTransmitAnnotation(ann.id);
+		} catch (err: any) {
+			console.error('Stop transmit failed:', err.message);
+		}
 	}
 
 	function toggleStatusDropdown(id: string, e: MouseEvent) {
@@ -249,6 +306,40 @@
 
 	{#if creating}
 		<div class="create-form">
+			<!-- Template picker toggle -->
+			{#if templates.length > 0}
+				<button class="template-toggle" onclick={() => showTemplates = !showTemplates}>
+					<svg width="12" height="12" viewBox="0 0 16 16" fill="none">
+						<path d="M4 2h8v12H4zM7 5h2M7 8h2M7 11h2" stroke="currentColor" stroke-width="1.2" fill="none" stroke-linecap="round"/>
+					</svg>
+					{showTemplates ? 'Hide templates' : 'Use a template'}
+					<svg width="10" height="10" viewBox="0 0 16 16" fill="none" class:rotated={showTemplates}>
+						<path d="M4 6l4 4 4-4" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/>
+					</svg>
+				</button>
+			{/if}
+
+			{#if showTemplates}
+				<div class="template-packs">
+					{#each ['event', 'sar', 'disaster'] as pack}
+						{@const packTemplates = templates.filter((t) => t.pack === pack)}
+						{#if packTemplates.length > 0}
+							<div class="template-pack">
+								<span class="pack-label">{pack.charAt(0).toUpperCase() + pack.slice(1)}</span>
+								{#each packTemplates as tmpl}
+									<button class="template-item" onclick={() => handleSelectTemplate(tmpl)}>
+										<svg width="12" height="12" viewBox="0 0 16 16" fill="none">
+											<path d={categoryMeta[tmpl.category]?.icon || ''} stroke="currentColor" stroke-width="1.2" fill="none" stroke-linecap="round" stroke-linejoin="round"/>
+										</svg>
+										{tmpl.name}
+									</button>
+								{/each}
+							</div>
+						{/if}
+					{/each}
+				</div>
+			{/if}
+
 			<!-- Category selector -->
 			<div class="category-grid">
 				{#each allCategories as cat}
@@ -403,6 +494,33 @@
 							{/if}
 							&middot; {timeAgo(ann.createdAt)}
 						</span>
+						{#if ann.missionId}
+							<span class="mission-badge">
+								<svg width="10" height="10" viewBox="0 0 16 16" fill="none"><path d="M4 2h8v12H4zM7 5h2M7 8h2" stroke="currentColor" stroke-width="1.2" fill="none" stroke-linecap="round"/></svg>
+								Linked to mission
+								{#if $canPlot}
+									<button class="unlink-btn" onclick={(e) => handleUnlink(ann, e)}>Unlink</button>
+								{/if}
+							</span>
+						{:else if $canPlot && ann.type === 'point' && !isTerminalStatus(ann.status)}
+							<button class="promote-btn" onclick={(e) => handlePromoteToMission(ann, e)}>
+								<svg width="10" height="10" viewBox="0 0 16 16" fill="none"><path d="M4 2h8v12H4zM7 5h2M7 8h2" stroke="currentColor" stroke-width="1.2" fill="none" stroke-linecap="round"/></svg>
+								Create Mission
+							</button>
+						{/if}
+						{#if $canOperate && ann.type === 'point' && !isTerminalStatus(ann.status)}
+							{#if ann.transmitting}
+								<button class="transmit-btn active" onclick={(e) => handleStopTransmit(ann, e)}>
+									<svg width="10" height="10" viewBox="0 0 16 16" fill="none"><path d="M8 2v12M4 6l4-4 4 4M3 10a5 5 0 0 0 10 0" stroke="currentColor" stroke-width="1.2" fill="none" stroke-linecap="round"/></svg>
+									Stop TX
+								</button>
+							{:else}
+								<button class="transmit-btn" onclick={(e) => handleTransmit(ann, e)}>
+									<svg width="10" height="10" viewBox="0 0 16 16" fill="none"><path d="M8 2v12M4 6l4-4 4 4M3 10a5 5 0 0 0 10 0" stroke="currentColor" stroke-width="1.2" fill="none" stroke-linecap="round"/></svg>
+									Transmit
+								</button>
+							{/if}
+						{/if}
 						{#if colorEditId === ann.id}
 							<!-- svelte-ignore a11y_no_static_element_interactions -->
 							<div class="inline-swatches" onclick={(e) => e.stopPropagation()}>
@@ -967,6 +1085,82 @@
 		font-weight: 600;
 	}
 
+	.mission-badge {
+		display: flex;
+		align-items: center;
+		gap: 4px;
+		font-size: 0.68rem;
+		color: var(--color-accent);
+		padding: 2px 0;
+	}
+
+	.unlink-btn {
+		margin-left: 4px;
+		padding: 0 4px;
+		background: none;
+		border: 1px solid var(--color-primary);
+		border-radius: 4px;
+		color: var(--color-text-muted);
+		font-size: 0.62rem;
+		cursor: pointer;
+		transition: color var(--duration-fast), border-color var(--duration-fast);
+	}
+
+	.unlink-btn:hover {
+		color: var(--color-accent);
+		border-color: var(--color-accent);
+	}
+
+	.promote-btn {
+		display: flex;
+		align-items: center;
+		gap: 3px;
+		padding: 2px 6px;
+		background: none;
+		border: 1px solid var(--color-primary);
+		border-radius: 4px;
+		color: var(--color-text-muted);
+		font-size: 0.68rem;
+		cursor: pointer;
+		transition: color var(--duration-fast), border-color var(--duration-fast);
+		margin-top: 2px;
+	}
+
+	.promote-btn:hover {
+		color: var(--color-accent);
+		border-color: var(--color-accent);
+	}
+
+	.transmit-btn {
+		display: flex;
+		align-items: center;
+		gap: 3px;
+		padding: 2px 6px;
+		background: none;
+		border: 1px solid var(--color-primary);
+		border-radius: 4px;
+		color: var(--color-text-muted);
+		font-size: 0.68rem;
+		cursor: pointer;
+		white-space: nowrap;
+	}
+
+	.transmit-btn:hover {
+		color: var(--color-accent);
+		border-color: var(--color-accent);
+	}
+
+	.transmit-btn.active {
+		color: #e63946;
+		border-color: #e63946;
+		animation: pulse-tx 1.5s ease-in-out infinite;
+	}
+
+	@keyframes pulse-tx {
+		0%, 100% { opacity: 1; }
+		50% { opacity: 0.5; }
+	}
+
 	.inline-swatches {
 		display: flex;
 		gap: 4px;
@@ -1089,5 +1283,73 @@
 		line-height: 1.4;
 		margin-top: 0.5rem;
 		opacity: 0.7;
+	}
+
+	/* Template picker */
+	.template-toggle {
+		display: flex;
+		align-items: center;
+		gap: 4px;
+		padding: 4px 8px;
+		background: none;
+		border: 1px solid var(--color-primary);
+		border-radius: var(--radius-sm);
+		color: var(--color-text-muted);
+		font-size: 0.75rem;
+		cursor: pointer;
+		transition: border-color var(--duration-fast), color var(--duration-fast);
+	}
+
+	.template-toggle:hover {
+		border-color: var(--color-accent);
+		color: var(--color-text);
+	}
+
+	.template-toggle svg.rotated {
+		transform: rotate(180deg);
+	}
+
+	.template-packs {
+		display: flex;
+		flex-direction: column;
+		gap: 6px;
+		padding: 6px;
+		background: var(--color-surface);
+		border: 1px solid var(--color-primary);
+		border-radius: var(--radius-sm);
+	}
+
+	.template-pack {
+		display: flex;
+		flex-direction: column;
+		gap: 2px;
+	}
+
+	.pack-label {
+		font-size: 0.65rem;
+		font-weight: 600;
+		color: var(--color-text-muted);
+		text-transform: uppercase;
+		letter-spacing: 0.05em;
+		padding: 0 4px;
+	}
+
+	.template-item {
+		display: flex;
+		align-items: center;
+		gap: 6px;
+		padding: 4px 8px;
+		background: none;
+		border: none;
+		border-radius: 4px;
+		color: var(--color-text);
+		font-size: 0.75rem;
+		text-align: left;
+		cursor: pointer;
+		transition: background var(--duration-fast);
+	}
+
+	.template-item:hover {
+		background: var(--color-primary);
 	}
 </style>

@@ -1,7 +1,8 @@
 import type {
 	Station, Message, Conversation, Bulletin, HealthResponse, TransportStatus,
 	SessionUser, PublicUser, ConfigResponse, Annotation, ActivityResponse,
-	Net, NetCheckIn, NetMission, NetNote, NetEvent, NetSummary, TacticalAlias
+	Net, NetCheckIn, NetMission, NetNote, NetEvent, NetSummary, TacticalAlias,
+	AnnotationTemplate, Operation
 } from './types';
 
 const BASE = '/api';
@@ -120,6 +121,19 @@ export const api = {
 	updateAnnotation: (id: string, ann: Partial<Annotation>) => put<Annotation>(`/annotations/${id}`, ann),
 	deleteAnnotation: (id: string) => del<{ status: string }>(`/annotations/${id}`),
 	changeAnnotationStatus: (id: string, status: string) => post<Annotation>(`/annotations/${id}/status`, { status }),
+	promoteAnnotation: (id: string) => post<{ annotation: Annotation; mission: NetMission }>(`/annotations/${id}/promote`, {}),
+	unlinkAnnotation: (id: string) => del<Annotation>(`/annotations/${id}/link`),
+
+	// Templates & Operations
+	annotationTemplates: () => get<AnnotationTemplate[]>('/annotation-templates'),
+	operations: () => get<Operation[]>('/operations'),
+	operation: (id: string) => get<Operation>(`/operations/${id}`),
+	createOperation: (data: Partial<Operation>) => post<Operation>('/operations', data),
+	archiveOperation: (id: string) => post<Operation>(`/operations/${id}/archive`, {}),
+
+	// APRS Object Bridge
+	transmitAnnotation: (id: string) => post<Annotation>(`/annotations/${id}/transmit`, {}),
+	stopTransmitAnnotation: (id: string) => del<{ status: string }>(`/annotations/${id}/transmit`),
 
 	// Activity
 	activity: (params?: Record<string, string>) => {

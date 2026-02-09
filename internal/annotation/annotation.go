@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/google/uuid"
+	"github.com/narvel/nymeria/internal/object"
 	"github.com/narvel/nymeria/internal/store"
 )
 
@@ -132,32 +133,47 @@ type Event struct {
 
 // Manager manages annotations with persistence and events.
 type Manager struct {
-	store       store.Store
-	mu          sync.RWMutex
-	annotations map[string]Annotation
-	events      chan Event
+	store        store.Store
+	mu           sync.RWMutex
+	annotations  map[string]Annotation
+	operations   map[string]store.Operation
+	events       chan Event
+	syncing      map[string]bool // loop guard for mission↔annotation status sync
+	objMgr       *object.Manager
+	transmitting map[string]string // annID → objID
 }
 
 // NewManager creates a new annotation Manager backed by the given store.
 func NewManager(s store.Store) *Manager {
 	return &Manager{
-		store:       s,
-		annotations: make(map[string]Annotation),
-		events:      make(chan Event, 64),
+		store:        s,
+		annotations:  make(map[string]Annotation),
+		operations:   make(map[string]store.Operation),
+		events:       make(chan Event, 64),
+		syncing:      make(map[string]bool),
+		transmitting: make(map[string]string),
 	}
 }
 
-// Load loads annotations from the store into the in-memory cache.
+// Load loads annotations and operations from the store into the in-memory cache.
 func (m *Manager) Load() error {
 	loaded, err := m.store.LoadAnnotations()
 	if err != nil {
 		return fmt.Errorf("load annotations: %w", err)
 	}
 
+	ops, err := m.store.LoadOperations()
+	if err != nil {
+		return fmt.Errorf("load operations: %w", err)
+	}
+
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	for _, a := range loaded {
 		m.annotations[a.ID] = a
+	}
+	for _, op := range ops {
+		m.operations[op.ID] = op
 	}
 	return nil
 }
@@ -340,6 +356,325 @@ func (m *Manager) ChangeStatus(id, newStatus string) (*Annotation, error) {
 	m.emit(Event{Type: EventAnnotationStatusChanged, Data: ann})
 
 	return &ann, nil
+}
+
+// GetByMissionID returns an annotation linked to a mission by its MissionID.
+func (m *Manager) GetByMissionID(missionID string) (*Annotation, bool) {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+
+	for _, a := range m.annotations {
+		if a.MissionID == missionID {
+			return &a, true
+		}
+	}
+	return nil, false
+}
+
+// CreateFromMission creates an annotation from a net mission's location data.
+func (m *Manager) CreateFromMission(mission store.NetMission, createdBy, createdByName string) (*Annotation, error) {
+	if mission.Lat == nil || mission.Lon == nil {
+		return nil, fmt.Errorf("mission has no location")
+	}
+
+	geom := fmt.Sprintf(`{"type":"Point","coordinates":[%f,%f]}`, *mission.Lon, *mission.Lat)
+
+	return m.Create(Annotation{
+		Type:          TypePoint,
+		Label:         mission.Title,
+		Description:   mission.Description,
+		Geometry:      geom,
+		Category:      CategoryAssignment,
+		Priority:      mission.Priority,
+		MissionID:     mission.ID,
+		CreatedBy:     createdBy,
+		CreatedByName: createdByName,
+	})
+}
+
+// missionToAnnotationStatus maps net mission status to annotation status.
+var missionToAnnotationStatus = map[string]string{
+	"open":     "planned",
+	"active":   "in-progress",
+	"complete": "complete",
+}
+
+// annotationToMissionStatus maps annotation status to net mission status.
+var annotationToMissionStatus = map[string]string{
+	"planned":     "open",
+	"assigned":    "active",
+	"in-progress": "active",
+	"complete":    "complete",
+	"incomplete":  "complete",
+	"resolved":    "complete",
+	"closed":      "complete",
+	"cleared":     "complete",
+}
+
+// SyncStatusFromMission updates an annotation's status when its linked mission changes.
+func (m *Manager) SyncStatusFromMission(missionID, missionStatus string) error {
+	m.mu.RLock()
+	syncing := m.syncing[missionID]
+	m.mu.RUnlock()
+	if syncing {
+		return nil // loop guard
+	}
+
+	ann, found := m.GetByMissionID(missionID)
+	if !found {
+		return nil
+	}
+
+	newStatus, ok := missionToAnnotationStatus[missionStatus]
+	if !ok {
+		return nil
+	}
+	if ann.Status == newStatus {
+		return nil
+	}
+
+	// Verify the status is valid for this category.
+	if err := ValidateStatusForCategory(ann.Category, newStatus); err != nil {
+		return nil // silently skip if invalid
+	}
+
+	m.mu.Lock()
+	m.syncing[missionID] = true
+	m.mu.Unlock()
+	defer func() {
+		m.mu.Lock()
+		delete(m.syncing, missionID)
+		m.mu.Unlock()
+	}()
+
+	_, err := m.ChangeStatus(ann.ID, newStatus)
+	return err
+}
+
+// SyncStatusToMission returns the mapped mission status for an annotation's current status.
+func (m *Manager) SyncStatusToMission(annID string) (missionID string, missionStatus string, err error) {
+	ann, found := m.Get(annID)
+	if !found {
+		return "", "", fmt.Errorf("annotation %q not found", annID)
+	}
+	if ann.MissionID == "" {
+		return "", "", fmt.Errorf("annotation has no linked mission")
+	}
+
+	mapped, ok := annotationToMissionStatus[ann.Status]
+	if !ok {
+		mapped = "open"
+	}
+	return ann.MissionID, mapped, nil
+}
+
+// ClearMissionLink removes the mission link from an annotation.
+func (m *Manager) ClearMissionLink(id string) (*Annotation, error) {
+	m.mu.RLock()
+	ann, exists := m.annotations[id]
+	m.mu.RUnlock()
+
+	if !exists {
+		return nil, fmt.Errorf("annotation %q not found", id)
+	}
+
+	ann.MissionID = ""
+	ann.UpdatedAt = time.Now().UTC()
+
+	if err := m.store.SaveAnnotation(ann); err != nil {
+		return nil, fmt.Errorf("persist annotation: %w", err)
+	}
+
+	m.mu.Lock()
+	m.annotations[id] = ann
+	m.mu.Unlock()
+
+	m.emit(Event{Type: EventAnnotationUpdated, Data: ann})
+	return &ann, nil
+}
+
+// --- Operation management ---
+
+// CreateOperation creates a new operation.
+func (m *Manager) CreateOperation(op store.Operation) (*store.Operation, error) {
+	if strings.TrimSpace(op.Name) == "" {
+		return nil, fmt.Errorf("operation name is required")
+	}
+
+	op.ID = uuid.New().String()
+	now := time.Now().UTC()
+	op.CreatedAt = now
+	if op.Status == "" {
+		op.Status = "active"
+	}
+
+	if err := m.store.SaveOperation(op); err != nil {
+		return nil, fmt.Errorf("persist operation: %w", err)
+	}
+
+	m.mu.Lock()
+	m.operations[op.ID] = op
+	m.mu.Unlock()
+
+	return &op, nil
+}
+
+// AllOperations returns all operations.
+func (m *Manager) AllOperations() []store.Operation {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+
+	result := make([]store.Operation, 0, len(m.operations))
+	for _, op := range m.operations {
+		result = append(result, op)
+	}
+	return result
+}
+
+// GetOperation returns an operation by ID.
+func (m *Manager) GetOperation(id string) (*store.Operation, bool) {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+
+	op, ok := m.operations[id]
+	if !ok {
+		return nil, false
+	}
+	return &op, true
+}
+
+// ArchiveOperation archives an operation and expires all linked annotations.
+func (m *Manager) ArchiveOperation(id string) error {
+	m.mu.RLock()
+	op, ok := m.operations[id]
+	m.mu.RUnlock()
+	if !ok {
+		return fmt.Errorf("operation %q not found", id)
+	}
+
+	now := time.Now().UTC()
+	op.Status = "archived"
+	op.ArchivedAt = &now
+
+	if err := m.store.SaveOperation(op); err != nil {
+		return fmt.Errorf("persist operation: %w", err)
+	}
+
+	m.mu.Lock()
+	m.operations[id] = op
+
+	// Expire all annotations linked to this operation.
+	for annID, ann := range m.annotations {
+		if ann.OperationID == id && ann.ExpiresAt == nil {
+			ann.ExpiresAt = &now
+			m.annotations[annID] = ann
+			m.store.SaveAnnotation(ann)
+		}
+	}
+	m.mu.Unlock()
+
+	return nil
+}
+
+// --- APRS Object Bridge ---
+
+// SetObjectManager sets the object manager for APRS object bridging.
+func (m *Manager) SetObjectManager(om *object.Manager) {
+	m.objMgr = om
+}
+
+// geojsonPoint is used for extracting coordinates from GeoJSON Point geometry.
+type geojsonPoint struct {
+	Type        string    `json:"type"`
+	Coordinates []float64 `json:"coordinates"`
+}
+
+// PromoteToObject transmits an annotation as an APRS Object.
+func (m *Manager) PromoteToObject(id string) (*Annotation, error) {
+	if m.objMgr == nil {
+		return nil, fmt.Errorf("object manager not available")
+	}
+
+	m.mu.RLock()
+	ann, exists := m.annotations[id]
+	_, alreadyTx := m.transmitting[id]
+	m.mu.RUnlock()
+
+	if !exists {
+		return nil, fmt.Errorf("annotation %q not found", id)
+	}
+	if alreadyTx {
+		return nil, fmt.Errorf("annotation is already being transmitted")
+	}
+	if ann.Type != TypePoint {
+		return nil, fmt.Errorf("only point annotations can be transmitted as APRS objects")
+	}
+
+	// Extract lat/lon from GeoJSON.
+	var pt geojsonPoint
+	if err := json.Unmarshal([]byte(ann.Geometry), &pt); err != nil || len(pt.Coordinates) < 2 {
+		return nil, fmt.Errorf("cannot extract coordinates from geometry")
+	}
+	lon, lat := pt.Coordinates[0], pt.Coordinates[1]
+
+	// Truncate label to 9 chars for APRS Object name.
+	name := ann.Label
+	if len(name) > 9 {
+		name = name[:9]
+	}
+
+	sym := SymbolForCategory(ann.Category)
+
+	obj, err := m.objMgr.CreateObject(object.Object{
+		Name:    name,
+		Lat:     lat,
+		Lon:     lon,
+		Symbol:  sym,
+		Comment: ann.Description,
+		Live:    true,
+	})
+	if err != nil {
+		return nil, fmt.Errorf("create APRS object: %w", err)
+	}
+
+	m.mu.Lock()
+	m.transmitting[id] = obj.ID
+	m.mu.Unlock()
+
+	return &ann, nil
+}
+
+// StopTransmitting kills the APRS Object for an annotation.
+func (m *Manager) StopTransmitting(id string) error {
+	if m.objMgr == nil {
+		return fmt.Errorf("object manager not available")
+	}
+
+	m.mu.RLock()
+	objID, ok := m.transmitting[id]
+	m.mu.RUnlock()
+
+	if !ok {
+		return fmt.Errorf("annotation %q is not being transmitted", id)
+	}
+
+	if err := m.objMgr.KillObject(objID); err != nil {
+		return fmt.Errorf("kill APRS object: %w", err)
+	}
+
+	m.mu.Lock()
+	delete(m.transmitting, id)
+	m.mu.Unlock()
+
+	return nil
+}
+
+// IsTransmitting returns whether an annotation is currently being transmitted.
+func (m *Manager) IsTransmitting(id string) bool {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+	_, ok := m.transmitting[id]
+	return ok
 }
 
 // Events returns the events channel for WebSocket broadcast.
