@@ -29,6 +29,9 @@ nymeria.yml
 *.db-wal
 *.sqlite
 
+# Cached map tiles
+/tiles/
+
 # Environment
 .env
 .env.*

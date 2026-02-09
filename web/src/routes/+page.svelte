@@ -18,14 +18,16 @@
 	import ConnectionStatus from '$lib/components/ConnectionStatus.svelte';
 	import SearchOverlay from '$lib/components/SearchOverlay.svelte';
 	import LoginOverlay from '$lib/components/LoginOverlay.svelte';
+	import CommandPalette from '$lib/components/CommandPalette.svelte';
 	import { stations, stationList, initStationStore } from '$lib/stores/stations';
 	import { initMessageStore, conversationList } from '$lib/stores/messages';
 	import { initTransportStore } from '$lib/stores/transports';
 	import { annotationList, initAnnotationStore } from '$lib/stores/annotations';
+	import { api } from '$lib/api';
 	import {
 		initNetControlStore,
 		activeNet, operatorsWithPosition, missionsWithPosition, assignmentLines,
-		opsView
+		opsView, hoveredMissionId, hoveredCheckInId
 	} from '$lib/stores/netcontrol';
 	import { initTacticalStore } from '$lib/stores/tactical';
 	import { initBulletinStore } from '$lib/stores/bulletins';
@@ -33,13 +35,14 @@
 	import {
 		selectedStation, panelMode, detailTab, searchOpen, sheetState,
 		selectStation, closePanel, openStationList, openMessages, openConversation, openTransports, openActivity, openAnnotations, openNetControl, openBulletins, openICS309,
-		togglePanel
+		togglePanel, commandPaletteOpen, toggleCommandPalette
 	} from '$lib/stores/ui';
 	import type { SheetState, DetailTab, PanelMode } from '$lib/stores/ui';
 	import type { Annotation } from '$lib/types';
 
 	let isDesktop = $state(true);
 	let flyToTarget = $state<{ lat: number; lon: number; zoom?: number } | null>(null);
+	let flyToBounds = $state<Array<{ lat: number; lon: number }> | null>(null);
 	let sessionReady = $state(false);
 	let drawingMode = $state<'point' | 'line' | 'area' | null>(null);
 	let previewGeometry = $state<string | null>(null);
@@ -134,10 +137,18 @@
 		flyToTarget = { lat, lon, zoom: 15 };
 	}
 
-	function handleSetOpsView() {
+	function handleFlyToBounds(coords: Array<{ lat: number; lon: number }>) {
+		flyToBounds = coords;
+		setTimeout(() => { flyToBounds = null; }, 100);
+	}
+
+	async function handleSetOpsView() {
 		const vp = mapRef?.getViewport();
-		if (vp) {
+		if (vp && $activeNet) {
 			opsView.set(vp);
+			try {
+				await api.setOpsView($activeNet.id, vp.lat, vp.lon, vp.zoom);
+			} catch { /* best-effort persist */ }
 		}
 	}
 
@@ -201,7 +212,30 @@
 	function handleRailToggle(mode: PanelMode) {
 		togglePanel(mode);
 	}
+
+	function handleGlobalKeydown(e: KeyboardEvent) {
+		// Ctrl+K / Cmd+K → toggle command palette
+		if ((e.ctrlKey || e.metaKey) && e.key === 'k') {
+			e.preventDefault();
+			toggleCommandPalette();
+			return;
+		}
+		// '/' when not in input/textarea → open command palette
+		if (e.key === '/' && !$commandPaletteOpen) {
+			const tag = (e.target as HTMLElement)?.tagName;
+			if (tag !== 'INPUT' && tag !== 'TEXTAREA' && !(e.target as HTMLElement)?.isContentEditable) {
+				e.preventDefault();
+				commandPaletteOpen.set(true);
+			}
+		}
+	}
+
+	function handlePaletteFlyTo(lat: number, lon: number) {
+		flyToTarget = { lat, lon, zoom: 15 };
+	}
 </script>
+
+<svelte:window onkeydown={handleGlobalKeydown} />
 
 <svelte:head>
 	<title>Nymeria - APRS Client</title>
@@ -237,8 +271,22 @@
 			activeNetId={$activeNet?.id ?? null}
 			onNetOperatorClick={handleNetOperatorClick}
 			onNetMissionClick={handleNetMissionClick}
+			{flyToBounds}
+			highlightedMissionId={$hoveredMissionId}
+			highlightedCheckInId={$hoveredCheckInId}
 		/>
 	</div>
+
+	<!-- Floating Ops View restore button -->
+	{#if $opsView && $activeNet}
+		<button class="ops-view-fab" onclick={handleGoToOpsView} title="Return to Ops View">
+			<svg width="18" height="18" viewBox="0 0 16 16" fill="none">
+				<circle cx="8" cy="7" r="3" stroke="currentColor" stroke-width="1.5"/>
+				<path d="M8 1C4.5 1 1.5 3.5 1 7c.5 3.5 3.5 6 7 6s6.5-2.5 7-6c-.5-3.5-3.5-6-7-6z" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/>
+				<path d="M8 13v2" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/>
+			</svg>
+		</button>
+	{/if}
 
 	<!-- Desktop: Activity Rail (right edge) -->
 	{#if isDesktop}
@@ -247,6 +295,7 @@
 			unreadCount={totalUnread}
 			onToggle={handleRailToggle}
 			onSelectStation={handleSearchSelect}
+			onCommandPalette={toggleCommandPalette}
 		/>
 	{/if}
 
@@ -259,6 +308,7 @@
 		onTransportsOpen={openTransports}
 		onAnnotationsOpen={openAnnotations}
 		onNetControlOpen={openNetControl}
+		onCommandPalette={toggleCommandPalette}
 	/>
 
 	<!-- Desktop: Side Panel -->
@@ -311,6 +361,7 @@
 			{:else if $panelMode === 'netcontrol'}
 				<NetControlPanel
 					onFlyTo={handleNetFlyTo}
+					onFlyToBounds={handleFlyToBounds}
 					onSetOpsView={handleSetOpsView}
 					onGoToOpsView={handleGoToOpsView}
 				/>
@@ -376,6 +427,7 @@
 			{:else if $panelMode === 'netcontrol'}
 				<NetControlPanel
 					onFlyTo={handleNetFlyTo}
+					onFlyToBounds={handleFlyToBounds}
 					onSetOpsView={handleSetOpsView}
 					onGoToOpsView={handleGoToOpsView}
 				/>
@@ -390,6 +442,14 @@
 		<SearchOverlay
 			onClose={() => searchOpen.set(false)}
 			onSelect={handleSearchSelect}
+		/>
+	{/if}
+
+	<!-- Command Palette (Ctrl+K) -->
+	{#if $commandPaletteOpen}
+		<CommandPalette
+			onFlyTo={handlePaletteFlyTo}
+			onClose={() => commandPaletteOpen.set(false)}
 		/>
 	{/if}
 </div>
@@ -419,5 +479,30 @@
 	.station-count {
 		font-size: 0.8rem;
 		color: var(--color-text-muted);
+	}
+
+	.ops-view-fab {
+		position: absolute;
+		top: 80px;
+		left: 10px;
+		z-index: var(--z-toolbar);
+		width: 40px;
+		height: 40px;
+		border-radius: 8px;
+		border: 2px solid #22c55e;
+		background: var(--color-surface);
+		background: rgba(var(--color-surface-rgb, 30, 30, 30), 0.9);
+		color: #22c55e;
+		display: flex;
+		align-items: center;
+		justify-content: center;
+		cursor: pointer;
+		box-shadow: 0 2px 8px rgba(0, 0, 0, 0.3);
+		transition: background 0.15s, border-color 0.15s;
+	}
+
+	.ops-view-fab:hover {
+		background: rgba(34, 197, 94, 0.15);
+		border-color: #4ade80;
 	}
 </style>

@@ -3,22 +3,27 @@
 	import { api } from '$lib/api';
 	import { timeAgo } from '$lib/utils';
 	import { openICS309 } from '$lib/stores/ui';
-	import type { Net, NetCheckIn, NetMission, NetEvent, OperatorStatus, TrafficType, Annotation } from '$lib/types';
+	import type { Net, NetCheckIn, NetMission, NetEvent, NetNote, OperatorStatus, TrafficType, Annotation, NoteCategory, NoteSeverity } from '$lib/types';
 	import {
-		activeNet, checkIns, missions, timeline,
+		activeNet, checkIns, missions, timeline, notes,
 		sortedCheckIns, activeCheckIns,
+		notesByCheckIn, notesByMission, pinnedNotes,
 		initNetControlStore, loadNetData, clearNetControl,
-		opsView
+		opsView,
+		hoveredMissionId, highlightedCheckIns,
+		hoveredCheckInId
 	} from '$lib/stores/netcontrol';
 	import { annotationList } from '$lib/stores/annotations';
 	import { categoryMeta, isTerminalStatus } from '$lib/annotationMeta';
 
 	let {
 		onFlyTo,
+		onFlyToBounds,
 		onSetOpsView,
 		onGoToOpsView,
 	}: {
 		onFlyTo?: (lat: number, lon: number) => void;
+		onFlyToBounds?: (coords: Array<{ lat: number; lon: number }>) => void;
 		onSetOpsView?: () => void;
 		onGoToOpsView?: () => void;
 	} = $props();
@@ -67,6 +72,8 @@
 
 	// Mission filter
 	let missionFilter = $state<'all' | 'active' | 'complete'>('all');
+	let recentlyChangedMissionId = $state<string | null>(null);
+	let recentlyChangedTimer: ReturnType<typeof setTimeout> | null = null;
 
 	// Highlighted check-in (dedup flash)
 	let highlightedCheckInId = $state<string | null>(null);
@@ -75,9 +82,39 @@
 	let expandedDeviceId = $state<string | null>(null);
 	let addDeviceCallsign = $state('');
 
-	// Inline note
+	// Note composer state
 	let noteCheckInId = $state<string | null>(null);
+	let noteMissionId = $state<string | null>(null);
 	let noteContent = $state('');
+	let noteCategory = $state<NoteCategory>('general');
+	let noteSeverity = $state<NoteSeverity>('info');
+	let showNetWideComposer = $state(false);
+
+	// Expanded note history on cards
+	let expandedNotesCheckInId = $state<string | null>(null);
+	let expandedNotesMissionId = $state<string | null>(null);
+
+	// Overflow menu
+	let overflowOpenId = $state<string | null>(null);
+
+	// Note category metadata
+	const noteCategoryMeta: Record<NoteCategory, { label: string; color: string; icon: string }> = {
+		general: { label: 'Gen', color: '#6b7280', icon: 'M12 19l9 2-9-18-9 18 9-2zm0 0v-8' },
+		medical: { label: 'Med', color: '#ef4444', icon: 'M12 2v20M2 12h20' },
+		logistical: { label: 'Log', color: '#3b82f6', icon: 'M1 3h22v18H1zM1 9h22' },
+		tactical: { label: 'Tac', color: '#8b5cf6', icon: 'M12 2l3 7h7l-5.5 4 2 7L12 16l-6.5 4 2-7L2 9h7z' },
+		weather: { label: 'Wx', color: '#06b6d4', icon: 'M3 15a4 4 0 014-4 4 4 0 017.87 3H16a3 3 0 010 6H7' },
+		resource: { label: 'Res', color: '#f59e0b', icon: 'M17 10V6a2 2 0 00-2-2H9a2 2 0 00-2 2v4M3 10h18v10H3z' },
+		hazard: { label: 'Haz', color: '#f97316', icon: 'M12 2L2 20h20L12 2zM12 10v4M12 17h.01' },
+		comms: { label: 'Com', color: '#6b7280', icon: 'M8.5 2A5.5 5.5 0 003 7.5v3A5.5 5.5 0 008.5 16H10v5l5-5h2.5A5.5 5.5 0 0023 10.5v-3A5.5 5.5 0 0017.5 2z' },
+	};
+
+	const severityMeta: Record<NoteSeverity, { label: string; color: string }> = {
+		info: { label: 'Info', color: '#6b7280' },
+		routine: { label: 'Routine', color: '#22c55e' },
+		priority: { label: 'Priority', color: '#f59e0b' },
+		urgent: { label: 'Urgent', color: '#ef4444' },
+	};
 
 	// Elapsed timer
 	let elapsed = $state('');
@@ -334,6 +371,10 @@
 		if (!$activeNet) return;
 		try {
 			await api.updateMission($activeNet.id, m.id, { status: status as any });
+			// Flash the card so the user can follow it after reorder.
+			if (recentlyChangedTimer) clearTimeout(recentlyChangedTimer);
+			recentlyChangedMissionId = m.id;
+			recentlyChangedTimer = setTimeout(() => { recentlyChangedMissionId = null; }, 2000);
 		} catch (e) {
 			console.error('Mission update failed:', e);
 		}
@@ -382,15 +423,35 @@
 		}
 	}
 
-	async function handleAddNote(checkInId?: string) {
+	function openNoteComposer(opts: { checkInId?: string; missionId?: string }) {
+		noteCheckInId = opts.checkInId ?? null;
+		noteMissionId = opts.missionId ?? null;
+		showNetWideComposer = !opts.checkInId && !opts.missionId;
+		noteContent = '';
+		noteCategory = 'general';
+		noteSeverity = 'info';
+	}
+
+	function closeNoteComposer() {
+		noteCheckInId = null;
+		noteMissionId = null;
+		showNetWideComposer = false;
+		noteContent = '';
+		noteCategory = 'general';
+		noteSeverity = 'info';
+	}
+
+	async function handleAddNote() {
 		if (!$activeNet || !noteContent.trim()) return;
 		try {
 			await api.addNetNote($activeNet.id, {
-				checkInId,
-				content: noteContent.trim()
+				checkInId: noteCheckInId ?? undefined,
+				missionId: noteMissionId ?? undefined,
+				content: noteContent.trim(),
+				category: noteCategory,
+				severity: noteSeverity,
 			});
-			noteContent = '';
-			noteCheckInId = null;
+			closeNoteComposer();
 		} catch (e) {
 			console.error('Add note failed:', e);
 		}
@@ -447,6 +508,98 @@
 		return `${min}m`;
 	}
 
+	function handleFlyToMission(m: NetMission) {
+		const coords: Array<{ lat: number; lon: number }> = [];
+
+		// Mission location
+		if (m.lat != null && m.lon != null) {
+			coords.push({ lat: m.lat, lon: m.lon });
+		}
+
+		// Assigned operator positions
+		const ops = operatorsForMission(m.id);
+		for (const op of ops) {
+			if (op.lat != null && op.lon != null) {
+				coords.push({ lat: op.lat, lon: op.lon });
+			}
+		}
+
+		// Linked annotation coordinates
+		const anns = annotationsForMission(m.id);
+		for (const ann of anns) {
+			if (!ann.geometry) continue;
+			try {
+				const geom = JSON.parse(ann.geometry);
+				if (geom.type === 'Point') {
+					coords.push({ lat: geom.coordinates[1], lon: geom.coordinates[0] });
+				} else if (geom.type === 'LineString') {
+					for (const c of geom.coordinates) {
+						coords.push({ lat: c[1], lon: c[0] });
+					}
+				} else if (geom.type === 'Polygon') {
+					for (const c of geom.coordinates[0]) {
+						coords.push({ lat: c[1], lon: c[0] });
+					}
+				}
+			} catch { /* skip malformed geometry */ }
+		}
+
+		if (coords.length > 0) {
+			onFlyToBounds?.(coords);
+		} else if (m.lat != null && m.lon != null) {
+			onFlyTo?.(m.lat, m.lon);
+		}
+	}
+
+	function handleAssignPickerHover(m: NetMission, ci: NetCheckIn) {
+		hoveredCheckInId.set(ci.id);
+		const coords: Array<{ lat: number; lon: number }> = [];
+
+		// Hovered candidate operator
+		if (ci.lat != null && ci.lon != null) {
+			coords.push({ lat: ci.lat, lon: ci.lon });
+		}
+
+		// Mission location
+		if (m.lat != null && m.lon != null) {
+			coords.push({ lat: m.lat, lon: m.lon });
+		}
+
+		// Already-assigned operator positions
+		const ops = operatorsForMission(m.id);
+		for (const op of ops) {
+			if (op.lat != null && op.lon != null) {
+				coords.push({ lat: op.lat, lon: op.lon });
+			}
+		}
+
+		// Linked annotation coordinates
+		const anns = annotationsForMission(m.id);
+		for (const ann of anns) {
+			if (!ann.geometry) continue;
+			try {
+				const geom = JSON.parse(ann.geometry);
+				if (geom.type === 'Point') {
+					coords.push({ lat: geom.coordinates[1], lon: geom.coordinates[0] });
+				} else if (geom.type === 'LineString') {
+					for (const c of geom.coordinates) {
+						coords.push({ lat: c[1], lon: c[0] });
+					}
+				} else if (geom.type === 'Polygon') {
+					for (const c of geom.coordinates[0]) {
+						coords.push({ lat: c[1], lon: c[0] });
+					}
+				}
+			} catch { /* skip */ }
+		}
+
+		if (coords.length > 1) {
+			onFlyToBounds?.(coords);
+		} else if (coords.length === 1) {
+			onFlyTo?.(coords[0].lat, coords[0].lon);
+		}
+	}
+
 	async function handleAssignOperatorToMission(missionId: string, ciId: string) {
 		if (!$activeNet) return;
 		try {
@@ -472,6 +625,18 @@
 			linkingAnnotationMissionId = null;
 		} catch (e) {
 			console.error('Link annotation to mission failed:', e);
+		}
+	}
+
+	async function handleTogglePin(noteId: string) {
+		if (!$activeNet) return;
+		try {
+			const updated = await api.toggleNotePin($activeNet.id, noteId);
+			notes.update((list) =>
+				list.map((n) => (n.id === noteId ? updated : n))
+			);
+		} catch (e) {
+			console.error('Toggle pin failed:', e);
 		}
 	}
 
@@ -501,6 +666,7 @@
 				if (timelineFilter === 'assignments' && e.type !== 'assignment' && e.type !== 'status_change') return false;
 				if (timelineFilter === 'missions' && e.type !== 'mission_created' && e.type !== 'mission_updated') return false;
 				if (timelineFilter === 'rollcalls' && e.type !== 'rollcall') return false;
+				if (timelineFilter === 'notes' && e.type !== 'note') return false;
 			}
 			if (timelineCallsignFilter.trim()) {
 				const q = timelineCallsignFilter.trim().toUpperCase();
@@ -509,6 +675,16 @@
 			return true;
 		}).reverse()
 	);
+
+	// Parse category from timeline note entries (format: "[CATEGORY] Note by ...")
+	function parseNoteCategory(summary: string): NoteCategory | null {
+		const match = summary.match(/^\[(\w+)\]/);
+		if (match) {
+			const cat = match[1].toLowerCase();
+			if (cat in noteCategoryMeta) return cat as NoteCategory;
+		}
+		return null;
+	}
 </script>
 
 <div class="net-panel">
@@ -582,34 +758,37 @@
 				{/if}
 			</div>
 			<div class="header-actions">
-				{#if $opsView}
-					<button class="action-btn ops-view-set" onclick={() => onGoToOpsView?.()} title="Return to Ops View">
-						<svg width="14" height="14" viewBox="0 0 16 16" fill="none">
-							<circle cx="8" cy="7" r="3" stroke="currentColor" stroke-width="1.5"/>
-							<path d="M8 1C4.5 1 1.5 3.5 1 7c.5 3.5 3.5 6 7 6s6.5-2.5 7-6c-.5-3.5-3.5-6-7-6z" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/>
-							<path d="M8 13v2" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/>
-						</svg>
-					</button>
-				{/if}
-				<button class="action-btn" onclick={() => onSetOpsView?.()} title={$opsView ? 'Update Ops View' : 'Set Ops View'}>
-					<svg width="14" height="14" viewBox="0 0 16 16" fill="none">
-						<circle cx="8" cy="7" r="3" stroke="currentColor" stroke-width="1.5"/>
-						<path d="M8 1C4.5 1 1.5 3.5 1 7c.5 3.5 3.5 6 7 6s6.5-2.5 7-6c-.5-3.5-3.5-6-7-6z" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/>
+				<button
+					class="action-btn"
+					class:ops-view-set={$opsView}
+					onclick={() => onSetOpsView?.()}
+					title="Save Ops View"
+				>
+					<svg width="16" height="16" viewBox="0 0 16 16" fill="none">
+						<circle cx="8" cy="8" r="6" stroke="currentColor" stroke-width="1.5"/>
+						<circle cx="8" cy="8" r="2" fill="currentColor"/>
+						<path d="M8 1v3M8 12v3M1 8h3M12 8h3" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/>
 					</svg>
 				</button>
 				<button class="action-btn" onclick={handleRollCall} title="Roll Call">
-					<svg width="14" height="14" viewBox="0 0 16 16" fill="none">
+					<svg width="16" height="16" viewBox="0 0 16 16" fill="none">
 						<path d="M1 8h3l2-5 3 10 2-5h4" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/>
 					</svg>
 				</button>
+				<button class="action-btn" onclick={() => openNoteComposer({})} title="Log Note">
+					<svg width="16" height="16" viewBox="0 0 16 16" fill="none">
+						<path d="M12 2l2 2-8 8H4v-2l8-8z" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/>
+						<path d="M2 14h12" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/>
+					</svg>
+				</button>
 				<button class="action-btn" onclick={() => openICS309($activeNet?.id)} title="ICS-309 Log">
-					<svg width="14" height="14" viewBox="0 0 16 16" fill="none">
+					<svg width="16" height="16" viewBox="0 0 16 16" fill="none">
 						<path d="M4 2h8a1 1 0 0 1 1 1v10a1 1 0 0 1-1 1H4a1 1 0 0 1-1-1V3a1 1 0 0 1 1-1z" stroke="currentColor" stroke-width="1.5"/>
 						<path d="M6 5h4M6 8h4M6 11h2" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/>
 					</svg>
 				</button>
 				<button class="action-btn danger" onclick={handleCloseNet} title="Close Net">
-					<svg width="14" height="14" viewBox="0 0 16 16" fill="none">
+					<svg width="16" height="16" viewBox="0 0 16 16" fill="none">
 						<path d="M4 4l8 8M12 4l-8 8" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/>
 					</svg>
 				</button>
@@ -668,10 +847,26 @@
 					{/if}
 				</div>
 
+				<!-- Pinned/urgent notes banner -->
+				{#if $pinnedNotes.length > 0}
+					<div class="pinned-banner">
+						{#each $pinnedNotes as pn}
+							{@const pnCat = noteCategoryMeta[pn.category as NoteCategory]}
+							<div class="pinned-note" style="--note-border-color: {pnCat?.color ?? '#6b7280'}">
+								<span class="pinned-icon">📌</span>
+								<span class="pinned-cat" style="background: {pnCat?.color ?? '#6b7280'}">{pn.category}</span>
+								<span class="pinned-text">{pn.content}</span>
+								<span class="pinned-age">{timeAgo(pn.createdAt)}</span>
+								<button class="pinned-remove" title="Unpin" onclick={() => handleTogglePin(pn.id)}>✕</button>
+							</div>
+						{/each}
+					</div>
+				{/if}
+
 				<!-- Roster -->
 				<div class="roster">
 					{#each $sortedCheckIns as ci (ci.id)}
-						<div class="operator-card" class:released={ci.status === 'released'} class:highlighted={highlightedCheckInId === ci.id}>
+						<div class="operator-card" class:released={ci.status === 'released'} class:highlighted={highlightedCheckInId === ci.id} class:mission-highlighted={$highlightedCheckIns.has(ci.id)}>
 							<div class="op-status-bar" style="background: {statusColors[ci.status]}"></div>
 							<div class="op-main">
 								<div class="op-header">
@@ -704,23 +899,82 @@
 									<div class="op-assignment">📋 {ci.assignment}</div>
 								{/if}
 								{#if ci.missionIds?.length > 0}
+									<div class="op-mission-chips">
 									{#each ci.missionIds as mid}
 										{@const linkedMission = $missions.find((m) => m.id === mid)}
 										{#if linkedMission}
-											<div class="op-mission-link">
-												<span class="mission-link-icon">🎯</span>
-												<span class="mission-link-title">{linkedMission.title}</span>
-												<button class="op-btn" title="Unassign mission" onclick={() => handleUnassignMission(ci.id, mid)}>✕</button>
-											</div>
+											<div
+													class="op-mission-chip"
+													class:chip-highlighted={$hoveredMissionId === mid}
+													style="--mission-color: {trafficColors[linkedMission.priority] ?? '#6b7280'}"
+													onmouseenter={() => hoveredMissionId.set(mid)}
+													onmouseleave={() => hoveredMissionId.set(null)}
+												>
+													<span class="mission-chip-dot"></span>
+													<span class="mission-chip-title">{linkedMission.title}</span>
+													<button class="mission-chip-remove" title="Unassign mission" onclick={() => handleUnassignMission(ci.id, mid)}>✕</button>
+												</div>
 										{/if}
 									{/each}
+									</div>
 								{/if}
 								{#if ci.missedRollCalls > 0}
 									<div class="missed-badge">Missed {ci.missedRollCalls} roll call{ci.missedRollCalls > 1 ? 's' : ''}</div>
 								{/if}
+								<!-- Inline note preview -->
+								{#if ($notesByCheckIn.get(ci.id)?.length ?? 0) > 0}
+									{@const ciNotes = $notesByCheckIn.get(ci.id)!}
+									{@const latest = ciNotes[0]}
+									{@const catMeta = noteCategoryMeta[latest.category as NoteCategory]}
+									<button class="note-preview" onclick={() => { expandedNotesCheckInId = expandedNotesCheckInId === ci.id ? null : ci.id; }}>
+										<span class="note-preview-cat" style="background: {catMeta?.color ?? '#6b7280'}">{latest.category}</span>
+										<span class="note-preview-text">{latest.content}</span>
+										{#if ciNotes.length > 1}
+											<span class="note-preview-count">+{ciNotes.length - 1}</span>
+										{/if}
+										<span class="note-preview-age">{timeAgo(latest.createdAt)}</span>
+									</button>
+								{/if}
+							</div>
+							<div class="op-actions">
+								<select
+									class="status-select"
+									value={ci.status}
+									onchange={(e) => handleStatusChange(ci, (e.target as HTMLSelectElement).value as OperatorStatus)}
+								>
+									<option value="available">Available</option>
+									<option value="assigned">Assigned</option>
+									<option value="enroute">En Route</option>
+									<option value="onscene">On Scene</option>
+									<option value="brb">BRB</option>
+									<option value="missing">Missing</option>
+								</select>
+								<div class="op-btn-row">
+									<button class="op-btn-labeled" title="Assign Mission" onclick={() => { assigningCheckInId = assigningCheckInId === ci.id ? null : ci.id; }}>Assign</button>
+									<button class="op-btn-labeled" title="Note" onclick={() => { if (noteCheckInId === ci.id) { closeNoteComposer(); } else { openNoteComposer({ checkInId: ci.id }); } }}>Note</button>
+									<div class="overflow-wrap">
+										<button class="op-btn-labeled overflow-trigger" onclick={() => { overflowOpenId = overflowOpenId === ci.id ? null : ci.id; }} title="More actions">
+											<svg width="14" height="14" viewBox="0 0 16 16" fill="none"><circle cx="4" cy="8" r="1.5" fill="currentColor"/><circle cx="8" cy="8" r="1.5" fill="currentColor"/><circle cx="12" cy="8" r="1.5" fill="currentColor"/></svg>
+										</button>
+										{#if overflowOpenId === ci.id}
+											<div class="overflow-menu">
+												{#if ci.lat != null && ci.lon != null}
+													<button class="overflow-item" onclick={() => { onFlyTo?.(ci.lat!, ci.lon!); overflowOpenId = null; }}>Fly to</button>
+												{/if}
+												<button class="overflow-item" class:active={expandedDeviceId === ci.id} onclick={() => { toggleDeviceList(ci.id); overflowOpenId = null; }}>Tracked devices</button>
+												{#if ci.missedRollCalls > 0}
+													<button class="overflow-item" onclick={() => { handleRollCallResponse(ci); overflowOpenId = null; }}>Roll call response</button>
+												{/if}
+												<button class="overflow-item overflow-danger" onclick={() => { handleCheckOut(ci); overflowOpenId = null; }}>Check out</button>
+											</div>
+										{/if}
+									</div>
+								</div>
+							</div>
 
-								<!-- Tracked devices list -->
-								{#if expandedDeviceId === ci.id}
+							<!-- Expandable sections (full card width) -->
+							{#if expandedDeviceId === ci.id}
+								<div class="card-expand">
 									<div class="device-list">
 										{#each ci.trackedStations || [] as dev}
 											<div class="device-chip">
@@ -740,10 +994,11 @@
 											<button class="device-add-btn" onclick={() => handleAddTrackedStation(ci.id)} disabled={!addDeviceCallsign.trim()}>+</button>
 										</div>
 									</div>
-								{/if}
+								</div>
+							{/if}
 
-								<!-- Mission assignment picker -->
-								{#if assigningCheckInId === ci.id}
+							{#if assigningCheckInId === ci.id}
+								<div class="card-expand">
 									<div class="assign-picker">
 										{#each $missions.filter((m) => m.status !== 'complete' && !ci.missionIds?.includes(m.id)) as m}
 											<button class="assign-option" onclick={() => handleAssignMission(ci.id, m.id)}>
@@ -755,49 +1010,71 @@
 											<span class="assign-empty">No available missions</span>
 										{/if}
 									</div>
-								{/if}
-
-								<!-- Inline note form -->
-								{#if noteCheckInId === ci.id}
-									<div class="inline-note">
-										<input
-											type="text"
-											bind:value={noteContent}
-											placeholder="Quick note..."
-											onkeydown={(e) => { if (e.key === 'Enter') handleAddNote(ci.id); if (e.key === 'Escape') { noteCheckInId = null; noteContent = ''; } }}
-										/>
-										<button class="note-send" onclick={() => handleAddNote(ci.id)}>Save</button>
-									</div>
-								{/if}
-							</div>
-							<div class="op-actions">
-								<select
-									class="status-select"
-									value={ci.status}
-									onchange={(e) => handleStatusChange(ci, (e.target as HTMLSelectElement).value as OperatorStatus)}
-								>
-									<option value="available">Available</option>
-									<option value="assigned">Assigned</option>
-									<option value="enroute">En Route</option>
-									<option value="onscene">On Scene</option>
-									<option value="brb">BRB</option>
-									<option value="missing">Missing</option>
-								</select>
-								<div class="op-btn-row">
-									{#if ci.missedRollCalls > 0}
-										<button class="op-btn" title="Roll Call Response" onclick={() => handleRollCallResponse(ci)}>✓</button>
-									{/if}
-									{#if ci.lat != null && ci.lon != null}
-										<button class="op-btn" title="Fly to" onclick={() => onFlyTo?.(ci.lat!, ci.lon!)}>
-											<svg width="10" height="10" viewBox="0 0 16 16" fill="none"><path d="M8 1v14M8 1l-3 3M8 1l3 3M1 8h14" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/></svg>
-										</button>
-									{/if}
-									<button class="op-btn" class:active={expandedDeviceId === ci.id} title="Tracked Devices" onclick={() => toggleDeviceList(ci.id)}>📡</button>
-									<button class="op-btn" title="Assign Mission" onclick={() => { assigningCheckInId = assigningCheckInId === ci.id ? null : ci.id; }}>🎯</button>
-									<button class="op-btn" title="Note" onclick={() => { noteCheckInId = noteCheckInId === ci.id ? null : ci.id; noteContent = ''; }}>📝</button>
-									<button class="op-btn" title="Check Out" onclick={() => handleCheckOut(ci)}>✕</button>
 								</div>
-							</div>
+							{/if}
+
+							{#if noteCheckInId === ci.id}
+								<div class="card-expand">
+									<div class="note-composer">
+										<div class="note-cat-row">
+											{#each Object.entries(noteCategoryMeta) as [key, meta]}
+												<button
+													class="note-cat-chip"
+													class:active={noteCategory === key}
+													style="--cat-color: {meta.color}"
+													onclick={() => { noteCategory = key as NoteCategory; }}
+												>{meta.label}</button>
+											{/each}
+										</div>
+										<textarea
+											class="note-textarea"
+											bind:value={noteContent}
+											placeholder="Note text..."
+											rows="2"
+											onkeydown={(e) => { if (e.key === 'Escape') closeNoteComposer(); }}
+										></textarea>
+										<div class="note-sev-row">
+											<span class="note-sev-label">Severity:</span>
+											{#each Object.entries(severityMeta) as [key, meta]}
+												<button
+													class="note-sev-dot"
+													class:active={noteSeverity === key}
+													style="--sev-color: {meta.color}"
+													title={meta.label}
+													onclick={() => { noteSeverity = key as NoteSeverity; }}
+												></button>
+											{/each}
+											<button class="note-save-btn" onclick={handleAddNote} disabled={!noteContent.trim()}>Save</button>
+										</div>
+									</div>
+								</div>
+							{/if}
+
+							<!-- Expanded note history -->
+							{#if expandedNotesCheckInId === ci.id}
+								{@const ciNotes = $notesByCheckIn.get(ci.id) || []}
+								<div class="card-expand">
+									<div class="note-history">
+										{#each ciNotes as n}
+											{@const nCat = noteCategoryMeta[n.category as NoteCategory]}
+											<div class="note-history-item" style="--note-border-color: {nCat?.color ?? '#6b7280'}">
+												<div class="note-history-header">
+													<span class="note-history-cat" style="background: {nCat?.color ?? '#6b7280'}">{n.category}</span>
+													{#if n.severity && n.severity !== 'info'}
+														<span class="note-history-sev" style="color: {severityMeta[n.severity as NoteSeverity]?.color ?? '#6b7280'}">{n.severity}</span>
+													{/if}
+													<span class="note-history-author">{n.authorName}</span>
+													<span class="note-history-time">{timeAgo(n.createdAt)}</span>
+												</div>
+												<p class="note-history-content">{n.content}</p>
+											</div>
+										{/each}
+										{#if ciNotes.length === 0}
+											<p class="empty" style="padding: 0.5rem;">No notes for this operator.</p>
+										{/if}
+									</div>
+								</div>
+							{/if}
 						</div>
 					{/each}
 					{#if $sortedCheckIns.length === 0}
@@ -876,13 +1153,32 @@
 					{#each filteredMissions as m (m.id)}
 						{@const assignedOps = operatorsForMission(m.id)}
 						{@const hasNoOperators = assignedOps.length === 0 && !m.assignedTo}
-						<div class="mission-card" class:complete={m.status === 'complete'}>
-							<div class="mission-priority-bar" style="background: {trafficColors[m.priority] ?? '#6b7280'}"></div>
+						<div
+							class="mission-card priority-{m.priority}"
+							class:complete={m.status === 'complete'}
+							class:just-moved={recentlyChangedMissionId === m.id}
+							role="article"
+							onmouseenter={() => hoveredMissionId.set(m.id)}
+							onmouseleave={() => hoveredMissionId.set(null)}
+							onfocus={() => hoveredMissionId.set(m.id)}
+							onblur={() => hoveredMissionId.set(null)}
+						>
 							<div class="mission-body">
 								<div class="mission-header">
 									<span class="mission-title">{m.title}</span>
 									<span class="priority-badge priority-{m.priority}">{m.priority}</span>
 									<span class="mission-age">{missionElapsed(m)}</span>
+									<button
+										class="fly-to-btn"
+										onclick={() => handleFlyToMission(m)}
+										title="Fit map to mission area"
+									>
+										<svg width="14" height="14" viewBox="0 0 16 16" fill="none">
+											<circle cx="8" cy="8" r="6" stroke="currentColor" stroke-width="1.5"/>
+											<circle cx="8" cy="8" r="2" fill="currentColor"/>
+											<path d="M8 1v3M8 12v3M1 8h3M12 8h3" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/>
+										</svg>
+									</button>
 								</div>
 								{#if m.description}
 									<p class="mission-desc">{m.description}</p>
@@ -953,12 +1249,18 @@
 								{#if assigningMissionId === m.id}
 									<div class="assign-picker">
 										{#each $activeCheckIns.filter((ci) => !ci.missionIds?.includes(m.id)) as ci}
-											<button class="assign-option" onclick={() => handleAssignOperatorToMission(m.id, ci.id)}>
+											<button
+												class="assign-option"
+												onclick={() => handleAssignOperatorToMission(m.id, ci.id)}
+												onmouseenter={() => handleAssignPickerHover(m, ci)}
+												onmouseleave={() => hoveredCheckInId.set(null)}
+											>
 												<span class="mission-op-dot" style="background: {statusColors[ci.status]}"></span>
 												{ci.callsign}
 												{#if ci.tacticalCall}
 													<span class="assign-option-tactical">"{ci.tacticalCall}"</span>
 												{/if}
+												{#if ci.lat != null}<span class="assign-option-pos">GPS</span>{/if}
 											</button>
 										{/each}
 										{#if $activeCheckIns.filter((ci) => !ci.missionIds?.includes(m.id)).length === 0}
@@ -967,17 +1269,93 @@
 									</div>
 								{/if}
 
+								<!-- Inline note preview on mission card -->
+								{#if ($notesByMission.get(m.id)?.length ?? 0) > 0}
+									{@const mNotes = $notesByMission.get(m.id)!}
+									{@const mLatest = mNotes[0]}
+									{@const mNoteCat = noteCategoryMeta[mLatest.category as NoteCategory]}
+									<button class="note-preview" onclick={() => { expandedNotesMissionId = expandedNotesMissionId === m.id ? null : m.id; }}>
+										<span class="note-preview-cat" style="background: {mNoteCat?.color ?? '#6b7280'}">{mLatest.category}</span>
+										<span class="note-preview-text">{mLatest.content}</span>
+										{#if mNotes.length > 1}
+											<span class="note-preview-count">+{mNotes.length - 1}</span>
+										{/if}
+										<span class="note-preview-age">{timeAgo(mLatest.createdAt)}</span>
+									</button>
+								{/if}
+
+								<!-- Expanded mission note history -->
+								{#if expandedNotesMissionId === m.id}
+									{@const mNotesAll = $notesByMission.get(m.id) || []}
+									<div class="note-history">
+										{#each mNotesAll as n}
+											{@const nCat = noteCategoryMeta[n.category as NoteCategory]}
+											<div class="note-history-item" style="--note-border-color: {nCat?.color ?? '#6b7280'}">
+												<div class="note-history-header">
+													<span class="note-history-cat" style="background: {nCat?.color ?? '#6b7280'}">{n.category}</span>
+													{#if n.severity && n.severity !== 'info'}
+														<span class="note-history-sev" style="color: {severityMeta[n.severity as NoteSeverity]?.color ?? '#6b7280'}">{n.severity}</span>
+													{/if}
+													<span class="note-history-author">{n.authorName}</span>
+													<span class="note-history-time">{timeAgo(n.createdAt)}</span>
+												</div>
+												<p class="note-history-content">{n.content}</p>
+											</div>
+										{/each}
+										{#if mNotesAll.length === 0}
+											<p class="empty" style="padding: 0.5rem;">No notes for this mission.</p>
+										{/if}
+									</div>
+								{/if}
+
+								<!-- Mission note composer -->
+								{#if noteMissionId === m.id}
+									<div class="note-composer">
+										<div class="note-cat-row">
+											{#each Object.entries(noteCategoryMeta) as [key, meta]}
+												<button
+													class="note-cat-chip"
+													class:active={noteCategory === key}
+													style="--cat-color: {meta.color}"
+													onclick={() => { noteCategory = key as NoteCategory; }}
+												>{meta.label}</button>
+											{/each}
+										</div>
+										<textarea
+											class="note-textarea"
+											bind:value={noteContent}
+											placeholder="Mission note..."
+											rows="2"
+											onkeydown={(e) => { if (e.key === 'Escape') closeNoteComposer(); }}
+										></textarea>
+										<div class="note-sev-row">
+											<span class="note-sev-label">Severity:</span>
+											{#each Object.entries(severityMeta) as [key, meta]}
+												<button
+													class="note-sev-dot"
+													class:active={noteSeverity === key}
+													style="--sev-color: {meta.color}"
+													title={meta.label}
+													onclick={() => { noteSeverity = key as NoteSeverity; }}
+												></button>
+											{/each}
+											<button class="note-save-btn" onclick={handleAddNote} disabled={!noteContent.trim()}>Save</button>
+										</div>
+									</div>
+								{/if}
+
 								<div class="mission-footer">
 									<span class="mission-status-badge mission-status-{m.status}">{m.status}</span>
 									<div class="mission-actions">
 										{#if m.status !== 'complete'}
-											<button class="op-btn" title="Link annotation" onclick={() => { linkingAnnotationMissionId = linkingAnnotationMissionId === m.id ? null : m.id; }}>+ Ann</button>
-											<button class="op-btn" title="Assign operator" onclick={() => { assigningMissionId = assigningMissionId === m.id ? null : m.id; }}>+ Assign</button>
+											<button class="op-btn-labeled" title="Link annotation" onclick={() => { linkingAnnotationMissionId = linkingAnnotationMissionId === m.id ? null : m.id; }}>+ Ann</button>
+											<button class="op-btn-labeled" title="Assign operator" onclick={() => { assigningMissionId = assigningMissionId === m.id ? null : m.id; }}>+ Assign</button>
+											<button class="op-btn-labeled" title="Add note" onclick={() => { if (noteMissionId === m.id) { closeNoteComposer(); } else { openNoteComposer({ missionId: m.id }); } }}>+ Note</button>
 										{/if}
 										{#if m.status === 'open'}
-											<button class="op-btn" onclick={() => handleMissionStatusChange(m, 'active')}>Start</button>
+											<button class="op-btn-labeled" onclick={() => handleMissionStatusChange(m, 'active')}>Start</button>
 										{:else if m.status === 'active'}
-											<button class="op-btn" onclick={() => handleMissionStatusChange(m, 'complete')}>Complete</button>
+											<button class="op-btn-labeled" onclick={() => handleMissionStatusChange(m, 'complete')}>Complete</button>
 										{/if}
 									</div>
 								</div>
@@ -994,9 +1372,45 @@
 				</div>
 
 			{:else if currentTab === 'timeline'}
+				<!-- Net-wide note composer -->
+				{#if showNetWideComposer}
+					<div class="note-composer note-composer-top">
+						<div class="note-cat-row">
+							{#each Object.entries(noteCategoryMeta) as [key, meta]}
+								<button
+									class="note-cat-chip"
+									class:active={noteCategory === key}
+									style="--cat-color: {meta.color}"
+									onclick={() => { noteCategory = key as NoteCategory; }}
+								>{meta.label}</button>
+							{/each}
+						</div>
+						<textarea
+							class="note-textarea"
+							bind:value={noteContent}
+							placeholder="Net-wide note..."
+							rows="2"
+							onkeydown={(e) => { if (e.key === 'Escape') closeNoteComposer(); }}
+						></textarea>
+						<div class="note-sev-row">
+							<span class="note-sev-label">Severity:</span>
+							{#each Object.entries(severityMeta) as [key, meta]}
+								<button
+									class="note-sev-dot"
+									class:active={noteSeverity === key}
+									style="--sev-color: {meta.color}"
+									title={meta.label}
+									onclick={() => { noteSeverity = key as NoteSeverity; }}
+								></button>
+							{/each}
+							<button class="note-save-btn" onclick={handleAddNote} disabled={!noteContent.trim()}>Save</button>
+						</div>
+					</div>
+				{/if}
+
 				<!-- Timeline filters -->
 				<div class="timeline-filters">
-					{#each [['all', 'All'], ['checkins', 'Check-ins'], ['assignments', 'Status'], ['missions', 'Missions'], ['rollcalls', 'Roll Calls']] as [value, label]}
+					{#each [['all', 'All'], ['checkins', 'Check-ins'], ['assignments', 'Status'], ['missions', 'Missions'], ['notes', 'Notes'], ['rollcalls', 'Roll Calls']] as [value, label]}
 						<button
 							class="filter-chip"
 							class:active={timelineFilter === value}
@@ -1014,13 +1428,27 @@
 				<!-- Timeline feed -->
 				<div class="timeline-feed">
 					{#each filteredTimeline as evt (evt.id)}
-						<div class="timeline-entry">
-							<span class="tl-icon">{eventIcons[evt.type] ?? '•'}</span>
-							<div class="tl-content">
-								<span class="tl-summary">{evt.summary}</span>
-								<span class="tl-time">{timeAgo(evt.createdAt)}</span>
+						{@const noteCat = evt.type === 'note' ? parseNoteCategory(evt.summary) : null}
+						{#if evt.type === 'note' && noteCat}
+							<div class="timeline-entry timeline-note" style="--note-border-color: {noteCategoryMeta[noteCat]?.color ?? '#6b7280'}">
+								<span class="tl-icon">{eventIcons[evt.type] ?? '•'}</span>
+								<div class="tl-content">
+									<div class="tl-note-header">
+										<span class="tl-note-cat" style="background: {noteCategoryMeta[noteCat]?.color ?? '#6b7280'}">{noteCat}</span>
+									</div>
+									<span class="tl-summary">{evt.summary.replace(/^\[\w+\]\s*/, '')}</span>
+									<span class="tl-time">{timeAgo(evt.createdAt)}</span>
+								</div>
 							</div>
-						</div>
+						{:else}
+							<div class="timeline-entry">
+								<span class="tl-icon">{eventIcons[evt.type] ?? '•'}</span>
+								<div class="tl-content">
+									<span class="tl-summary">{evt.summary}</span>
+									<span class="tl-time">{timeAgo(evt.createdAt)}</span>
+								</div>
+							</div>
+						{/if}
 					{/each}
 					{#if filteredTimeline.length === 0}
 						<p class="empty">No timeline events yet.</p>
@@ -1036,6 +1464,7 @@
 		display: flex;
 		flex-direction: column;
 		height: 100%;
+		overflow-x: hidden;
 	}
 
 	.panel-header {
@@ -1065,11 +1494,11 @@
 	}
 
 	.status-badge {
-		font-size: 0.6rem;
+		font-size: 0.65rem;
 		font-weight: 700;
 		text-transform: uppercase;
 		letter-spacing: 0.05em;
-		padding: 1px 6px;
+		padding: 2px 8px;
 		border-radius: var(--radius-sm);
 	}
 
@@ -1079,17 +1508,17 @@
 
 	.elapsed {
 		font-family: monospace;
-		font-size: 0.75rem;
+		font-size: 0.8rem;
 		color: #22c55e;
 	}
 
 	.frequency {
-		font-size: 0.7rem;
+		font-size: 0.75rem;
 		color: var(--color-text-muted);
 	}
 
 	.mission-brief {
-		font-size: 0.7rem;
+		font-size: 0.75rem;
 		color: var(--color-text-muted);
 		font-style: italic;
 		max-width: 200px;
@@ -1100,15 +1529,18 @@
 
 	.header-actions {
 		display: flex;
-		gap: var(--space-xs);
+		gap: 6px;
+		flex-shrink: 0;
+		flex-wrap: wrap;
+		justify-content: flex-end;
 	}
 
 	.action-btn {
 		display: flex;
 		align-items: center;
 		justify-content: center;
-		width: 28px;
-		height: 28px;
+		width: 36px;
+		height: 36px;
 		background: none;
 		border: 1px solid var(--color-primary);
 		border-radius: var(--radius-sm);
@@ -1120,6 +1552,10 @@
 	.action-btn:hover {
 		border-color: var(--color-accent);
 		color: var(--color-text);
+	}
+
+	.action-btn.danger {
+		border-color: rgba(239, 68, 68, 0.4);
 	}
 
 	.action-btn.danger:hover {
@@ -1145,12 +1581,12 @@
 
 	.tab {
 		flex: 1;
-		padding: var(--space-sm);
+		padding: 12px var(--space-sm);
 		background: none;
 		border: none;
-		border-bottom: 2px solid transparent;
+		border-bottom: 3px solid transparent;
 		color: var(--color-text-muted);
-		font-size: 0.8rem;
+		font-size: 0.85rem;
 		cursor: pointer;
 		transition: all var(--duration-fast);
 	}
@@ -1162,16 +1598,17 @@
 	}
 
 	.tab-count {
-		font-size: 0.65rem;
+		font-size: 0.7rem;
 		background: var(--color-primary);
-		padding: 1px 5px;
+		padding: 2px 6px;
 		border-radius: 8px;
-		margin-left: 3px;
+		margin-left: 4px;
 	}
 
 	.tab-content {
 		flex: 1;
 		overflow-y: auto;
+		overflow-x: hidden;
 	}
 
 	/* Quick Add */
@@ -1193,8 +1630,8 @@
 		border-radius: var(--radius-sm);
 		color: var(--color-text);
 		font-family: monospace;
-		font-size: 0.85rem;
-		padding: 6px 8px;
+		font-size: 1rem;
+		padding: 10px 12px;
 		outline: none;
 		text-transform: uppercase;
 	}
@@ -1209,13 +1646,15 @@
 	}
 
 	.quick-add-btn {
-		width: 32px;
+		width: 44px;
+		height: 44px;
 		background: var(--color-accent);
 		border: none;
 		border-radius: var(--radius-sm);
 		color: white;
-		font-size: 1.1rem;
+		font-size: 1.2rem;
 		cursor: pointer;
+		flex-shrink: 0;
 	}
 
 	.quick-add-btn:disabled {
@@ -1239,15 +1678,16 @@
 	.search-item {
 		display: flex;
 		flex-direction: column;
-		gap: 1px;
+		gap: 2px;
 		width: 100%;
-		padding: 6px 10px;
+		padding: 10px 12px;
 		background: none;
 		border: none;
 		border-bottom: 1px solid var(--color-primary);
 		color: var(--color-text);
 		text-align: left;
 		cursor: pointer;
+		min-height: 44px;
 	}
 
 	.search-item:hover { background: var(--color-primary); }
@@ -1256,11 +1696,11 @@
 	.search-call {
 		font-family: monospace;
 		font-weight: 600;
-		font-size: 0.8rem;
+		font-size: 0.85rem;
 	}
 
 	.search-comment {
-		font-size: 0.7rem;
+		font-size: 0.75rem;
 		color: var(--color-text-muted);
 	}
 
@@ -1269,9 +1709,9 @@
 		display: flex;
 		justify-content: space-between;
 		align-items: center;
-		padding: 4px var(--space-md);
+		padding: 6px var(--space-md);
 		border-bottom: 1px solid var(--color-primary);
-		font-size: 0.65rem;
+		font-size: 0.75rem;
 		color: var(--color-text-muted);
 	}
 
@@ -1279,7 +1719,7 @@
 		color: var(--color-accent);
 		text-decoration: none;
 		font-weight: 600;
-		font-size: 0.65rem;
+		font-size: 0.75rem;
 	}
 
 	.export-link:hover {
@@ -1293,8 +1733,17 @@
 
 	.operator-card {
 		display: flex;
+		flex-wrap: wrap;
 		border-bottom: 1px solid var(--color-primary);
-		transition: opacity var(--duration-fast);
+		transition: opacity var(--duration-fast), background var(--duration-fast);
+	}
+
+	.card-expand {
+		flex-basis: 100%;
+		padding: 0 var(--space-sm) var(--space-sm) calc(4px + var(--space-sm));
+		min-width: 0;
+		overflow: hidden;
+		box-sizing: border-box;
 	}
 
 	.operator-card.released {
@@ -1310,6 +1759,10 @@
 		100% { background: transparent; }
 	}
 
+	.operator-card.mission-highlighted {
+		background: rgba(59, 130, 246, 0.08);
+	}
+
 	.op-status-bar {
 		width: 4px;
 		flex-shrink: 0;
@@ -1317,7 +1770,7 @@
 
 	.op-main {
 		flex: 1;
-		padding: var(--space-sm) var(--space-sm) var(--space-sm) var(--space-sm);
+		padding: 12px var(--space-sm) 12px var(--space-sm);
 		min-width: 0;
 	}
 
@@ -1331,19 +1784,19 @@
 	.op-callsign {
 		font-family: monospace;
 		font-weight: 700;
-		font-size: 0.85rem;
+		font-size: 1rem;
 	}
 
 	.op-tactical {
-		font-size: 0.75rem;
+		font-size: 0.8rem;
 		color: var(--color-accent);
 	}
 
 	.source-badge {
-		font-size: 0.5rem;
+		font-size: 0.65rem;
 		font-weight: 700;
-		padding: 1px 4px;
-		border-radius: 2px;
+		padding: 2px 6px;
+		border-radius: 3px;
 		letter-spacing: 0.03em;
 	}
 
@@ -1353,15 +1806,15 @@
 	}
 
 	.traffic-badge {
-		font-size: 0.55rem;
+		font-size: 0.7rem;
 		font-weight: 700;
 		color: #000;
-		padding: 1px 5px;
+		padding: 2px 8px;
 		border-radius: 3px;
 	}
 
 	.op-age {
-		font-size: 0.65rem;
+		font-size: 0.8rem;
 		color: var(--color-text-muted);
 		margin-left: auto;
 	}
@@ -1373,64 +1826,109 @@
 	.op-detail {
 		display: flex;
 		gap: var(--space-sm);
-		font-size: 0.7rem;
+		font-size: 0.8rem;
 		color: var(--color-text-muted);
-		margin-top: 2px;
+		margin-top: 3px;
 	}
 
 	.op-location { font-style: italic; }
 
 	.op-assignment {
-		font-size: 0.7rem;
+		font-size: 0.8rem;
 		color: var(--color-accent);
-		margin-top: 2px;
+		margin-top: 3px;
 	}
 
-	.op-mission-link {
+	/* Roster mission chips */
+	.op-mission-chips {
 		display: flex;
+		flex-wrap: wrap;
+		gap: 6px;
+		margin-top: 6px;
+	}
+
+	.op-mission-chip {
+		display: inline-flex;
 		align-items: center;
-		gap: 4px;
-		font-size: 0.7rem;
-		color: var(--color-accent);
-		margin-top: 2px;
+		gap: 6px;
+		background: var(--color-bg);
+		border: 1px solid var(--mission-color);
+		border-radius: var(--radius-sm);
+		padding: 4px 10px;
+		font-size: 0.75rem;
+		color: var(--color-text);
+		min-height: 32px;
+		transition: background var(--duration-fast), box-shadow var(--duration-fast);
+		cursor: default;
 	}
 
-	.mission-link-icon {
-		font-size: 0.7rem;
+	.op-mission-chip.chip-highlighted {
+		box-shadow: 0 0 0 2px var(--mission-color);
+		background: rgba(255, 255, 255, 0.06);
 	}
 
-	.mission-link-title {
+	.mission-chip-dot {
+		width: 8px;
+		height: 8px;
+		border-radius: 50%;
+		background: var(--mission-color);
+		flex-shrink: 0;
+	}
+
+	.mission-chip-title {
 		flex: 1;
 		min-width: 0;
 		overflow: hidden;
 		text-overflow: ellipsis;
 		white-space: nowrap;
+		max-width: 140px;
+	}
+
+	.mission-chip-remove {
+		background: none;
+		border: none;
+		color: var(--color-text-muted);
+		cursor: pointer;
+		font-size: 0.85rem;
+		padding: 2px 4px;
+		line-height: 1;
+		min-width: 28px;
+		min-height: 28px;
+		display: flex;
+		align-items: center;
+		justify-content: center;
+		transition: color var(--duration-fast);
+	}
+
+	.mission-chip-remove:hover {
+		color: #ef4444;
 	}
 
 	.assign-picker {
 		display: flex;
 		flex-direction: column;
 		gap: 1px;
-		margin-top: var(--space-xs);
 		background: var(--color-bg);
 		border: 1px solid var(--color-primary);
 		border-radius: var(--radius-sm);
-		max-height: 120px;
+		max-height: 160px;
 		overflow-y: auto;
+		min-width: 0;
 	}
 
 	.assign-option {
 		display: flex;
 		align-items: center;
-		gap: 6px;
-		padding: 4px 8px;
+		gap: 8px;
+		padding: 10px 12px;
 		background: none;
 		border: none;
 		border-bottom: 1px solid var(--color-primary);
 		color: var(--color-text);
-		font-size: 0.7rem;
+		font-size: 0.8rem;
 		text-align: left;
 		cursor: pointer;
+		min-height: 44px;
 	}
 
 	.assign-option:hover {
@@ -1442,31 +1940,31 @@
 	}
 
 	.assign-empty {
-		padding: 6px 8px;
-		font-size: 0.65rem;
+		padding: 10px 12px;
+		font-size: 0.75rem;
 		color: var(--color-text-muted);
 		font-style: italic;
 	}
 
 	.priority-dot {
-		width: 6px;
-		height: 6px;
+		width: 8px;
+		height: 8px;
 		border-radius: 50%;
 		flex-shrink: 0;
 	}
 
 	.missed-badge {
-		font-size: 0.65rem;
+		font-size: 0.75rem;
 		color: #ef4444;
 		font-weight: 600;
-		margin-top: 2px;
+		margin-top: 3px;
 	}
 
 	.device-badge {
-		font-size: 0.5rem;
+		font-size: 0.65rem;
 		font-weight: 700;
-		padding: 1px 4px;
-		border-radius: 2px;
+		padding: 3px 8px;
+		border-radius: 3px;
 		background: var(--color-primary);
 		color: var(--color-text-muted);
 		border: 1px solid var(--color-primary);
@@ -1483,19 +1981,21 @@
 	.device-list {
 		display: flex;
 		flex-direction: column;
-		gap: 3px;
-		margin-top: var(--space-xs);
-		padding: var(--space-xs);
+		gap: 4px;
+		padding: var(--space-sm);
 		background: var(--color-bg);
 		border: 1px solid var(--color-primary);
 		border-radius: var(--radius-sm);
+		min-width: 0;
+		overflow: hidden;
 	}
 
 	.device-chip {
 		display: inline-flex;
 		align-items: center;
-		gap: 4px;
-		font-size: 0.7rem;
+		gap: 6px;
+		font-size: 0.8rem;
+		min-height: 36px;
 	}
 
 	.device-call {
@@ -1504,21 +2004,26 @@
 	}
 
 	.device-type {
-		font-size: 0.55rem;
+		font-size: 0.65rem;
 		color: var(--color-text-muted);
-		padding: 0 3px;
+		padding: 2px 6px;
 		border: 1px solid var(--color-primary);
-		border-radius: 2px;
+		border-radius: 3px;
 	}
 
 	.device-remove {
 		background: none;
 		border: none;
 		color: var(--color-text-muted);
-		font-size: 0.8rem;
+		font-size: 1rem;
 		cursor: pointer;
-		padding: 0 2px;
+		padding: 8px;
 		line-height: 1;
+		min-width: 36px;
+		min-height: 36px;
+		display: flex;
+		align-items: center;
+		justify-content: center;
 	}
 
 	.device-remove:hover {
@@ -1528,20 +2033,22 @@
 	.device-add {
 		display: flex;
 		gap: var(--space-xs);
-		margin-top: 2px;
+		margin-top: 4px;
 	}
 
 	.device-add-input {
 		flex: 1;
+		min-width: 0;
 		background: var(--color-surface);
 		border: 1px solid var(--color-primary);
 		border-radius: var(--radius-sm);
 		color: var(--color-text);
 		font-family: monospace;
-		font-size: 0.7rem;
-		padding: 2px 6px;
+		font-size: 0.85rem;
+		padding: 8px 10px;
 		outline: none;
 		text-transform: uppercase;
+		box-sizing: border-box;
 	}
 
 	.device-add-input:focus {
@@ -1554,12 +2061,13 @@
 	}
 
 	.device-add-btn {
-		width: 22px;
+		width: 36px;
+		height: 36px;
 		background: var(--color-primary);
 		border: none;
 		border-radius: var(--radius-sm);
 		color: var(--color-text);
-		font-size: 0.85rem;
+		font-size: 1rem;
 		cursor: pointer;
 	}
 
@@ -1568,39 +2076,127 @@
 		cursor: default;
 	}
 
-	.inline-note {
-		display: flex;
-		gap: var(--space-xs);
-		margin-top: var(--space-xs);
-	}
-
-	.inline-note input {
-		flex: 1;
+	/* Note composer */
+	.note-composer {
+		padding: var(--space-sm);
 		background: var(--color-bg);
 		border: 1px solid var(--color-primary);
 		border-radius: var(--radius-sm);
-		color: var(--color-text);
-		font-size: 0.75rem;
-		padding: 3px 6px;
-		outline: none;
+		display: flex;
+		flex-direction: column;
+		gap: var(--space-xs);
+		min-width: 0;
+		overflow: hidden;
 	}
 
-	.note-send {
-		background: var(--color-primary);
-		border: none;
+	.note-composer-top {
+		margin: 0;
+		border-radius: 0;
+		border-left: none;
+		border-right: none;
+		border-top: none;
+	}
+
+	.note-cat-row {
+		display: flex;
+		gap: 4px;
+		overflow-x: auto;
+		-webkit-overflow-scrolling: touch;
+		scrollbar-width: none;
+	}
+
+	.note-cat-row::-webkit-scrollbar { display: none; }
+
+	.note-cat-chip {
+		flex-shrink: 0;
+		min-height: 36px;
+		padding: 6px 12px;
+		background: none;
+		border: 1px solid var(--color-primary);
+		border-radius: var(--radius-full);
+		color: var(--color-text-muted);
+		font-size: 0.75rem;
+		font-weight: 600;
+		cursor: pointer;
+		transition: all var(--duration-fast);
+	}
+
+	.note-cat-chip.active {
+		background: var(--cat-color);
+		border-color: var(--cat-color);
+		color: #fff;
+	}
+
+	.note-textarea {
+		background: var(--color-surface);
+		border: 1px solid var(--color-primary);
 		border-radius: var(--radius-sm);
 		color: var(--color-text);
-		font-size: 0.7rem;
-		padding: 3px 8px;
+		font-size: 0.85rem;
+		padding: 8px 10px;
+		outline: none;
+		resize: vertical;
+		font-family: inherit;
+		width: 100%;
+		box-sizing: border-box;
+	}
+
+	.note-textarea:focus {
+		border-color: var(--color-accent);
+	}
+
+	.note-sev-row {
+		display: flex;
+		align-items: center;
+		gap: 6px;
+		flex-wrap: wrap;
+	}
+
+	.note-sev-label {
+		font-size: 0.75rem;
+		color: var(--color-text-muted);
+		flex-shrink: 0;
+	}
+
+	.note-sev-dot {
+		width: 28px;
+		height: 28px;
+		border-radius: 50%;
+		border: 2px solid var(--sev-color);
+		background: none;
 		cursor: pointer;
+		transition: all var(--duration-fast);
+		padding: 0;
+	}
+
+	.note-sev-dot.active {
+		background: var(--sev-color);
+	}
+
+	.note-save-btn {
+		margin-left: auto;
+		min-height: 36px;
+		padding: 6px 16px;
+		background: var(--color-accent);
+		border: none;
+		border-radius: var(--radius-sm);
+		color: white;
+		font-size: 0.85rem;
+		font-weight: 600;
+		cursor: pointer;
+	}
+
+	.note-save-btn:disabled {
+		opacity: 0.4;
+		cursor: default;
 	}
 
 	.op-actions {
 		display: flex;
 		flex-direction: column;
 		align-items: flex-end;
-		gap: var(--space-xs);
-		padding: var(--space-sm) var(--space-sm);
+		gap: var(--space-sm);
+		padding: 12px var(--space-sm);
 		flex-shrink: 0;
 	}
 
@@ -1609,25 +2205,109 @@
 		border: 1px solid var(--color-primary);
 		border-radius: var(--radius-sm);
 		color: var(--color-text);
-		font-size: 0.65rem;
-		padding: 2px 4px;
+		font-size: 0.8rem;
+		padding: 8px 12px;
 		cursor: pointer;
+		min-height: 36px;
 	}
 
 	.op-btn-row {
 		display: flex;
-		gap: 2px;
+		gap: 6px;
+		flex-wrap: wrap;
 	}
 
+	.op-btn-labeled {
+		background: none;
+		border: 1px solid var(--color-primary);
+		border-radius: var(--radius-sm);
+		color: var(--color-text-muted);
+		font-size: 0.75rem;
+		padding: 6px 10px;
+		cursor: pointer;
+		transition: all var(--duration-fast);
+		min-height: 36px;
+		display: flex;
+		align-items: center;
+		justify-content: center;
+	}
+
+	.op-btn-labeled:hover {
+		border-color: var(--color-accent);
+		color: var(--color-text);
+	}
+
+	.op-btn-labeled.active {
+		border-color: var(--color-accent);
+		color: var(--color-accent);
+	}
+
+	/* Overflow menu */
+	.overflow-wrap {
+		position: relative;
+	}
+
+	.overflow-trigger {
+		padding: 6px 8px;
+	}
+
+	.overflow-menu {
+		position: absolute;
+		right: 0;
+		top: 100%;
+		min-width: 160px;
+		background: var(--color-surface);
+		border: 1px solid var(--color-primary);
+		border-radius: var(--radius-sm);
+		z-index: 20;
+		box-shadow: 0 4px 12px rgba(0, 0, 0, 0.3);
+	}
+
+	.overflow-item {
+		display: block;
+		width: 100%;
+		padding: 10px 14px;
+		background: none;
+		border: none;
+		border-bottom: 1px solid var(--color-primary);
+		color: var(--color-text);
+		font-size: 0.8rem;
+		text-align: left;
+		cursor: pointer;
+		min-height: 44px;
+	}
+
+	.overflow-item:hover {
+		background: var(--color-primary);
+	}
+
+	.overflow-item:last-child {
+		border-bottom: none;
+	}
+
+	.overflow-item.overflow-danger {
+		color: #ef4444;
+	}
+
+	.overflow-item.overflow-danger:hover {
+		background: rgba(239, 68, 68, 0.1);
+	}
+
+	/* Old op-btn kept for mission card unassign buttons */
 	.op-btn {
 		background: none;
 		border: 1px solid var(--color-primary);
 		border-radius: var(--radius-sm);
 		color: var(--color-text-muted);
-		font-size: 0.65rem;
-		padding: 2px 6px;
+		font-size: 0.75rem;
+		padding: 4px 8px;
 		cursor: pointer;
 		transition: all var(--duration-fast);
+		min-width: 32px;
+		min-height: 32px;
+		display: flex;
+		align-items: center;
+		justify-content: center;
 	}
 
 	.op-btn:hover {
@@ -1651,13 +2331,14 @@
 
 	.mission-filter-chips {
 		display: flex;
-		gap: var(--space-xs);
+		gap: 6px;
 		margin-left: auto;
 	}
 
 	.btn-sm {
-		font-size: 0.7rem;
-		padding: 3px 10px;
+		font-size: 0.8rem;
+		padding: 6px 14px;
+		min-height: 36px;
 	}
 
 	.mission-form {
@@ -1665,7 +2346,7 @@
 		border-bottom: 1px solid var(--color-primary);
 		display: flex;
 		flex-direction: column;
-		gap: var(--space-xs);
+		gap: var(--space-sm);
 	}
 
 	.mission-form input,
@@ -1675,9 +2356,10 @@
 		border: 1px solid var(--color-primary);
 		border-radius: var(--radius-sm);
 		color: var(--color-text);
-		font-size: 0.8rem;
-		padding: 6px 8px;
+		font-size: 0.85rem;
+		padding: 10px 12px;
 		outline: none;
+		min-height: 44px;
 	}
 
 	.mission-form textarea {
@@ -1685,27 +2367,101 @@
 	}
 
 	.mission-list {
-		padding: 0;
+		padding: 6px 6px 0;
+		display: flex;
+		flex-direction: column;
 	}
 
 	.mission-card {
 		display: flex;
-		border-bottom: 1px solid var(--color-primary);
+		flex-direction: column;
+		margin-bottom: 6px;
+		border-radius: 6px;
+		border: 1px solid rgba(255, 255, 255, 0.06);
+		transition: background var(--duration-fast), border-color var(--duration-fast), box-shadow var(--duration-fast);
+		border-left: 4px solid transparent;
+	}
+
+	.mission-card:hover {
+		border-color: rgba(255, 255, 255, 0.15);
+		box-shadow: 0 1px 6px rgba(0, 0, 0, 0.25);
+	}
+
+	/* Priority tint backgrounds */
+	.mission-card.priority-emergency {
+		background: linear-gradient(to right, rgba(239, 68, 68, 0.12), rgba(239, 68, 68, 0.04));
+		border-left-color: #ef4444;
+	}
+
+	.mission-card.priority-emergency:hover {
+		background: linear-gradient(to right, rgba(239, 68, 68, 0.2), rgba(239, 68, 68, 0.08));
+	}
+
+	.mission-card.priority-priority {
+		background: linear-gradient(to right, rgba(245, 158, 11, 0.1), rgba(245, 158, 11, 0.03));
+		border-left-color: #f59e0b;
+	}
+
+	.mission-card.priority-priority:hover {
+		background: linear-gradient(to right, rgba(245, 158, 11, 0.18), rgba(245, 158, 11, 0.07));
+	}
+
+	.mission-card.priority-welfare {
+		background: linear-gradient(to right, rgba(59, 130, 246, 0.08), rgba(59, 130, 246, 0.02));
+		border-left-color: #3b82f6;
+	}
+
+	.mission-card.priority-welfare:hover {
+		background: linear-gradient(to right, rgba(59, 130, 246, 0.16), rgba(59, 130, 246, 0.06));
+	}
+
+	.mission-card.priority-routine {
+		background: linear-gradient(to right, rgba(34, 197, 94, 0.06), rgba(34, 197, 94, 0.02));
+		border-left-color: #22c55e;
+	}
+
+	.mission-card.priority-routine:hover {
+		background: linear-gradient(to right, rgba(34, 197, 94, 0.14), rgba(34, 197, 94, 0.06));
 	}
 
 	.mission-card.complete {
 		opacity: 0.45;
 	}
 
-	.mission-priority-bar {
-		width: 4px;
-		flex-shrink: 0;
+	.mission-card.just-moved {
+		animation: card-flash 2s ease-out;
+	}
+
+	@keyframes card-flash {
+		0% { box-shadow: 0 0 0 2px rgba(250, 204, 21, 0.8), 0 0 12px rgba(250, 204, 21, 0.4); }
+		30% { box-shadow: 0 0 0 2px rgba(250, 204, 21, 0.5), 0 0 8px rgba(250, 204, 21, 0.2); }
+		100% { box-shadow: none; }
 	}
 
 	.mission-body {
 		flex: 1;
-		padding: var(--space-sm) var(--space-md);
+		padding: 12px var(--space-md);
 		min-width: 0;
+	}
+
+	/* Fly-to button in mission header */
+	.fly-to-btn {
+		background: none;
+		border: none;
+		color: var(--color-text-muted);
+		cursor: pointer;
+		padding: 4px;
+		display: flex;
+		align-items: center;
+		flex-shrink: 0;
+		transition: color var(--duration-fast);
+		min-width: 28px;
+		min-height: 28px;
+		justify-content: center;
+	}
+
+	.fly-to-btn:hover {
+		color: var(--color-accent);
 	}
 
 	.mission-header {
@@ -1716,11 +2472,11 @@
 
 	.mission-title {
 		font-weight: 600;
-		font-size: 0.85rem;
+		font-size: 0.9rem;
 	}
 
 	.mission-age {
-		font-size: 0.6rem;
+		font-size: 0.7rem;
 		font-family: monospace;
 		color: var(--color-text-muted);
 		margin-left: auto;
@@ -1728,53 +2484,54 @@
 	}
 
 	.priority-badge {
-		font-size: 0.55rem;
+		font-size: 0.65rem;
 		font-weight: 700;
 		text-transform: uppercase;
-		padding: 1px 5px;
+		padding: 2px 8px;
 		border-radius: 3px;
 		flex-shrink: 0;
 	}
 
-	.priority-routine { background: #22c55e; color: #000; }
-	.priority-priority { background: #f59e0b; color: #000; }
-	.priority-welfare { background: #3b82f6; color: #fff; }
-	.priority-emergency { background: #ef4444; color: #fff; }
+	.priority-badge.priority-routine { background: #22c55e; color: #000; }
+	.priority-badge.priority-priority { background: #f59e0b; color: #000; }
+	.priority-badge.priority-welfare { background: #3b82f6; color: #fff; }
+	.priority-badge.priority-emergency { background: #ef4444; color: #fff; }
 
 	.mission-desc {
-		font-size: 0.75rem;
+		font-size: 0.8rem;
 		color: var(--color-text-muted);
-		margin: 2px 0;
+		margin: 3px 0;
 	}
 
 	.mission-location {
-		font-size: 0.7rem;
+		font-size: 0.8rem;
 		color: var(--color-text-muted);
-		margin-top: 2px;
+		margin-top: 3px;
 	}
 
 	/* Assigned operators on mission card */
 	.mission-operators {
 		display: flex;
 		flex-wrap: wrap;
-		gap: 4px;
-		margin-top: var(--space-xs);
+		gap: 6px;
+		margin-top: var(--space-sm);
 	}
 
 	.mission-op-chip {
 		display: inline-flex;
 		align-items: center;
-		gap: 3px;
+		gap: 4px;
 		background: var(--color-bg);
 		border: 1px solid var(--color-primary);
 		border-radius: var(--radius-sm);
-		padding: 2px 6px;
-		font-size: 0.65rem;
+		padding: 6px 10px;
+		font-size: 0.75rem;
+		min-height: 36px;
 	}
 
 	.mission-op-dot {
-		width: 6px;
-		height: 6px;
+		width: 8px;
+		height: 8px;
 		border-radius: 50%;
 		flex-shrink: 0;
 	}
@@ -1786,7 +2543,7 @@
 
 	.mission-op-status {
 		color: var(--color-text-muted);
-		font-size: 0.55rem;
+		font-size: 0.65rem;
 		text-transform: uppercase;
 	}
 
@@ -1794,10 +2551,15 @@
 		background: none;
 		border: none;
 		color: var(--color-text-muted);
-		font-size: 0.6rem;
-		padding: 0 2px;
+		font-size: 0.85rem;
+		padding: 4px 8px;
 		cursor: pointer;
 		line-height: 1;
+		min-width: 32px;
+		min-height: 32px;
+		display: flex;
+		align-items: center;
+		justify-content: center;
 	}
 
 	.mission-op-remove:hover {
@@ -1806,40 +2568,51 @@
 
 	.mission-assigned-text {
 		font-family: monospace;
-		font-size: 0.7rem;
+		font-size: 0.8rem;
 		color: var(--color-accent);
 	}
 
 	.mission-unassigned {
-		font-size: 0.65rem;
+		font-size: 0.75rem;
 		color: var(--color-text-muted);
 		font-style: italic;
 	}
 
 	.assign-option-tactical {
-		font-size: 0.6rem;
+		font-size: 0.7rem;
 		color: var(--color-accent);
+	}
+
+	.assign-option-pos {
+		font-size: 0.6rem;
+		font-weight: 700;
+		color: #22c55e;
+		margin-left: auto;
+		letter-spacing: 0.04em;
 	}
 
 	.mission-footer {
 		display: flex;
 		align-items: center;
 		gap: var(--space-sm);
-		margin-top: var(--space-xs);
+		margin-top: var(--space-sm);
+		flex-wrap: wrap;
 	}
 
 	.mission-actions {
 		display: flex;
-		gap: 2px;
+		gap: 6px;
 		margin-left: auto;
+		flex-wrap: wrap;
+		justify-content: flex-end;
 	}
 
 	.mission-status-badge {
-		font-size: 0.6rem;
+		font-size: 0.7rem;
 		font-weight: 600;
 		text-transform: uppercase;
-		padding: 1px 5px;
-		border-radius: 2px;
+		padding: 2px 8px;
+		border-radius: 3px;
 	}
 
 	.mission-status-open {
@@ -1858,11 +2631,11 @@
 	.annotation-link-section {
 		display: flex;
 		flex-direction: column;
-		gap: 4px;
+		gap: 6px;
 	}
 
 	.field-label-sm {
-		font-size: 0.7rem;
+		font-size: 0.75rem;
 		color: var(--color-text-muted);
 		font-weight: 500;
 	}
@@ -1874,23 +2647,24 @@
 	.annotation-chips-wrap {
 		display: flex;
 		flex-wrap: wrap;
-		gap: 4px;
-		max-height: 100px;
+		gap: 6px;
+		max-height: 120px;
 		overflow-y: auto;
 	}
 
 	.annotation-chip {
 		display: inline-flex;
 		align-items: center;
-		gap: 3px;
-		padding: 2px 8px;
+		gap: 4px;
+		padding: 6px 12px;
 		background: none;
 		border: 1px solid var(--color-primary);
 		border-radius: var(--radius-full);
 		color: var(--color-text-muted);
-		font-size: 0.65rem;
+		font-size: 0.75rem;
 		cursor: pointer;
 		transition: all var(--duration-fast);
+		min-height: 36px;
 	}
 
 	.annotation-chip:hover {
@@ -1908,24 +2682,25 @@
 	.mission-annotations {
 		display: flex;
 		flex-wrap: wrap;
-		gap: 4px;
-		margin-top: var(--space-xs);
+		gap: 6px;
+		margin-top: var(--space-sm);
 	}
 
 	.mission-ann-chip {
 		display: inline-flex;
 		align-items: center;
-		gap: 3px;
+		gap: 4px;
 		background: var(--color-bg);
 		border: 1px solid var(--color-primary);
 		border-radius: var(--radius-sm);
-		padding: 2px 6px;
-		font-size: 0.65rem;
+		padding: 6px 10px;
+		font-size: 0.75rem;
 		color: var(--color-text-muted);
+		min-height: 36px;
 	}
 
 	.mission-ann-label {
-		max-width: 100px;
+		max-width: 120px;
 		overflow: hidden;
 		text-overflow: ellipsis;
 		white-space: nowrap;
@@ -1935,10 +2710,15 @@
 		background: none;
 		border: none;
 		color: var(--color-text-muted);
-		font-size: 0.7rem;
-		padding: 0 2px;
+		font-size: 0.85rem;
+		padding: 4px 8px;
 		cursor: pointer;
 		line-height: 1;
+		min-width: 32px;
+		min-height: 32px;
+		display: flex;
+		align-items: center;
+		justify-content: center;
 	}
 
 	.mission-ann-remove:hover {
@@ -1948,7 +2728,7 @@
 	/* Timeline */
 	.timeline-filters {
 		display: flex;
-		gap: var(--space-xs);
+		gap: 6px;
 		padding: var(--space-sm) var(--space-md);
 		border-bottom: 1px solid var(--color-primary);
 		flex-wrap: wrap;
@@ -1959,10 +2739,11 @@
 		border: 1px solid var(--color-primary);
 		border-radius: var(--radius-full);
 		color: var(--color-text-muted);
-		font-size: 0.65rem;
-		padding: 2px 8px;
+		font-size: 0.75rem;
+		padding: 6px 12px;
 		cursor: pointer;
 		transition: all var(--duration-fast);
+		min-height: 32px;
 	}
 
 	.filter-chip.active {
@@ -1976,13 +2757,14 @@
 		border: 1px solid var(--color-primary);
 		border-radius: var(--radius-sm);
 		color: var(--color-text);
-		font-size: 0.65rem;
+		font-size: 0.75rem;
 		font-family: monospace;
-		padding: 2px 6px;
+		padding: 6px 10px;
 		outline: none;
-		width: 100px;
+		width: 110px;
 		text-transform: uppercase;
 		margin-left: auto;
+		min-height: 32px;
 	}
 
 	.timeline-search:focus {
@@ -2001,36 +2783,57 @@
 	.timeline-entry {
 		display: flex;
 		gap: var(--space-sm);
-		padding: 6px var(--space-md);
+		padding: 10px 16px;
 		border-bottom: 1px solid var(--color-primary);
 	}
 
+	.timeline-entry.timeline-note {
+		background: rgba(255, 255, 255, 0.02);
+		border-left: 3px solid var(--note-border-color, #6b7280);
+	}
+
 	.tl-icon {
-		font-size: 0.8rem;
+		font-size: 0.85rem;
 		flex-shrink: 0;
-		width: 20px;
+		width: 22px;
 		text-align: center;
 	}
 
 	.tl-content {
 		flex: 1;
 		display: flex;
+		flex-wrap: wrap;
 		justify-content: space-between;
 		align-items: flex-start;
-		gap: var(--space-sm);
+		gap: var(--space-xs);
 		min-width: 0;
 	}
 
 	.tl-summary {
-		font-size: 0.75rem;
+		font-size: 0.85rem;
 		overflow: hidden;
 		text-overflow: ellipsis;
 	}
 
 	.tl-time {
-		font-size: 0.6rem;
+		font-size: 0.7rem;
 		color: var(--color-text-muted);
 		flex-shrink: 0;
+	}
+
+	.tl-note-header {
+		width: 100%;
+		margin-bottom: 2px;
+	}
+
+	.tl-note-cat {
+		font-size: 0.65rem;
+		font-weight: 700;
+		text-transform: uppercase;
+		padding: 2px 8px;
+		border-radius: 3px;
+		color: #fff;
+		letter-spacing: 0.04em;
 	}
 
 	/* Empty state */
@@ -2066,11 +2869,11 @@
 	.form-group {
 		display: flex;
 		flex-direction: column;
-		gap: 2px;
+		gap: 4px;
 	}
 
 	.form-group label {
-		font-size: 0.7rem;
+		font-size: 0.75rem;
 		color: var(--color-text-muted);
 		font-weight: 500;
 	}
@@ -2083,8 +2886,9 @@
 		border-radius: var(--radius-sm);
 		color: var(--color-text);
 		font-size: 0.85rem;
-		padding: 6px 8px;
+		padding: 10px 12px;
 		outline: none;
+		min-height: 44px;
 	}
 
 	.form-group input:focus,
@@ -2118,11 +2922,12 @@
 		border: none;
 		border-radius: var(--radius-sm);
 		color: white;
-		font-size: 0.8rem;
+		font-size: 0.85rem;
 		font-weight: 600;
-		padding: 6px 16px;
+		padding: 10px 20px;
 		cursor: pointer;
 		transition: opacity var(--duration-fast);
+		min-height: 44px;
 	}
 
 	.btn-primary:hover { opacity: 0.9; }
@@ -2133,14 +2938,198 @@
 		border: 1px solid var(--color-primary);
 		border-radius: var(--radius-sm);
 		color: var(--color-text-muted);
-		font-size: 0.8rem;
-		padding: 6px 16px;
+		font-size: 0.85rem;
+		padding: 10px 20px;
 		cursor: pointer;
 		transition: all var(--duration-fast);
+		min-height: 44px;
 	}
 
 	.btn-secondary:hover {
 		border-color: var(--color-text-muted);
+		color: var(--color-text);
+	}
+
+	/* --- Note preview (inline on cards) --- */
+	.note-preview {
+		display: flex;
+		align-items: center;
+		gap: 6px;
+		width: 100%;
+		padding: 6px 8px;
+		margin-top: 4px;
+		background: rgba(255, 255, 255, 0.03);
+		border: 1px solid var(--color-primary);
+		border-radius: var(--radius-sm);
+		cursor: pointer;
+		text-align: left;
+		color: var(--color-text);
+		font-size: 0.8rem;
+		transition: background var(--duration-fast);
+		min-height: 32px;
+	}
+
+	.note-preview:hover {
+		background: rgba(255, 255, 255, 0.06);
+	}
+
+	.note-preview-cat {
+		font-size: 0.6rem;
+		font-weight: 700;
+		text-transform: uppercase;
+		padding: 1px 5px;
+		border-radius: 3px;
+		color: #fff;
+		flex-shrink: 0;
+		letter-spacing: 0.03em;
+	}
+
+	.note-preview-text {
+		flex: 1;
+		min-width: 0;
+		overflow: hidden;
+		text-overflow: ellipsis;
+		white-space: nowrap;
+		color: var(--color-text-muted);
+		font-size: 0.8rem;
+	}
+
+	.note-preview-count {
+		font-size: 0.7rem;
+		font-weight: 600;
+		color: var(--color-accent);
+		flex-shrink: 0;
+	}
+
+	.note-preview-age {
+		font-size: 0.7rem;
+		color: var(--color-text-muted);
+		flex-shrink: 0;
+	}
+
+	/* --- Note history (expanded on cards) --- */
+	.note-history {
+		display: flex;
+		flex-direction: column;
+		gap: 4px;
+		max-height: 200px;
+		overflow-y: auto;
+	}
+
+	.note-history-item {
+		padding: 8px 10px;
+		background: rgba(255, 255, 255, 0.02);
+		border-left: 3px solid var(--note-border-color, #6b7280);
+		border-radius: 0 var(--radius-sm) var(--radius-sm) 0;
+	}
+
+	.note-history-header {
+		display: flex;
+		align-items: center;
+		gap: 6px;
+		margin-bottom: 3px;
+	}
+
+	.note-history-cat {
+		font-size: 0.6rem;
+		font-weight: 700;
+		text-transform: uppercase;
+		padding: 1px 5px;
+		border-radius: 3px;
+		color: #fff;
+		letter-spacing: 0.03em;
+	}
+
+	.note-history-sev {
+		font-size: 0.65rem;
+		font-weight: 600;
+		text-transform: uppercase;
+	}
+
+	.note-history-author {
+		font-size: 0.7rem;
+		color: var(--color-text-muted);
+	}
+
+	.note-history-time {
+		font-size: 0.65rem;
+		color: var(--color-text-muted);
+		margin-left: auto;
+	}
+
+	.note-history-content {
+		font-size: 0.8rem;
+		color: var(--color-text);
+		line-height: 1.4;
+		word-break: break-word;
+	}
+
+	/* --- Pinned notes banner --- */
+	.pinned-banner {
+		border-bottom: 1px solid var(--color-primary);
+		background: rgba(239, 68, 68, 0.04);
+	}
+
+	.pinned-note {
+		display: flex;
+		align-items: flex-start;
+		gap: 6px;
+		padding: 8px var(--space-md);
+		border-left: 3px solid var(--note-border-color, #ef4444);
+		border-bottom: 1px solid var(--color-primary);
+	}
+
+	.pinned-note:last-child {
+		border-bottom: none;
+	}
+
+	.pinned-icon {
+		font-size: 0.8rem;
+		flex-shrink: 0;
+	}
+
+	.pinned-cat {
+		font-size: 0.6rem;
+		font-weight: 700;
+		text-transform: uppercase;
+		padding: 1px 5px;
+		border-radius: 3px;
+		color: #fff;
+		flex-shrink: 0;
+		letter-spacing: 0.03em;
+	}
+
+	.pinned-text {
+		flex: 1;
+		min-width: 0;
+		font-size: 0.8rem;
+		color: var(--color-text);
+		line-height: 1.3;
+		word-break: break-word;
+	}
+
+	.pinned-age {
+		font-size: 0.65rem;
+		color: var(--color-text-muted);
+		flex-shrink: 0;
+		margin-top: 1px;
+	}
+
+	.pinned-remove {
+		flex-shrink: 0;
+		background: none;
+		border: none;
+		color: var(--color-text-muted);
+		cursor: pointer;
+		font-size: 0.75rem;
+		padding: 0 2px;
+		line-height: 1;
+		opacity: 0.5;
+		transition: opacity 0.15s, color 0.15s;
+	}
+
+	.pinned-remove:hover {
+		opacity: 1;
 		color: var(--color-text);
 	}
 </style>

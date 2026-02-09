@@ -1,5 +1,13 @@
 <script lang="ts">
+	import { onMount } from 'svelte';
 	import { activeNet, activeCheckIns } from '$lib/stores/netcontrol';
+
+	let isMac = $state(false);
+	let helpOpen = $state(false);
+
+	onMount(() => {
+		isMac = navigator.platform.toUpperCase().indexOf('MAC') >= 0;
+	});
 
 	let {
 		unreadCount = 0,
@@ -8,7 +16,8 @@
 		onBulletinsOpen,
 		onTransportsOpen,
 		onAnnotationsOpen,
-		onNetControlOpen
+		onNetControlOpen,
+		onCommandPalette
 	}: {
 		unreadCount?: number;
 		onSearchOpen?: () => void;
@@ -17,6 +26,7 @@
 		onTransportsOpen?: () => void;
 		onAnnotationsOpen?: () => void;
 		onNetControlOpen?: () => void;
+		onCommandPalette?: () => void;
 	} = $props();
 
 	let netActive = $derived($activeNet?.status === 'open');
@@ -29,6 +39,12 @@
 		<svg width="18" height="18" viewBox="0 0 16 16" fill="none">
 			<circle cx="6.5" cy="6.5" r="5.5" stroke="currentColor" stroke-width="1.5"/>
 			<path d="M10.5 10.5L15 15" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/>
+		</svg>
+	</button>
+	<button class="fab cmd-fab" onclick={onCommandPalette} title="Command Palette">
+		<svg width="18" height="18" viewBox="0 0 16 16" fill="none">
+			<path d="M4 1v4H1M12 1v4h3M4 15v-4H1M12 15v-4h3" stroke="currentColor" stroke-width="1.3" stroke-linecap="round" stroke-linejoin="round"/>
+			<rect x="5" y="5" width="6" height="6" rx="1" stroke="currentColor" stroke-width="1.3"/>
 		</svg>
 	</button>
 	<button class="fab" onclick={onMessagesOpen} title="Messages">
@@ -64,6 +80,40 @@
 			<span class="fab-badge">{netOpCount}</span>
 		{/if}
 	</button>
+	<div class="help-container">
+		<button class="fab help-fab" onclick={() => { helpOpen = !helpOpen; }} title="Keyboard shortcuts">
+			<svg width="16" height="16" viewBox="0 0 16 16" fill="none">
+				<circle cx="8" cy="8" r="7" stroke="currentColor" stroke-width="1.4"/>
+				<path d="M6 6a2 2 0 114 0c0 1-1.5 1.25-1.5 2.5M8 11.5h.01" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round"/>
+			</svg>
+		</button>
+		{#if helpOpen}
+			<!-- svelte-ignore a11y_no_static_element_interactions -->
+			<div class="help-popover" onmousedown={(e) => e.preventDefault()}>
+				<div class="help-title">Keyboard shortcuts</div>
+				<div class="help-section">
+					<span class="help-section-label">Global</span>
+					<div class="help-row"><kbd>{isMac ? '⌘' : 'Ctrl'}+K</kbd><span>Command palette</span></div>
+					<div class="help-row"><kbd>/</kbd><span>Command palette (when not typing)</span></div>
+				</div>
+				<div class="help-section">
+					<span class="help-section-label">Command palette &mdash; search</span>
+					<div class="help-row"><kbd>&uarr; &darr;</kbd><span>Navigate results</span></div>
+					<div class="help-row"><kbd>Enter</kbd><span>Select station</span></div>
+					<div class="help-row"><kbd>Esc</kbd><span>Close</span></div>
+				</div>
+				<div class="help-section">
+					<span class="help-section-label">Command palette &mdash; station</span>
+					<div class="help-row"><kbd>N</kbd><span>Focus note composer</span></div>
+					<div class="help-row"><kbd>{isMac ? '⌘' : 'Ctrl'}+Enter</kbd><span>Save note</span></div>
+					<div class="help-row"><kbd>S</kbd><span>Change status</span></div>
+					<div class="help-row"><kbd>M</kbd><span>Assign mission</span></div>
+					<div class="help-row"><kbd>F</kbd><span>Fly to on map</span></div>
+					<div class="help-row"><kbd>Backspace</kbd><span>Back to search</span></div>
+				</div>
+			</div>
+		{/if}
+	</div>
 </div>
 
 <style>
@@ -93,9 +143,94 @@
 		position: relative;
 	}
 
+	.fab.cmd-fab {
+		border-color: var(--color-accent);
+		color: var(--color-accent);
+	}
+
 	.fab.net-active {
 		border-color: #22c55e;
 		color: #22c55e;
+	}
+
+	/* Help button + popover */
+	.help-container {
+		position: relative;
+	}
+
+	.fab.help-fab {
+		width: 36px;
+		height: 36px;
+		opacity: 0.5;
+		border-color: rgba(255, 255, 255, 0.1);
+	}
+
+	.fab.help-fab:hover {
+		opacity: 1;
+	}
+
+	.help-popover {
+		position: absolute;
+		top: 0;
+		right: calc(100% + 10px);
+		width: 270px;
+		background: var(--color-surface);
+		border: 1px solid var(--color-primary);
+		border-radius: var(--radius-md);
+		box-shadow: var(--shadow-lg);
+		padding: 12px 14px;
+		z-index: 10;
+	}
+
+	.help-title {
+		font-size: 0.8rem;
+		font-weight: 600;
+		color: var(--color-text);
+		margin-bottom: 10px;
+	}
+
+	.help-section {
+		margin-bottom: 10px;
+	}
+
+	.help-section:last-child {
+		margin-bottom: 0;
+	}
+
+	.help-section-label {
+		display: block;
+		font-size: 0.65rem;
+		text-transform: uppercase;
+		letter-spacing: 0.05em;
+		color: var(--color-text-muted);
+		margin-bottom: 4px;
+	}
+
+	.help-row {
+		display: flex;
+		align-items: center;
+		gap: 8px;
+		padding: 2px 0;
+		font-size: 0.78rem;
+		color: var(--color-text-muted);
+	}
+
+	.help-row kbd {
+		display: inline-flex;
+		align-items: center;
+		justify-content: center;
+		min-width: 22px;
+		padding: 1px 5px;
+		font-size: 0.68rem;
+		font-family: inherit;
+		background: var(--color-primary);
+		border-radius: 4px;
+		color: var(--color-text);
+		white-space: nowrap;
+	}
+
+	.help-row span {
+		color: var(--color-text);
 	}
 
 	.fab-badge {

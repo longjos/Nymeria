@@ -219,6 +219,30 @@ func (m *Manager) TransferNCS(netID, newCallsign, newUserID string) error {
 	return nil
 }
 
+// SetOpsView saves the NCS ops view (map viewport) on the net.
+func (m *Manager) SetOpsView(netID string, lat, lon, zoom float64) error {
+	m.mu.Lock()
+	n, ok := m.nets[netID]
+	if !ok {
+		m.mu.Unlock()
+		return fmt.Errorf("net %q not found", netID)
+	}
+
+	n.OpsViewLat = &lat
+	n.OpsViewLon = &lon
+	n.OpsViewZoom = &zoom
+	m.nets[netID] = n
+	m.mu.Unlock()
+
+	if err := m.store.SaveNet(n); err != nil {
+		return fmt.Errorf("persist net: %w", err)
+	}
+
+	m.emit(Event{Type: EventNetUpdated, Data: n})
+
+	return nil
+}
+
 // CheckIn registers an operator in the net.
 func (m *Manager) CheckIn(netID, callsign, traffic string) (*store.NetCheckIn, error) {
 	m.mu.RLock()
@@ -507,6 +531,12 @@ func (m *Manager) autoUnassignCompletedMission(netID, missionID, missionTitle st
 	}
 }
 
+// Allowed note categories.
+var noteCategories = map[string]bool{
+	"general": true, "medical": true, "logistical": true, "tactical": true,
+	"weather": true, "resource": true, "hazard": true, "comms": true,
+}
+
 // AddNote adds a note to a net.
 func (m *Manager) AddNote(note store.NetNote) (*store.NetNote, error) {
 	m.mu.RLock()
@@ -520,6 +550,24 @@ func (m *Manager) AddNote(note store.NetNote) (*store.NetNote, error) {
 		return nil, fmt.Errorf("note content is required")
 	}
 
+	// Default category.
+	if note.Category == "" {
+		note.Category = "general"
+	}
+	if !noteCategories[note.Category] {
+		return nil, fmt.Errorf("invalid note category %q", note.Category)
+	}
+
+	// Default severity.
+	if note.Severity == "" {
+		note.Severity = "info"
+	}
+
+	// Auto-pin urgent notes.
+	if note.Severity == "urgent" {
+		note.Pinned = true
+	}
+
 	note.ID = uuid.New().String()
 	note.CreatedAt = time.Now().UTC()
 
@@ -527,7 +575,8 @@ func (m *Manager) AddNote(note store.NetNote) (*store.NetNote, error) {
 		return nil, fmt.Errorf("persist note: %w", err)
 	}
 
-	m.logEvent(note.NetID, "note", "", fmt.Sprintf("Note by %s: %s", note.AuthorName, truncate(note.Content, 80)))
+	categoryTag := strings.ToUpper(note.Category)
+	m.logEvent(note.NetID, "note", "", fmt.Sprintf("[%s] Note by %s: %s", categoryTag, note.AuthorName, truncate(note.Content, 80)))
 	m.emit(Event{Type: EventTimelineEntry, Data: note})
 
 	return &note, nil
@@ -678,6 +727,39 @@ func (m *Manager) GetMissions(netID string) []store.NetMission {
 // GetNotes returns notes for a net from the store.
 func (m *Manager) GetNotes(netID string) ([]store.NetNote, error) {
 	return m.store.LoadNetNotes(netID)
+}
+
+// ToggleNotePin toggles the pinned state of a note.
+func (m *Manager) ToggleNotePin(netID, noteID string) (*store.NetNote, error) {
+	notes, err := m.store.LoadNetNotes(netID)
+	if err != nil {
+		return nil, fmt.Errorf("load notes: %w", err)
+	}
+
+	var target *store.NetNote
+	for i := range notes {
+		if notes[i].ID == noteID {
+			target = &notes[i]
+			break
+		}
+	}
+	if target == nil {
+		return nil, fmt.Errorf("note %q not found", noteID)
+	}
+
+	target.Pinned = !target.Pinned
+	if err := m.store.UpdateNotePinned(noteID, target.Pinned); err != nil {
+		return nil, fmt.Errorf("update pin: %w", err)
+	}
+
+	action := "pinned"
+	if !target.Pinned {
+		action = "unpinned"
+	}
+	m.logEvent(netID, "note_pin", "", fmt.Sprintf("Note %s by %s: %s", action, target.AuthorName, truncate(target.Content, 60)))
+	m.emit(Event{Type: EventTimelineEntry, Data: *target})
+
+	return target, nil
 }
 
 // GetEvents returns timeline events for a net from the store.

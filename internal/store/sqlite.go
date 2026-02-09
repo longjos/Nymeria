@@ -14,7 +14,7 @@ import (
 	_ "modernc.org/sqlite"
 )
 
-const currentSchemaVersion = 9
+const currentSchemaVersion = 11
 
 // SQLiteStore implements Store using modernc.org/sqlite.
 type SQLiteStore struct {
@@ -115,6 +115,18 @@ func (s *SQLiteStore) migrate() error {
 
 	if version < 9 {
 		if err := s.migrateV9(); err != nil {
+			return err
+		}
+	}
+
+	if version < 10 {
+		if err := s.migrateV10(); err != nil {
+			return err
+		}
+	}
+
+	if version < 11 {
+		if err := s.migrateV11(); err != nil {
 			return err
 		}
 	}
@@ -928,10 +940,11 @@ func (s *SQLiteStore) SaveNet(n Net) error {
 
 	_, err := s.db.Exec(`
 		INSERT OR REPLACE INTO nets
-			(id, name, type, frequency, ncs_callsign, ncs_user_id, status, opened_at, closed_at, notes, mission_brief)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+			(id, name, type, frequency, ncs_callsign, ncs_user_id, status, opened_at, closed_at, notes, mission_brief, ops_view_lat, ops_view_lon, ops_view_zoom)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
 		n.ID, n.Name, n.Type, n.Frequency, n.NCSCallsign, n.NCSUserID,
 		n.Status, openedAt, closedAt, n.Notes, n.MissionBrief,
+		n.OpsViewLat, n.OpsViewLon, n.OpsViewZoom,
 	)
 	if err != nil {
 		return fmt.Errorf("save net: %w", err)
@@ -942,13 +955,16 @@ func (s *SQLiteStore) SaveNet(n Net) error {
 func (s *SQLiteStore) LoadNet(id string) (*Net, error) {
 	var n Net
 	var openedAt, closedAt sql.NullString
+	var opsLat, opsLon, opsZoom sql.NullFloat64
 
 	err := s.db.QueryRow(`
 		SELECT id, name, type, frequency, ncs_callsign, ncs_user_id,
-		       status, opened_at, closed_at, notes, mission_brief
+		       status, opened_at, closed_at, notes, mission_brief,
+		       ops_view_lat, ops_view_lon, ops_view_zoom
 		FROM nets WHERE id = ?`, id).Scan(
 		&n.ID, &n.Name, &n.Type, &n.Frequency, &n.NCSCallsign, &n.NCSUserID,
 		&n.Status, &openedAt, &closedAt, &n.Notes, &n.MissionBrief,
+		&opsLat, &opsLon, &opsZoom,
 	)
 	if err != nil {
 		if err == sql.ErrNoRows {
@@ -971,6 +987,15 @@ func (s *SQLiteStore) LoadNet(id string) (*Net, error) {
 		}
 		n.ClosedAt = &t
 	}
+	if opsLat.Valid {
+		n.OpsViewLat = &opsLat.Float64
+	}
+	if opsLon.Valid {
+		n.OpsViewLon = &opsLon.Float64
+	}
+	if opsZoom.Valid {
+		n.OpsViewZoom = &opsZoom.Float64
+	}
 
 	return &n, nil
 }
@@ -978,7 +1003,8 @@ func (s *SQLiteStore) LoadNet(id string) (*Net, error) {
 func (s *SQLiteStore) LoadNets() ([]Net, error) {
 	rows, err := s.db.Query(`
 		SELECT id, name, type, frequency, ncs_callsign, ncs_user_id,
-		       status, opened_at, closed_at, notes, mission_brief
+		       status, opened_at, closed_at, notes, mission_brief,
+		       ops_view_lat, ops_view_lon, ops_view_zoom
 		FROM nets ORDER BY rowid ASC`)
 	if err != nil {
 		return nil, fmt.Errorf("query nets: %w", err)
@@ -989,10 +1015,12 @@ func (s *SQLiteStore) LoadNets() ([]Net, error) {
 	for rows.Next() {
 		var n Net
 		var openedAt, closedAt sql.NullString
+		var opsLat, opsLon, opsZoom sql.NullFloat64
 
 		if err := rows.Scan(
 			&n.ID, &n.Name, &n.Type, &n.Frequency, &n.NCSCallsign, &n.NCSUserID,
 			&n.Status, &openedAt, &closedAt, &n.Notes, &n.MissionBrief,
+			&opsLat, &opsLon, &opsZoom,
 		); err != nil {
 			return nil, fmt.Errorf("scan net: %w", err)
 		}
@@ -1010,6 +1038,15 @@ func (s *SQLiteStore) LoadNets() ([]Net, error) {
 				return nil, fmt.Errorf("parse closed_at: %w", err)
 			}
 			n.ClosedAt = &t
+		}
+		if opsLat.Valid {
+			n.OpsViewLat = &opsLat.Float64
+		}
+		if opsLon.Valid {
+			n.OpsViewLon = &opsLon.Float64
+		}
+		if opsZoom.Valid {
+			n.OpsViewZoom = &opsZoom.Float64
 		}
 
 		nets = append(nets, n)
@@ -1249,12 +1286,28 @@ func (s *SQLiteStore) SaveNetNote(n NetNote) error {
 		missionID = n.MissionID
 	}
 
+	pinned := 0
+	if n.Pinned {
+		pinned = 1
+	}
+
+	category := n.Category
+	if category == "" {
+		category = "general"
+	}
+
+	severity := n.Severity
+	if severity == "" {
+		severity = "info"
+	}
+
 	_, err := s.db.Exec(`
 		INSERT OR REPLACE INTO net_notes
-			(id, net_id, check_in_id, mission_id, author_id, author_name, content, created_at)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+			(id, net_id, check_in_id, mission_id, author_id, author_name, content,
+			 category, severity, pinned, created_at)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
 		n.ID, n.NetID, checkInID, missionID, n.AuthorID, n.AuthorName,
-		n.Content, n.CreatedAt.UTC(),
+		n.Content, category, severity, pinned, n.CreatedAt.UTC(),
 	)
 	if err != nil {
 		return fmt.Errorf("save net note: %w", err)
@@ -1264,7 +1317,8 @@ func (s *SQLiteStore) SaveNetNote(n NetNote) error {
 
 func (s *SQLiteStore) LoadNetNotes(netID string) ([]NetNote, error) {
 	rows, err := s.db.Query(`
-		SELECT id, net_id, check_in_id, mission_id, author_id, author_name, content, created_at
+		SELECT id, net_id, check_in_id, mission_id, author_id, author_name, content,
+		       category, severity, pinned, created_at
 		FROM net_notes WHERE net_id = ? ORDER BY created_at ASC`, netID)
 	if err != nil {
 		return nil, fmt.Errorf("query net notes: %w", err)
@@ -1276,14 +1330,16 @@ func (s *SQLiteStore) LoadNetNotes(netID string) ([]NetNote, error) {
 		var n NetNote
 		var createdAt string
 		var checkInID, missionID sql.NullString
+		var pinned int
 
 		if err := rows.Scan(
 			&n.ID, &n.NetID, &checkInID, &missionID, &n.AuthorID, &n.AuthorName,
-			&n.Content, &createdAt,
+			&n.Content, &n.Category, &n.Severity, &pinned, &createdAt,
 		); err != nil {
 			return nil, fmt.Errorf("scan net note: %w", err)
 		}
 
+		n.Pinned = pinned != 0
 		n.CreatedAt, err = parseTime(createdAt)
 		if err != nil {
 			return nil, fmt.Errorf("parse created_at: %w", err)
@@ -1301,6 +1357,18 @@ func (s *SQLiteStore) LoadNetNotes(netID string) ([]NetNote, error) {
 		return nil, fmt.Errorf("iterate net notes: %w", err)
 	}
 	return notes, nil
+}
+
+func (s *SQLiteStore) UpdateNotePinned(noteID string, pinned bool) error {
+	val := 0
+	if pinned {
+		val = 1
+	}
+	_, err := s.db.Exec(`UPDATE net_notes SET pinned = ? WHERE id = ?`, val, noteID)
+	if err != nil {
+		return fmt.Errorf("update note pinned: %w", err)
+	}
+	return nil
 }
 
 func (s *SQLiteStore) SaveNetEvent(e NetEvent) error {
@@ -1666,6 +1734,54 @@ func (s *SQLiteStore) migrateV9() error {
 		return fmt.Errorf("clear schema_version: %w", err)
 	}
 	if _, err := s.db.Exec("INSERT INTO schema_version (version) VALUES (?)", 9); err != nil {
+		return fmt.Errorf("set schema_version: %w", err)
+	}
+
+	return nil
+}
+
+func (s *SQLiteStore) migrateV10() error {
+	for _, stmt := range []string{
+		"ALTER TABLE net_notes ADD COLUMN category TEXT NOT NULL DEFAULT 'general'",
+		"ALTER TABLE net_notes ADD COLUMN severity TEXT NOT NULL DEFAULT 'info'",
+		"ALTER TABLE net_notes ADD COLUMN pinned INTEGER NOT NULL DEFAULT 0",
+	} {
+		if _, err := s.db.Exec(stmt); err != nil {
+			if !isDuplicateColumnError(err) {
+				return fmt.Errorf("migrate v10: %w", err)
+			}
+		}
+	}
+
+	// Update schema version.
+	if _, err := s.db.Exec("DELETE FROM schema_version"); err != nil {
+		return fmt.Errorf("clear schema_version: %w", err)
+	}
+	if _, err := s.db.Exec("INSERT INTO schema_version (version) VALUES (?)", 10); err != nil {
+		return fmt.Errorf("set schema_version: %w", err)
+	}
+
+	return nil
+}
+
+func (s *SQLiteStore) migrateV11() error {
+	for _, stmt := range []string{
+		"ALTER TABLE nets ADD COLUMN ops_view_lat REAL",
+		"ALTER TABLE nets ADD COLUMN ops_view_lon REAL",
+		"ALTER TABLE nets ADD COLUMN ops_view_zoom REAL",
+	} {
+		if _, err := s.db.Exec(stmt); err != nil {
+			if !isDuplicateColumnError(err) {
+				return fmt.Errorf("migrate v11: %w", err)
+			}
+		}
+	}
+
+	// Update schema version.
+	if _, err := s.db.Exec("DELETE FROM schema_version"); err != nil {
+		return fmt.Errorf("clear schema_version: %w", err)
+	}
+	if _, err := s.db.Exec("INSERT INTO schema_version (version) VALUES (?)", 11); err != nil {
 		return fmt.Errorf("set schema_version: %w", err)
 	}
 

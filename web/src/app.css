@@ -32,6 +32,7 @@
 	--z-toolbar: 200;
 	--z-sheet: 300;
 	--z-overlay: 400;
+	--z-command-palette: 500;
 
 	/* Animation */
 	--ease-out: cubic-bezier(0.16, 1, 0.3, 1);
@@ -40,7 +41,7 @@
 	--duration-slow: 400ms;
 
 	/* Panel dims */
-	--panel-width: 380px;
+	--panel-width: 420px;
 	--rail-width: 48px;
 	--sheet-peek: 60px;
 

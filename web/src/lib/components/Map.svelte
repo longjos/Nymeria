@@ -1,7 +1,8 @@
 <script lang="ts">
 	import { onMount, onDestroy } from 'svelte';
 	import type { Station, Annotation, NetCheckIn, NetMission } from '$lib/types';
-	import { symbolInfo, symbolChar } from '$lib/symbols';
+	import { symbolInfo } from '$lib/symbols';
+	import { createStationIcon } from '$lib/aprs-icons';
 	import { stationDisplayName } from '$lib/utils';
 	import { getTacticalAlias } from '$lib/stores/tactical';
 	import { get } from 'svelte/store';
@@ -30,6 +31,9 @@
 		activeNetId = null,
 		onNetOperatorClick,
 		onNetMissionClick,
+		flyToBounds = null,
+		highlightedMissionId = null,
+		highlightedCheckInId = null,
 	}: {
 		stations?: Station[];
 		annotations?: Annotation[];
@@ -51,6 +55,9 @@
 		activeNetId?: string | null;
 		onNetOperatorClick?: (checkInId: string) => void;
 		onNetMissionClick?: (missionId: string) => void;
+		flyToBounds?: Array<{ lat: number; lon: number }> | null;
+		highlightedMissionId?: string | null;
+		highlightedCheckInId?: string | null;
 	} = $props();
 
 	let mapEl: HTMLDivElement;
@@ -61,7 +68,7 @@
 		const c = map.getCenter();
 		return { lat: c.lat, lon: c.lng, zoom: map.getZoom() };
 	}
-	let markers: Map<string, L.CircleMarker> = new Map();
+	let markers: Map<string, L.Marker> = new Map();
 	let trackLines: Map<string, L.Polyline> = new Map();
 	let annotationLayers: Map<string, L.Layer> = new Map();
 
@@ -81,6 +88,10 @@
 	let netHalos: Map<string, L.CircleMarker | L.Marker> = new Map();
 	let netMissionFlags: Map<string, L.Marker> = new Map();
 	let netAssignLines: L.Polyline[] = [];
+	// Highlight overlay layers for hovered mission
+	let highlightOverlays: L.Layer[] = [];
+	// Single operator highlight (assign picker hover)
+	let operatorHighlight: L.Layer | null = null;
 
 	const netStatusColors: Record<string, string> = {
 		available: '#22c55e',
@@ -123,6 +134,9 @@
 	});
 
 	onDestroy(() => {
+		for (const layer of highlightOverlays) layer.remove();
+		highlightOverlays = [];
+		operatorHighlight?.remove();
 		map?.remove();
 	});
 
@@ -138,6 +152,14 @@
 	$effect(() => {
 		if (map && flyToTarget) {
 			map.flyTo([flyToTarget.lat, flyToTarget.lon], flyToTarget.zoom ?? 14);
+		}
+	});
+
+	// Fly to bounds (multi-point) when they change
+	$effect(() => {
+		if (map && flyToBounds && flyToBounds.length > 0) {
+			const bounds = L.latLngBounds(flyToBounds.map(p => [p.lat, p.lon] as L.LatLngExpression));
+			map.flyToBounds(bounds, { padding: [50, 50], maxZoom: 16 });
 		}
 	});
 
@@ -361,6 +383,121 @@
 			).addTo(map);
 			netAssignLines.push(polyline);
 		}
+	});
+
+	// Highlight overlay: glow rings on annotations + operators for hovered mission
+	$effect(() => {
+		if (!map) return;
+		const hovered = highlightedMissionId;
+
+		// Clear previous overlays
+		for (const layer of highlightOverlays) layer.remove();
+		highlightOverlays = [];
+
+		if (!hovered) return;
+
+		// Highlight operator halos with pulsing ring
+		for (const ci of netOperators) {
+			if (ci.lat == null || ci.lon == null) continue;
+			if (!ci.missionIds?.includes(hovered)) continue;
+			const ring = L.circleMarker([ci.lat, ci.lon], {
+				radius: 18,
+				weight: 3,
+				color: '#fff',
+				fillColor: netStatusColors[ci.status] || '#6b7280',
+				fillOpacity: 0.25,
+				opacity: 0.8,
+				className: 'highlight-pulse-ring',
+			}).addTo(map);
+			highlightOverlays.push(ring);
+		}
+
+		// Highlight mission flag
+		for (const m of netMissions) {
+			if (m.lat == null || m.lon == null) continue;
+			if (m.id !== hovered) continue;
+			const ring = L.circleMarker([m.lat, m.lon], {
+				radius: 18,
+				weight: 3,
+				color: missionPriorityColors[m.priority] || '#6b7280',
+				fillColor: missionPriorityColors[m.priority] || '#6b7280',
+				fillOpacity: 0.2,
+				opacity: 0.8,
+				className: 'highlight-pulse-ring',
+			}).addTo(map);
+			highlightOverlays.push(ring);
+		}
+
+		// Highlight linked annotations
+		for (const ann of annotations) {
+			if (!ann.missionIds?.includes(hovered)) continue;
+			let geom: { type: string; coordinates: unknown };
+			try { geom = JSON.parse(ann.geometry); } catch { continue; }
+
+			const annStyle = parseStyle(ann.style);
+			const color = (annStyle.color as string) || DEFAULT_ANN_COLOR;
+
+			if (geom.type === 'Point') {
+				const coords = geom.coordinates as [number, number];
+				const ring = L.circleMarker([coords[1], coords[0]], {
+					radius: 16,
+					weight: 3,
+					color,
+					fillColor: color,
+					fillOpacity: 0.2,
+					opacity: 0.8,
+					className: 'highlight-pulse-ring',
+				}).addTo(map);
+				highlightOverlays.push(ring);
+			} else if (geom.type === 'LineString') {
+				const coords = geom.coordinates as [number, number][];
+				const latlngs = coords.map(c => [c[1], c[0]] as L.LatLngExpression);
+				const highlight = L.polyline(latlngs, {
+					color,
+					weight: 6,
+					opacity: 0.5,
+					className: 'highlight-pulse-ring',
+				}).addTo(map);
+				highlightOverlays.push(highlight);
+			} else if (geom.type === 'Polygon') {
+				const rings = geom.coordinates as [number, number][][];
+				const latlngs = rings[0].map(c => [c[1], c[0]] as L.LatLngExpression);
+				const highlight = L.polygon(latlngs, {
+					color,
+					weight: 4,
+					opacity: 0.5,
+					fillColor: color,
+					fillOpacity: 0.15,
+					className: 'highlight-pulse-ring',
+				}).addTo(map);
+				highlightOverlays.push(highlight);
+			}
+		}
+	});
+
+	// Highlight single operator when hovering in assign picker
+	$effect(() => {
+		if (!map) return;
+		const ciId = highlightedCheckInId;
+
+		operatorHighlight?.remove();
+		operatorHighlight = null;
+
+		if (!ciId) return;
+
+		const ci = netOperators.find(op => op.id === ciId);
+		if (!ci || ci.lat == null || ci.lon == null) return;
+
+		const color = netStatusColors[ci.status] || '#6b7280';
+		operatorHighlight = L.circleMarker([ci.lat, ci.lon], {
+			radius: 20,
+			weight: 3,
+			color: '#fff',
+			fillColor: color,
+			fillOpacity: 0.3,
+			opacity: 0.9,
+			className: 'highlight-pulse-ring',
+		}).addTo(map);
 	});
 
 	function setupVertexHandles(geojsonStr: string, color: string, onChange: (geom: string) => void) {
@@ -662,23 +799,19 @@
 			currentKeys.add(key);
 
 			const info = symbolInfo(st.symbol);
-			const char = symbolChar(st.symbol);
 			const baseName = stationDisplayName(st.callsign, st.ssid);
 			const tacAlias = get(getTacticalAlias)(key);
 			const name = tacAlias ? `${tacAlias} (${baseName})` : baseName;
 			const isSelected = key === selectedCallsign;
 
+			const iconOpts = createStationIcon(st.symbol, info.color, isSelected);
+			const divIcon = L.divIcon(iconOpts);
+
 			// Update or create marker
 			let marker = markers.get(key);
 			if (marker) {
 				marker.setLatLng([st.position.lat, st.position.lon]);
-				marker.setStyle({
-					fillColor: info.color,
-					radius: isSelected ? 12 : 7,
-					weight: isSelected ? 3 : 1,
-					color: isSelected ? '#fff' : info.color,
-					fillOpacity: isSelected ? 1 : 0.9,
-				});
+				marker.setIcon(divIcon);
 				// Update tooltip in case tactical alias changed
 				marker.unbindTooltip();
 				marker.bindTooltip(name, {
@@ -687,12 +820,8 @@
 					className: 'station-tooltip',
 				});
 			} else {
-				marker = L.circleMarker([st.position.lat, st.position.lon], {
-					radius: isSelected ? 12 : 7,
-					fillColor: info.color,
-					color: isSelected ? '#fff' : info.color,
-					weight: isSelected ? 3 : 1,
-					fillOpacity: isSelected ? 1 : 0.9,
+				marker = L.marker([st.position.lat, st.position.lon], {
+					icon: divIcon,
 				}).addTo(map);
 
 				marker.bindTooltip(name, {
@@ -819,6 +948,11 @@
 		border-style: dashed;
 	}
 
+	:global(.aprs-station-icon) {
+		background: transparent !important;
+		border: none !important;
+	}
+
 	:global(.net-voice-marker) {
 		background: transparent !important;
 		border: none !important;
@@ -837,5 +971,15 @@
 
 	:global(.leaflet-popup-tip) {
 		background: #1a1a2e;
+	}
+
+	:global(.highlight-pulse-ring) {
+		animation: highlight-pulse 1.5s ease-in-out infinite;
+		pointer-events: none;
+	}
+
+	@keyframes highlight-pulse {
+		0%, 100% { opacity: 0.6; }
+		50% { opacity: 1; }
 	}
 </style>

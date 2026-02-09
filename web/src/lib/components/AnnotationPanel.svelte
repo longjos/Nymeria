@@ -734,7 +734,7 @@
 
 	.header-actions {
 		display: flex;
-		gap: 6px;
+		gap: 8px;
 		align-items: center;
 		flex-shrink: 0;
 	}
@@ -743,8 +743,8 @@
 		display: flex;
 		align-items: center;
 		justify-content: center;
-		width: 30px;
-		height: 30px;
+		width: 36px;
+		height: 36px;
 		background: none;
 		border: 1px solid var(--color-primary);
 		border-radius: var(--radius-sm);
@@ -761,13 +761,14 @@
 	.add-btn {
 		display: flex;
 		align-items: center;
-		gap: 4px;
-		padding: 0.25rem 0.6rem;
+		gap: 6px;
+		padding: 8px 12px;
+		min-height: 36px;
 		background: none;
 		border: 1px solid var(--color-accent);
 		border-radius: var(--radius-sm);
 		color: var(--color-accent);
-		font-size: 0.8rem;
+		font-size: 0.85rem;
 		font-weight: 600;
 		cursor: pointer;
 		transition: background var(--duration-fast), color var(--duration-fast);
@@ -781,8 +782,8 @@
 	/* Filter bar */
 	.filter-bar {
 		display: flex;
-		gap: 4px;
-		padding: 6px var(--space-md);
+		gap: 6px;
+		padding: 8px var(--space-md);
 		border-bottom: 1px solid var(--color-primary);
 		overflow-x: auto;
 		flex-shrink: 0;
@@ -791,13 +792,14 @@
 	.filter-chip {
 		display: flex;
 		align-items: center;
-		gap: 3px;
-		padding: 3px 8px;
+		gap: 4px;
+		padding: 6px 12px;
+		min-height: 32px;
 		background: none;
 		border: 1px solid var(--color-primary);
-		border-radius: 12px;
+		border-radius: 16px;
 		color: var(--color-text-muted);
-		font-size: 0.7rem;
+		font-size: 0.75rem;
 		white-space: nowrap;
 		cursor: pointer;
 		transition: border-color var(--duration-fast), color var(--duration-fast), background var(--duration-fast);
@@ -826,20 +828,21 @@
 	.category-grid {
 		display: grid;
 		grid-template-columns: repeat(4, 1fr);
-		gap: 4px;
+		gap: 6px;
 	}
 
 	.cat-btn {
 		display: flex;
 		flex-direction: column;
 		align-items: center;
-		gap: 2px;
-		padding: 6px 2px;
+		gap: 4px;
+		padding: 10px 4px;
+		min-height: 44px;
 		background: none;
 		border: 1px solid var(--color-primary);
 		border-radius: var(--radius-sm);
 		color: var(--color-text-muted);
-		font-size: 0.65rem;
+		font-size: 0.7rem;
 		cursor: pointer;
 		transition: border-color var(--duration-fast), color var(--duration-fast);
 	}
@@ -868,12 +871,13 @@
 		display: flex;
 		align-items: center;
 		justify-content: center;
-		padding: 0.35rem;
+		padding: 10px 8px;
+		min-height: 44px;
 		background: none;
 		border: 1px solid var(--color-primary);
 		border-radius: var(--radius-sm);
 		color: var(--color-text-muted);
-		font-size: 0.8rem;
+		font-size: 0.85rem;
 		cursor: pointer;
 		transition: border-color var(--duration-fast), color var(--duration-fast);
 	}
@@ -890,14 +894,16 @@
 
 	.form-input {
 		width: 100%;
-		padding: 0.4rem 0.6rem;
+		padding: 10px 12px;
+		min-height: 44px;
 		background: var(--color-surface);
 		border: 1px solid var(--color-primary);
 		border-radius: var(--radius-sm);
 		color: var(--color-text);
-		font-size: 0.85rem;
+		font-size: 1rem;
 		outline: none;
 		transition: border-color var(--duration-fast);
+		box-sizing: border-box;
 	}
 
 	.form-input:focus {
@@ -923,17 +929,18 @@
 
 	.priority-btns {
 		display: flex;
-		gap: 4px;
+		gap: 6px;
 		flex-wrap: wrap;
 	}
 
 	.priority-btn {
-		padding: 2px 8px;
+		padding: 6px 12px;
+		min-height: 36px;
 		background: none;
 		border: 1px solid var(--color-primary);
-		border-radius: 10px;
+		border-radius: 18px;
 		color: var(--color-text-muted);
-		font-size: 0.7rem;
+		font-size: 0.8rem;
 		cursor: pointer;
 		transition: border-color var(--duration-fast), color var(--duration-fast);
 	}
@@ -951,13 +958,13 @@
 
 	.color-swatches {
 		display: flex;
-		gap: 4px;
+		gap: 8px;
 		flex-wrap: wrap;
 	}
 
 	.swatch {
-		width: 22px;
-		height: 22px;
+		width: 32px;
+		height: 32px;
 		border-radius: 50%;
 		border: 2px solid transparent;
 		cursor: pointer;
@@ -980,13 +987,14 @@
 	.draw-btn {
 		display: flex;
 		align-items: center;
-		gap: 4px;
-		padding: 0.35rem 0.6rem;
+		gap: 6px;
+		padding: 10px 14px;
+		min-height: 44px;
 		background: none;
 		border: 1px solid var(--color-primary);
 		border-radius: var(--radius-sm);
 		color: var(--color-text);
-		font-size: 0.8rem;
+		font-size: 0.85rem;
 		cursor: pointer;
 		transition: border-color var(--duration-fast);
 	}
@@ -996,8 +1004,8 @@
 	}
 
 	.draw-status {
-		font-size: 0.8rem;
-		padding: 0.35rem 0;
+		font-size: 0.85rem;
+		padding: 10px 0;
 	}
 
 	.draw-status.done {
@@ -1010,12 +1018,13 @@
 
 	.redraw-btn {
 		margin-left: auto;
-		padding: 0.2rem 0.5rem;
+		padding: 8px 12px;
+		min-height: 36px;
 		background: none;
 		border: 1px solid var(--color-primary);
 		border-radius: var(--radius-sm);
 		color: var(--color-text-muted);
-		font-size: 0.75rem;
+		font-size: 0.8rem;
 		cursor: pointer;
 		transition: border-color var(--duration-fast), color var(--duration-fast);
 	}
@@ -1027,13 +1036,14 @@
 
 	.form-actions {
 		display: flex;
-		gap: var(--space-xs);
+		gap: 8px;
 	}
 
 	.btn {
-		padding: 0.4rem 1rem;
+		padding: 10px 16px;
+		min-height: 44px;
 		border-radius: var(--radius-sm);
-		font-size: 0.85rem;
+		font-size: 0.9rem;
 		font-weight: 600;
 		cursor: pointer;
 		border: none;
@@ -1070,8 +1080,8 @@
 	.entry {
 		display: flex;
 		align-items: flex-start;
-		gap: 0.5rem;
-		padding: 0.6rem var(--space-md);
+		gap: 10px;
+		padding: 10px var(--space-md);
 		border-bottom: 1px solid var(--color-primary);
 		border-left: 3px solid transparent;
 		cursor: pointer;
@@ -1094,15 +1104,15 @@
 	/* Category icon */
 	.entry-icon {
 		flex-shrink: 0;
-		width: 28px;
-		height: 28px;
+		width: 32px;
+		height: 32px;
 		display: flex;
 		align-items: center;
 		justify-content: center;
 		border-radius: 50%;
 		border: 2px solid var(--status-color, var(--color-primary));
 		color: var(--icon-color, var(--color-text-muted));
-		margin-top: 1px;
+		margin-top: 2px;
 	}
 
 	.entry-info {
@@ -1120,7 +1130,7 @@
 	}
 
 	.entry-label {
-		font-size: 0.85rem;
+		font-size: 0.95rem;
 		font-weight: 500;
 		white-space: nowrap;
 		overflow: hidden;
@@ -1129,9 +1139,9 @@
 
 	.status-badge {
 		flex-shrink: 0;
-		padding: 1px 6px;
+		padding: 2px 8px;
 		border-radius: 8px;
-		font-size: 0.6rem;
+		font-size: 0.65rem;
 		font-weight: 600;
 		color: white;
 		text-transform: uppercase;
@@ -1139,7 +1149,7 @@
 	}
 
 	.entry-desc {
-		font-size: 0.75rem;
+		font-size: 0.8rem;
 		color: var(--color-text-muted);
 		overflow: hidden;
 		text-overflow: ellipsis;
@@ -1147,7 +1157,7 @@
 	}
 
 	.entry-meta {
-		font-size: 0.7rem;
+		font-size: 0.75rem;
 		color: var(--color-text-muted);
 		opacity: 0.7;
 		display: flex;
@@ -1169,20 +1179,21 @@
 	.mission-chips {
 		display: flex;
 		flex-wrap: wrap;
-		gap: 4px;
+		gap: 6px;
 		align-items: center;
-		padding: 2px 0;
+		padding: 4px 0;
 	}
 
 	.mission-chip {
 		display: inline-flex;
 		align-items: center;
-		gap: 3px;
+		gap: 4px;
 		background: var(--color-surface);
 		border: 1px solid var(--color-primary);
 		border-radius: var(--radius-sm);
-		padding: 1px 6px;
-		font-size: 0.65rem;
+		padding: 4px 8px;
+		min-height: 32px;
+		font-size: 0.75rem;
 		color: var(--color-accent);
 	}
 
@@ -1191,14 +1202,14 @@
 	}
 
 	.mission-chip-dot {
-		width: 5px;
-		height: 5px;
+		width: 6px;
+		height: 6px;
 		border-radius: 50%;
 		flex-shrink: 0;
 	}
 
 	.mission-chip-title {
-		max-width: 100px;
+		max-width: 120px;
 		overflow: hidden;
 		text-overflow: ellipsis;
 		white-space: nowrap;
@@ -1208,10 +1219,16 @@
 		background: none;
 		border: none;
 		color: var(--color-text-muted);
-		font-size: 0.7rem;
-		padding: 0 1px;
+		font-size: 0.85rem;
+		padding: 4px 6px;
+		min-width: 28px;
+		min-height: 28px;
+		display: flex;
+		align-items: center;
+		justify-content: center;
 		cursor: pointer;
 		line-height: 1;
+		margin: -4px -6px -4px 0;
 	}
 
 	.mission-chip-remove:hover {
@@ -1221,13 +1238,14 @@
 	.add-mission-btn {
 		display: inline-flex;
 		align-items: center;
-		gap: 3px;
-		padding: 1px 6px;
+		gap: 4px;
+		padding: 6px 10px;
+		min-height: 32px;
 		background: none;
 		border: 1px solid var(--color-primary);
 		border-radius: var(--radius-sm);
 		color: var(--color-text-muted);
-		font-size: 0.62rem;
+		font-size: 0.75rem;
 		cursor: pointer;
 		transition: color var(--duration-fast), border-color var(--duration-fast);
 	}
@@ -1252,13 +1270,14 @@
 	.add-mission-option {
 		display: flex;
 		align-items: center;
-		gap: 6px;
-		padding: 4px 8px;
+		gap: 8px;
+		padding: 10px 12px;
+		min-height: 44px;
 		background: none;
 		border: none;
 		border-bottom: 1px solid var(--color-primary);
 		color: var(--color-text);
-		font-size: 0.7rem;
+		font-size: 0.8rem;
 		text-align: left;
 		cursor: pointer;
 		transition: background var(--duration-fast);
@@ -1281,15 +1300,15 @@
 	}
 
 	.add-mission-status {
-		font-size: 0.55rem;
+		font-size: 0.65rem;
 		color: var(--color-text-muted);
 		text-transform: uppercase;
 		flex-shrink: 0;
 	}
 
 	.add-mission-empty {
-		padding: 6px 8px;
-		font-size: 0.65rem;
+		padding: 10px 12px;
+		font-size: 0.75rem;
 		color: var(--color-text-muted);
 		font-style: italic;
 	}
@@ -1297,13 +1316,14 @@
 	.promote-btn {
 		display: flex;
 		align-items: center;
-		gap: 3px;
-		padding: 2px 6px;
+		gap: 4px;
+		padding: 6px 10px;
+		min-height: 32px;
 		background: none;
 		border: 1px solid var(--color-primary);
 		border-radius: 4px;
 		color: var(--color-text-muted);
-		font-size: 0.68rem;
+		font-size: 0.75rem;
 		cursor: pointer;
 		transition: color var(--duration-fast), border-color var(--duration-fast);
 		margin-top: 2px;
@@ -1317,13 +1337,14 @@
 	.transmit-btn {
 		display: flex;
 		align-items: center;
-		gap: 3px;
-		padding: 2px 6px;
+		gap: 4px;
+		padding: 6px 10px;
+		min-height: 32px;
 		background: none;
 		border: 1px solid var(--color-primary);
 		border-radius: 4px;
 		color: var(--color-text-muted);
-		font-size: 0.68rem;
+		font-size: 0.75rem;
 		cursor: pointer;
 		white-space: nowrap;
 	}
@@ -1346,9 +1367,9 @@
 
 	.inline-swatches {
 		display: flex;
-		gap: 4px;
+		gap: 8px;
 		flex-wrap: wrap;
-		padding-top: 4px;
+		padding-top: 6px;
 	}
 
 	/* Status dropdown */
@@ -1366,12 +1387,13 @@
 	.status-option {
 		display: flex;
 		align-items: center;
-		gap: 6px;
-		padding: 4px 10px;
+		gap: 8px;
+		padding: 10px 12px;
+		min-height: 44px;
 		background: none;
 		border: none;
 		color: var(--color-text);
-		font-size: 0.75rem;
+		font-size: 0.8rem;
 		cursor: pointer;
 		text-align: left;
 		transition: background var(--duration-fast);
@@ -1395,7 +1417,7 @@
 	/* Action buttons */
 	.entry-actions {
 		display: flex;
-		gap: 2px;
+		gap: 4px;
 		flex-shrink: 0;
 	}
 
@@ -1404,8 +1426,8 @@
 		display: flex;
 		align-items: center;
 		justify-content: center;
-		width: 26px;
-		height: 26px;
+		width: 36px;
+		height: 36px;
 		background: none;
 		border: none;
 		border-radius: var(--radius-sm);
@@ -1424,8 +1446,8 @@
 	}
 
 	.color-dot-mini {
-		width: 12px;
-		height: 12px;
+		width: 14px;
+		height: 14px;
 		border-radius: 50%;
 	}
 
@@ -1472,13 +1494,14 @@
 	.template-toggle {
 		display: flex;
 		align-items: center;
-		gap: 4px;
-		padding: 4px 8px;
+		gap: 6px;
+		padding: 8px 12px;
+		min-height: 36px;
 		background: none;
 		border: 1px solid var(--color-primary);
 		border-radius: var(--radius-sm);
 		color: var(--color-text-muted);
-		font-size: 0.75rem;
+		font-size: 0.8rem;
 		cursor: pointer;
 		transition: border-color var(--duration-fast), color var(--duration-fast);
 	}
@@ -1509,24 +1532,25 @@
 	}
 
 	.pack-label {
-		font-size: 0.65rem;
+		font-size: 0.7rem;
 		font-weight: 600;
 		color: var(--color-text-muted);
 		text-transform: uppercase;
 		letter-spacing: 0.05em;
-		padding: 0 4px;
+		padding: 2px 6px;
 	}
 
 	.template-item {
 		display: flex;
 		align-items: center;
-		gap: 6px;
-		padding: 4px 8px;
+		gap: 8px;
+		padding: 10px 12px;
+		min-height: 44px;
 		background: none;
 		border: none;
 		border-radius: 4px;
 		color: var(--color-text);
-		font-size: 0.75rem;
+		font-size: 0.8rem;
 		text-align: left;
 		cursor: pointer;
 		transition: background var(--duration-fast);

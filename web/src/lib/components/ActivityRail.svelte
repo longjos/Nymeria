@@ -11,13 +11,21 @@
 		panelMode = 'closed',
 		unreadCount = 0,
 		onToggle,
-		onSelectStation
+		onSelectStation,
+		onCommandPalette
 	}: {
 		panelMode?: PanelMode;
 		unreadCount?: number;
 		onToggle?: (mode: PanelMode) => void;
 		onSelectStation?: (key: string) => void;
+		onCommandPalette?: () => void;
 	} = $props();
+
+	let isMac = $state(false);
+	import { onMount } from 'svelte';
+	onMount(() => {
+		isMac = navigator.platform.toUpperCase().indexOf('MAC') >= 0;
+	});
 
 	let stationCount = $derived($stationList.length);
 	let netActive = $derived($activeNet?.status === 'open');
@@ -38,6 +46,17 @@
 			case 'reconnecting': return 'Reconnecting';
 		}
 	});
+
+	/* Help popover */
+	let helpOpen = $state(false);
+
+	function toggleHelp() {
+		helpOpen = !helpOpen;
+	}
+
+	function handleHelpBlur() {
+		setTimeout(() => { helpOpen = false; }, 200);
+	}
 
 	/* Search popover */
 	let searchOpen = $state(false);
@@ -143,6 +162,20 @@
 			{/if}
 		</div>
 
+		<!-- Command Palette -->
+		<button
+			class="rail-btn cmd-palette-btn"
+			onclick={onCommandPalette}
+			title={isMac ? 'Command Palette (⌘K)' : 'Command Palette (Ctrl+K)'}
+			aria-label="Command Palette"
+		>
+			<svg width="18" height="18" viewBox="0 0 16 16" fill="none">
+				<path d="M4 1v4H1M12 1v4h3M4 15v-4H1M12 15v-4h3" stroke="currentColor" stroke-width="1.3" stroke-linecap="round" stroke-linejoin="round"/>
+				<rect x="5" y="5" width="6" height="6" rx="1" stroke="currentColor" stroke-width="1.3"/>
+			</svg>
+			<span class="kbd-hint">{isMac ? '⌘K' : '^K'}</span>
+		</button>
+
 		<div class="rail-divider"></div>
 
 		<!-- Navigation icons -->
@@ -245,6 +278,47 @@
 	</div>
 
 	<div class="rail-bottom">
+		<div class="help-container">
+			<button
+				class="rail-btn help-btn"
+				class:active={helpOpen}
+				onclick={toggleHelp}
+				onblur={handleHelpBlur}
+				title="Keyboard shortcuts"
+				aria-label="Keyboard shortcuts"
+			>
+				<svg width="16" height="16" viewBox="0 0 16 16" fill="none">
+					<circle cx="8" cy="8" r="7" stroke="currentColor" stroke-width="1.4"/>
+					<path d="M6 6a2 2 0 114 0c0 1-1.5 1.25-1.5 2.5M8 11.5h.01" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round"/>
+				</svg>
+			</button>
+			{#if helpOpen}
+				<!-- svelte-ignore a11y_no_static_element_interactions -->
+				<div class="help-popover" onmousedown={(e) => e.preventDefault()}>
+					<div class="help-title">Keyboard shortcuts</div>
+					<div class="help-section">
+						<span class="help-section-label">Global</span>
+						<div class="help-row"><kbd>{isMac ? '⌘' : 'Ctrl'}+K</kbd><span>Command palette</span></div>
+						<div class="help-row"><kbd>/</kbd><span>Command palette (when not typing)</span></div>
+					</div>
+					<div class="help-section">
+						<span class="help-section-label">Command palette &mdash; search</span>
+						<div class="help-row"><kbd>&uarr; &darr;</kbd><span>Navigate results</span></div>
+						<div class="help-row"><kbd>Enter</kbd><span>Select station</span></div>
+						<div class="help-row"><kbd>Esc</kbd><span>Close</span></div>
+					</div>
+					<div class="help-section">
+						<span class="help-section-label">Command palette &mdash; station</span>
+						<div class="help-row"><kbd>N</kbd><span>Focus note composer</span></div>
+						<div class="help-row"><kbd>{isMac ? '⌘' : 'Ctrl'}+Enter</kbd><span>Save note</span></div>
+						<div class="help-row"><kbd>S</kbd><span>Change status</span></div>
+						<div class="help-row"><kbd>M</kbd><span>Assign mission</span></div>
+						<div class="help-row"><kbd>F</kbd><span>Fly to on map</span></div>
+						<div class="help-row"><kbd>Backspace</kbd><span>Back to search</span></div>
+					</div>
+				</div>
+			{/if}
+		</div>
 		<div class="conn-dot" title={connLabel}>
 			<span class="dot" class:pulse={connState === 'reconnecting'} style="background: {dotColor}"></span>
 		</div>
@@ -315,6 +389,23 @@
 		color: var(--color-accent);
 		background: var(--color-primary);
 		box-shadow: inset 3px 0 0 var(--color-accent);
+	}
+
+	/* Command palette button */
+	.cmd-palette-btn {
+		position: relative;
+	}
+
+	.kbd-hint {
+		position: absolute;
+		bottom: 2px;
+		right: 0;
+		font-size: 0.5rem;
+		font-weight: 600;
+		color: var(--color-text-muted);
+		line-height: 1;
+		pointer-events: none;
+		opacity: 0.7;
 	}
 
 	.rail-btn.net-active {
@@ -433,6 +524,87 @@
 		overflow: hidden;
 		text-overflow: ellipsis;
 		white-space: nowrap;
+	}
+
+	/* Help button + popover */
+	.help-container {
+		position: relative;
+	}
+
+	.help-btn {
+		width: 32px;
+		height: 32px;
+		opacity: 0.5;
+		transition: opacity var(--duration-fast), color var(--duration-fast), background var(--duration-fast);
+	}
+
+	.help-btn:hover,
+	.help-btn.active {
+		opacity: 1;
+	}
+
+	.help-popover {
+		position: absolute;
+		bottom: -4px;
+		right: calc(100% + 12px);
+		width: 280px;
+		background: var(--color-surface);
+		border: 1px solid var(--color-primary);
+		border-radius: var(--radius-md);
+		box-shadow: var(--shadow-lg);
+		padding: 12px 14px;
+		z-index: 10;
+	}
+
+	.help-title {
+		font-size: 0.8rem;
+		font-weight: 600;
+		color: var(--color-text);
+		margin-bottom: 10px;
+	}
+
+	.help-section {
+		margin-bottom: 10px;
+	}
+
+	.help-section:last-child {
+		margin-bottom: 0;
+	}
+
+	.help-section-label {
+		display: block;
+		font-size: 0.65rem;
+		text-transform: uppercase;
+		letter-spacing: 0.05em;
+		color: var(--color-text-muted);
+		margin-bottom: 4px;
+	}
+
+	.help-row {
+		display: flex;
+		align-items: center;
+		gap: 8px;
+		padding: 2px 0;
+		font-size: 0.78rem;
+		color: var(--color-text-muted);
+	}
+
+	.help-row kbd {
+		display: inline-flex;
+		align-items: center;
+		justify-content: center;
+		min-width: 22px;
+		padding: 1px 5px;
+		font-size: 0.68rem;
+		font-family: inherit;
+		background: var(--color-primary);
+		border-radius: 4px;
+		color: var(--color-text);
+		white-space: nowrap;
+	}
+
+	.help-row span {
+		color: var(--color-text);
 	}
 
 	/* Connection dot */

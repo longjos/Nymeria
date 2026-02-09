@@ -494,8 +494,8 @@ func TestV2SchemaVersion(t *testing.T) {
 	if err != nil {
 		t.Fatalf("query schema_version: %v", err)
 	}
-	if version != 9 {
-		t.Errorf("expected schema version 9, got %d", version)
+	if version != 11 {
+		t.Errorf("expected schema version 11, got %d", version)
 	}
 }
 
@@ -994,8 +994,8 @@ func TestV3SchemaVersion(t *testing.T) {
 	if err != nil {
 		t.Fatalf("query schema_version: %v", err)
 	}
-	if version != 9 {
-		t.Errorf("expected schema version 9, got %d", version)
+	if version != 11 {
+		t.Errorf("expected schema version 11, got %d", version)
 	}
 }
 
@@ -1616,8 +1616,8 @@ func TestV5MigrationAddsTrackedStationsColumn(t *testing.T) {
 
 	var version int
 	s.db.QueryRow("SELECT version FROM schema_version LIMIT 1").Scan(&version)
-	if version != 9 {
-		t.Errorf("expected schema version 9, got %d", version)
+	if version != 11 {
+		t.Errorf("expected schema version 11, got %d", version)
 	}
 }
 
@@ -1723,8 +1723,8 @@ func TestV6MigrationCreatesTacticalAliasesTable(t *testing.T) {
 
 	var version int
 	s.db.QueryRow("SELECT version FROM schema_version LIMIT 1").Scan(&version)
-	if version != 9 {
-		t.Errorf("expected schema version 9, got %d", version)
+	if version != 11 {
+		t.Errorf("expected schema version 11, got %d", version)
 	}
 }
 
@@ -1891,8 +1891,8 @@ func TestV7MigrationAddsAnnotationColumns(t *testing.T) {
 
 	var version int
 	s.db.QueryRow("SELECT version FROM schema_version LIMIT 1").Scan(&version)
-	if version != 9 {
-		t.Errorf("expected schema version 9, got %d", version)
+	if version != 11 {
+		t.Errorf("expected schema version 11, got %d", version)
 	}
 }
 
@@ -2194,8 +2194,8 @@ func TestMigrateV8CreatesOperationsTable(t *testing.T) {
 
 	var version int
 	s.db.QueryRow("SELECT version FROM schema_version LIMIT 1").Scan(&version)
-	if version != 9 {
-		t.Errorf("expected schema version 9, got %d", version)
+	if version != 11 {
+		t.Errorf("expected schema version 11, got %d", version)
 	}
 
 	// Verify operations table exists by doing a query.
@@ -2203,5 +2203,155 @@ func TestMigrateV8CreatesOperationsTable(t *testing.T) {
 	err := s.db.QueryRow("SELECT COUNT(*) FROM operations").Scan(&count)
 	if err != nil {
 		t.Fatalf("operations table should exist: %v", err)
+	}
+}
+
+// --- V11 Migration: Ops View ---
+
+func TestMigrateV11AddsOpsViewColumns(t *testing.T) {
+	s, _ := newTestStore(t)
+	defer s.Close()
+
+	var version int
+	s.db.QueryRow("SELECT version FROM schema_version LIMIT 1").Scan(&version)
+	if version != 11 {
+		t.Errorf("expected schema version 11, got %d", version)
+	}
+
+	// Verify ops_view columns exist.
+	for _, col := range []string{"ops_view_lat", "ops_view_lon", "ops_view_zoom"} {
+		_, err := s.db.Exec(fmt.Sprintf("SELECT %s FROM nets WHERE 1=0", col))
+		if err != nil {
+			t.Errorf("nets missing %s column: %v", col, err)
+		}
+	}
+}
+
+func TestNetOpsViewRoundtrip(t *testing.T) {
+	s, _ := newTestStore(t)
+	defer s.Close()
+
+	lat := 34.05
+	lon := -118.24
+	zoom := 13.0
+
+	n := Net{
+		ID:          "net-opsview",
+		Name:        "Ops View Test",
+		Type:        "tactical",
+		Status:      "open",
+		OpsViewLat:  &lat,
+		OpsViewLon:  &lon,
+		OpsViewZoom: &zoom,
+	}
+	if err := s.SaveNet(n); err != nil {
+		t.Fatalf("SaveNet failed: %v", err)
+	}
+
+	loaded, err := s.LoadNet("net-opsview")
+	if err != nil {
+		t.Fatalf("LoadNet failed: %v", err)
+	}
+	if loaded.OpsViewLat == nil || *loaded.OpsViewLat != lat {
+		t.Errorf("opsViewLat: got %v, want %v", loaded.OpsViewLat, lat)
+	}
+	if loaded.OpsViewLon == nil || *loaded.OpsViewLon != lon {
+		t.Errorf("opsViewLon: got %v, want %v", loaded.OpsViewLon, lon)
+	}
+	if loaded.OpsViewZoom == nil || *loaded.OpsViewZoom != zoom {
+		t.Errorf("opsViewZoom: got %v, want %v", loaded.OpsViewZoom, zoom)
+	}
+
+	// Also via LoadNets.
+	nets, _ := s.LoadNets()
+	found := false
+	for _, net := range nets {
+		if net.ID == "net-opsview" && net.OpsViewLat != nil && *net.OpsViewLat == lat {
+			found = true
+		}
+	}
+	if !found {
+		t.Error("LoadNets did not return net with opsView fields")
+	}
+}
+
+func TestNetOpsViewNullable(t *testing.T) {
+	s, _ := newTestStore(t)
+	defer s.Close()
+
+	// Net without ops view fields.
+	n := Net{
+		ID:     "net-no-opsview",
+		Name:   "No Ops View",
+		Type:   "tactical",
+		Status: "open",
+	}
+	if err := s.SaveNet(n); err != nil {
+		t.Fatalf("SaveNet failed: %v", err)
+	}
+
+	loaded, err := s.LoadNet("net-no-opsview")
+	if err != nil {
+		t.Fatalf("LoadNet failed: %v", err)
+	}
+	if loaded.OpsViewLat != nil {
+		t.Errorf("opsViewLat should be nil, got %v", loaded.OpsViewLat)
+	}
+	if loaded.OpsViewLon != nil {
+		t.Errorf("opsViewLon should be nil, got %v", loaded.OpsViewLon)
+	}
+	if loaded.OpsViewZoom != nil {
+		t.Errorf("opsViewZoom should be nil, got %v", loaded.OpsViewZoom)
+	}
+}
+
+func TestUpdateNotePinned(t *testing.T) {
+	s, _ := newTestStore(t)
+
+	// Save a note that is NOT pinned.
+	note := NetNote{
+		ID:         "note-pin-1",
+		NetID:      "net-pin",
+		AuthorID:   "u1",
+		AuthorName: "Alice",
+		Content:    "routine observation",
+		Category:   "general",
+		Severity:   "info",
+		Pinned:     false,
+		CreatedAt:  time.Now(),
+	}
+	if err := s.SaveNetNote(note); err != nil {
+		t.Fatalf("save note: %v", err)
+	}
+
+	// Pin it.
+	if err := s.UpdateNotePinned(note.ID, true); err != nil {
+		t.Fatalf("pin note: %v", err)
+	}
+
+	notes, _ := s.LoadNetNotes("net-pin")
+	found := false
+	for _, n := range notes {
+		if n.ID == note.ID {
+			found = true
+			if !n.Pinned {
+				t.Error("note should be pinned after UpdateNotePinned(true)")
+			}
+		}
+	}
+	if !found {
+		t.Fatal("note not found after pin update")
+	}
+
+	// Unpin it.
+	if err := s.UpdateNotePinned(note.ID, false); err != nil {
+		t.Fatalf("unpin note: %v", err)
+	}
+
+	notes, _ = s.LoadNetNotes("net-pin")
+	for _, n := range notes {
+		if n.ID == note.ID && n.Pinned {
+			t.Error("note should be unpinned after UpdateNotePinned(false)")
+		}
 	}
 }
