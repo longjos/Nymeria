@@ -4,6 +4,7 @@ import { api } from '$lib/api';
 import { wsClient } from './stations';
 
 export const activeNet = writable<Net | null>(null);
+export const opsView = writable<{ lat: number; lon: number; zoom: number } | null>(null);
 export const checkIns = writable<NetCheckIn[]>([]);
 export const missions = writable<NetMission[]>([]);
 export const timeline = writable<NetEvent[]>([]);
@@ -31,6 +32,24 @@ export const sortedCheckIns = derived(checkIns, ($cis) =>
 export const activeCheckIns = derived(checkIns, ($cis) =>
 	$cis.filter((ci) => ci.status !== 'released')
 );
+
+export const operatorsWithPosition = derived(checkIns, ($cis) =>
+	$cis.filter((ci) => ci.lat != null && ci.lon != null && ci.status !== 'released')
+);
+
+export const missionsWithPosition = derived(missions, ($ms) =>
+	$ms.filter((m) => m.lat != null && m.lon != null && m.status !== 'complete')
+);
+
+export const assignmentLines = derived([checkIns, missions], ([$cis, $ms]) => {
+	const missionMap = new Map($ms.map((m) => [m.id, m]));
+	return $cis
+		.filter((ci) => ci.missionId && ci.lat != null && ci.lon != null)
+		.map((ci) => ({ operator: ci, mission: missionMap.get(ci.missionId!) }))
+		.filter((pair): pair is { operator: NetCheckIn; mission: NetMission } =>
+			pair.mission != null && pair.mission.lat != null && pair.mission.lon != null
+		);
+});
 
 let initialized = false;
 
@@ -119,4 +138,5 @@ export function clearNetControl(): void {
 	missions.set([]);
 	timeline.set([]);
 	notes.set([]);
+	opsView.set(null);
 }

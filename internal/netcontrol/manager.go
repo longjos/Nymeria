@@ -1,7 +1,9 @@
 package netcontrol
 
 import (
+	"encoding/csv"
 	"fmt"
+	"io"
 	"strings"
 	"sync"
 	"time"
@@ -233,6 +235,7 @@ func (m *Manager) CheckIn(netID, callsign, traffic string) (*store.NetCheckIn, e
 		Callsign:    callsign,
 		Status:      OpAvailable,
 		Traffic:     traffic,
+		Source:      "voice",
 		CheckedInAt: now,
 		LastHeard:   now,
 	}
@@ -240,6 +243,11 @@ func (m *Manager) CheckIn(netID, callsign, traffic string) (*store.NetCheckIn, e
 	// Auto-populate from tracker if known.
 	if m.tracker != nil {
 		m.autoPopulate(&ci)
+	}
+
+	// Set source based on whether position data was found.
+	if ci.Lat != nil && ci.Lon != nil {
+		ci.Source = "aprs"
 	}
 
 	if err := m.store.SaveNetCheckIn(ci); err != nil {
@@ -461,9 +469,18 @@ func (m *Manager) InitiateRollCall(netID string) error {
 	// Increment missed roll calls for all active check-ins.
 	m.mu.Lock()
 	cis := m.checkIns[netID]
-	for i, ci := range cis {
-		if ci.Status != OpReleased {
-			cis[i].MissedRollCalls++
+	for i := range cis {
+		if cis[i].Status == OpReleased {
+			continue
+		}
+		cis[i].MissedRollCalls++
+
+		// Auto-mark missing after threshold.
+		if cis[i].MissedRollCalls >= MissedRollCallThreshold && cis[i].Status != OpMissing {
+			cis[i].Status = OpMissing
+			m.store.SaveNetCheckIn(cis[i])
+			// Emit update for the auto-marked operator (outside lock would deadlock, so just save).
+		} else {
 			m.store.SaveNetCheckIn(cis[i])
 		}
 	}
@@ -590,6 +607,151 @@ func (m *Manager) GetNotes(netID string) ([]store.NetNote, error) {
 // GetEvents returns timeline events for a net from the store.
 func (m *Manager) GetEvents(netID string) ([]store.NetEvent, error) {
 	return m.store.LoadNetEvents(netID)
+}
+
+// AssignMission assigns a mission to an operator.
+func (m *Manager) AssignMission(netID, checkInID, missionID string) (*store.NetCheckIn, error) {
+	m.mu.Lock()
+	cis, ok := m.checkIns[netID]
+	if !ok {
+		m.mu.Unlock()
+		return nil, fmt.Errorf("net %q not found", netID)
+	}
+
+	// Validate mission exists.
+	missions := m.missions[netID]
+	var mission *store.NetMission
+	for i, ms := range missions {
+		if ms.ID == missionID {
+			mission = &missions[i]
+			break
+		}
+	}
+	if mission == nil {
+		m.mu.Unlock()
+		return nil, fmt.Errorf("mission %q not found", missionID)
+	}
+
+	found := false
+	var updated store.NetCheckIn
+	for i, ci := range cis {
+		if ci.ID == checkInID {
+			cis[i].MissionID = missionID
+			if mission.Lat != nil && mission.Lon != nil {
+				cis[i].AssignmentLat = mission.Lat
+				cis[i].AssignmentLon = mission.Lon
+			}
+			if cis[i].Status == OpAvailable {
+				cis[i].Status = OpAssigned
+			}
+			updated = cis[i]
+			found = true
+			break
+		}
+	}
+
+	if !found {
+		m.mu.Unlock()
+		return nil, fmt.Errorf("check-in %q not found", checkInID)
+	}
+
+	m.checkIns[netID] = cis
+	m.mu.Unlock()
+
+	if err := m.store.SaveNetCheckIn(updated); err != nil {
+		return nil, fmt.Errorf("persist check-in: %w", err)
+	}
+
+	m.logEvent(netID, "assignment", updated.Callsign,
+		fmt.Sprintf("%s assigned to mission %q", updated.Callsign, mission.Title))
+	m.emit(Event{Type: EventCheckInUpdated, Data: updated})
+
+	return &updated, nil
+}
+
+// UnassignMission removes a mission assignment from an operator.
+func (m *Manager) UnassignMission(netID, checkInID string) (*store.NetCheckIn, error) {
+	m.mu.Lock()
+	cis, ok := m.checkIns[netID]
+	if !ok {
+		m.mu.Unlock()
+		return nil, fmt.Errorf("net %q not found", netID)
+	}
+
+	found := false
+	var updated store.NetCheckIn
+	for i, ci := range cis {
+		if ci.ID == checkInID {
+			cis[i].MissionID = ""
+			cis[i].AssignmentLat = nil
+			cis[i].AssignmentLon = nil
+			if cis[i].Status == OpAssigned {
+				cis[i].Status = OpAvailable
+			}
+			updated = cis[i]
+			found = true
+			break
+		}
+	}
+
+	if !found {
+		m.mu.Unlock()
+		return nil, fmt.Errorf("check-in %q not found", checkInID)
+	}
+
+	m.checkIns[netID] = cis
+	m.mu.Unlock()
+
+	if err := m.store.SaveNetCheckIn(updated); err != nil {
+		return nil, fmt.Errorf("persist check-in: %w", err)
+	}
+
+	m.logEvent(netID, "assignment", updated.Callsign,
+		fmt.Sprintf("%s unassigned from mission", updated.Callsign))
+	m.emit(Event{Type: EventCheckInUpdated, Data: updated})
+
+	return &updated, nil
+}
+
+// ExportRosterCSV writes the roster as CSV.
+func ExportRosterCSV(w io.Writer, checkIns []store.NetCheckIn) error {
+	cw := csv.NewWriter(w)
+	defer cw.Flush()
+
+	header := []string{
+		"callsign", "tacticalCall", "operatorName", "status", "traffic",
+		"source", "location", "assignment", "checkedInAt", "checkedOutAt",
+		"lastHeard", "missedRollCalls",
+	}
+	if err := cw.Write(header); err != nil {
+		return err
+	}
+
+	for _, ci := range checkIns {
+		checkedOut := ""
+		if ci.CheckedOutAt != nil {
+			checkedOut = ci.CheckedOutAt.Format(time.RFC3339)
+		}
+		row := []string{
+			ci.Callsign,
+			ci.TacticalCall,
+			ci.OperatorName,
+			ci.Status,
+			ci.Traffic,
+			ci.Source,
+			ci.Location,
+			ci.Assignment,
+			ci.CheckedInAt.Format(time.RFC3339),
+			checkedOut,
+			ci.LastHeard.Format(time.RFC3339),
+			fmt.Sprintf("%d", ci.MissedRollCalls),
+		}
+		if err := cw.Write(row); err != nil {
+			return err
+		}
+	}
+
+	return nil
 }
 
 // RootCallsign strips the "-N" SSID suffix from a callsign.

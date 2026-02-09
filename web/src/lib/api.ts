@@ -141,5 +141,10 @@ export const api = {
 	netNotes: (netId: string) => get<NetNote[]>(`/nets/${netId}/notes`),
 	initiateRollCall: (netId: string) => post<{ status: string }>(`/nets/${netId}/rollcall`, {}),
 	recordRollCallResponse: (netId: string, ciId: string) => post<{ status: string }>(`/nets/${netId}/rollcall/${ciId}`, {}),
-	searchOperators: (q: string) => get<Station[]>(`/nets/search?q=${encodeURIComponent(q)}`)
+	searchOperators: (q: string) => get<Station[]>(`/nets/search?q=${encodeURIComponent(q)}`),
+	assignMission: (netId: string, ciId: string, missionId: string) =>
+		post<NetCheckIn>(`/nets/${netId}/checkin/${ciId}/assign`, { missionId }),
+	unassignMission: (netId: string, ciId: string) =>
+		del<NetCheckIn>(`/nets/${netId}/checkin/${ciId}/assign`),
+	rosterExportUrl: (netId: string) => `${BASE}/nets/${netId}/roster/export`
 };

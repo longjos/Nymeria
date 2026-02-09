@@ -28,6 +28,9 @@ const (
 	TrafficEmergency = "emergency"
 )
 
+// MissedRollCallThreshold is the number of missed roll calls before auto-marking missing.
+const MissedRollCallThreshold = 2
+
 // Event types for WebSocket broadcast.
 const (
 	EventNetCreated     = "net_created"

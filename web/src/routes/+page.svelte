@@ -19,7 +19,11 @@
 	import { initMessageStore, conversationList } from '$lib/stores/messages';
 	import { initTransportStore } from '$lib/stores/transports';
 	import { annotationList, initAnnotationStore } from '$lib/stores/annotations';
-	import { initNetControlStore } from '$lib/stores/netcontrol';
+	import {
+		initNetControlStore,
+		activeNet, operatorsWithPosition, missionsWithPosition, assignmentLines,
+		opsView
+	} from '$lib/stores/netcontrol';
 	import { isLoggedIn, initSession } from '$lib/stores/session';
 	import {
 		selectedStation, panelMode, detailTab, searchOpen, sheetState,
@@ -35,6 +39,7 @@
 	let previewGeometry = $state<string | null>(null);
 	let previewColor = $state('#e63946');
 	let annotationPanelRef = $state<AnnotationPanel>();
+	let mapRef = $state<Map>();
 	let editingAnnotationId = $state<string | null>(null);
 
 	let stationsWithPosition = $derived(
@@ -107,7 +112,32 @@
 
 	function handleAnnotationClick(id: string) {
 		openAnnotations();
-		// Could also highlight the annotation in the panel
+	}
+
+	function handleNetOperatorClick(_checkInId: string) {
+		openNetControl();
+	}
+
+	function handleNetMissionClick(_missionId: string) {
+		openNetControl();
+	}
+
+	function handleNetFlyTo(lat: number, lon: number) {
+		flyToTarget = { lat, lon, zoom: 15 };
+	}
+
+	function handleSetOpsView() {
+		const vp = mapRef?.getViewport();
+		if (vp) {
+			opsView.set(vp);
+		}
+	}
+
+	function handleGoToOpsView() {
+		const v = $opsView;
+		if (v) {
+			flyToTarget = { lat: v.lat, lon: v.lon, zoom: v.zoom };
+		}
 	}
 
 	function handleFlyToAnnotation(ann: Annotation) {
@@ -174,6 +204,7 @@
 	<!-- Full-screen map -->
 	<div class="map-layer">
 		<Map
+			bind:this={mapRef}
 			stations={stationsWithPosition}
 			annotations={$annotationList}
 			selectedCallsign={$selectedStation ?? ''}
@@ -188,6 +219,12 @@
 			{editingAnnotationId}
 			onGeometryEdit={handleGeometryEdit}
 			onPreviewGeometryChange={handlePreviewGeometryChange}
+			netOperators={$operatorsWithPosition}
+			netMissions={$missionsWithPosition}
+			netAssignmentLines={$assignmentLines}
+			activeNetId={$activeNet?.id ?? null}
+			onNetOperatorClick={handleNetOperatorClick}
+			onNetMissionClick={handleNetMissionClick}
 		/>
 	</div>
 
@@ -250,7 +287,11 @@
 					onStopEdit={handleStopEdit}
 				/>
 			{:else if $panelMode === 'netcontrol'}
-				<NetControlPanel />
+				<NetControlPanel
+					onFlyTo={handleNetFlyTo}
+					onSetOpsView={handleSetOpsView}
+					onGoToOpsView={handleGoToOpsView}
+				/>
 			{/if}
 		</SidePanel>
 	{/if}
@@ -307,7 +348,11 @@
 					onStopEdit={handleStopEdit}
 				/>
 			{:else if $panelMode === 'netcontrol'}
-				<NetControlPanel />
+				<NetControlPanel
+					onFlyTo={handleNetFlyTo}
+					onSetOpsView={handleSetOpsView}
+					onGoToOpsView={handleGoToOpsView}
+				/>
 			{/if}
 		</BottomSheet>
 	{/if}

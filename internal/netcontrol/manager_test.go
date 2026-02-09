@@ -1,7 +1,9 @@
 package netcontrol
 
 import (
+	"bytes"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
@@ -524,6 +526,207 @@ func TestLoadPersistence(t *testing.T) {
 	}
 
 	s.Close()
+}
+
+func TestAutoMarkMissingAfterTwoRollCalls(t *testing.T) {
+	mgr := newTestManager(t)
+
+	n, _ := mgr.CreateNet(store.Net{Name: "Test Net"})
+	mgr.OpenNet(n.ID)
+
+	ci, _ := mgr.CheckIn(n.ID, "KD7BBC", "")
+	drainEvents(mgr)
+
+	// Two roll calls without response.
+	mgr.InitiateRollCall(n.ID)
+	mgr.InitiateRollCall(n.ID)
+	drainEvents(mgr)
+
+	cis := mgr.GetCheckIns(n.ID)
+	for _, c := range cis {
+		if c.ID == ci.ID {
+			if c.Status != OpMissing {
+				t.Errorf("expected status %q after 2 missed roll calls, got %q", OpMissing, c.Status)
+			}
+			if c.MissedRollCalls != 2 {
+				t.Errorf("expected 2 missed roll calls, got %d", c.MissedRollCalls)
+			}
+		}
+	}
+}
+
+func TestAutoMarkMissingSkipsReleased(t *testing.T) {
+	mgr := newTestManager(t)
+
+	n, _ := mgr.CreateNet(store.Net{Name: "Test Net"})
+	mgr.OpenNet(n.ID)
+
+	ci, _ := mgr.CheckIn(n.ID, "KD7BBC", "")
+	mgr.CheckOut(n.ID, ci.ID)
+	drainEvents(mgr)
+
+	// Two roll calls — released operator should not be affected.
+	mgr.InitiateRollCall(n.ID)
+	mgr.InitiateRollCall(n.ID)
+
+	cis := mgr.GetCheckIns(n.ID)
+	for _, c := range cis {
+		if c.ID == ci.ID {
+			if c.Status != OpReleased {
+				t.Errorf("released operator status changed: got %q", c.Status)
+			}
+			if c.MissedRollCalls != 0 {
+				t.Errorf("released operator missed roll calls should be 0, got %d", c.MissedRollCalls)
+			}
+		}
+	}
+}
+
+func TestCheckInSourceAprs(t *testing.T) {
+	mgr := newTestManager(t)
+
+	// Add station with position to tracker.
+	mgr.tracker.Update(station.Station{
+		Callsign:  "KD7BBC",
+		SSID:      0,
+		LastHeard: time.Now(),
+		Position: &station.Position{
+			Lat: 34.0522,
+			Lon: -118.2437,
+		},
+	})
+
+	n, _ := mgr.CreateNet(store.Net{Name: "Test Net"})
+	mgr.OpenNet(n.ID)
+
+	ci, _ := mgr.CheckIn(n.ID, "KD7BBC", "")
+	if ci.Source != "aprs" {
+		t.Errorf("source: got %q, want %q", ci.Source, "aprs")
+	}
+}
+
+func TestCheckInSourceVoice(t *testing.T) {
+	mgr := newTestManager(t)
+
+	n, _ := mgr.CreateNet(store.Net{Name: "Test Net"})
+	mgr.OpenNet(n.ID)
+
+	// Unknown station — no tracker entry.
+	ci, _ := mgr.CheckIn(n.ID, "UNKNOWN", "")
+	if ci.Source != "voice" {
+		t.Errorf("source: got %q, want %q", ci.Source, "voice")
+	}
+}
+
+func TestAssignMission(t *testing.T) {
+	mgr := newTestManager(t)
+
+	n, _ := mgr.CreateNet(store.Net{Name: "Test Net"})
+	mgr.OpenNet(n.ID)
+
+	ci, _ := mgr.CheckIn(n.ID, "KD7BBC", "")
+	m, _ := mgr.CreateMission(store.NetMission{NetID: n.ID, Title: "Deploy"})
+	drainEvents(mgr)
+
+	updated, err := mgr.AssignMission(n.ID, ci.ID, m.ID)
+	if err != nil {
+		t.Fatalf("AssignMission failed: %v", err)
+	}
+	if updated.MissionID != m.ID {
+		t.Errorf("missionId: got %q, want %q", updated.MissionID, m.ID)
+	}
+	if updated.Status != OpAssigned {
+		t.Errorf("status: got %q, want %q", updated.Status, OpAssigned)
+	}
+}
+
+func TestAssignMissionCopiesCoords(t *testing.T) {
+	mgr := newTestManager(t)
+
+	n, _ := mgr.CreateNet(store.Net{Name: "Test Net"})
+	mgr.OpenNet(n.ID)
+
+	ci, _ := mgr.CheckIn(n.ID, "KD7BBC", "")
+	lat, lon := 34.05, -118.24
+	m, _ := mgr.CreateMission(store.NetMission{
+		NetID: n.ID,
+		Title: "Deploy to shelter",
+		Lat:   &lat,
+		Lon:   &lon,
+	})
+	drainEvents(mgr)
+
+	updated, err := mgr.AssignMission(n.ID, ci.ID, m.ID)
+	if err != nil {
+		t.Fatalf("AssignMission failed: %v", err)
+	}
+	if updated.AssignmentLat == nil || *updated.AssignmentLat != lat {
+		t.Errorf("assignmentLat: got %v, want %f", updated.AssignmentLat, lat)
+	}
+	if updated.AssignmentLon == nil || *updated.AssignmentLon != lon {
+		t.Errorf("assignmentLon: got %v, want %f", updated.AssignmentLon, lon)
+	}
+}
+
+func TestUnassignMission(t *testing.T) {
+	mgr := newTestManager(t)
+
+	n, _ := mgr.CreateNet(store.Net{Name: "Test Net"})
+	mgr.OpenNet(n.ID)
+
+	ci, _ := mgr.CheckIn(n.ID, "KD7BBC", "")
+	m, _ := mgr.CreateMission(store.NetMission{NetID: n.ID, Title: "Deploy"})
+	mgr.AssignMission(n.ID, ci.ID, m.ID)
+	drainEvents(mgr)
+
+	updated, err := mgr.UnassignMission(n.ID, ci.ID)
+	if err != nil {
+		t.Fatalf("UnassignMission failed: %v", err)
+	}
+	if updated.MissionID != "" {
+		t.Errorf("missionId should be empty, got %q", updated.MissionID)
+	}
+	if updated.Status != OpAvailable {
+		t.Errorf("status: got %q, want %q", updated.Status, OpAvailable)
+	}
+	if updated.AssignmentLat != nil {
+		t.Errorf("assignmentLat should be nil, got %v", updated.AssignmentLat)
+	}
+}
+
+func TestExportRosterCSV(t *testing.T) {
+	checkIns := []store.NetCheckIn{
+		{
+			Callsign:    "KD7BBC",
+			TacticalCall: "Shelter-1",
+			OperatorName: "Bob",
+			Status:      "available",
+			Traffic:     "routine",
+			Source:      "aprs",
+			Location:    "Downtown",
+			CheckedInAt: time.Date(2024, 1, 1, 12, 0, 0, 0, time.UTC),
+			LastHeard:   time.Date(2024, 1, 1, 12, 30, 0, 0, time.UTC),
+		},
+	}
+
+	var buf bytes.Buffer
+	if err := ExportRosterCSV(&buf, checkIns); err != nil {
+		t.Fatalf("ExportRosterCSV failed: %v", err)
+	}
+
+	csv := buf.String()
+	if !strings.Contains(csv, "callsign,tacticalCall,operatorName") {
+		t.Error("CSV missing header")
+	}
+	if !strings.Contains(csv, "KD7BBC") {
+		t.Error("CSV missing operator data")
+	}
+	if !strings.Contains(csv, "Shelter-1") {
+		t.Error("CSV missing tacticalCall")
+	}
+	if !strings.Contains(csv, "aprs") {
+		t.Error("CSV missing source field")
+	}
 }
 
 // drainEvents reads all pending events from the channel.

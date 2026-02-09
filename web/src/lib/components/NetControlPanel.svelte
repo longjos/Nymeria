@@ -6,8 +6,19 @@
 	import {
 		activeNet, checkIns, missions, timeline,
 		sortedCheckIns, activeCheckIns,
-		initNetControlStore, loadNetData, clearNetControl
+		initNetControlStore, loadNetData, clearNetControl,
+		opsView
 	} from '$lib/stores/netcontrol';
+
+	let {
+		onFlyTo,
+		onSetOpsView,
+		onGoToOpsView,
+	}: {
+		onFlyTo?: (lat: number, lon: number) => void;
+		onSetOpsView?: () => void;
+		onGoToOpsView?: () => void;
+	} = $props();
 
 	type Tab = 'roster' | 'missions' | 'timeline';
 	let currentTab = $state<Tab>('roster');
@@ -32,6 +43,24 @@
 	let newMissionDesc = $state('');
 	let newMissionPriority = $state('routine');
 	let newMissionAssign = $state('');
+	let newMissionLocation = $state('');
+	let newMissionLat = $state('');
+	let newMissionLon = $state('');
+
+	// Mission brief in create form
+	let newNetMissionBrief = $state('');
+
+	// Mission assignment from roster
+	let assigningCheckInId = $state<string | null>(null);
+
+	// Mission-side operator assignment
+	let assigningMissionId = $state<string | null>(null);
+
+	// Mission filter
+	let missionFilter = $state<'all' | 'active' | 'complete'>('all');
+
+	// Highlighted check-in (dedup flash)
+	let highlightedCheckInId = $state<string | null>(null);
 
 	// Inline note
 	let noteCheckInId = $state<string | null>(null);
@@ -128,7 +157,8 @@
 				name: newNetName.trim(),
 				type: newNetType,
 				frequency: newNetFreq.trim(),
-				notes: newNetNotes.trim()
+				notes: newNetNotes.trim(),
+				missionBrief: newNetMissionBrief.trim()
 			});
 			// Auto-open the net.
 			await api.openNet(net.id);
@@ -137,6 +167,7 @@
 			newNetName = '';
 			newNetFreq = '';
 			newNetNotes = '';
+			newNetMissionBrief = '';
 		} catch (e) {
 			console.error('Failed to create net:', e);
 		} finally {
@@ -148,13 +179,24 @@
 		if (!$activeNet || !quickAddInput.trim()) return;
 
 		const parts = quickAddInput.trim().split(/\s+/);
-		const callsign = parts[0];
+		const callsign = parts[0].toUpperCase();
 		let traffic = '';
 
 		if (parts.length > 1) {
 			const shortcut = parts[1].toUpperCase();
 			const map: Record<string, string> = { R: 'routine', P: 'priority', W: 'welfare', E: 'emergency' };
 			traffic = map[shortcut] || '';
+		}
+
+		// Dedup: highlight existing operator instead of creating duplicate
+		const existing = $checkIns.find((ci) => ci.callsign.toUpperCase() === callsign && ci.status !== 'released');
+		if (existing) {
+			highlightedCheckInId = existing.id;
+			setTimeout(() => { highlightedCheckInId = null; }, 2000);
+			quickAddInput = '';
+			searchResults = [];
+			quickAddRef?.focus();
+			return;
 		}
 
 		try {
@@ -239,17 +281,28 @@
 	async function handleCreateMission() {
 		if (!$activeNet || !newMissionTitle.trim()) return;
 		try {
-			await api.createMission($activeNet.id, {
+			const data: Partial<NetMission> = {
 				title: newMissionTitle.trim(),
 				description: newMissionDesc.trim(),
 				priority: newMissionPriority,
-				assignedTo: newMissionAssign
-			});
+				assignedTo: newMissionAssign,
+				location: newMissionLocation.trim()
+			};
+			const lat = parseFloat(newMissionLat);
+			const lon = parseFloat(newMissionLon);
+			if (!isNaN(lat) && !isNaN(lon)) {
+				data.lat = lat;
+				data.lon = lon;
+			}
+			await api.createMission($activeNet.id, data);
 			showMissionForm = false;
 			newMissionTitle = '';
 			newMissionDesc = '';
 			newMissionPriority = 'routine';
 			newMissionAssign = '';
+			newMissionLocation = '';
+			newMissionLat = '';
+			newMissionLon = '';
 		} catch (e) {
 			console.error('Create mission failed:', e);
 		}
@@ -261,6 +314,25 @@
 			await api.updateMission($activeNet.id, m.id, { status: status as any });
 		} catch (e) {
 			console.error('Mission update failed:', e);
+		}
+	}
+
+	async function handleAssignMission(ciId: string, missionId: string) {
+		if (!$activeNet) return;
+		try {
+			await api.assignMission($activeNet.id, ciId, missionId);
+			assigningCheckInId = null;
+		} catch (e) {
+			console.error('Assign mission failed:', e);
+		}
+	}
+
+	async function handleUnassignMission(ciId: string) {
+		if (!$activeNet) return;
+		try {
+			await api.unassignMission($activeNet.id, ciId);
+		} catch (e) {
+			console.error('Unassign mission failed:', e);
 		}
 	}
 
@@ -278,14 +350,80 @@
 		}
 	}
 
+	// Operators assigned to each mission (by FK)
+	function operatorsForMission(missionId: string): NetCheckIn[] {
+		return $checkIns.filter((ci) => ci.missionId === missionId && ci.status !== 'released');
+	}
+
+	// Sort missions: emergency > priority > welfare > routine, then active > open > complete
+	const priorityOrder: Record<string, number> = { emergency: 0, priority: 1, welfare: 2, routine: 3 };
+	const missionStatusOrder: Record<string, number> = { active: 0, open: 1, complete: 2 };
+
+	let sortedMissions = $derived(
+		[...$missions].sort((a, b) => {
+			const sa = missionStatusOrder[a.status] ?? 1;
+			const sb = missionStatusOrder[b.status] ?? 1;
+			if (sa !== sb) return sa - sb;
+			const pa = priorityOrder[a.priority] ?? 3;
+			const pb = priorityOrder[b.priority] ?? 3;
+			return pa - pb;
+		})
+	);
+
+	let filteredMissions = $derived(
+		sortedMissions.filter((m) => {
+			if (missionFilter === 'active') return m.status !== 'complete';
+			if (missionFilter === 'complete') return m.status === 'complete';
+			return true;
+		})
+	);
+
+	let activeMissionCount = $derived($missions.filter((m) => m.status !== 'complete').length);
+	let completeMissionCount = $derived($missions.filter((m) => m.status === 'complete').length);
+
+	function missionElapsed(m: NetMission): string {
+		const start = new Date(m.createdAt).getTime();
+		const end = m.completedAt ? new Date(m.completedAt).getTime() : Date.now();
+		const ms = end - start;
+		const h = Math.floor(ms / 3600000);
+		const min = Math.floor((ms % 3600000) / 60000);
+		if (h > 0) return `${h}h ${min}m`;
+		return `${min}m`;
+	}
+
+	async function handleAssignOperatorToMission(missionId: string, ciId: string) {
+		if (!$activeNet) return;
+		try {
+			await api.assignMission($activeNet.id, ciId, missionId);
+			assigningMissionId = null;
+		} catch (e) {
+			console.error('Assign operator to mission failed:', e);
+		}
+	}
+
+	async function handleUnassignFromMission(ciId: string) {
+		if (!$activeNet) return;
+		try {
+			await api.unassignMission($activeNet.id, ciId);
+		} catch (e) {
+			console.error('Unassign from mission failed:', e);
+		}
+	}
+
 	let timelineFilter = $state('all');
+	let timelineCallsignFilter = $state('');
 	let filteredTimeline = $derived(
 		$timeline.filter((e) => {
-			if (timelineFilter === 'all') return true;
-			if (timelineFilter === 'checkins') return e.type === 'checkin' || e.type === 'checkout';
-			if (timelineFilter === 'assignments') return e.type === 'assignment' || e.type === 'status_change';
-			if (timelineFilter === 'missions') return e.type === 'mission_created' || e.type === 'mission_updated';
-			if (timelineFilter === 'rollcalls') return e.type === 'rollcall';
+			if (timelineFilter !== 'all') {
+				if (timelineFilter === 'checkins' && e.type !== 'checkin' && e.type !== 'checkout') return false;
+				if (timelineFilter === 'assignments' && e.type !== 'assignment' && e.type !== 'status_change') return false;
+				if (timelineFilter === 'missions' && e.type !== 'mission_created' && e.type !== 'mission_updated') return false;
+				if (timelineFilter === 'rollcalls' && e.type !== 'rollcall') return false;
+			}
+			if (timelineCallsignFilter.trim()) {
+				const q = timelineCallsignFilter.trim().toUpperCase();
+				return e.callsign.toUpperCase().includes(q) || e.summary.toUpperCase().includes(q);
+			}
 			return true;
 		}).reverse()
 	);
@@ -328,6 +466,10 @@
 					</div>
 				</div>
 				<div class="form-group">
+					<label for="net-brief">Mission Brief</label>
+					<textarea id="net-brief" bind:value={newNetMissionBrief} rows="2" placeholder="Overall mission objective..."></textarea>
+				</div>
+				<div class="form-group">
 					<label for="net-notes">Notes</label>
 					<textarea id="net-notes" bind:value={newNetNotes} rows="2" placeholder="Optional notes..."></textarea>
 				</div>
@@ -353,8 +495,26 @@
 				{#if $activeNet.frequency}
 					<span class="frequency">{$activeNet.frequency}</span>
 				{/if}
+				{#if $activeNet.missionBrief}
+					<span class="mission-brief">{$activeNet.missionBrief}</span>
+				{/if}
 			</div>
 			<div class="header-actions">
+				{#if $opsView}
+					<button class="action-btn ops-view-set" onclick={() => onGoToOpsView?.()} title="Return to Ops View">
+						<svg width="14" height="14" viewBox="0 0 16 16" fill="none">
+							<circle cx="8" cy="7" r="3" stroke="currentColor" stroke-width="1.5"/>
+							<path d="M8 1C4.5 1 1.5 3.5 1 7c.5 3.5 3.5 6 7 6s6.5-2.5 7-6c-.5-3.5-3.5-6-7-6z" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/>
+							<path d="M8 13v2" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/>
+						</svg>
+					</button>
+				{/if}
+				<button class="action-btn" onclick={() => onSetOpsView?.()} title={$opsView ? 'Update Ops View' : 'Set Ops View'}>
+					<svg width="14" height="14" viewBox="0 0 16 16" fill="none">
+						<circle cx="8" cy="7" r="3" stroke="currentColor" stroke-width="1.5"/>
+						<path d="M8 1C4.5 1 1.5 3.5 1 7c.5 3.5 3.5 6 7 6s6.5-2.5 7-6c-.5-3.5-3.5-6-7-6z" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/>
+					</svg>
+				</button>
 				<button class="action-btn" onclick={handleRollCall} title="Roll Call">
 					<svg width="14" height="14" viewBox="0 0 16 16" fill="none">
 						<path d="M1 8h3l2-5 3 10 2-5h4" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/>
@@ -374,7 +534,7 @@
 				Roster <span class="tab-count">{$activeCheckIns.length}</span>
 			</button>
 			<button class="tab" class:active={currentTab === 'missions'} onclick={() => (currentTab = 'missions')}>
-				Missions <span class="tab-count">{$missions.length}</span>
+				Missions {#if activeMissionCount > 0}<span class="tab-count">{activeMissionCount}</span>{/if}
 			</button>
 			<button class="tab" class:active={currentTab === 'timeline'} onclick={() => (currentTab = 'timeline')}>
 				Timeline
@@ -384,6 +544,13 @@
 		<!-- Tab content -->
 		<div class="tab-content">
 			{#if currentTab === 'roster'}
+				<!-- Roster header with export -->
+				{#if $activeNet && $sortedCheckIns.length > 0}
+					<div class="roster-header">
+						<span class="roster-count">{$activeCheckIns.length} active</span>
+						<a href={api.rosterExportUrl($activeNet.id)} class="export-link" download>CSV</a>
+					</div>
+				{/if}
 				<!-- Quick Add Bar -->
 				<div class="quick-add">
 					<div class="quick-add-wrap">
@@ -416,13 +583,16 @@
 				<!-- Roster -->
 				<div class="roster">
 					{#each $sortedCheckIns as ci (ci.id)}
-						<div class="operator-card" class:released={ci.status === 'released'}>
+						<div class="operator-card" class:released={ci.status === 'released'} class:highlighted={highlightedCheckInId === ci.id}>
 							<div class="op-status-bar" style="background: {statusColors[ci.status]}"></div>
 							<div class="op-main">
 								<div class="op-header">
 									<span class="op-callsign">{ci.callsign}</span>
 									{#if ci.tacticalCall}
 										<span class="op-tactical">"{ci.tacticalCall}"</span>
+									{/if}
+									{#if ci.source === 'voice'}
+										<span class="source-badge vox">VOX</span>
 									{/if}
 									{#if ci.traffic && ci.traffic !== 'none'}
 										<span class="traffic-badge" style="background: {trafficColors[ci.traffic]}">{trafficLabels[ci.traffic as TrafficType]}</span>
@@ -442,8 +612,33 @@
 								{#if ci.assignment}
 									<div class="op-assignment">📋 {ci.assignment}</div>
 								{/if}
+								{#if ci.missionId}
+									{@const linkedMission = $missions.find((m) => m.id === ci.missionId)}
+									{#if linkedMission}
+										<div class="op-mission-link">
+											<span class="mission-link-icon">🎯</span>
+											<span class="mission-link-title">{linkedMission.title}</span>
+											<button class="op-btn" title="Unassign mission" onclick={() => handleUnassignMission(ci.id)}>✕</button>
+										</div>
+									{/if}
+								{/if}
 								{#if ci.missedRollCalls > 0}
 									<div class="missed-badge">Missed {ci.missedRollCalls} roll call{ci.missedRollCalls > 1 ? 's' : ''}</div>
+								{/if}
+
+								<!-- Mission assignment picker -->
+								{#if assigningCheckInId === ci.id}
+									<div class="assign-picker">
+										{#each $missions.filter((m) => m.status !== 'complete') as m}
+											<button class="assign-option" onclick={() => handleAssignMission(ci.id, m.id)}>
+												<span class="priority-dot" style="background: {trafficColors[m.priority] ?? '#6b7280'}"></span>
+												{m.title}
+											</button>
+										{/each}
+										{#if $missions.filter((m) => m.status !== 'complete').length === 0}
+											<span class="assign-empty">No active missions</span>
+										{/if}
+									</div>
 								{/if}
 
 								<!-- Inline note form -->
@@ -476,6 +671,12 @@
 									{#if ci.missedRollCalls > 0}
 										<button class="op-btn" title="Roll Call Response" onclick={() => handleRollCallResponse(ci)}>✓</button>
 									{/if}
+									{#if ci.lat != null && ci.lon != null}
+										<button class="op-btn" title="Fly to" onclick={() => onFlyTo?.(ci.lat!, ci.lon!)}>
+											<svg width="10" height="10" viewBox="0 0 16 16" fill="none"><path d="M8 1v14M8 1l-3 3M8 1l3 3M1 8h14" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/></svg>
+										</button>
+									{/if}
+									<button class="op-btn" title="Assign Mission" onclick={() => { assigningCheckInId = assigningCheckInId === ci.id ? null : ci.id; }}>🎯</button>
 									<button class="op-btn" title="Note" onclick={() => { noteCheckInId = noteCheckInId === ci.id ? null : ci.id; noteContent = ''; }}>📝</button>
 									<button class="op-btn" title="Check Out" onclick={() => handleCheckOut(ci)}>✕</button>
 								</div>
@@ -488,12 +689,21 @@
 				</div>
 
 			{:else if currentTab === 'missions'}
-				<!-- Mission form toggle -->
-				{#if !showMissionForm}
-					<div class="mission-add">
-						<button class="btn-secondary" onclick={() => (showMissionForm = true)}>+ New Mission</button>
+				<!-- Mission toolbar -->
+				<div class="mission-toolbar">
+					{#if !showMissionForm}
+						<button class="btn-secondary btn-sm" onclick={() => (showMissionForm = true)}>+ New</button>
+					{/if}
+					<div class="mission-filter-chips">
+						<button class="filter-chip" class:active={missionFilter === 'all'} onclick={() => (missionFilter = 'all')}>All {$missions.length}</button>
+						<button class="filter-chip" class:active={missionFilter === 'active'} onclick={() => (missionFilter = 'active')}>Active {activeMissionCount}</button>
+						{#if completeMissionCount > 0}
+							<button class="filter-chip" class:active={missionFilter === 'complete'} onclick={() => (missionFilter = 'complete')}>Done {completeMissionCount}</button>
+						{/if}
 					</div>
-				{:else}
+				</div>
+
+				{#if showMissionForm}
 					<div class="mission-form">
 						<input type="text" bind:value={newMissionTitle} placeholder="Mission title" />
 						<textarea bind:value={newMissionDesc} rows="2" placeholder="Description (optional)"></textarea>
@@ -511,6 +721,11 @@
 								{/each}
 							</select>
 						</div>
+						<input type="text" bind:value={newMissionLocation} placeholder="Location (e.g., Main & 5th St)" />
+						<div class="form-row">
+							<input type="text" bind:value={newMissionLat} placeholder="Lat" inputmode="decimal" />
+							<input type="text" bind:value={newMissionLon} placeholder="Lon" inputmode="decimal" />
+						</div>
 						<div class="form-actions">
 							<button class="btn-secondary" onclick={() => (showMissionForm = false)}>Cancel</button>
 							<button class="btn-primary" onclick={handleCreateMission} disabled={!newMissionTitle.trim()}>Create</button>
@@ -520,30 +735,85 @@
 
 				<!-- Mission list -->
 				<div class="mission-list">
-					{#each $missions as m (m.id)}
+					{#each filteredMissions as m (m.id)}
+						{@const assignedOps = operatorsForMission(m.id)}
+						{@const hasNoOperators = assignedOps.length === 0 && !m.assignedTo}
 						<div class="mission-card" class:complete={m.status === 'complete'}>
-							<div class="mission-header">
-								<span class="mission-title">{m.title}</span>
-								<span class="priority-badge priority-{m.priority}">{m.priority}</span>
-							</div>
-							{#if m.description}
-								<p class="mission-desc">{m.description}</p>
-							{/if}
-							<div class="mission-footer">
-								{#if m.assignedTo}
-									<span class="mission-assigned">→ {m.assignedTo}</span>
+							<div class="mission-priority-bar" style="background: {trafficColors[m.priority] ?? '#6b7280'}"></div>
+							<div class="mission-body">
+								<div class="mission-header">
+									<span class="mission-title">{m.title}</span>
+									<span class="priority-badge priority-{m.priority}">{m.priority}</span>
+									<span class="mission-age">{missionElapsed(m)}</span>
+								</div>
+								{#if m.description}
+									<p class="mission-desc">{m.description}</p>
 								{/if}
-								<span class="mission-status-badge">{m.status}</span>
-								{#if m.status === 'open'}
-									<button class="op-btn" onclick={() => handleMissionStatusChange(m, 'active')}>Start</button>
-								{:else if m.status === 'active'}
-									<button class="op-btn" onclick={() => handleMissionStatusChange(m, 'complete')}>Complete</button>
+								{#if m.location}
+									<div class="mission-location">📍 {m.location}</div>
 								{/if}
+
+								<!-- Assigned operators -->
+								<div class="mission-operators">
+									{#if assignedOps.length > 0}
+										{#each assignedOps as op}
+											<div class="mission-op-chip">
+												<span class="mission-op-dot" style="background: {statusColors[op.status]}"></span>
+												<span class="mission-op-call">{op.callsign}</span>
+												<span class="mission-op-status">{op.status}</span>
+												{#if m.status !== 'complete'}
+													<button class="mission-op-remove" title="Unassign" onclick={() => handleUnassignFromMission(op.id)}>✕</button>
+												{/if}
+											</div>
+										{/each}
+									{:else if m.assignedTo}
+										<span class="mission-assigned-text">→ {m.assignedTo}</span>
+									{/if}
+									{#if hasNoOperators && m.status !== 'complete'}
+										<span class="mission-unassigned">No operators assigned</span>
+									{/if}
+								</div>
+
+								<!-- Assign operator picker (from mission side) -->
+								{#if assigningMissionId === m.id}
+									<div class="assign-picker">
+										{#each $activeCheckIns.filter((ci) => !ci.missionId) as ci}
+											<button class="assign-option" onclick={() => handleAssignOperatorToMission(m.id, ci.id)}>
+												<span class="mission-op-dot" style="background: {statusColors[ci.status]}"></span>
+												{ci.callsign}
+												{#if ci.tacticalCall}
+													<span class="assign-option-tactical">"{ci.tacticalCall}"</span>
+												{/if}
+											</button>
+										{/each}
+										{#if $activeCheckIns.filter((ci) => !ci.missionId).length === 0}
+											<span class="assign-empty">No available operators</span>
+										{/if}
+									</div>
+								{/if}
+
+								<div class="mission-footer">
+									<span class="mission-status-badge mission-status-{m.status}">{m.status}</span>
+									<div class="mission-actions">
+										{#if m.status !== 'complete'}
+											<button class="op-btn" title="Assign operator" onclick={() => { assigningMissionId = assigningMissionId === m.id ? null : m.id; }}>+ Assign</button>
+										{/if}
+										{#if m.status === 'open'}
+											<button class="op-btn" onclick={() => handleMissionStatusChange(m, 'active')}>Start</button>
+										{:else if m.status === 'active'}
+											<button class="op-btn" onclick={() => handleMissionStatusChange(m, 'complete')}>Complete</button>
+										{/if}
+									</div>
+								</div>
 							</div>
 						</div>
 					{/each}
-					{#if $missions.length === 0}
-						<p class="empty">No missions. Create one above.</p>
+					{#if filteredMissions.length === 0}
+						{#if $missions.length === 0}
+							<p class="empty">No missions. Create one above.</p>
+						{:else}
+							<p class="empty">No {missionFilter} missions.</p>
+						{/if}
 					{/if}
 				</div>
 
@@ -557,6 +827,12 @@
 							onclick={() => (timelineFilter = value)}
 						>{label}</button>
 					{/each}
+					<input
+						type="text"
+						class="timeline-search"
+						bind:value={timelineCallsignFilter}
+						placeholder="Filter by callsign..."
+					/>
 				</div>
 
 				<!-- Timeline feed -->
@@ -636,6 +912,16 @@
 		color: var(--color-text-muted);
 	}
 
+	.mission-brief {
+		font-size: 0.7rem;
+		color: var(--color-text-muted);
+		font-style: italic;
+		max-width: 200px;
+		overflow: hidden;
+		text-overflow: ellipsis;
+		white-space: nowrap;
+	}
+
 	.header-actions {
 		display: flex;
 		gap: var(--space-xs);
@@ -663,6 +949,15 @@
 	.action-btn.danger:hover {
 		border-color: #ef4444;
 		color: #ef4444;
+	}
+
+	.action-btn.ops-view-set {
+		border-color: #22c55e;
+		color: #22c55e;
+	}
+
+	.action-btn.ops-view-set:hover {
+		background: rgba(34, 197, 94, 0.1);
 	}
 
 	/* Tabs */
@@ -793,6 +1088,28 @@
 		color: var(--color-text-muted);
 	}
 
+	/* Roster header */
+	.roster-header {
+		display: flex;
+		justify-content: space-between;
+		align-items: center;
+		padding: 4px var(--space-md);
+		border-bottom: 1px solid var(--color-primary);
+		font-size: 0.65rem;
+		color: var(--color-text-muted);
+	}
+
+	.export-link {
+		color: var(--color-accent);
+		text-decoration: none;
+		font-weight: 600;
+		font-size: 0.65rem;
+	}
+
+	.export-link:hover {
+		text-decoration: underline;
+	}
+
 	/* Roster */
 	.roster {
 		padding: 0;
@@ -806,6 +1123,15 @@
 
 	.operator-card.released {
 		opacity: 0.5;
+	}
+
+	.operator-card.highlighted {
+		animation: highlight-flash 2s ease-out;
+	}
+
+	@keyframes highlight-flash {
+		0% { background: rgba(59, 130, 246, 0.3); }
+		100% { background: transparent; }
 	}
 
 	.op-status-bar {
@@ -835,6 +1161,19 @@
 	.op-tactical {
 		font-size: 0.75rem;
 		color: var(--color-accent);
+	}
+
+	.source-badge {
+		font-size: 0.5rem;
+		font-weight: 700;
+		padding: 1px 4px;
+		border-radius: 2px;
+		letter-spacing: 0.03em;
+	}
+
+	.source-badge.vox {
+		background: #6b7280;
+		color: #fff;
 	}
 
 	.traffic-badge {
@@ -869,6 +1208,75 @@
 		font-size: 0.7rem;
 		color: var(--color-accent);
 		margin-top: 2px;
+	}
+
+	.op-mission-link {
+		display: flex;
+		align-items: center;
+		gap: 4px;
+		font-size: 0.7rem;
+		color: var(--color-accent);
+		margin-top: 2px;
+	}
+
+	.mission-link-icon {
+		font-size: 0.7rem;
+	}
+
+	.mission-link-title {
+		flex: 1;
+		min-width: 0;
+		overflow: hidden;
+		text-overflow: ellipsis;
+		white-space: nowrap;
+	}
+
+	.assign-picker {
+		display: flex;
+		flex-direction: column;
+		gap: 1px;
+		margin-top: var(--space-xs);
+		background: var(--color-bg);
+		border: 1px solid var(--color-primary);
+		border-radius: var(--radius-sm);
+		max-height: 120px;
+		overflow-y: auto;
+	}
+
+	.assign-option {
+		display: flex;
+		align-items: center;
+		gap: 6px;
+		padding: 4px 8px;
+		background: none;
+		border: none;
+		border-bottom: 1px solid var(--color-primary);
+		color: var(--color-text);
+		font-size: 0.7rem;
+		text-align: left;
+		cursor: pointer;
+	}
+
+	.assign-option:hover {
+		background: var(--color-primary);
+	}
+
+	.assign-option:last-child {
+		border-bottom: none;
+	}
+
+	.assign-empty {
+		padding: 6px 8px;
+		font-size: 0.65rem;
+		color: var(--color-text-muted);
+		font-style: italic;
+	}
+
+	.priority-dot {
+		width: 6px;
+		height: 6px;
+		border-radius: 50%;
+		flex-shrink: 0;
 	}
 
 	.missed-badge {
@@ -946,9 +1354,23 @@
 	}
 
 	/* Missions */
-	.mission-add {
+	.mission-toolbar {
+		display: flex;
+		align-items: center;
+		gap: var(--space-sm);
 		padding: var(--space-sm) var(--space-md);
 		border-bottom: 1px solid var(--color-primary);
+	}
+
+	.mission-filter-chips {
+		display: flex;
+		gap: var(--space-xs);
+		margin-left: auto;
+	}
+
+	.btn-sm {
+		font-size: 0.7rem;
+		padding: 3px 10px;
 	}
 
 	.mission-form {
@@ -980,12 +1402,23 @@
 	}
 
 	.mission-card {
-		padding: var(--space-sm) var(--space-md);
+		display: flex;
 		border-bottom: 1px solid var(--color-primary);
 	}
 
 	.mission-card.complete {
-		opacity: 0.5;
+		opacity: 0.45;
+	}
+
+	.mission-priority-bar {
+		width: 4px;
+		flex-shrink: 0;
+	}
+
+	.mission-body {
+		flex: 1;
+		padding: var(--space-sm) var(--space-md);
+		min-width: 0;
 	}
 
 	.mission-header {
@@ -999,12 +1432,21 @@
 		font-size: 0.85rem;
 	}
 
+	.mission-age {
+		font-size: 0.6rem;
+		font-family: monospace;
+		color: var(--color-text-muted);
+		margin-left: auto;
+		flex-shrink: 0;
+	}
+
 	.priority-badge {
 		font-size: 0.55rem;
 		font-weight: 700;
 		text-transform: uppercase;
 		padding: 1px 5px;
 		border-radius: 3px;
+		flex-shrink: 0;
 	}
 
 	.priority-routine { background: #22c55e; color: #000; }
@@ -1018,6 +1460,80 @@
 		margin: 2px 0;
 	}
 
+	.mission-location {
+		font-size: 0.7rem;
+		color: var(--color-text-muted);
+		margin-top: 2px;
+	}
+
+	/* Assigned operators on mission card */
+	.mission-operators {
+		display: flex;
+		flex-wrap: wrap;
+		gap: 4px;
+		margin-top: var(--space-xs);
+	}
+
+	.mission-op-chip {
+		display: inline-flex;
+		align-items: center;
+		gap: 3px;
+		background: var(--color-bg);
+		border: 1px solid var(--color-primary);
+		border-radius: var(--radius-sm);
+		padding: 2px 6px;
+		font-size: 0.65rem;
+	}
+
+	.mission-op-dot {
+		width: 6px;
+		height: 6px;
+		border-radius: 50%;
+		flex-shrink: 0;
+	}
+
+	.mission-op-call {
+		font-family: monospace;
+		font-weight: 600;
+	}
+
+	.mission-op-status {
+		color: var(--color-text-muted);
+		font-size: 0.55rem;
+		text-transform: uppercase;
+	}
+
+	.mission-op-remove {
+		background: none;
+		border: none;
+		color: var(--color-text-muted);
+		font-size: 0.6rem;
+		padding: 0 2px;
+		cursor: pointer;
+		line-height: 1;
+	}
+
+	.mission-op-remove:hover {
+		color: #ef4444;
+	}
+
+	.mission-assigned-text {
+		font-family: monospace;
+		font-size: 0.7rem;
+		color: var(--color-accent);
+	}
+
+	.mission-unassigned {
+		font-size: 0.65rem;
+		color: var(--color-text-muted);
+		font-style: italic;
+	}
+
+	.assign-option-tactical {
+		font-size: 0.6rem;
+		color: var(--color-accent);
+	}
+
 	.mission-footer {
 		display: flex;
 		align-items: center;
@@ -1025,16 +1541,30 @@
 		margin-top: var(--space-xs);
 	}
 
-	.mission-assigned {
-		font-family: monospace;
-		font-size: 0.7rem;
-		color: var(--color-accent);
+	.mission-actions {
+		display: flex;
+		gap: 2px;
+		margin-left: auto;
 	}
 
 	.mission-status-badge {
 		font-size: 0.6rem;
+		font-weight: 600;
 		text-transform: uppercase;
+		padding: 1px 5px;
+		border-radius: 2px;
+	}
+
+	.mission-status-open {
 		color: var(--color-text-muted);
+	}
+
+	.mission-status-active {
+		color: #22c55e;
+	}
+
+	.mission-status-complete {
+		color: #6b7280;
 	}
 
 	/* Timeline */
@@ -1061,6 +1591,29 @@
 		background: var(--color-accent);
 		border-color: var(--color-accent);
 		color: white;
+	}
+
+	.timeline-search {
+		background: var(--color-bg);
+		border: 1px solid var(--color-primary);
+		border-radius: var(--radius-sm);
+		color: var(--color-text);
+		font-size: 0.65rem;
+		font-family: monospace;
+		padding: 2px 6px;
+		outline: none;
+		width: 100px;
+		text-transform: uppercase;
+		margin-left: auto;
+	}
+
+	.timeline-search:focus {
+		border-color: var(--color-accent);
+	}
+
+	.timeline-search::placeholder {
+		text-transform: none;
+		color: var(--color-text-muted);
 	}
 
 	.timeline-feed {
