@@ -23,6 +23,7 @@ import (
 	"github.com/narvel/nymeria/internal/session"
 	"github.com/narvel/nymeria/internal/station"
 	"github.com/narvel/nymeria/internal/store"
+	"github.com/narvel/nymeria/internal/tilecache"
 	"github.com/narvel/nymeria/internal/transport"
 	nweb "github.com/narvel/nymeria/web"
 )
@@ -41,6 +42,7 @@ type Server struct {
 	actLogger  activity.Logger
 	annMgr     *annotation.Manager
 	netMgr     *netcontrol.Manager
+	tileCache  *tilecache.Cache
 	stationCfg config.StationConfig
 }
 
@@ -89,6 +91,9 @@ func New(tracker station.Tracker, tm *transport.Manager, eng message.Engine, db 
 	if s.netMgr != nil {
 		go s.bridgeNetControlEvents()
 	}
+	if s.tileCache != nil {
+		go s.bridgeTileCacheEvents()
+	}
 
 	return s
 }
@@ -135,6 +140,13 @@ func WithAnnotationManager(mgr *annotation.Manager) Option {
 func WithNetControlManager(mgr *netcontrol.Manager) Option {
 	return func(s *Server) {
 		s.netMgr = mgr
+	}
+}
+
+// WithTileCache sets the tile cache on the server.
+func WithTileCache(tc *tilecache.Cache) Option {
+	return func(s *Server) {
+		s.tileCache = tc
 	}
 }
 
@@ -410,6 +422,22 @@ func (s *Server) broadcastTactical(eventType string, payload any) {
 		return
 	}
 	s.hub.Broadcast(data)
+}
+
+// bridgeTileCacheEvents reads tile cache events and broadcasts via WebSocket.
+func (s *Server) bridgeTileCacheEvents() {
+	for evt := range s.tileCache.Events() {
+		msg := map[string]any{
+			"type": evt.Type,
+			"data": evt.Data,
+		}
+		data, err := json.Marshal(msg)
+		if err != nil {
+			log.Printf("[server] marshal tile cache event: %v", err)
+			continue
+		}
+		s.hub.Broadcast(data)
+	}
 }
 
 // HandleTacticalPacket detects APRS TACTICAL messages and upserts aliases.

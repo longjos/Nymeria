@@ -1,6 +1,6 @@
 import { writable, get } from 'svelte/store';
 
-export type PanelMode = 'closed' | 'stations' | 'detail' | 'messages' | 'convo' | 'transports' | 'activity' | 'annotations' | 'netcontrol' | 'bulletins';
+export type PanelMode = 'closed' | 'stations' | 'detail' | 'messages' | 'convo' | 'transports' | 'activity' | 'annotations' | 'netcontrol' | 'bulletins' | 'ics309';
 export type DetailTab = 'info' | 'messages' | 'track';
 export type SheetState = 'peek' | 'half' | 'full';
 export type ConnectionState = 'connected' | 'disconnected' | 'reconnecting';
@@ -74,6 +74,15 @@ export function openBulletins(): void {
 	sheetState.set('half');
 }
 
+export function openICS309(netId?: string): void {
+	ics309NetId.set(netId ?? null);
+	panelMode.set('ics309');
+	selectedStation.set(null);
+	sheetState.set('full');
+}
+
+export const ics309NetId = writable<string | null>(null);
+
 /** Toggle a panel: if it's already open, close it; otherwise open it. */
 export function togglePanel(mode: PanelMode): void {
 	if (get(panelMode) === mode) {
@@ -87,6 +96,7 @@ export function togglePanel(mode: PanelMode): void {
 			case 'annotations': openAnnotations(); break;
 			case 'netcontrol': openNetControl(); break;
 			case 'bulletins': openBulletins(); break;
+			case 'ics309': openICS309(); break;
 			default: closePanel();
 		}
 	}

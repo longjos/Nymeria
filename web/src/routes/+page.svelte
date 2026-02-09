@@ -14,6 +14,7 @@
 	import AnnotationPanel from '$lib/components/AnnotationPanel.svelte';
 	import NetControlPanel from '$lib/components/NetControlPanel.svelte';
 	import BulletinPanel from '$lib/components/BulletinPanel.svelte';
+	import ICS309Panel from '$lib/components/ICS309Panel.svelte';
 	import ConnectionStatus from '$lib/components/ConnectionStatus.svelte';
 	import SearchOverlay from '$lib/components/SearchOverlay.svelte';
 	import LoginOverlay from '$lib/components/LoginOverlay.svelte';
@@ -31,7 +32,7 @@
 	import { isLoggedIn, initSession } from '$lib/stores/session';
 	import {
 		selectedStation, panelMode, detailTab, searchOpen, sheetState,
-		selectStation, closePanel, openStationList, openMessages, openConversation, openTransports, openActivity, openAnnotations, openNetControl, openBulletins,
+		selectStation, closePanel, openStationList, openMessages, openConversation, openTransports, openActivity, openAnnotations, openNetControl, openBulletins, openICS309,
 		togglePanel
 	} from '$lib/stores/ui';
 	import type { SheetState, DetailTab, PanelMode } from '$lib/stores/ui';
@@ -313,6 +314,8 @@
 					onSetOpsView={handleSetOpsView}
 					onGoToOpsView={handleGoToOpsView}
 				/>
+			{:else if $panelMode === 'ics309'}
+				<ICS309Panel />
 			{/if}
 		</SidePanel>
 	{/if}
@@ -376,6 +379,8 @@
 					onSetOpsView={handleSetOpsView}
 					onGoToOpsView={handleGoToOpsView}
 				/>
+			{:else if $panelMode === 'ics309'}
+				<ICS309Panel />
 			{/if}
 		</BottomSheet>
 	{/if}

@@ -1,6 +1,7 @@
 package server
 
 import (
+	"context"
 	"encoding/json"
 	"net/http"
 	"strconv"
@@ -12,7 +13,9 @@ import (
 	"github.com/narvel/nymeria/internal/activity"
 	"github.com/narvel/nymeria/internal/annotation"
 	"github.com/narvel/nymeria/internal/aprs"
+	"github.com/narvel/nymeria/internal/ics309"
 	"github.com/narvel/nymeria/internal/netcontrol"
+	"github.com/narvel/nymeria/internal/tilecache"
 	"github.com/narvel/nymeria/internal/object"
 	"github.com/narvel/nymeria/internal/server/ws"
 	"github.com/narvel/nymeria/internal/session"
@@ -42,6 +45,13 @@ func (s *Server) routes() {
 		r.Get("/operations/{id}", s.handleGetOperation)
 		r.Get("/activity", s.handleGetActivity)
 		r.Get("/activity/export", s.handleExportActivityCSV)
+
+		// ICS-309 Communications Log
+		r.Get("/ics309", s.handleGetICS309)
+		r.Get("/ics309/export", s.handleExportICS309CSV)
+
+		// Tile cache — status (observer+)
+		r.Get("/tiles/cache", s.handleTileCacheStatus)
 
 		// Session management — requires a valid session
 		r.Get("/session", s.handleGetSession)
@@ -112,6 +122,13 @@ func (s *Server) routes() {
 			r.Delete("/nets/{id}/checkin/{ciId}/devices/{callsign}", s.handleRemoveTrackedStation)
 		})
 
+		// Tile cache — preload/estimate (operator+)
+		r.Group(func(r chi.Router) {
+			r.Use(RequireRole(session.RoleOperator))
+			r.Post("/tiles/cache", s.handleTilePreload)
+			r.Post("/tiles/estimate", s.handleTileEstimate)
+		})
+
 		// Admin endpoints — user management
 		r.Group(func(r chi.Router) {
 			r.Use(RequireRole(session.RoleAdmin))
@@ -119,6 +136,11 @@ func (s *Server) routes() {
 			r.Delete("/users/{id}", s.handleRemoveUser)
 		})
 	})
+
+	// Tile proxy endpoint — no auth, serves images directly
+	if s.tileCache != nil {
+		s.router.Get("/tiles/{z}/{x}/{y}", s.handleTileProxy)
+	}
 
 	// WebSocket endpoint
 	s.router.Get("/ws", ws.HandleWS(s.hub, func(to, body string) error {
@@ -1249,6 +1271,218 @@ func (s *Server) handleExportActivityCSV(w http.ResponseWriter, r *http.Request)
 	w.Header().Set("Content-Type", "text/csv")
 	w.Header().Set("Content-Disposition", "attachment; filename=activity.csv")
 	activity.ExportCSV(w, entries)
+}
+
+// --- ICS-309 handlers ---
+
+func (s *Server) handleGetICS309(w http.ResponseWriter, r *http.Request) {
+	if s.msgEngine == nil {
+		writeJSON(w, http.StatusOK, ics309.Report{})
+		return
+	}
+
+	q := r.URL.Query()
+	header := ics309.Header{
+		IncidentName: q.Get("incidentName"),
+		OperatorName: q.Get("operatorName"),
+		StationID:    q.Get("stationId"),
+	}
+
+	from, to := s.parseICS309TimeRange(q.Get("from"), q.Get("to"))
+	header.DateFrom = from
+	header.DateTo = to
+
+	// If netId provided, pre-populate header from net session.
+	if netID := q.Get("netId"); netID != "" && s.netMgr != nil {
+		if n, ok := s.netMgr.GetNet(netID); ok {
+			if header.IncidentName == "" {
+				header.IncidentName = n.Name
+			}
+			if header.StationID == "" {
+				header.StationID = n.NCSCallsign
+			}
+			if n.OpenedAt != nil && q.Get("from") == "" {
+				header.DateFrom = *n.OpenedAt
+			}
+			if n.ClosedAt != nil && q.Get("to") == "" {
+				header.DateTo = *n.ClosedAt
+			}
+		}
+	}
+
+	msgs := s.msgEngine.Messages("")
+	rows := ics309.BuildFromMessages(msgs, header.DateFrom, header.DateTo, q.Get("method"))
+
+	writeJSON(w, http.StatusOK, ics309.Report{Header: header, Rows: rows})
+}
+
+func (s *Server) handleExportICS309CSV(w http.ResponseWriter, r *http.Request) {
+	if s.msgEngine == nil {
+		http.Error(w, "message engine not available", http.StatusServiceUnavailable)
+		return
+	}
+
+	q := r.URL.Query()
+	header := ics309.Header{
+		IncidentName: q.Get("incidentName"),
+		OperatorName: q.Get("operatorName"),
+		StationID:    q.Get("stationId"),
+	}
+
+	from, to := s.parseICS309TimeRange(q.Get("from"), q.Get("to"))
+	header.DateFrom = from
+	header.DateTo = to
+
+	if netID := q.Get("netId"); netID != "" && s.netMgr != nil {
+		if n, ok := s.netMgr.GetNet(netID); ok {
+			if header.IncidentName == "" {
+				header.IncidentName = n.Name
+			}
+			if header.StationID == "" {
+				header.StationID = n.NCSCallsign
+			}
+			if n.OpenedAt != nil && q.Get("from") == "" {
+				header.DateFrom = *n.OpenedAt
+			}
+			if n.ClosedAt != nil && q.Get("to") == "" {
+				header.DateTo = *n.ClosedAt
+			}
+		}
+	}
+
+	msgs := s.msgEngine.Messages("")
+	rows := ics309.BuildFromMessages(msgs, header.DateFrom, header.DateTo, q.Get("method"))
+
+	report := ics309.Report{Header: header, Rows: rows}
+
+	w.Header().Set("Content-Type", "text/csv")
+	w.Header().Set("Content-Disposition", "attachment; filename=ics309.csv")
+	ics309.ExportCSV(w, report)
+}
+
+func (s *Server) parseICS309TimeRange(fromStr, toStr string) (time.Time, time.Time) {
+	now := time.Now()
+	from := now.Add(-24 * time.Hour)
+	to := now
+
+	if fromStr != "" {
+		if t, err := time.Parse(time.RFC3339, fromStr); err == nil {
+			from = t
+		}
+	}
+	if toStr != "" {
+		if t, err := time.Parse(time.RFC3339, toStr); err == nil {
+			to = t
+		}
+	}
+	return from, to
+}
+
+// --- Tile cache handlers ---
+
+func (s *Server) handleTileProxy(w http.ResponseWriter, r *http.Request) {
+	z, _ := strconv.Atoi(chi.URLParam(r, "z"))
+	x, _ := strconv.Atoi(chi.URLParam(r, "x"))
+	y := chi.URLParam(r, "y")
+	// Strip .png extension if present
+	y = strings.TrimSuffix(y, ".png")
+	yInt, _ := strconv.Atoi(y)
+
+	data, err := s.tileCache.Get(r.Context(), z, x, yInt)
+	if err != nil {
+		http.Error(w, "tile fetch failed", http.StatusBadGateway)
+		return
+	}
+
+	w.Header().Set("Content-Type", "image/png")
+	w.Header().Set("Cache-Control", "public, max-age=86400")
+	w.Write(data)
+}
+
+func (s *Server) handleTileCacheStatus(w http.ResponseWriter, _ *http.Request) {
+	if s.tileCache == nil {
+		writeJSON(w, http.StatusOK, map[string]any{
+			"enabled":   false,
+			"tileCount": 0,
+			"diskUsage": 0,
+		})
+		return
+	}
+
+	status, err := s.tileCache.Status()
+	if err != nil {
+		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
+		return
+	}
+
+	writeJSON(w, http.StatusOK, map[string]any{
+		"enabled":   true,
+		"tileCount": status.TileCount,
+		"diskUsage": status.DiskUsage,
+		"maxZoom":   s.tileCache.MaxZoom(),
+	})
+}
+
+func (s *Server) handleTilePreload(w http.ResponseWriter, r *http.Request) {
+	if s.tileCache == nil {
+		writeJSON(w, http.StatusServiceUnavailable, map[string]string{"error": "tile cache not available"})
+		return
+	}
+
+	var req struct {
+		South   float64 `json:"south"`
+		West    float64 `json:"west"`
+		North   float64 `json:"north"`
+		East    float64 `json:"east"`
+		ZoomMin int     `json:"zoomMin"`
+		ZoomMax int     `json:"zoomMax"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid request body"})
+		return
+	}
+
+	if req.ZoomMax > s.tileCache.MaxZoom() {
+		req.ZoomMax = s.tileCache.MaxZoom()
+	}
+
+	tiles := tilecache.TilesForBounds(req.South, req.West, req.North, req.East, req.ZoomMin, req.ZoomMax)
+
+	// Run preload in background with detached context (request context cancels on response)
+	go s.tileCache.Preload(context.Background(), tiles)
+
+	writeJSON(w, http.StatusOK, map[string]any{
+		"status":    "started",
+		"tileCount": len(tiles),
+	})
+}
+
+func (s *Server) handleTileEstimate(w http.ResponseWriter, r *http.Request) {
+	if s.tileCache == nil {
+		writeJSON(w, http.StatusServiceUnavailable, map[string]string{"error": "tile cache not available"})
+		return
+	}
+
+	var req struct {
+		South   float64 `json:"south"`
+		West    float64 `json:"west"`
+		North   float64 `json:"north"`
+		East    float64 `json:"east"`
+		ZoomMin int     `json:"zoomMin"`
+		ZoomMax int     `json:"zoomMax"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid request body"})
+		return
+	}
+
+	if req.ZoomMax > s.tileCache.MaxZoom() {
+		req.ZoomMax = s.tileCache.MaxZoom()
+	}
+
+	count := tilecache.EstimateTileCount(req.South, req.West, req.North, req.East, req.ZoomMin, req.ZoomMax)
+
+	writeJSON(w, http.StatusOK, map[string]int{"tileCount": count})
 }
 
 // --- Net Control handlers ---

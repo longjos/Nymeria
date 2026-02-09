@@ -2,7 +2,7 @@ import type {
 	Station, Message, Conversation, Bulletin, HealthResponse, TransportStatus,
 	SessionUser, PublicUser, ConfigResponse, Annotation, ActivityResponse,
 	Net, NetCheckIn, NetMission, NetNote, NetEvent, NetSummary, TacticalAlias,
-	AnnotationTemplate, Operation
+	AnnotationTemplate, Operation, ICS309Report, TileCacheStatus
 } from './types';
 
 const BASE = '/api';
@@ -178,5 +178,22 @@ export const api = {
 	setTacticalAlias: (callsign: string, alias: string) =>
 		put<TacticalAlias>(`/tactical/${encodeURIComponent(callsign)}`, { alias }),
 	deleteTacticalAlias: (callsign: string) =>
-		del<{ status: string }>(`/tactical/${encodeURIComponent(callsign)}`)
+		del<{ status: string }>(`/tactical/${encodeURIComponent(callsign)}`),
+
+	// ICS-309 Communications Log
+	ics309: (params?: Record<string, string>) => {
+		const qs = params ? '?' + new URLSearchParams(params).toString() : '';
+		return get<ICS309Report>(`/ics309${qs}`);
+	},
+	ics309ExportUrl: (params?: Record<string, string>) => {
+		const qs = params ? '?' + new URLSearchParams(params).toString() : '';
+		return `${BASE}/ics309/export${qs}`;
+	},
+
+	// Tile Cache
+	tileCacheStatus: () => get<TileCacheStatus>('/tiles/cache'),
+	preloadTiles: (south: number, west: number, north: number, east: number, zoomMin: number, zoomMax: number) =>
+		post<{ status: string; tileCount: number }>('/tiles/cache', { south, west, north, east, zoomMin, zoomMax }),
+	estimateTiles: (south: number, west: number, north: number, east: number, zoomMin: number, zoomMax: number) =>
+		post<{ tileCount: number }>('/tiles/estimate', { south, west, north, east, zoomMin, zoomMax })
 };
