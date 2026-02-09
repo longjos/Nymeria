@@ -194,6 +194,19 @@ func main() {
 		InactivityTimeout: cfg.Session.InactivityTimeout,
 	}
 	sessMgr := session.NewMemoryManager(sessCfg)
+
+	// Create activity logger
+	actLogger := activity.NewStoreLogger(db)
+
+	sessMgr.OnDisconnect = func(user *session.User) {
+		actLogger.Log(activity.Entry{
+			Timestamp: time.Now(),
+			UserID:    user.ID,
+			UserName:  user.Name,
+			Action:    activity.ActionSessionEnded,
+			Details:   "timeout",
+		})
+	}
 	sessMgr.Start(ctx, time.Minute)
 	log.Printf("session manager started (PIN %s, timeout %s)",
 		func() string {
@@ -203,9 +216,6 @@ func main() {
 			return "disabled"
 		}(),
 		cfg.Session.InactivityTimeout)
-
-	// Create activity logger
-	actLogger := activity.NewStoreLogger(db)
 
 	// Create annotation manager
 	annMgr := annotation.NewManager(db)

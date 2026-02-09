@@ -171,6 +171,17 @@ func (s *Server) handleSendMessage(w http.ResponseWriter, r *http.Request) {
 	}
 
 	writeJSON(w, http.StatusOK, msg)
+
+	if s.actLogger != nil {
+		user, _ := UserFromContext(r.Context())
+		s.actLogger.Log(activity.Entry{
+			Timestamp: time.Now(),
+			UserID:    user.ID,
+			UserName:  user.Name,
+			Action:    activity.ActionMessageSent,
+			Target:    req.To,
+		})
+	}
 }
 
 func (s *Server) handleClaimConversation(w http.ResponseWriter, r *http.Request) {
@@ -200,10 +211,21 @@ func (s *Server) handleClaimConversation(w http.ResponseWriter, r *http.Request)
 	}
 
 	writeJSON(w, http.StatusOK, map[string]string{
-		"callsign": callsign,
-		"claimedBy": req.UserID,
+		"callsign":    callsign,
+		"claimedBy":   req.UserID,
 		"claimedName": req.UserName,
 	})
+
+	if s.actLogger != nil {
+		user, _ := UserFromContext(r.Context())
+		s.actLogger.Log(activity.Entry{
+			Timestamp: time.Now(),
+			UserID:    user.ID,
+			UserName:  user.Name,
+			Action:    activity.ActionMessageClaimed,
+			Target:    callsign,
+		})
+	}
 }
 
 func (s *Server) handleUnclaimConversation(w http.ResponseWriter, r *http.Request) {
@@ -226,7 +248,7 @@ func (s *Server) handleGetTransports(w http.ResponseWriter, _ *http.Request) {
 	writeJSON(w, http.StatusOK, statuses)
 }
 
-func (s *Server) handleBeaconNow(w http.ResponseWriter, _ *http.Request) {
+func (s *Server) handleBeaconNow(w http.ResponseWriter, r *http.Request) {
 	if s.beaconMgr == nil {
 		writeJSON(w, http.StatusServiceUnavailable, map[string]string{"error": "beaconing not configured"})
 		return
@@ -236,6 +258,17 @@ func (s *Server) handleBeaconNow(w http.ResponseWriter, _ *http.Request) {
 		return
 	}
 	writeJSON(w, http.StatusOK, map[string]string{"status": "beacon sent"})
+
+	if s.actLogger != nil {
+		user, _ := UserFromContext(r.Context())
+		s.actLogger.Log(activity.Entry{
+			Timestamp: time.Now(),
+			UserID:    user.ID,
+			UserName:  user.Name,
+			Action:    activity.ActionBeaconSent,
+			Details:   "manual",
+		})
+	}
 }
 
 func (s *Server) handleGetConfig(w http.ResponseWriter, _ *http.Request) {
@@ -449,6 +482,17 @@ func (s *Server) handleCreateObject(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSON(w, http.StatusCreated, obj)
+
+	if s.actLogger != nil {
+		user, _ := UserFromContext(r.Context())
+		s.actLogger.Log(activity.Entry{
+			Timestamp: time.Now(),
+			UserID:    user.ID,
+			UserName:  user.Name,
+			Action:    activity.ActionObjectCreated,
+			Target:    obj.Name,
+		})
+	}
 }
 
 func (s *Server) handleDeleteObject(w http.ResponseWriter, r *http.Request) {
@@ -475,6 +519,17 @@ func (s *Server) handleKillObject(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSON(w, http.StatusOK, map[string]string{"status": "killed"})
+
+	if s.actLogger != nil {
+		user, _ := UserFromContext(r.Context())
+		s.actLogger.Log(activity.Entry{
+			Timestamp: time.Now(),
+			UserID:    user.ID,
+			UserName:  user.Name,
+			Action:    activity.ActionObjectKilled,
+			Target:    id,
+		})
+	}
 }
 
 func (s *Server) handleGetItems(w http.ResponseWriter, _ *http.Request) {
@@ -583,6 +638,12 @@ func (s *Server) handleCreateAnnotation(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 
+	// Set creator attribution from session
+	if user, ok := UserFromContext(r.Context()); ok {
+		req.CreatedBy = user.ID
+		req.CreatedByName = user.Name
+	}
+
 	ann, err := s.annMgr.Create(req)
 	if err != nil {
 		writeJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
@@ -590,6 +651,17 @@ func (s *Server) handleCreateAnnotation(w http.ResponseWriter, r *http.Request) 
 	}
 
 	writeJSON(w, http.StatusCreated, ann)
+
+	if s.actLogger != nil {
+		user, _ := UserFromContext(r.Context())
+		s.actLogger.Log(activity.Entry{
+			Timestamp: time.Now(),
+			UserID:    user.ID,
+			UserName:  user.Name,
+			Action:    activity.ActionAnnotationCreated,
+			Target:    ann.Label,
+		})
+	}
 }
 
 func (s *Server) handleUpdateAnnotation(w http.ResponseWriter, r *http.Request) {
@@ -600,16 +672,23 @@ func (s *Server) handleUpdateAnnotation(w http.ResponseWriter, r *http.Request) 
 
 	id := chi.URLParam(r, "id")
 
-	var req annotation.Annotation
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+	// Fetch the existing annotation so omitted fields are preserved (partial update).
+	existing, found := s.annMgr.Get(id)
+	if !found {
+		writeJSON(w, http.StatusNotFound, map[string]string{"error": "annotation not found"})
+		return
+	}
+
+	updated := *existing
+	if err := json.NewDecoder(r.Body).Decode(&updated); err != nil {
 		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid request body"})
 		return
 	}
-	req.ID = id
+	updated.ID = id // ensure ID cannot be changed
 
-	ann, err := s.annMgr.Update(req)
+	ann, err := s.annMgr.Update(updated)
 	if err != nil {
-		writeJSON(w, http.StatusNotFound, map[string]string{"error": err.Error()})
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
 		return
 	}
 
@@ -629,6 +708,17 @@ func (s *Server) handleDeleteAnnotation(w http.ResponseWriter, r *http.Request) 
 	}
 
 	writeJSON(w, http.StatusOK, map[string]string{"status": "deleted"})
+
+	if s.actLogger != nil {
+		user, _ := UserFromContext(r.Context())
+		s.actLogger.Log(activity.Entry{
+			Timestamp: time.Now(),
+			UserID:    user.ID,
+			UserName:  user.Name,
+			Action:    activity.ActionAnnotationDeleted,
+			Target:    id,
+		})
+	}
 }
 
 // --- Activity log handlers ---
