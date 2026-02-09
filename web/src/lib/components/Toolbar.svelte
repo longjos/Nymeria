@@ -1,136 +1,25 @@
 <script lang="ts">
-	import { stationList } from '$lib/stores/stations';
-	import { stationKey as getStationKey } from '$lib/utils';
-	import ConnectionStatus from './ConnectionStatus.svelte';
-	import UserMenu from './UserMenu.svelte';
-
 	import { activeNet, activeCheckIns } from '$lib/stores/netcontrol';
 
 	let {
 		unreadCount = 0,
 		onSearchOpen,
-		onStationsOpen,
 		onMessagesOpen,
 		onTransportsOpen,
-		onActivityOpen,
 		onAnnotationsOpen,
-		onNetControlOpen,
-		onSelectStation
+		onNetControlOpen
 	}: {
 		unreadCount?: number;
 		onSearchOpen?: () => void;
-		onStationsOpen?: () => void;
 		onMessagesOpen?: () => void;
 		onTransportsOpen?: () => void;
-		onActivityOpen?: () => void;
 		onAnnotationsOpen?: () => void;
 		onNetControlOpen?: () => void;
-		onSelectStation?: (key: string) => void;
 	} = $props();
 
 	let netActive = $derived($activeNet?.status === 'open');
 	let netOpCount = $derived($activeCheckIns.length);
-
-	let searchFocused = $state(false);
-	let searchQuery = $state('');
-	let stationCount = $derived($stationList.length);
-
-	let searchResults = $derived.by(() => {
-		if (!searchQuery) return [];
-		const q = searchQuery.toUpperCase();
-		return $stationList
-			.filter((s) => s.callsign.includes(q) || (s.comment ?? '').toUpperCase().includes(q))
-			.slice(0, 8);
-	});
-
-	let showDropdown = $derived(searchFocused && searchQuery.length > 0 && searchResults.length > 0);
-
-	function handleSelect(key: string) {
-		searchQuery = '';
-		searchFocused = false;
-		onSelectStation?.(key);
-	}
 </script>
-
-<!-- Desktop toolbar -->
-<div class="toolbar desktop-only">
-	<div class="search-group">
-		<div class="search-wrap">
-			<svg class="search-icon" width="14" height="14" viewBox="0 0 16 16" fill="none">
-				<circle cx="6.5" cy="6.5" r="5.5" stroke="currentColor" stroke-width="1.5"/>
-				<path d="M10.5 10.5L15 15" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/>
-			</svg>
-			<input
-				type="search"
-				placeholder="Search stations..."
-				bind:value={searchQuery}
-				onfocus={() => (searchFocused = true)}
-				onblur={() => setTimeout(() => (searchFocused = false), 200)}
-			/>
-		</div>
-		{#if showDropdown}
-			<div class="search-dropdown">
-				{#each searchResults as station}
-					{@const key = getStationKey(station)}
-					<button class="search-result" onmousedown={() => handleSelect(key)}>
-						<span class="result-call">{station.ssid > 0 ? `${station.callsign}-${station.ssid}` : station.callsign}</span>
-						{#if station.comment}
-							<span class="result-comment">{station.comment}</span>
-						{/if}
-					</button>
-				{/each}
-			</div>
-		{/if}
-	</div>
-
-	<button class="toolbar-btn" onclick={onStationsOpen} title="Stations">
-		<svg width="14" height="14" viewBox="0 0 16 16" fill="none">
-			<circle cx="8" cy="5" r="3" stroke="currentColor" stroke-width="1.5"/>
-			<path d="M2 14c0-3.3 2.7-6 6-6s6 2.7 6 6" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/>
-		</svg>
-		<span>{stationCount}</span>
-	</button>
-
-	<button class="toolbar-btn" onclick={onMessagesOpen} title="Messages">
-		<svg width="14" height="14" viewBox="0 0 16 16" fill="none">
-			<path d="M2 3h12v8H4l-2 2V3z" stroke="currentColor" stroke-width="1.5" stroke-linejoin="round"/>
-		</svg>
-		{#if unreadCount > 0}
-			<span class="unread-badge">{unreadCount}</span>
-		{/if}
-	</button>
-
-	<button class="toolbar-btn" onclick={onTransportsOpen} title="Transports">
-		<svg width="14" height="14" viewBox="0 0 16 16" fill="none">
-			<path d="M8 1v4M8 11v4M1 8h4M11 8h4" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/>
-			<circle cx="8" cy="8" r="3" stroke="currentColor" stroke-width="1.5"/>
-		</svg>
-	</button>
-
-	<button class="toolbar-btn" onclick={onActivityOpen} title="Activity Log">
-		<svg width="14" height="14" viewBox="0 0 16 16" fill="none">
-			<path d="M2 2v12h12M5 10l3-3 2 2 4-4" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/>
-		</svg>
-	</button>
-
-	<button class="toolbar-btn" onclick={onAnnotationsOpen} title="Annotations">
-		<svg width="14" height="14" viewBox="0 0 16 16" fill="none">
-			<path d="M8 1a5 5 0 00-5 5c0 4 5 9 5 9s5-5 5-9a5 5 0 00-5-5zm0 7a2 2 0 110-4 2 2 0 010 4z" stroke="currentColor" stroke-width="1.2" fill="none" stroke-linecap="round" stroke-linejoin="round"/>
-		</svg>
-	</button>
-
-	<button class="toolbar-btn" class:net-active={netActive} onclick={onNetControlOpen} title="Net Control">
-		<svg width="14" height="14" viewBox="0 0 16 16" fill="none">
-			<path d="M8 1v4M4.5 3L6 6M11.5 3L10 6M8 6v5M5 11h6M3 14h10" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/>
-		</svg>
-		{#if netActive}
-			<span class="net-indicator">{netOpCount}</span>
-		{/if}
-	</button>
-
-	<ConnectionStatus />
-	<UserMenu />
-</div>
 
 <!-- Mobile floating buttons -->
 <div class="mobile-toolbar mobile-only">
@@ -170,150 +59,6 @@
 </div>
 
 <style>
-	/* Desktop */
-	.toolbar {
-		position: fixed;
-		top: var(--space-md);
-		left: var(--space-md);
-		z-index: var(--z-toolbar);
-		display: flex;
-		align-items: center;
-		gap: var(--space-sm);
-		pointer-events: auto;
-	}
-
-	.search-group {
-		position: relative;
-	}
-
-	.search-wrap {
-		display: flex;
-		align-items: center;
-		background: var(--color-surface);
-		border: 1px solid var(--color-primary);
-		border-radius: var(--radius-full);
-		padding: 0 10px;
-		transition: border-color var(--duration-fast);
-	}
-
-	.search-wrap:focus-within {
-		border-color: var(--color-accent);
-	}
-
-	.search-icon {
-		color: var(--color-text-muted);
-		flex-shrink: 0;
-	}
-
-	.search-wrap input {
-		background: none;
-		border: none;
-		color: var(--color-text);
-		font-size: 0.85rem;
-		padding: 6px 8px;
-		width: 180px;
-		outline: none;
-	}
-
-	.search-wrap input::placeholder {
-		color: var(--color-text-muted);
-	}
-
-	.search-dropdown {
-		position: absolute;
-		top: calc(100% + 4px);
-		left: 0;
-		right: 0;
-		background: var(--color-surface);
-		border: 1px solid var(--color-primary);
-		border-radius: var(--radius-md);
-		box-shadow: var(--shadow-md);
-		overflow: hidden;
-		max-height: 320px;
-		overflow-y: auto;
-	}
-
-	.search-result {
-		display: flex;
-		flex-direction: column;
-		gap: 1px;
-		width: 100%;
-		padding: 8px 12px;
-		background: none;
-		border: none;
-		border-bottom: 1px solid var(--color-primary);
-		color: var(--color-text);
-		text-align: left;
-		cursor: pointer;
-		transition: background var(--duration-fast);
-	}
-
-	.search-result:last-child {
-		border-bottom: none;
-	}
-
-	.search-result:hover {
-		background: var(--color-primary);
-	}
-
-	.result-call {
-		font-family: monospace;
-		font-weight: 600;
-		font-size: 0.85rem;
-	}
-
-	.result-comment {
-		font-size: 0.75rem;
-		color: var(--color-text-muted);
-		overflow: hidden;
-		text-overflow: ellipsis;
-		white-space: nowrap;
-	}
-
-	.toolbar-btn {
-		display: flex;
-		align-items: center;
-		gap: 5px;
-		padding: 6px 10px;
-		background: var(--color-surface);
-		border: 1px solid var(--color-primary);
-		border-radius: var(--radius-full);
-		color: var(--color-text-muted);
-		font-size: 0.8rem;
-		cursor: pointer;
-		transition: border-color var(--duration-fast), color var(--duration-fast);
-		pointer-events: auto;
-	}
-
-	.toolbar-btn:hover {
-		border-color: var(--color-accent);
-		color: var(--color-text);
-	}
-
-	.toolbar-btn.net-active {
-		border-color: #22c55e;
-		color: #22c55e;
-	}
-
-	.net-indicator {
-		background: #22c55e;
-		color: #000;
-		font-size: 0.6rem;
-		font-weight: 700;
-		padding: 1px 5px;
-		border-radius: 10px;
-	}
-
-	.unread-badge {
-		background: var(--color-accent);
-		color: white;
-		font-size: 0.6rem;
-		font-weight: 700;
-		padding: 1px 5px;
-		border-radius: 10px;
-	}
-
-	/* Mobile */
 	.mobile-toolbar {
 		position: fixed;
 		top: var(--space-md);

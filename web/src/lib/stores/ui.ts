@@ -67,3 +67,20 @@ export function openNetControl(): void {
 	selectedStation.set(null);
 	sheetState.set('half');
 }
+
+/** Toggle a panel: if it's already open, close it; otherwise open it. */
+export function togglePanel(mode: PanelMode): void {
+	if (get(panelMode) === mode) {
+		closePanel();
+	} else {
+		switch (mode) {
+			case 'stations': openStationList(); break;
+			case 'messages': openMessages(); break;
+			case 'transports': openTransports(); break;
+			case 'activity': openActivity(); break;
+			case 'annotations': openAnnotations(); break;
+			case 'netcontrol': openNetControl(); break;
+			default: closePanel();
+		}
+	}
+}

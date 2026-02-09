@@ -41,6 +41,7 @@
 
 	/* Panel dims */
 	--panel-width: 380px;
+	--rail-width: 48px;
 	--sheet-peek: 60px;
 
 	/* Semantic colors */

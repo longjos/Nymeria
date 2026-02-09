@@ -1,6 +1,12 @@
 <script lang="ts">
 	import { currentUser, logout } from '$lib/stores/session';
 
+	let {
+		position = 'toolbar'
+	}: {
+		position?: 'toolbar' | 'rail';
+	} = $props();
+
 	let open = $state(false);
 
 	function handleLogout() {
@@ -17,7 +23,7 @@
 </script>
 
 {#if $currentUser}
-	<div class="user-menu">
+	<div class="user-menu" class:rail-position={position === 'rail'}>
 		<button
 			class="user-btn"
 			onclick={() => (open = !open)}
@@ -28,7 +34,7 @@
 		</button>
 
 		{#if open}
-			<div class="dropdown">
+			<div class="dropdown" class:dropdown-rail={position === 'rail'}>
 				<div class="user-info">
 					<span class="user-name">{$currentUser.name}</span>
 					<span class="user-role">{roleLabels[$currentUser.role] ?? $currentUser.role}</span>
@@ -76,6 +82,13 @@
 		border-radius: var(--radius-md);
 		box-shadow: var(--shadow-md);
 		overflow: hidden;
+		z-index: 10;
+	}
+
+	.dropdown-rail {
+		top: auto;
+		bottom: 0;
+		right: calc(100% + 8px);
 	}
 
 	.user-info {

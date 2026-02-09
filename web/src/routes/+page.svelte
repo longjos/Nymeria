@@ -3,6 +3,7 @@
 	import { browser } from '$app/environment';
 	import Map from '$lib/components/Map.svelte';
 	import Toolbar from '$lib/components/Toolbar.svelte';
+	import ActivityRail from '$lib/components/ActivityRail.svelte';
 	import SidePanel from '$lib/components/SidePanel.svelte';
 	import BottomSheet from '$lib/components/BottomSheet.svelte';
 	import StationList from '$lib/components/StationList.svelte';
@@ -27,9 +28,10 @@
 	import { isLoggedIn, initSession } from '$lib/stores/session';
 	import {
 		selectedStation, panelMode, detailTab, searchOpen, sheetState,
-		selectStation, closePanel, openStationList, openMessages, openConversation, openTransports, openActivity, openAnnotations, openNetControl
+		selectStation, closePanel, openStationList, openMessages, openConversation, openTransports, openActivity, openAnnotations, openNetControl,
+		togglePanel
 	} from '$lib/stores/ui';
-	import type { SheetState, DetailTab } from '$lib/stores/ui';
+	import type { SheetState, DetailTab, PanelMode } from '$lib/stores/ui';
 	import type { Annotation } from '$lib/types';
 
 	let isDesktop = $state(true);
@@ -189,6 +191,10 @@
 	function handlePreviewGeometryChange(geometry: string) {
 		previewGeometry = geometry;
 	}
+
+	function handleRailToggle(mode: PanelMode) {
+		togglePanel(mode);
+	}
 </script>
 
 <svelte:head>
@@ -228,17 +234,24 @@
 		/>
 	</div>
 
-	<!-- Toolbar -->
+	<!-- Desktop: Activity Rail (right edge) -->
+	{#if isDesktop}
+		<ActivityRail
+			panelMode={$panelMode}
+			unreadCount={totalUnread}
+			onToggle={handleRailToggle}
+			onSelectStation={handleSearchSelect}
+		/>
+	{/if}
+
+	<!-- Mobile: Toolbar (FABs) -->
 	<Toolbar
 		unreadCount={totalUnread}
 		onSearchOpen={() => searchOpen.set(true)}
-		onStationsOpen={openStationList}
 		onMessagesOpen={openMessages}
 		onTransportsOpen={openTransports}
-		onActivityOpen={openActivity}
 		onAnnotationsOpen={openAnnotations}
 		onNetControlOpen={openNetControl}
-		onSelectStation={handleSearchSelect}
 	/>
 
 	<!-- Desktop: Side Panel -->
@@ -357,13 +370,6 @@
 		</BottomSheet>
 	{/if}
 
-	<!-- Desktop: Connection Status (bottom-left) -->
-	{#if isDesktop}
-		<div class="desktop-status desktop-only">
-			<ConnectionStatus />
-		</div>
-	{/if}
-
 	<!-- Mobile: Search Overlay -->
 	{#if $searchOpen && !isDesktop}
 		<SearchOverlay
@@ -386,14 +392,6 @@
 		position: absolute;
 		inset: 0;
 		z-index: var(--z-map);
-	}
-
-	.desktop-status {
-		position: fixed;
-		bottom: var(--space-md);
-		left: var(--space-md);
-		z-index: var(--z-toolbar);
-		pointer-events: auto;
 	}
 
 	.sheet-peek-row {
