@@ -109,12 +109,14 @@ func (s *Server) routes() {
 			r.Post("/nets/{id}/open", s.handleOpenNet)
 			r.Post("/nets/{id}/close", s.handleCloseNet)
 			r.Post("/nets/{id}/transfer", s.handleTransferNCS)
+			r.Post("/nets/{id}/opsview", s.handleSetOpsView)
 			r.Post("/nets/{id}/checkin", s.handleCheckIn)
 			r.Put("/nets/{id}/checkin/{ciId}", s.handleUpdateCheckIn)
 			r.Post("/nets/{id}/checkout/{ciId}", s.handleCheckOut)
 			r.Post("/nets/{id}/missions", s.handleCreateMission)
 			r.Put("/nets/{id}/missions/{mId}", s.handleUpdateMission)
 			r.Post("/nets/{id}/notes", s.handleAddNetNote)
+			r.Patch("/nets/{id}/notes/{noteId}/pin", s.handleToggleNotePin)
 			r.Post("/nets/{id}/rollcall", s.handleInitiateRollCall)
 			r.Post("/nets/{id}/rollcall/{ciId}", s.handleRecordRollCallResponse)
 			r.Post("/nets/{id}/checkin/{ciId}/assign", s.handleAssignMission)
@@ -1641,6 +1643,32 @@ func (s *Server) handleTransferNCS(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, n)
 }
 
+func (s *Server) handleSetOpsView(w http.ResponseWriter, r *http.Request) {
+	if s.netMgr == nil {
+		writeJSON(w, http.StatusServiceUnavailable, map[string]string{"error": "net control not available"})
+		return
+	}
+
+	id := chi.URLParam(r, "id")
+	var req struct {
+		Lat  float64 `json:"lat"`
+		Lon  float64 `json:"lon"`
+		Zoom float64 `json:"zoom"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid request body"})
+		return
+	}
+
+	if err := s.netMgr.SetOpsView(id, req.Lat, req.Lon, req.Zoom); err != nil {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
+		return
+	}
+
+	n, _ := s.netMgr.GetNet(id)
+	writeJSON(w, http.StatusOK, n)
+}
+
 func (s *Server) handleCheckIn(w http.ResponseWriter, r *http.Request) {
 	if s.netMgr == nil {
 		writeJSON(w, http.StatusServiceUnavailable, map[string]string{"error": "net control not available"})
@@ -1830,6 +1858,24 @@ func (s *Server) handleGetNetNotes(w http.ResponseWriter, r *http.Request) {
 	}
 
 	writeJSON(w, http.StatusOK, notes)
+}
+
+func (s *Server) handleToggleNotePin(w http.ResponseWriter, r *http.Request) {
+	if s.netMgr == nil {
+		writeJSON(w, http.StatusServiceUnavailable, map[string]string{"error": "net control not available"})
+		return
+	}
+
+	netID := chi.URLParam(r, "id")
+	noteID := chi.URLParam(r, "noteId")
+
+	updated, err := s.netMgr.ToggleNotePin(netID, noteID)
+	if err != nil {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
+		return
+	}
+
+	writeJSON(w, http.StatusOK, updated)
 }
 
 func (s *Server) handleInitiateRollCall(w http.ResponseWriter, r *http.Request) {

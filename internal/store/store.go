@@ -41,6 +41,9 @@ type Net struct {
 	ClosedAt     *time.Time `json:"closedAt,omitempty"`
 	Notes        string     `json:"notes"`
 	MissionBrief string     `json:"missionBrief"`
+	OpsViewLat   *float64   `json:"opsViewLat,omitempty"`
+	OpsViewLon   *float64   `json:"opsViewLon,omitempty"`
+	OpsViewZoom  *float64   `json:"opsViewZoom,omitempty"`
 }
 
 // TrackedStation represents a device linked to a checked-in operator.
@@ -96,6 +99,9 @@ type NetNote struct {
 	AuthorID   string    `json:"authorId"`
 	AuthorName string    `json:"authorName"`
 	Content    string    `json:"content"`
+	Category   string    `json:"category"`
+	Severity   string    `json:"severity,omitempty"`
+	Pinned     bool      `json:"pinned"`
 	CreatedAt  time.Time `json:"createdAt"`
 }
 
@@ -224,6 +230,7 @@ type Store interface {
 
 	SaveNetNote(n NetNote) error
 	LoadNetNotes(netID string) ([]NetNote, error)
+	UpdateNotePinned(noteID string, pinned bool) error
 
 	SaveNetEvent(e NetEvent) error
 	LoadNetEvents(netID string) ([]NetEvent, error)

@@ -66,6 +66,15 @@ async function put<T>(path: string, body: unknown): Promise<T> {
 	return res.json();
 }
 
+async function patch<T>(path: string): Promise<T> {
+	const res = await fetch(`${BASE}${path}`, {
+		method: 'PATCH',
+		headers: headers()
+	});
+	if (!res.ok) throw new Error(`API error: ${res.status}`);
+	return res.json();
+}
+
 async function del<T>(path: string): Promise<T> {
 	const res = await fetch(`${BASE}${path}`, {
 		method: 'DELETE',
@@ -162,9 +171,10 @@ export const api = {
 	checkOut: (netId: string, ciId: string) => post<{ status: string }>(`/nets/${netId}/checkout/${ciId}`, {}),
 	createMission: (netId: string, data: Partial<NetMission>) => post<NetMission>(`/nets/${netId}/missions`, data),
 	updateMission: (netId: string, mId: string, data: Partial<NetMission>) => put<NetMission>(`/nets/${netId}/missions/${mId}`, data),
-	addNetNote: (netId: string, data: { checkInId?: string; content: string }) => post<NetNote>(`/nets/${netId}/notes`, data),
+	addNetNote: (netId: string, data: { checkInId?: string; missionId?: string; content: string; category?: string; severity?: string }) => post<NetNote>(`/nets/${netId}/notes`, data),
 	netEvents: (netId: string) => get<NetEvent[]>(`/nets/${netId}/events`),
 	netNotes: (netId: string) => get<NetNote[]>(`/nets/${netId}/notes`),
+	toggleNotePin: (netId: string, noteId: string) => patch<NetNote>(`/nets/${netId}/notes/${noteId}/pin`),
 	initiateRollCall: (netId: string) => post<{ status: string }>(`/nets/${netId}/rollcall`, {}),
 	recordRollCallResponse: (netId: string, ciId: string) => post<{ status: string }>(`/nets/${netId}/rollcall/${ciId}`, {}),
 	searchOperators: (q: string) => get<Station[]>(`/nets/search?q=${encodeURIComponent(q)}`),
@@ -176,6 +186,8 @@ export const api = {
 		post<NetCheckIn>(`/nets/${netId}/checkin/${ciId}/devices`, { callsign }),
 	removeTrackedStation: (netId: string, ciId: string, callsign: string) =>
 		del<NetCheckIn>(`/nets/${netId}/checkin/${ciId}/devices/${encodeURIComponent(callsign)}`),
+	setOpsView: (netId: string, lat: number, lon: number, zoom: number) =>
+		post<Net>(`/nets/${netId}/opsview`, { lat, lon, zoom }),
 	rosterExportUrl: (netId: string) => `${BASE}/nets/${netId}/roster/export`,
 
 	// Tactical Aliases

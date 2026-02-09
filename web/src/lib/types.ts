@@ -166,6 +166,9 @@ export interface Net {
 	closedAt?: string;
 	notes: string;
 	missionBrief: string;
+	opsViewLat?: number;
+	opsViewLon?: number;
+	opsViewZoom?: number;
 }
 
 export interface TrackedStation {
@@ -209,6 +212,9 @@ export interface NetMission {
 	completedAt?: string;
 }
 
+export type NoteCategory = 'general' | 'medical' | 'logistical' | 'tactical' | 'weather' | 'resource' | 'hazard' | 'comms';
+export type NoteSeverity = 'info' | 'routine' | 'priority' | 'urgent';
+
 export interface NetNote {
 	id: string;
 	netId: string;
@@ -217,6 +223,9 @@ export interface NetNote {
 	authorId: string;
 	authorName: string;
 	content: string;
+	category: NoteCategory;
+	severity?: NoteSeverity;
+	pinned: boolean;
 	createdAt: string;
 }
 

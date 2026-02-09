@@ -2,8 +2,8 @@ package aprs
 
 // Symbol represents an APRS symbol identified by table and code characters.
 type Symbol struct {
-	Table byte // '/' for primary, '\\' for alternate, or overlay char
-	Code  byte // Symbol code character
+	Table byte `json:"table"` // '/' for primary, '\\' for alternate, or overlay char
+	Code  byte `json:"code"`  // Symbol code character
 }
 
 // IsPrimary returns true if the symbol is from the primary table.

@@ -2,6 +2,7 @@ import { writable, derived } from 'svelte/store';
 import type { Net, NetCheckIn, NetMission, NetEvent, NetNote } from '$lib/types';
 import { api } from '$lib/api';
 import { wsClient } from './stations';
+import { annotationList } from './annotations';
 
 export const activeNet = writable<Net | null>(null);
 export const opsView = writable<{ lat: number; lon: number; zoom: number } | null>(null);
@@ -9,6 +10,30 @@ export const checkIns = writable<NetCheckIn[]>([]);
 export const missions = writable<NetMission[]>([]);
 export const timeline = writable<NetEvent[]>([]);
 export const notes = writable<NetNote[]>([]);
+
+// Hover state for cross-component highlighting (mission card → map + roster)
+export const hoveredMissionId = writable<string | null>(null);
+
+// Hover state for operator highlighting (assign picker → map)
+export const hoveredCheckInId = writable<string | null>(null);
+
+// Check-ins linked to the currently hovered mission
+export const highlightedCheckIns = derived(
+	[hoveredMissionId, checkIns],
+	([$hovered, $cis]) => {
+		if (!$hovered) return new Set<string>();
+		return new Set($cis.filter(ci => ci.missionIds?.includes($hovered)).map(ci => ci.id));
+	}
+);
+
+// Annotations linked to the currently hovered mission
+export const highlightedAnnotations = derived(
+	[hoveredMissionId, annotationList],
+	([$hovered, $anns]) => {
+		if (!$hovered) return new Set<string>();
+		return new Set($anns.filter(a => a.missionIds?.includes($hovered)).map(a => a.id));
+	}
+);
 
 // Smart sort: missing > emergency > stale(>20m) > available > working > released
 function statusPriority(ci: NetCheckIn): number {
@@ -56,6 +81,44 @@ export const assignmentLines = derived([checkIns, missions], ([$cis, $ms]) => {
 	return lines;
 });
 
+// Notes grouped by checkInId — latest first.
+export const notesByCheckIn = derived(notes, ($notes) => {
+	const map = new Map<string, NetNote[]>();
+	for (const n of $notes) {
+		if (!n.checkInId) continue;
+		const arr = map.get(n.checkInId) || [];
+		arr.push(n);
+		map.set(n.checkInId, arr);
+	}
+	// Sort each group: latest first.
+	for (const arr of map.values()) {
+		arr.sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime());
+	}
+	return map;
+});
+
+// Notes grouped by missionId — latest first.
+export const notesByMission = derived(notes, ($notes) => {
+	const map = new Map<string, NetNote[]>();
+	for (const n of $notes) {
+		if (!n.missionId) continue;
+		const arr = map.get(n.missionId) || [];
+		arr.push(n);
+		map.set(n.missionId, arr);
+	}
+	for (const arr of map.values()) {
+		arr.sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime());
+	}
+	return map;
+});
+
+// Pinned/urgent notes (net-wide, not tied to a specific operator or mission, sorted latest first).
+export const pinnedNotes = derived(notes, ($notes) =>
+	$notes
+		.filter((n) => n.pinned)
+		.sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime())
+);
+
 let initialized = false;
 
 export function initNetControlStore(): void {
@@ -86,6 +149,10 @@ export function initNetControlStore(): void {
 			if (current && current.id === n.id && n.status !== 'open') return null;
 			return current;
 		});
+		// Sync ops view from net data.
+		if (n.opsViewLat != null && n.opsViewLon != null && n.opsViewZoom != null) {
+			opsView.set({ lat: n.opsViewLat, lon: n.opsViewLon, zoom: n.opsViewZoom });
+		}
 	});
 
 	wsClient.on('checkin_created', (msg) => {
@@ -117,9 +184,19 @@ export function initNetControlStore(): void {
 	});
 
 	wsClient.on('net_timeline_entry', (msg) => {
-		const evt = msg.data as NetEvent;
-		if (evt) {
-			timeline.update((list) => [...list, evt]);
+		const data = msg.data as any;
+		if (!data) return;
+
+		// If the data has 'content' and 'category', it's a NetNote (emitted as timeline entry).
+		if (data.content && data.category) {
+			const note = data as NetNote;
+			notes.update((list) => [...list, note]);
+		}
+
+		// Always push to timeline (logEvent creates a separate NetEvent).
+		// The timeline entry is a NetEvent with type/summary/callsign fields.
+		if (data.type && data.summary) {
+			timeline.update((list) => [...list, data as NetEvent]);
 		}
 	});
 }
@@ -130,8 +207,18 @@ export async function loadNetData(netId: string): Promise<void> {
 		checkIns.set(data.checkIns || []);
 		missions.set(data.missions || []);
 
-		const events = await api.netEvents(netId);
+		// Hydrate ops view from persisted net data.
+		const n = data.net;
+		if (n && n.opsViewLat != null && n.opsViewLon != null && n.opsViewZoom != null) {
+			opsView.set({ lat: n.opsViewLat, lon: n.opsViewLon, zoom: n.opsViewZoom });
+		}
+
+		const [events, netNotes] = await Promise.all([
+			api.netEvents(netId),
+			api.netNotes(netId),
+		]);
 		timeline.set(events || []);
+		notes.set(netNotes || []);
 	} catch {
 		// Ignore fetch errors on init.
 	}

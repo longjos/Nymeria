@@ -12,6 +12,11 @@ export const searchOpen = writable<boolean>(false);
 export const searchQuery = writable<string>('');
 export const sheetState = writable<SheetState>('peek');
 export const connectionState = writable<ConnectionState>('disconnected');
+export const commandPaletteOpen = writable<boolean>(false);
+
+export function toggleCommandPalette(): void {
+	commandPaletteOpen.update(v => !v);
+}
 
 export function selectStation(key: string): void {
 	selectedStation.set(key);

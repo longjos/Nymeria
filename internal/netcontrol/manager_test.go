@@ -1270,6 +1270,271 @@ func TestCompleteMissionSkipsReleased(t *testing.T) {
 	}
 }
 
+// --- Enhanced Notes Tests ---
+
+func TestAddNoteWithCategory(t *testing.T) {
+	mgr := newTestManager(t)
+
+	n, _ := mgr.CreateNet(store.Net{Name: "Test Net"})
+	mgr.OpenNet(n.ID)
+	drainEvents(mgr)
+
+	note, err := mgr.AddNote(store.NetNote{
+		NetID:      n.ID,
+		AuthorID:   "user-1",
+		AuthorName: "Alice",
+		Content:    "Rider down at mile 32",
+		Category:   "medical",
+		Severity:   "urgent",
+	})
+	if err != nil {
+		t.Fatalf("AddNote failed: %v", err)
+	}
+	if note.Category != "medical" {
+		t.Errorf("category: got %q, want %q", note.Category, "medical")
+	}
+	if note.Severity != "urgent" {
+		t.Errorf("severity: got %q, want %q", note.Severity, "urgent")
+	}
+
+	// Verify it appears in timeline with category prefix.
+	events, _ := mgr.GetEvents(n.ID)
+	found := false
+	for _, e := range events {
+		if e.Type == "note" && strings.Contains(e.Summary, "[MEDICAL]") {
+			found = true
+		}
+	}
+	if !found {
+		t.Error("expected timeline event with [MEDICAL] prefix")
+	}
+}
+
+func TestAddNoteAutoPin(t *testing.T) {
+	mgr := newTestManager(t)
+
+	n, _ := mgr.CreateNet(store.Net{Name: "Test Net"})
+	mgr.OpenNet(n.ID)
+	drainEvents(mgr)
+
+	// Non-urgent should NOT be pinned.
+	note1, _ := mgr.AddNote(store.NetNote{
+		NetID:      n.ID,
+		AuthorID:   "user-1",
+		AuthorName: "Bob",
+		Content:    "Routine update",
+		Severity:   "routine",
+	})
+	if note1.Pinned {
+		t.Error("non-urgent note should not be auto-pinned")
+	}
+
+	// Urgent SHOULD be auto-pinned.
+	note2, _ := mgr.AddNote(store.NetNote{
+		NetID:      n.ID,
+		AuthorID:   "user-1",
+		AuthorName: "Bob",
+		Content:    "Subject located, requesting helicopter",
+		Severity:   "urgent",
+	})
+	if !note2.Pinned {
+		t.Error("urgent note should be auto-pinned")
+	}
+
+	// Verify pinned flag persists through store.
+	notes, _ := mgr.GetNotes(n.ID)
+	for _, nn := range notes {
+		if nn.ID == note2.ID && !nn.Pinned {
+			t.Error("pinned flag should persist in store")
+		}
+	}
+}
+
+func TestAddNoteDefaultCategory(t *testing.T) {
+	mgr := newTestManager(t)
+
+	n, _ := mgr.CreateNet(store.Net{Name: "Test Net"})
+	mgr.OpenNet(n.ID)
+	drainEvents(mgr)
+
+	// Empty category should default to "general".
+	note, _ := mgr.AddNote(store.NetNote{
+		NetID:      n.ID,
+		AuthorID:   "user-1",
+		AuthorName: "Bob",
+		Content:    "General observation",
+	})
+	if note.Category != "general" {
+		t.Errorf("category: got %q, want %q", note.Category, "general")
+	}
+
+	// Empty severity should default to "info".
+	if note.Severity != "info" {
+		t.Errorf("severity: got %q, want %q", note.Severity, "info")
+	}
+}
+
+func TestAddNoteMissionAttachment(t *testing.T) {
+	mgr := newTestManager(t)
+
+	n, _ := mgr.CreateNet(store.Net{Name: "Test Net"})
+	mgr.OpenNet(n.ID)
+	m, _ := mgr.CreateMission(store.NetMission{NetID: n.ID, Title: "Deploy"})
+	drainEvents(mgr)
+
+	note, err := mgr.AddNote(store.NetNote{
+		NetID:      n.ID,
+		MissionID:  m.ID,
+		AuthorID:   "user-1",
+		AuthorName: "Alice",
+		Content:    "Mission update: supplies delivered",
+		Category:   "logistical",
+	})
+	if err != nil {
+		t.Fatalf("AddNote with mission failed: %v", err)
+	}
+	if note.MissionID != m.ID {
+		t.Errorf("missionId: got %q, want %q", note.MissionID, m.ID)
+	}
+
+	// Verify roundtrip from store.
+	notes, _ := mgr.GetNotes(n.ID)
+	found := false
+	for _, nn := range notes {
+		if nn.ID == note.ID && nn.MissionID == m.ID && nn.Category == "logistical" {
+			found = true
+		}
+	}
+	if !found {
+		t.Error("note with missionId and category should persist")
+	}
+}
+
+func TestAddNoteInvalidCategory(t *testing.T) {
+	mgr := newTestManager(t)
+
+	n, _ := mgr.CreateNet(store.Net{Name: "Test Net"})
+	mgr.OpenNet(n.ID)
+	drainEvents(mgr)
+
+	_, err := mgr.AddNote(store.NetNote{
+		NetID:      n.ID,
+		AuthorID:   "user-1",
+		AuthorName: "Bob",
+		Content:    "Test note",
+		Category:   "invalid_category",
+	})
+	if err == nil {
+		t.Error("expected error for invalid category")
+	}
+}
+
+func TestSetOpsView(t *testing.T) {
+	mgr := newTestManager(t)
+
+	n, _ := mgr.CreateNet(store.Net{Name: "Ops View Net"})
+	mgr.OpenNet(n.ID)
+	drainEvents(mgr)
+
+	if err := mgr.SetOpsView(n.ID, 34.05, -118.24, 13); err != nil {
+		t.Fatalf("SetOpsView failed: %v", err)
+	}
+
+	// Verify in-memory.
+	updated, ok := mgr.GetNet(n.ID)
+	if !ok {
+		t.Fatal("net not found after SetOpsView")
+	}
+	if updated.OpsViewLat == nil || *updated.OpsViewLat != 34.05 {
+		t.Errorf("opsViewLat: got %v, want 34.05", updated.OpsViewLat)
+	}
+	if updated.OpsViewLon == nil || *updated.OpsViewLon != -118.24 {
+		t.Errorf("opsViewLon: got %v, want -118.24", updated.OpsViewLon)
+	}
+	if updated.OpsViewZoom == nil || *updated.OpsViewZoom != 13 {
+		t.Errorf("opsViewZoom: got %v, want 13", updated.OpsViewZoom)
+	}
+
+	// Verify event emitted.
+	select {
+	case evt := <-mgr.Events():
+		if evt.Type != EventNetUpdated {
+			t.Errorf("expected %s event, got %s", EventNetUpdated, evt.Type)
+		}
+	default:
+		t.Error("expected EventNetUpdated to be emitted")
+	}
+}
+
+func TestSetOpsViewNetNotFound(t *testing.T) {
+	mgr := newTestManager(t)
+
+	err := mgr.SetOpsView("nonexistent", 34.05, -118.24, 13)
+	if err == nil {
+		t.Error("expected error for nonexistent net")
+	}
+}
+
+func TestToggleNotePin(t *testing.T) {
+	mgr := newTestManager(t)
+
+	n, _ := mgr.CreateNet(store.Net{Name: "Test Net"})
+	mgr.OpenNet(n.ID)
+	drainEvents(mgr)
+
+	// Create a non-pinned note.
+	note, err := mgr.AddNote(store.NetNote{
+		NetID:      n.ID,
+		AuthorID:   "user-1",
+		AuthorName: "Bob",
+		Content:    "Routine observation",
+		Severity:   "routine",
+	})
+	if err != nil {
+		t.Fatalf("add note: %v", err)
+	}
+	if note.Pinned {
+		t.Fatal("note should not be pinned initially")
+	}
+	drainEvents(mgr)
+
+	// Pin it.
+	updated, err := mgr.ToggleNotePin(n.ID, note.ID)
+	if err != nil {
+		t.Fatalf("toggle pin: %v", err)
+	}
+	if !updated.Pinned {
+		t.Error("note should be pinned after toggle")
+	}
+
+	// Verify event emitted.
+	select {
+	case ev := <-mgr.Events():
+		if ev.Type != EventTimelineEntry {
+			t.Errorf("event type: got %q, want %q", ev.Type, EventTimelineEntry)
+		}
+	default:
+		t.Error("expected event after pin toggle")
+	}
+
+	// Unpin it.
+	updated, err = mgr.ToggleNotePin(n.ID, note.ID)
+	if err != nil {
+		t.Fatalf("toggle unpin: %v", err)
+	}
+	if updated.Pinned {
+		t.Error("note should be unpinned after second toggle")
+	}
+
+	// Verify persistence.
+	notes, _ := mgr.GetNotes(n.ID)
+	for _, nn := range notes {
+		if nn.ID == note.ID && nn.Pinned {
+			t.Error("unpinned state should persist")
+		}
+	}
+}
+
 // drainEvents reads all pending events from the channel.
 func drainEvents(mgr *Manager) {
 	for {
