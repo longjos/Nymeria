@@ -90,9 +90,11 @@ export interface Annotation {
 	id: string;
 	type: 'point' | 'line' | 'area';
 	label: string;
+	description?: string;
 	geometry: string;
 	style?: string;
 	createdBy?: string;
+	createdByName?: string;
 	createdAt: string;
 	updatedAt: string;
 }

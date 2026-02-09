@@ -10,22 +10,30 @@
 	import ConvoList from '$lib/components/ConvoList.svelte';
 	import TransportPanel from '$lib/components/TransportPanel.svelte';
 	import ActivityPanel from '$lib/components/ActivityPanel.svelte';
+	import AnnotationPanel from '$lib/components/AnnotationPanel.svelte';
 	import ConnectionStatus from '$lib/components/ConnectionStatus.svelte';
 	import SearchOverlay from '$lib/components/SearchOverlay.svelte';
 	import LoginOverlay from '$lib/components/LoginOverlay.svelte';
 	import { stations, stationList, initStationStore } from '$lib/stores/stations';
 	import { initMessageStore, conversationList } from '$lib/stores/messages';
 	import { initTransportStore } from '$lib/stores/transports';
+	import { annotationList, initAnnotationStore } from '$lib/stores/annotations';
 	import { isLoggedIn, initSession } from '$lib/stores/session';
 	import {
 		selectedStation, panelMode, detailTab, searchOpen, sheetState,
-		selectStation, closePanel, openStationList, openMessages, openConversation, openTransports, openActivity
+		selectStation, closePanel, openStationList, openMessages, openConversation, openTransports, openActivity, openAnnotations
 	} from '$lib/stores/ui';
 	import type { SheetState, DetailTab } from '$lib/stores/ui';
+	import type { Annotation } from '$lib/types';
 
 	let isDesktop = $state(true);
 	let flyToTarget = $state<{ lat: number; lon: number; zoom?: number } | null>(null);
 	let sessionReady = $state(false);
+	let drawingMode = $state<'point' | 'line' | 'area' | null>(null);
+	let previewGeometry = $state<string | null>(null);
+	let previewColor = $state('#e63946');
+	let annotationPanelRef = $state<AnnotationPanel>();
+	let editingAnnotationId = $state<string | null>(null);
 
 	let stationsWithPosition = $derived(
 		$stationList.filter((s) => s.position)
@@ -43,6 +51,7 @@
 			initStationStore();
 			initMessageStore();
 			initTransportStore();
+			initAnnotationStore();
 		}
 	});
 
@@ -92,6 +101,61 @@
 	function handleConvoSelect(callsign: string) {
 		openConversation(callsign);
 	}
+
+	function handleAnnotationClick(id: string) {
+		openAnnotations();
+		// Could also highlight the annotation in the panel
+	}
+
+	function handleFlyToAnnotation(ann: Annotation) {
+		try {
+			const geom = JSON.parse(ann.geometry);
+			if (geom.type === 'Point') {
+				flyToTarget = { lat: geom.coordinates[1], lon: geom.coordinates[0], zoom: 15 };
+			} else if (geom.type === 'LineString') {
+				const mid = Math.floor(geom.coordinates.length / 2);
+				flyToTarget = { lat: geom.coordinates[mid][1], lon: geom.coordinates[mid][0], zoom: 14 };
+			} else if (geom.type === 'Polygon') {
+				const coords = geom.coordinates[0];
+				let latSum = 0, lonSum = 0;
+				for (const c of coords) { latSum += c[1]; lonSum += c[0]; }
+				flyToTarget = { lat: latSum / coords.length, lon: lonSum / coords.length, zoom: 14 };
+			}
+		} catch { /* skip */ }
+	}
+
+	function handleStartDraw(mode: 'point' | 'line' | 'area') {
+		drawingMode = mode;
+	}
+
+	function handleDrawComplete(geometry: string) {
+		drawingMode = null;
+		annotationPanelRef?.setGeometry(geometry);
+	}
+
+	function handlePreviewChange(geometry: string | null, color: string) {
+		previewGeometry = geometry;
+		previewColor = color;
+	}
+
+	function handleStartEdit(id: string) {
+		editingAnnotationId = id;
+		// Fly to the annotation
+		const ann = $annotationList.find((a) => a.id === id);
+		if (ann) handleFlyToAnnotation(ann);
+	}
+
+	function handleStopEdit() {
+		editingAnnotationId = null;
+	}
+
+	function handleGeometryEdit(geometry: string) {
+		annotationPanelRef?.setEditGeometry(geometry);
+	}
+
+	function handlePreviewGeometryChange(geometry: string) {
+		previewGeometry = geometry;
+	}
 </script>
 
 <svelte:head>
@@ -108,10 +172,19 @@
 	<div class="map-layer">
 		<Map
 			stations={stationsWithPosition}
+			annotations={$annotationList}
 			selectedCallsign={$selectedStation ?? ''}
 			onStationClick={handleStationClick}
+			onAnnotationClick={handleAnnotationClick}
 			{flyToTarget}
 			panelOpen={panelIsOpen}
+			{drawingMode}
+			onDrawComplete={handleDrawComplete}
+			{previewGeometry}
+			{previewColor}
+			{editingAnnotationId}
+			onGeometryEdit={handleGeometryEdit}
+			onPreviewGeometryChange={handlePreviewGeometryChange}
 		/>
 	</div>
 
@@ -123,6 +196,7 @@
 		onMessagesOpen={openMessages}
 		onTransportsOpen={openTransports}
 		onActivityOpen={openActivity}
+		onAnnotationsOpen={openAnnotations}
 		onSelectStation={handleSearchSelect}
 	/>
 
@@ -162,6 +236,15 @@
 				<TransportPanel />
 			{:else if $panelMode === 'activity'}
 				<ActivityPanel />
+			{:else if $panelMode === 'annotations'}
+				<AnnotationPanel
+					bind:this={annotationPanelRef}
+					onFlyToAnnotation={handleFlyToAnnotation}
+					onStartDraw={handleStartDraw}
+					onPreviewChange={handlePreviewChange}
+					onStartEdit={handleStartEdit}
+					onStopEdit={handleStopEdit}
+				/>
 			{/if}
 		</SidePanel>
 	{/if}
@@ -208,6 +291,15 @@
 				<TransportPanel />
 			{:else if $panelMode === 'activity'}
 				<ActivityPanel />
+			{:else if $panelMode === 'annotations'}
+				<AnnotationPanel
+					bind:this={annotationPanelRef}
+					onFlyToAnnotation={handleFlyToAnnotation}
+					onStartDraw={handleStartDraw}
+					onPreviewChange={handlePreviewChange}
+					onStartEdit={handleStartEdit}
+					onStopEdit={handleStopEdit}
+				/>
 			{/if}
 		</BottomSheet>
 	{/if}
