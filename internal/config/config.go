@@ -24,6 +24,14 @@ type SessionConfig struct {
 	InactivityTimeout time.Duration `yaml:"inactivity_timeout"`
 }
 
+// TileCacheConfig holds offline map tile cache settings.
+type TileCacheConfig struct {
+	Enabled bool   `yaml:"enabled"`
+	DataDir string `yaml:"data_dir"`
+	TileURL string `yaml:"tile_url"`
+	MaxZoom int    `yaml:"max_zoom"`
+}
+
 // Config holds the application configuration.
 type Config struct {
 	Server     ServerConfig               `yaml:"server"`
@@ -33,6 +41,7 @@ type Config struct {
 	Logging    LoggingConfig              `yaml:"logging"`
 	Beacon     BeaconConfig               `yaml:"beacon"`
 	Session    SessionConfig              `yaml:"session"`
+	TileCache  TileCacheConfig            `yaml:"tile_cache"`
 }
 
 // ServerConfig holds HTTP server settings.
@@ -89,6 +98,10 @@ func DefaultConfig() Config {
 		},
 		Session: SessionConfig{
 			InactivityTimeout: 30 * time.Minute,
+		},
+		TileCache: TileCacheConfig{
+			Enabled: true,
+			MaxZoom: 16,
 		},
 	}
 }

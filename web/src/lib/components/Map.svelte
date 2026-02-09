@@ -105,7 +105,7 @@
 			attributionControl: true,
 		}).setView([39.8283, -98.5795], 4);
 
-		L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
+		L.tileLayer('/tiles/{z}/{x}/{y}.png', {
 			attribution: '&copy; OpenStreetMap contributors',
 			maxZoom: 19,
 		}).addTo(map);

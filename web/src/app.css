@@ -91,3 +91,26 @@ a {
 @media (min-width: 769px) {
 	.mobile-only { display: none !important; }
 }
+
+/* Print: hide everything except the ICS-309 panel */
+@media print {
+	.map-layer,
+	.mobile-toolbar,
+	.activity-rail,
+	.bottom-sheet-backdrop,
+	.search-overlay,
+	.login-overlay,
+	.connection-status {
+		display: none !important;
+	}
+
+	body {
+		background: white;
+		color: black;
+	}
+
+	.app-container {
+		overflow: visible !important;
+		height: auto !important;
+	}
+}

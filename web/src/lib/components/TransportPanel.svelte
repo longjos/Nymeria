@@ -1,9 +1,85 @@
 <script lang="ts">
+	import { onMount, onDestroy } from 'svelte';
 	import { transports } from '$lib/stores/transports';
+	import { wsClient } from '$lib/stores/stations';
 	import { timeAgo } from '$lib/utils';
+	import { api } from '$lib/api';
+	import type { TileCacheStatus } from '$lib/types';
 
 	let list = $derived($transports);
 	let connectedCount = $derived(list.filter((t) => t.connected).length);
+
+	// Tile cache state
+	let tileStatus = $state<TileCacheStatus | null>(null);
+	let tileExpanded = $state(false);
+	let preloadZoomMin = $state(8);
+	let preloadZoomMax = $state(14);
+	let preloadEstimate = $state<number | null>(null);
+	let preloading = $state(false);
+	let preloadProgress = $state<{ done: number; total: number } | null>(null);
+
+	onMount(() => {
+		loadTileStatus();
+
+		wsClient.on('tile_preload_progress', (msg) => {
+			const data = msg.data as { done: number; total: number; skipped: number };
+			if (data) preloadProgress = { done: data.done, total: data.total };
+		});
+		wsClient.on('tile_preload_complete', () => {
+			preloading = false;
+			loadTileStatus();
+		});
+	});
+
+	async function loadTileStatus() {
+		try {
+			tileStatus = await api.tileCacheStatus();
+		} catch {
+			// tile cache may not be available
+		}
+	}
+
+	async function handleEstimate() {
+		try {
+			// Use approximate current map viewport (whole earth as fallback)
+			const bounds = getStoredBounds();
+			const result = await api.estimateTiles(
+				bounds.south, bounds.west, bounds.north, bounds.east,
+				preloadZoomMin, preloadZoomMax
+			);
+			preloadEstimate = result.tileCount;
+		} catch (e) {
+			console.error('Estimate failed:', e);
+		}
+	}
+
+	async function handlePreload() {
+		const bounds = getStoredBounds();
+		preloading = true;
+		preloadProgress = null;
+		try {
+			const result = await api.preloadTiles(
+				bounds.south, bounds.west, bounds.north, bounds.east,
+				preloadZoomMin, preloadZoomMax
+			);
+			preloadProgress = { done: 0, total: result.tileCount };
+		} catch (e) {
+			console.error('Preload failed:', e);
+			preloading = false;
+		}
+	}
+
+	function getStoredBounds() {
+		// Try to read viewport from a stored value, fallback to CONUS
+		return { south: 24, west: -125, north: 50, east: -66 };
+	}
+
+	function formatBytes(bytes: number): string {
+		if (bytes === 0) return '0 B';
+		const units = ['B', 'KB', 'MB', 'GB'];
+		const i = Math.floor(Math.log(bytes) / Math.log(1024));
+		return (bytes / Math.pow(1024, i)).toFixed(1) + ' ' + units[i];
+	}
 
 	function transportLabel(type: string): string {
 		switch (type) {
@@ -90,6 +166,72 @@
 					{/if}
 				</div>
 			{/each}
+		</div>
+	{/if}
+
+	<!-- Offline Tiles -->
+	{#if tileStatus?.enabled}
+		<div class="tile-section">
+			<button class="tile-toggle" onclick={() => (tileExpanded = !tileExpanded)}>
+				<svg width="12" height="12" viewBox="0 0 16 16" fill="none" class="chevron" class:expanded={tileExpanded}>
+					<path d="M6 4l4 4-4 4" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/>
+				</svg>
+				<span>Offline Tiles</span>
+				<span class="tile-count">{tileStatus.tileCount.toLocaleString()} cached</span>
+			</button>
+
+			{#if tileExpanded}
+				<div class="tile-content">
+					<div class="tile-stats">
+						<div class="tile-stat">
+							<span class="tile-stat-label">Tiles</span>
+							<span class="tile-stat-value">{tileStatus.tileCount.toLocaleString()}</span>
+						</div>
+						<div class="tile-stat">
+							<span class="tile-stat-label">Disk</span>
+							<span class="tile-stat-value">{formatBytes(tileStatus.diskUsage)}</span>
+						</div>
+						{#if tileStatus.maxZoom}
+							<div class="tile-stat">
+								<span class="tile-stat-label">Max Zoom</span>
+								<span class="tile-stat-value">{tileStatus.maxZoom}</span>
+							</div>
+						{/if}
+					</div>
+
+					<div class="preload-controls">
+						<div class="zoom-range">
+							<label>
+								<span class="zoom-label">Zoom</span>
+								<input type="number" bind:value={preloadZoomMin} min="1" max="18" class="zoom-input" />
+								<span class="zoom-sep">–</span>
+								<input type="number" bind:value={preloadZoomMax} min="1" max="18" class="zoom-input" />
+							</label>
+						</div>
+						<div class="preload-actions">
+							<button class="tile-btn" onclick={handleEstimate}>Estimate</button>
+							<button class="tile-btn primary" onclick={handlePreload} disabled={preloading}>
+								{preloading ? 'Caching...' : 'Cache View'}
+							</button>
+						</div>
+					</div>
+
+					{#if preloadEstimate !== null}
+						<div class="estimate-result">
+							~{preloadEstimate.toLocaleString()} tiles
+						</div>
+					{/if}
+
+					{#if preloadProgress}
+						<div class="preload-progress">
+							<div class="progress-bar">
+								<div class="progress-fill" style="width: {preloadProgress.total > 0 ? (preloadProgress.done / preloadProgress.total * 100) : 0}%"></div>
+							</div>
+							<span class="progress-text">{preloadProgress.done} / {preloadProgress.total}</span>
+						</div>
+					{/if}
+				</div>
+			{/if}
 		</div>
 	{/if}
 </div>
@@ -277,5 +419,182 @@
 		font-size: 0.75rem;
 		color: var(--color-error);
 		word-break: break-word;
+	}
+
+	/* Tile cache section */
+	.tile-section {
+		border-top: 1px solid var(--color-primary);
+		margin-top: var(--space-sm);
+	}
+
+	.tile-toggle {
+		display: flex;
+		align-items: center;
+		gap: var(--space-sm);
+		width: 100%;
+		padding: var(--space-sm) var(--space-md);
+		background: none;
+		border: none;
+		color: var(--color-text);
+		font-size: 0.85rem;
+		font-weight: 600;
+		cursor: pointer;
+		text-align: left;
+	}
+	.tile-toggle:hover {
+		background: color-mix(in srgb, var(--color-primary) 40%, transparent);
+	}
+
+	.chevron {
+		transition: transform var(--duration-fast);
+	}
+	.chevron.expanded {
+		transform: rotate(90deg);
+	}
+
+	.tile-count {
+		margin-left: auto;
+		font-size: 0.7rem;
+		color: var(--color-text-muted);
+		font-weight: 400;
+	}
+
+	.tile-content {
+		padding: 0 var(--space-md) var(--space-md);
+		display: flex;
+		flex-direction: column;
+		gap: var(--space-sm);
+	}
+
+	.tile-stats {
+		display: flex;
+		gap: var(--space-md);
+	}
+
+	.tile-stat {
+		display: flex;
+		flex-direction: column;
+		gap: 1px;
+	}
+
+	.tile-stat-label {
+		font-size: 0.6rem;
+		text-transform: uppercase;
+		letter-spacing: 0.5px;
+		color: var(--color-text-muted);
+	}
+
+	.tile-stat-value {
+		font-family: monospace;
+		font-size: 0.85rem;
+		font-weight: 600;
+		color: var(--color-text);
+	}
+
+	.preload-controls {
+		display: flex;
+		align-items: flex-end;
+		gap: var(--space-sm);
+	}
+
+	.zoom-range {
+		flex: 1;
+	}
+
+	.zoom-range label {
+		display: flex;
+		align-items: center;
+		gap: 4px;
+		font-size: 0.7rem;
+		color: var(--color-text-muted);
+	}
+
+	.zoom-label {
+		margin-right: 4px;
+	}
+
+	.zoom-input {
+		width: 44px;
+		padding: 3px 6px;
+		background: var(--color-surface);
+		border: 1px solid var(--color-primary);
+		border-radius: var(--radius-sm);
+		color: var(--color-text);
+		font-size: 0.8rem;
+		font-family: monospace;
+		text-align: center;
+	}
+	.zoom-input:focus {
+		outline: none;
+		border-color: var(--color-accent);
+	}
+
+	.zoom-sep {
+		color: var(--color-text-muted);
+	}
+
+	.preload-actions {
+		display: flex;
+		gap: var(--space-xs);
+	}
+
+	.tile-btn {
+		padding: 4px 10px;
+		border: 1px solid var(--color-primary);
+		border-radius: var(--radius-sm);
+		background: var(--color-surface);
+		color: var(--color-text);
+		font-size: 0.7rem;
+		font-weight: 600;
+		cursor: pointer;
+	}
+	.tile-btn:hover {
+		background: var(--color-primary);
+	}
+	.tile-btn.primary {
+		background: var(--color-accent);
+		border-color: var(--color-accent);
+		color: white;
+	}
+	.tile-btn.primary:hover {
+		background: color-mix(in srgb, var(--color-accent) 80%, white 20%);
+	}
+	.tile-btn:disabled {
+		opacity: 0.5;
+		cursor: not-allowed;
+	}
+
+	.estimate-result {
+		font-size: 0.75rem;
+		color: var(--color-text-muted);
+		font-family: monospace;
+	}
+
+	.preload-progress {
+		display: flex;
+		align-items: center;
+		gap: var(--space-sm);
+	}
+
+	.progress-bar {
+		flex: 1;
+		height: 6px;
+		background: var(--color-primary);
+		border-radius: var(--radius-full);
+		overflow: hidden;
+	}
+
+	.progress-fill {
+		height: 100%;
+		background: var(--color-accent);
+		border-radius: var(--radius-full);
+		transition: width var(--duration-fast);
+	}
+
+	.progress-text {
+		font-size: 0.7rem;
+		font-family: monospace;
+		color: var(--color-text-muted);
+		white-space: nowrap;
 	}
 </style>
