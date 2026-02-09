@@ -30,16 +30,17 @@ type ActivityFilter struct {
 
 // Net represents a net control session.
 type Net struct {
-	ID          string     `json:"id"`
-	Name        string     `json:"name"`
-	Type        string     `json:"type"`
-	Frequency   string     `json:"frequency"`
-	NCSCallsign string     `json:"ncsCallsign"`
-	NCSUserID   string     `json:"ncsUserId"`
-	Status      string     `json:"status"`
-	OpenedAt    *time.Time `json:"openedAt,omitempty"`
-	ClosedAt    *time.Time `json:"closedAt,omitempty"`
-	Notes       string     `json:"notes"`
+	ID           string     `json:"id"`
+	Name         string     `json:"name"`
+	Type         string     `json:"type"`
+	Frequency    string     `json:"frequency"`
+	NCSCallsign  string     `json:"ncsCallsign"`
+	NCSUserID    string     `json:"ncsUserId"`
+	Status       string     `json:"status"`
+	OpenedAt     *time.Time `json:"openedAt,omitempty"`
+	ClosedAt     *time.Time `json:"closedAt,omitempty"`
+	Notes        string     `json:"notes"`
+	MissionBrief string     `json:"missionBrief"`
 }
 
 // NetCheckIn represents an operator check-in to a net.
@@ -51,12 +52,14 @@ type NetCheckIn struct {
 	OperatorName    string     `json:"operatorName"`
 	Status          string     `json:"status"`
 	Traffic         string     `json:"traffic"`
+	Source          string     `json:"source"`
 	Location        string     `json:"location"`
 	Lat             *float64   `json:"lat,omitempty"`
 	Lon             *float64   `json:"lon,omitempty"`
 	Assignment      string     `json:"assignment"`
 	AssignmentLat   *float64   `json:"assignmentLat,omitempty"`
 	AssignmentLon   *float64   `json:"assignmentLon,omitempty"`
+	MissionID       string     `json:"missionId,omitempty"`
 	CheckedInAt     time.Time  `json:"checkedInAt"`
 	CheckedOutAt    *time.Time `json:"checkedOutAt,omitempty"`
 	LastHeard       time.Time  `json:"lastHeard"`
@@ -72,6 +75,9 @@ type NetMission struct {
 	Priority    string     `json:"priority"`
 	Status      string     `json:"status"`
 	AssignedTo  string     `json:"assignedTo"`
+	Location    string     `json:"location"`
+	Lat         *float64   `json:"lat,omitempty"`
+	Lon         *float64   `json:"lon,omitempty"`
 	CreatedAt   time.Time  `json:"createdAt"`
 	CompletedAt *time.Time `json:"completedAt,omitempty"`
 }
@@ -81,6 +87,7 @@ type NetNote struct {
 	ID         string    `json:"id"`
 	NetID      string    `json:"netId"`
 	CheckInID  string    `json:"checkInId,omitempty"`
+	MissionID  string    `json:"missionId,omitempty"`
 	AuthorID   string    `json:"authorId"`
 	AuthorName string    `json:"authorName"`
 	Content    string    `json:"content"`

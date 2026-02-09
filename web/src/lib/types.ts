@@ -142,6 +142,7 @@ export interface Net {
 	openedAt?: string;
 	closedAt?: string;
 	notes: string;
+	missionBrief: string;
 }
 
 export interface NetCheckIn {
@@ -152,12 +153,14 @@ export interface NetCheckIn {
 	operatorName: string;
 	status: OperatorStatus;
 	traffic: TrafficType;
+	source: 'aprs' | 'voice';
 	location: string;
 	lat?: number;
 	lon?: number;
 	assignment: string;
 	assignmentLat?: number;
 	assignmentLon?: number;
+	missionId?: string;
 	checkedInAt: string;
 	checkedOutAt?: string;
 	lastHeard: string;
@@ -172,6 +175,9 @@ export interface NetMission {
 	priority: string;
 	status: MissionStatus;
 	assignedTo: string;
+	location: string;
+	lat?: number;
+	lon?: number;
 	createdAt: string;
 	completedAt?: string;
 }
@@ -180,6 +186,7 @@ export interface NetNote {
 	id: string;
 	netId: string;
 	checkInId?: string;
+	missionId?: string;
 	authorId: string;
 	authorName: string;
 	content: string;

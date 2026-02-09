@@ -12,6 +12,7 @@ import (
 	"github.com/narvel/nymeria/internal/activity"
 	"github.com/narvel/nymeria/internal/annotation"
 	"github.com/narvel/nymeria/internal/aprs"
+	"github.com/narvel/nymeria/internal/netcontrol"
 	"github.com/narvel/nymeria/internal/object"
 	"github.com/narvel/nymeria/internal/server/ws"
 	"github.com/narvel/nymeria/internal/session"
@@ -72,6 +73,7 @@ func (s *Server) routes() {
 		r.Get("/nets/{id}", s.handleGetNet)
 		r.Get("/nets/{id}/events", s.handleGetNetEvents)
 		r.Get("/nets/{id}/notes", s.handleGetNetNotes)
+		r.Get("/nets/{id}/roster/export", s.handleExportRosterCSV)
 
 		// Net Control — write endpoints (operator+)
 		r.Group(func(r chi.Router) {
@@ -88,6 +90,8 @@ func (s *Server) routes() {
 			r.Post("/nets/{id}/notes", s.handleAddNetNote)
 			r.Post("/nets/{id}/rollcall", s.handleInitiateRollCall)
 			r.Post("/nets/{id}/rollcall/{ciId}", s.handleRecordRollCallResponse)
+			r.Post("/nets/{id}/checkin/{ciId}/assign", s.handleAssignMission)
+			r.Delete("/nets/{id}/checkin/{ciId}/assign", s.handleUnassignMission)
 		})
 
 		// Admin endpoints — user management
@@ -1182,6 +1186,64 @@ func (s *Server) handleSearchOperators(w http.ResponseWriter, r *http.Request) {
 		results = []station.Station{}
 	}
 	writeJSON(w, http.StatusOK, results)
+}
+
+func (s *Server) handleAssignMission(w http.ResponseWriter, r *http.Request) {
+	if s.netMgr == nil {
+		writeJSON(w, http.StatusServiceUnavailable, map[string]string{"error": "net control not available"})
+		return
+	}
+
+	id := chi.URLParam(r, "id")
+	ciId := chi.URLParam(r, "ciId")
+
+	var req struct {
+		MissionID string `json:"missionId"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid request body"})
+		return
+	}
+
+	ci, err := s.netMgr.AssignMission(id, ciId, req.MissionID)
+	if err != nil {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
+		return
+	}
+
+	writeJSON(w, http.StatusOK, ci)
+}
+
+func (s *Server) handleUnassignMission(w http.ResponseWriter, r *http.Request) {
+	if s.netMgr == nil {
+		writeJSON(w, http.StatusServiceUnavailable, map[string]string{"error": "net control not available"})
+		return
+	}
+
+	id := chi.URLParam(r, "id")
+	ciId := chi.URLParam(r, "ciId")
+
+	ci, err := s.netMgr.UnassignMission(id, ciId)
+	if err != nil {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
+		return
+	}
+
+	writeJSON(w, http.StatusOK, ci)
+}
+
+func (s *Server) handleExportRosterCSV(w http.ResponseWriter, r *http.Request) {
+	if s.netMgr == nil {
+		http.Error(w, "net control not available", http.StatusServiceUnavailable)
+		return
+	}
+
+	id := chi.URLParam(r, "id")
+	checkIns := s.netMgr.GetCheckIns(id)
+
+	w.Header().Set("Content-Type", "text/csv")
+	w.Header().Set("Content-Disposition", "attachment; filename=roster.csv")
+	netcontrol.ExportRosterCSV(w, checkIns)
 }
 
 func findCheckIn(cis []store.NetCheckIn, id string) *store.NetCheckIn {

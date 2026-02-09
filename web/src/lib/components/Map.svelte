@@ -1,6 +1,6 @@
 <script lang="ts">
 	import { onMount, onDestroy } from 'svelte';
-	import type { Station, Annotation } from '$lib/types';
+	import type { Station, Annotation, NetCheckIn, NetMission } from '$lib/types';
 	import { symbolInfo, symbolChar } from '$lib/symbols';
 	import { stationDisplayName } from '$lib/utils';
 	import L from 'leaflet';
@@ -22,6 +22,12 @@
 		editingAnnotationId = null,
 		onGeometryEdit,
 		onPreviewGeometryChange,
+		netOperators = [],
+		netMissions = [],
+		netAssignmentLines = [],
+		activeNetId = null,
+		onNetOperatorClick,
+		onNetMissionClick,
 	}: {
 		stations?: Station[];
 		annotations?: Annotation[];
@@ -37,10 +43,22 @@
 		editingAnnotationId?: string | null;
 		onGeometryEdit?: (geometry: string) => void;
 		onPreviewGeometryChange?: (geometry: string) => void;
+		netOperators?: NetCheckIn[];
+		netMissions?: NetMission[];
+		netAssignmentLines?: Array<{ operator: NetCheckIn; mission: NetMission }>;
+		activeNetId?: string | null;
+		onNetOperatorClick?: (checkInId: string) => void;
+		onNetMissionClick?: (missionId: string) => void;
 	} = $props();
 
 	let mapEl: HTMLDivElement;
 	let map: L.Map;
+
+	export function getViewport(): { lat: number; lon: number; zoom: number } | null {
+		if (!map) return null;
+		const c = map.getCenter();
+		return { lat: c.lat, lon: c.lng, zoom: map.getZoom() };
+	}
 	let markers: Map<string, L.CircleMarker> = new Map();
 	let trackLines: Map<string, L.Polyline> = new Map();
 	let annotationLayers: Map<string, L.Layer> = new Map();
@@ -56,6 +74,28 @@
 	// Vertex editing state
 	let vertexHandles: L.Marker[] = [];
 	let editShape: L.Polyline | L.Polygon | L.CircleMarker | null = null;
+
+	// Net overlay layers
+	let netHalos: Map<string, L.CircleMarker | L.Marker> = new Map();
+	let netMissionFlags: Map<string, L.Marker> = new Map();
+	let netAssignLines: L.Polyline[] = [];
+
+	const netStatusColors: Record<string, string> = {
+		available: '#22c55e',
+		assigned: '#3b82f6',
+		enroute: '#8b5cf6',
+		onscene: '#06b6d4',
+		brb: '#f59e0b',
+		missing: '#ef4444',
+		released: '#6b7280'
+	};
+
+	const missionPriorityColors: Record<string, string> = {
+		routine: '#22c55e',
+		priority: '#f59e0b',
+		welfare: '#3b82f6',
+		emergency: '#ef4444'
+	};
 
 	onMount(() => {
 		map = L.map(mapEl, {
@@ -202,6 +242,122 @@
 					onGeometryEdit?.(newGeom);
 				});
 			}
+		}
+	});
+
+	// Net operator halos
+	$effect(() => {
+		if (!map) return;
+		const ops = netOperators;
+		const _netId = activeNetId;
+
+		// Clear old halos
+		for (const [, layer] of netHalos) layer.remove();
+		netHalos.clear();
+
+		if (!_netId || !ops.length) return;
+
+		for (const ci of ops) {
+			if (ci.lat == null || ci.lon == null) continue;
+			const color = netStatusColors[ci.status] || '#6b7280';
+			const staleMs = Date.now() - new Date(ci.lastHeard).getTime();
+			const opacity = staleMs > 20 * 60 * 1000 ? 0.4 : 1;
+
+			let layer: L.CircleMarker | L.Marker;
+			if (ci.source === 'voice') {
+				// Voice-only: square marker
+				const div = document.createElement('div');
+				div.style.cssText = `width:16px;height:16px;border:3px solid ${color};background:transparent;opacity:${opacity};`;
+				const icon = L.divIcon({
+					className: 'net-voice-marker',
+					html: div.outerHTML,
+					iconSize: [16, 16],
+					iconAnchor: [8, 8],
+				});
+				layer = L.marker([ci.lat, ci.lon], { icon, interactive: true }).addTo(map);
+			} else {
+				// APRS: circle halo
+				layer = L.circleMarker([ci.lat, ci.lon], {
+					radius: 12,
+					weight: 3,
+					color,
+					fillColor: 'transparent',
+					fillOpacity: 0,
+					opacity,
+				}).addTo(map);
+			}
+
+			(layer as L.Layer & { bindTooltip: Function }).bindTooltip(
+				ci.tacticalCall ? `${ci.callsign} "${ci.tacticalCall}"` : ci.callsign,
+				{ permanent: false, direction: 'top', className: 'station-tooltip' }
+			);
+			(layer as L.Layer & { on: Function }).on('click', () => {
+				onNetOperatorClick?.(ci.id);
+			});
+			netHalos.set(ci.id, layer);
+		}
+	});
+
+	// Net mission flags
+	$effect(() => {
+		if (!map) return;
+		const ms = netMissions;
+		const _netId = activeNetId;
+
+		// Clear old flags
+		for (const [, layer] of netMissionFlags) layer.remove();
+		netMissionFlags.clear();
+
+		if (!_netId || !ms.length) return;
+
+		for (const m of ms) {
+			if (m.lat == null || m.lon == null) continue;
+			const color = missionPriorityColors[m.priority] || '#6b7280';
+			const html = `<div style="width:0;height:0;border-left:8px solid ${color};border-top:6px solid transparent;border-bottom:6px solid transparent;filter:drop-shadow(0 1px 2px rgba(0,0,0,0.4));"></div>`;
+			const icon = L.divIcon({
+				className: 'net-mission-flag',
+				html,
+				iconSize: [8, 12],
+				iconAnchor: [0, 6],
+			});
+			const marker = L.marker([m.lat, m.lon], { icon, interactive: true }).addTo(map);
+			marker.bindTooltip(m.title, {
+				permanent: false,
+				direction: 'right',
+				className: 'annotation-tooltip',
+			});
+			marker.on('click', () => {
+				onNetMissionClick?.(m.id);
+			});
+			netMissionFlags.set(m.id, marker);
+		}
+	});
+
+	// Net assignment lines
+	$effect(() => {
+		if (!map) return;
+		const lines = netAssignmentLines;
+		const _netId = activeNetId;
+
+		// Clear old lines
+		for (const line of netAssignLines) line.remove();
+		netAssignLines = [];
+
+		if (!_netId || !lines.length) return;
+
+		for (const { operator, mission } of lines) {
+			if (operator.lat == null || operator.lon == null) continue;
+			if (mission.lat == null || mission.lon == null) continue;
+			const polyline = L.polyline(
+				[[operator.lat, operator.lon], [mission.lat, mission.lon]],
+				{
+					color: '#3b82f6',
+					weight: 2,
+					opacity: 0.6,
+					dashArray: '6 4',
+				}
+			).addTo(map);
+			netAssignLines.push(polyline);
 		}
 	});
 
@@ -650,6 +806,16 @@
 		font-style: italic;
 		opacity: 0.7;
 		border-style: dashed;
+	}
+
+	:global(.net-voice-marker) {
+		background: transparent !important;
+		border: none !important;
+	}
+
+	:global(.net-mission-flag) {
+		background: transparent !important;
+		border: none !important;
 	}
 
 	:global(.leaflet-popup-content-wrapper) {

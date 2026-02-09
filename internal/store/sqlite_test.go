@@ -494,8 +494,8 @@ func TestV2SchemaVersion(t *testing.T) {
 	if err != nil {
 		t.Fatalf("query schema_version: %v", err)
 	}
-	if version != 3 {
-		t.Errorf("expected schema version 3, got %d", version)
+	if version != 4 {
+		t.Errorf("expected schema version 4, got %d", version)
 	}
 }
 
@@ -994,8 +994,8 @@ func TestV3SchemaVersion(t *testing.T) {
 	if err != nil {
 		t.Fatalf("query schema_version: %v", err)
 	}
-	if version != 3 {
-		t.Errorf("expected schema version 3, got %d", version)
+	if version != 4 {
+		t.Errorf("expected schema version 4, got %d", version)
 	}
 }
 
@@ -1412,5 +1412,192 @@ func TestCheckInsIsolatedByNetID(t *testing.T) {
 	}
 	if loaded[0].Callsign != "A" {
 		t.Errorf("expected callsign A, got %q", loaded[0].Callsign)
+	}
+}
+
+// --- V4 Migration Tests ---
+
+func TestV4MigrationAddsNewColumns(t *testing.T) {
+	s, _ := newTestStore(t)
+	defer s.Close()
+
+	// Verify new columns exist by querying them.
+	_, err := s.db.Exec(`SELECT source, mission_id FROM net_check_ins WHERE 1=0`)
+	if err != nil {
+		t.Errorf("net_check_ins missing v4 columns: %v", err)
+	}
+	_, err = s.db.Exec(`SELECT location, lat, lon FROM net_missions WHERE 1=0`)
+	if err != nil {
+		t.Errorf("net_missions missing v4 columns: %v", err)
+	}
+	_, err = s.db.Exec(`SELECT mission_id FROM net_notes WHERE 1=0`)
+	if err != nil {
+		t.Errorf("net_notes missing v4 columns: %v", err)
+	}
+	_, err = s.db.Exec(`SELECT mission_brief FROM nets WHERE 1=0`)
+	if err != nil {
+		t.Errorf("nets missing mission_brief column: %v", err)
+	}
+}
+
+func TestNetCheckInSourceField(t *testing.T) {
+	s, _ := newTestStore(t)
+	defer s.Close()
+
+	s.SaveNet(Net{ID: "net-1", Name: "Test", Type: "tactical", Status: "open"})
+
+	now := time.Now().Truncate(time.Second).UTC()
+	ci := NetCheckIn{
+		ID:          "ci-src",
+		NetID:       "net-1",
+		Callsign:    "KD7BBC",
+		Status:      "available",
+		Traffic:     "none",
+		Source:      "aprs",
+		CheckedInAt: now,
+		LastHeard:   now,
+	}
+	if err := s.SaveNetCheckIn(ci); err != nil {
+		t.Fatalf("SaveNetCheckIn failed: %v", err)
+	}
+
+	loaded, _ := s.LoadNetCheckIns("net-1")
+	if len(loaded) != 1 {
+		t.Fatalf("expected 1, got %d", len(loaded))
+	}
+	if loaded[0].Source != "aprs" {
+		t.Errorf("source: got %q, want %q", loaded[0].Source, "aprs")
+	}
+}
+
+func TestNetCheckInMissionID(t *testing.T) {
+	s, _ := newTestStore(t)
+	defer s.Close()
+
+	s.SaveNet(Net{ID: "net-1", Name: "Test", Type: "tactical", Status: "open"})
+
+	now := time.Now().Truncate(time.Second).UTC()
+	ci := NetCheckIn{
+		ID:          "ci-mid",
+		NetID:       "net-1",
+		Callsign:    "W1AW",
+		Status:      "assigned",
+		Traffic:     "none",
+		Source:      "voice",
+		MissionID:   "mission-42",
+		CheckedInAt: now,
+		LastHeard:   now,
+	}
+	if err := s.SaveNetCheckIn(ci); err != nil {
+		t.Fatalf("SaveNetCheckIn failed: %v", err)
+	}
+
+	loaded, _ := s.LoadNetCheckIns("net-1")
+	if len(loaded) != 1 {
+		t.Fatalf("expected 1, got %d", len(loaded))
+	}
+	if loaded[0].MissionID != "mission-42" {
+		t.Errorf("missionId: got %q, want %q", loaded[0].MissionID, "mission-42")
+	}
+}
+
+func TestNetMissionLocationFields(t *testing.T) {
+	s, _ := newTestStore(t)
+	defer s.Close()
+
+	s.SaveNet(Net{ID: "net-1", Name: "Test", Type: "tactical", Status: "open"})
+
+	now := time.Now().Truncate(time.Second).UTC()
+	lat, lon := 34.0522, -118.2437
+	m := NetMission{
+		ID:         "m-loc",
+		NetID:      "net-1",
+		Title:      "Shelter Setup",
+		Priority:   "priority",
+		Status:     "open",
+		Location:   "Red Cross Shelter #3",
+		Lat:        &lat,
+		Lon:        &lon,
+		CreatedAt:  now,
+	}
+	if err := s.SaveNetMission(m); err != nil {
+		t.Fatalf("SaveNetMission failed: %v", err)
+	}
+
+	loaded, _ := s.LoadNetMissions("net-1")
+	if len(loaded) != 1 {
+		t.Fatalf("expected 1, got %d", len(loaded))
+	}
+	if loaded[0].Location != "Red Cross Shelter #3" {
+		t.Errorf("location: got %q, want %q", loaded[0].Location, "Red Cross Shelter #3")
+	}
+	if loaded[0].Lat == nil || *loaded[0].Lat != lat {
+		t.Errorf("lat: got %v, want %f", loaded[0].Lat, lat)
+	}
+	if loaded[0].Lon == nil || *loaded[0].Lon != lon {
+		t.Errorf("lon: got %v, want %f", loaded[0].Lon, lon)
+	}
+}
+
+func TestNetNoteMissionID(t *testing.T) {
+	s, _ := newTestStore(t)
+	defer s.Close()
+
+	s.SaveNet(Net{ID: "net-1", Name: "Test", Type: "tactical", Status: "open"})
+
+	now := time.Now().Truncate(time.Second).UTC()
+	note := NetNote{
+		ID:        "note-m",
+		NetID:     "net-1",
+		MissionID: "mission-7",
+		Content:   "Mission note",
+		CreatedAt: now,
+	}
+	if err := s.SaveNetNote(note); err != nil {
+		t.Fatalf("SaveNetNote failed: %v", err)
+	}
+
+	loaded, _ := s.LoadNetNotes("net-1")
+	if len(loaded) != 1 {
+		t.Fatalf("expected 1, got %d", len(loaded))
+	}
+	if loaded[0].MissionID != "mission-7" {
+		t.Errorf("missionId: got %q, want %q", loaded[0].MissionID, "mission-7")
+	}
+}
+
+func TestNetMissionBrief(t *testing.T) {
+	s, _ := newTestStore(t)
+	defer s.Close()
+
+	n := Net{
+		ID:           "net-mb",
+		Name:         "Wildfire Response",
+		Type:         "tactical",
+		Status:       "open",
+		MissionBrief: "Coordinating evacuation shelters for Cascade Fire",
+	}
+	if err := s.SaveNet(n); err != nil {
+		t.Fatalf("SaveNet failed: %v", err)
+	}
+
+	loaded, err := s.LoadNet("net-mb")
+	if err != nil {
+		t.Fatalf("LoadNet failed: %v", err)
+	}
+	if loaded.MissionBrief != n.MissionBrief {
+		t.Errorf("missionBrief: got %q, want %q", loaded.MissionBrief, n.MissionBrief)
+	}
+
+	// Also verify via LoadNets.
+	nets, _ := s.LoadNets()
+	found := false
+	for _, net := range nets {
+		if net.ID == "net-mb" && net.MissionBrief == n.MissionBrief {
+			found = true
+		}
+	}
+	if !found {
+		t.Error("LoadNets did not return net with missionBrief")
 	}
 }
