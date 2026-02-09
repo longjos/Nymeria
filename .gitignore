@@ -25,6 +25,8 @@ web/.svelte-kit/
 nymeria.yaml
 nymeria.yml
 *.db
+*.db-shm
+*.db-wal
 *.sqlite
 
 # Environment
