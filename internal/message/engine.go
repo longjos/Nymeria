@@ -24,8 +24,11 @@ type Engine interface {
 	// Messages returns all messages for a given callsign (empty = all).
 	Messages(callsign string) []Message
 
-	// Conversations returns grouped conversations.
+	// Conversations returns grouped conversations (excludes bulletins).
 	Conversations() []Conversation
+
+	// Bulletins returns deduplicated bulletin messages.
+	Bulletins() []Bulletin
 
 	// Events returns a channel that emits message lifecycle events.
 	Events() <-chan Event

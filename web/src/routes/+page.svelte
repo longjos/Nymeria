@@ -13,6 +13,7 @@
 	import ActivityPanel from '$lib/components/ActivityPanel.svelte';
 	import AnnotationPanel from '$lib/components/AnnotationPanel.svelte';
 	import NetControlPanel from '$lib/components/NetControlPanel.svelte';
+	import BulletinPanel from '$lib/components/BulletinPanel.svelte';
 	import ConnectionStatus from '$lib/components/ConnectionStatus.svelte';
 	import SearchOverlay from '$lib/components/SearchOverlay.svelte';
 	import LoginOverlay from '$lib/components/LoginOverlay.svelte';
@@ -26,10 +27,11 @@
 		opsView
 	} from '$lib/stores/netcontrol';
 	import { initTacticalStore } from '$lib/stores/tactical';
+	import { initBulletinStore } from '$lib/stores/bulletins';
 	import { isLoggedIn, initSession } from '$lib/stores/session';
 	import {
 		selectedStation, panelMode, detailTab, searchOpen, sheetState,
-		selectStation, closePanel, openStationList, openMessages, openConversation, openTransports, openActivity, openAnnotations, openNetControl,
+		selectStation, closePanel, openStationList, openMessages, openConversation, openTransports, openActivity, openAnnotations, openNetControl, openBulletins,
 		togglePanel
 	} from '$lib/stores/ui';
 	import type { SheetState, DetailTab, PanelMode } from '$lib/stores/ui';
@@ -64,6 +66,7 @@
 			initAnnotationStore();
 			initNetControlStore();
 			initTacticalStore();
+			initBulletinStore();
 		}
 	});
 
@@ -251,6 +254,7 @@
 		unreadCount={totalUnread}
 		onSearchOpen={() => searchOpen.set(true)}
 		onMessagesOpen={openMessages}
+		onBulletinsOpen={openBulletins}
 		onTransportsOpen={openTransports}
 		onAnnotationsOpen={openAnnotations}
 		onNetControlOpen={openNetControl}
@@ -301,6 +305,8 @@
 					onStartEdit={handleStartEdit}
 					onStopEdit={handleStopEdit}
 				/>
+			{:else if $panelMode === 'bulletins'}
+				<BulletinPanel />
 			{:else if $panelMode === 'netcontrol'}
 				<NetControlPanel
 					onFlyTo={handleNetFlyTo}
@@ -362,6 +368,8 @@
 					onStartEdit={handleStartEdit}
 					onStopEdit={handleStopEdit}
 				/>
+			{:else if $panelMode === 'bulletins'}
+				<BulletinPanel />
 			{:else if $panelMode === 'netcontrol'}
 				<NetControlPanel
 					onFlyTo={handleNetFlyTo}

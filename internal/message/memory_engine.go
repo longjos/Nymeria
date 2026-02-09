@@ -2,6 +2,7 @@ package message
 
 import (
 	"fmt"
+	"sort"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -10,6 +11,11 @@ import (
 	"github.com/google/uuid"
 	"github.com/narvel/nymeria/internal/aprs"
 )
+
+// isBulletinKey returns true if the conversation key is a bulletin or announcement.
+func isBulletinKey(key string) bool {
+	return strings.HasPrefix(key, "BLN") || strings.HasPrefix(key, "ANN")
+}
 
 // RetryConfig controls message retry timing.
 type RetryConfig struct {
@@ -196,13 +202,16 @@ func (e *MemoryEngine) Messages(callsign string) []Message {
 	return all
 }
 
-// Conversations returns grouped conversations.
+// Conversations returns grouped conversations (excludes bulletins).
 func (e *MemoryEngine) Conversations() []Conversation {
 	e.mu.Lock()
 	defer e.mu.Unlock()
 
 	convos := make([]Conversation, 0, len(e.messages))
 	for callsign, msgs := range e.messages {
+		if isBulletinKey(callsign) {
+			continue
+		}
 		unread := 0
 		var lastActive time.Time
 		for _, m := range msgs {
@@ -230,6 +239,50 @@ func (e *MemoryEngine) Conversations() []Conversation {
 		convos = append(convos, conv)
 	}
 	return convos
+}
+
+// Bulletins returns deduplicated bulletin messages.
+// Per APRS spec, same sender + same bulletin ID = replacement (latest wins).
+func (e *MemoryEngine) Bulletins() []Bulletin {
+	e.mu.Lock()
+	defer e.mu.Unlock()
+
+	// Dedup: keyed by "from:bulletinID", latest timestamp wins
+	dedup := make(map[string]Bulletin)
+
+	for convKey, msgs := range e.messages {
+		if !isBulletinKey(convKey) {
+			continue
+		}
+		for _, m := range msgs {
+			dedupKey := m.From + ":" + convKey
+			existing, ok := dedup[dedupKey]
+			if !ok || m.Timestamp.After(existing.Timestamp) {
+				dedup[dedupKey] = Bulletin{
+					ID:             m.ID,
+					From:           m.From,
+					BulletinID:     convKey,
+					Body:           m.Body,
+					Timestamp:      m.Timestamp,
+					IsAnnouncement: strings.HasPrefix(convKey, "ANN"),
+				}
+			}
+		}
+	}
+
+	result := make([]Bulletin, 0, len(dedup))
+	for _, b := range dedup {
+		result = append(result, b)
+	}
+
+	sort.Slice(result, func(i, j int) bool {
+		if result[i].BulletinID != result[j].BulletinID {
+			return result[i].BulletinID < result[j].BulletinID
+		}
+		return result[i].From < result[j].From
+	})
+
+	return result
 }
 
 // ClaimConversation assigns an operator to a conversation.
@@ -288,8 +341,12 @@ func (e *MemoryEngine) Import(msgs []Message) {
 
 	for _, m := range msgs {
 		// Key by remote callsign (same logic as runtime message handling)
+		// For bulletins (BLN*/ANN), always key by To (the bulletin ID)
 		convKey := m.From
 		if !m.Inbound {
+			convKey = m.To
+		}
+		if isBulletinKey(m.To) {
 			convKey = m.To
 		}
 		e.messages[convKey] = append(e.messages[convKey], m)

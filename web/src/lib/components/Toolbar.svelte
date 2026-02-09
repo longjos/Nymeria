@@ -5,6 +5,7 @@
 		unreadCount = 0,
 		onSearchOpen,
 		onMessagesOpen,
+		onBulletinsOpen,
 		onTransportsOpen,
 		onAnnotationsOpen,
 		onNetControlOpen
@@ -12,6 +13,7 @@
 		unreadCount?: number;
 		onSearchOpen?: () => void;
 		onMessagesOpen?: () => void;
+		onBulletinsOpen?: () => void;
 		onTransportsOpen?: () => void;
 		onAnnotationsOpen?: () => void;
 		onNetControlOpen?: () => void;
@@ -36,6 +38,12 @@
 		{#if unreadCount > 0}
 			<span class="fab-badge">{unreadCount}</span>
 		{/if}
+	</button>
+	<button class="fab" onclick={onBulletinsOpen} title="Bulletin Board">
+		<svg width="18" height="18" viewBox="0 0 16 16" fill="none">
+			<path d="M2 2h12v11H2z" stroke="currentColor" stroke-width="1.3" stroke-linejoin="round"/>
+			<path d="M5 5.5h6M5 8h4" stroke="currentColor" stroke-width="1.3" stroke-linecap="round"/>
+		</svg>
 	</button>
 	<button class="fab" onclick={onTransportsOpen} title="Transports">
 		<svg width="18" height="18" viewBox="0 0 16 16" fill="none">

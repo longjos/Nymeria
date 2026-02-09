@@ -26,6 +26,16 @@ type Message struct {
 	Timestamp time.Time    `json:"timestamp"`
 }
 
+// Bulletin represents a deduplicated APRS bulletin message.
+type Bulletin struct {
+	ID             string    `json:"id"`
+	From           string    `json:"from"`
+	BulletinID     string    `json:"bulletinId"`
+	Body           string    `json:"body"`
+	Timestamp      time.Time `json:"timestamp"`
+	IsAnnouncement bool      `json:"isAnnouncement"`
+}
+
 // Conversation groups messages with a single remote station.
 type Conversation struct {
 	Callsign    string     `json:"callsign"`
