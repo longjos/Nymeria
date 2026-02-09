@@ -42,16 +42,17 @@ type ServerConfig struct {
 
 // StationConfig holds the operator's station identity and tracker tuning.
 type StationConfig struct {
-	Callsign       string        `yaml:"callsign"`
-	SSID           int           `yaml:"ssid"`
-	Lat            float64       `yaml:"lat"`
-	Lon            float64       `yaml:"lon"`
-	SymbolTable    string        `yaml:"symbol_table"`
-	SymbolCode     string        `yaml:"symbol_code"`
-	Comment        string        `yaml:"comment"`
-	TrackMaxPoints int           `yaml:"track_max_points"`
-	StaleTimeout   time.Duration `yaml:"stale_timeout"`
-	DedupWindow    time.Duration `yaml:"dedup_window"`
+	Callsign        string            `yaml:"callsign"`
+	SSID            int               `yaml:"ssid"`
+	Lat             float64           `yaml:"lat"`
+	Lon             float64           `yaml:"lon"`
+	SymbolTable     string            `yaml:"symbol_table"`
+	SymbolCode      string            `yaml:"symbol_code"`
+	Comment         string            `yaml:"comment"`
+	TrackMaxPoints  int               `yaml:"track_max_points"`
+	StaleTimeout    time.Duration     `yaml:"stale_timeout"`
+	DedupWindow     time.Duration     `yaml:"dedup_window"`
+	TacticalAliases map[string]string `yaml:"tactical_aliases"`
 }
 
 // StoreConfig holds storage settings.

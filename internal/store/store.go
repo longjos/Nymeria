@@ -112,6 +112,14 @@ type NetEvent struct {
 	CreatedAt time.Time `json:"createdAt"`
 }
 
+// TacticalAlias maps an APRS callsign to a tactical name.
+type TacticalAlias struct {
+	Callsign   string    `json:"callsign"`
+	Alias      string    `json:"alias"`
+	AssignedBy string    `json:"assignedBy"`
+	UpdatedAt  time.Time `json:"updatedAt"`
+}
+
 // Annotation represents a local map annotation.
 type Annotation struct {
 	ID            string    `json:"id"`
@@ -188,4 +196,9 @@ type Store interface {
 
 	SaveNetEvent(e NetEvent) error
 	LoadNetEvents(netID string) ([]NetEvent, error)
+
+	// Tactical Aliases
+	SaveTacticalAlias(a TacticalAlias) error
+	LoadTacticalAliases() ([]TacticalAlias, error)
+	DeleteTacticalAlias(callsign string) error
 }

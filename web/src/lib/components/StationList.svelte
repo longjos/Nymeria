@@ -1,6 +1,8 @@
 <script lang="ts">
 	import StationCard from './StationCard.svelte';
 	import { stationList } from '$lib/stores/stations';
+	import { getTacticalAlias } from '$lib/stores/tactical';
+	import { stationKey } from '$lib/utils';
 
 	let {
 		onSelect,
@@ -16,10 +18,12 @@
 		const list = $stationList;
 		if (!search) return list;
 		const q = search.toUpperCase();
+		const lookup = $getTacticalAlias;
 		return list.filter(
 			(s) =>
 				s.callsign.includes(q) ||
-				(s.comment ?? '').toUpperCase().includes(q)
+				(s.comment ?? '').toUpperCase().includes(q) ||
+				(lookup(stationKey(s)) ?? '').toUpperCase().includes(q)
 		);
 	});
 </script>

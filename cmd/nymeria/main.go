@@ -141,27 +141,6 @@ func main() {
 		log.Printf("warning: transport connect failed: %v", err)
 	}
 
-	// Frame processing loop: parse frames → tracker + message engine + object manager
-	go func() {
-		for {
-			select {
-			case <-ctx.Done():
-				return
-			case tf, ok := <-tm.TaggedFrames():
-				if !ok {
-					return
-				}
-				pkt, err := parser.Parse(tf.Frame)
-				if err != nil {
-					continue
-				}
-				tracker.HandlePacket(pkt, tf.Source)
-				msgEngine.HandlePacket(pkt)
-				objMgr.HandlePacket(pkt)
-			}
-		}
-	}()
-
 	// Create beacon manager
 	bcnCfg := beacon.Config{
 		Enabled:  cfg.Beacon.Enabled,
@@ -243,7 +222,30 @@ func main() {
 		server.WithActivityLogger(actLogger),
 		server.WithAnnotationManager(annMgr),
 		server.WithNetControlManager(netMgr),
+		server.WithStationConfig(cfg.Station),
 	)
+
+	// Frame processing loop: parse frames → tracker + message engine + object manager + tactical
+	go func() {
+		for {
+			select {
+			case <-ctx.Done():
+				return
+			case tf, ok := <-tm.TaggedFrames():
+				if !ok {
+					return
+				}
+				pkt, err := parser.Parse(tf.Frame)
+				if err != nil {
+					continue
+				}
+				tracker.HandlePacket(pkt, tf.Source)
+				msgEngine.HandlePacket(pkt)
+				objMgr.HandlePacket(pkt)
+				srv.HandleTacticalPacket(pkt)
+			}
+		}
+	}()
 
 	httpSrv := &http.Server{
 		Addr:    cfg.Server.Listen,

@@ -14,7 +14,7 @@ import (
 	_ "modernc.org/sqlite"
 )
 
-const currentSchemaVersion = 5
+const currentSchemaVersion = 6
 
 // SQLiteStore implements Store using modernc.org/sqlite.
 type SQLiteStore struct {
@@ -91,6 +91,12 @@ func (s *SQLiteStore) migrate() error {
 
 	if version < 5 {
 		if err := s.migrateV5(); err != nil {
+			return err
+		}
+	}
+
+	if version < 6 {
+		if err := s.migrateV6(); err != nil {
 			return err
 		}
 	}
@@ -1269,6 +1275,85 @@ func (s *SQLiteStore) migrateV5() error {
 		return fmt.Errorf("set schema_version: %w", err)
 	}
 
+	return nil
+}
+
+func (s *SQLiteStore) migrateV6() error {
+	ddl := `
+CREATE TABLE IF NOT EXISTS tactical_aliases (
+    callsign TEXT PRIMARY KEY,
+    alias TEXT NOT NULL,
+    assigned_by TEXT NOT NULL DEFAULT 'ui',
+    updated_at DATETIME NOT NULL
+);
+`
+	if _, err := s.db.Exec(ddl); err != nil {
+		return fmt.Errorf("create v6 tables: %w", err)
+	}
+
+	// Update schema version.
+	if _, err := s.db.Exec("DELETE FROM schema_version"); err != nil {
+		return fmt.Errorf("clear schema_version: %w", err)
+	}
+	if _, err := s.db.Exec("INSERT INTO schema_version (version) VALUES (?)", 6); err != nil {
+		return fmt.Errorf("set schema_version: %w", err)
+	}
+
+	return nil
+}
+
+// --- Tactical Alias CRUD ---
+
+func (s *SQLiteStore) SaveTacticalAlias(a TacticalAlias) error {
+	_, err := s.db.Exec(`
+		INSERT OR REPLACE INTO tactical_aliases (callsign, alias, assigned_by, updated_at)
+		VALUES (?, ?, ?, ?)`,
+		a.Callsign, a.Alias, a.AssignedBy, a.UpdatedAt.UTC(),
+	)
+	if err != nil {
+		return fmt.Errorf("save tactical alias: %w", err)
+	}
+	return nil
+}
+
+func (s *SQLiteStore) LoadTacticalAliases() ([]TacticalAlias, error) {
+	rows, err := s.db.Query(`
+		SELECT callsign, alias, assigned_by, updated_at
+		FROM tactical_aliases
+		ORDER BY callsign ASC`)
+	if err != nil {
+		return nil, fmt.Errorf("query tactical aliases: %w", err)
+	}
+	defer rows.Close()
+
+	var aliases []TacticalAlias
+	for rows.Next() {
+		var a TacticalAlias
+		var updatedAt string
+
+		if err := rows.Scan(&a.Callsign, &a.Alias, &a.AssignedBy, &updatedAt); err != nil {
+			return nil, fmt.Errorf("scan tactical alias: %w", err)
+		}
+
+		a.UpdatedAt, err = parseTime(updatedAt)
+		if err != nil {
+			return nil, fmt.Errorf("parse tactical alias updated_at %q: %w", updatedAt, err)
+		}
+
+		aliases = append(aliases, a)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("iterate tactical aliases: %w", err)
+	}
+
+	return aliases, nil
+}
+
+func (s *SQLiteStore) DeleteTacticalAlias(callsign string) error {
+	_, err := s.db.Exec("DELETE FROM tactical_aliases WHERE callsign = ?", callsign)
+	if err != nil {
+		return fmt.Errorf("delete tactical alias: %w", err)
+	}
 	return nil
 }
 

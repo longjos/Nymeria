@@ -256,6 +256,18 @@ func (m *Manager) CheckIn(netID, callsign, traffic string) (*store.NetCheckIn, e
 		m.discoverDevices(&ci)
 	}
 
+	// Auto-populate tactical call from alias table if empty.
+	if ci.TacticalCall == "" && m.store != nil {
+		if aliases, err := m.store.LoadTacticalAliases(); err == nil {
+			for _, a := range aliases {
+				if a.Callsign == ci.Callsign {
+					ci.TacticalCall = a.Alias
+					break
+				}
+			}
+		}
+	}
+
 	// Set source based on whether position data was found.
 	if ci.Lat != nil && ci.Lon != nil {
 		ci.Source = "aprs"

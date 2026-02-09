@@ -5,6 +5,7 @@ import (
 	"io/fs"
 	"log"
 	"net/http"
+	"strings"
 	"time"
 
 	"github.com/go-chi/chi/v5"
@@ -14,6 +15,7 @@ import (
 	"github.com/narvel/nymeria/internal/annotation"
 	"github.com/narvel/nymeria/internal/aprs"
 	"github.com/narvel/nymeria/internal/beacon"
+	"github.com/narvel/nymeria/internal/config"
 	"github.com/narvel/nymeria/internal/message"
 	"github.com/narvel/nymeria/internal/netcontrol"
 	"github.com/narvel/nymeria/internal/object"
@@ -39,6 +41,7 @@ type Server struct {
 	actLogger  activity.Logger
 	annMgr     *annotation.Manager
 	netMgr     *netcontrol.Manager
+	stationCfg config.StationConfig
 }
 
 // New creates a new Server.
@@ -63,6 +66,7 @@ func New(tracker station.Tracker, tm *transport.Manager, eng message.Engine, db 
 
 	s.routes()
 	s.serveFrontend()
+	s.loadConfigAliases()
 
 	go s.hub.Run()
 	go s.bridgeTrackerEvents()
@@ -128,6 +132,13 @@ func WithAnnotationManager(mgr *annotation.Manager) Option {
 func WithNetControlManager(mgr *netcontrol.Manager) Option {
 	return func(s *Server) {
 		s.netMgr = mgr
+	}
+}
+
+// WithStationConfig provides the station configuration for tactical alias loading.
+func WithStationConfig(cfg config.StationConfig) Option {
+	return func(s *Server) {
+		s.stationCfg = cfg
 	}
 }
 
@@ -320,5 +331,69 @@ func (s *Server) bridgeTransportStatus() {
 			continue
 		}
 		s.hub.Broadcast(data)
+	}
+}
+
+// loadConfigAliases seeds the tactical alias table from config on startup.
+func (s *Server) loadConfigAliases() {
+	if s.store == nil || len(s.stationCfg.TacticalAliases) == 0 {
+		return
+	}
+	for callsign, alias := range s.stationCfg.TacticalAliases {
+		a := store.TacticalAlias{
+			Callsign:   strings.ToUpper(callsign),
+			Alias:      alias,
+			AssignedBy: "config",
+			UpdatedAt:  time.Now().UTC(),
+		}
+		if err := s.store.SaveTacticalAlias(a); err != nil {
+			log.Printf("[server] save config tactical alias %s: %v", callsign, err)
+		}
+	}
+	log.Printf("loaded %d tactical aliases from config", len(s.stationCfg.TacticalAliases))
+}
+
+// broadcastTactical sends a tactical alias event via WebSocket.
+func (s *Server) broadcastTactical(eventType string, payload any) {
+	msg := map[string]any{
+		"type": eventType,
+		"data": payload,
+	}
+	data, err := json.Marshal(msg)
+	if err != nil {
+		log.Printf("[server] marshal tactical event: %v", err)
+		return
+	}
+	s.hub.Broadcast(data)
+}
+
+// HandleTacticalPacket detects APRS TACTICAL messages and upserts aliases.
+// Called from the packet processing loop in main.go.
+func (s *Server) HandleTacticalPacket(pkt *aprs.Packet) {
+	if pkt.Type != aprs.PacketTypeMessage || pkt.Message == nil {
+		return
+	}
+	if strings.ToUpper(strings.TrimSpace(pkt.Message.Addressee)) != "TACTICAL" {
+		return
+	}
+
+	aliases := aprs.ParseTacticalMessage(pkt.Message.Text)
+	if aliases == nil {
+		return
+	}
+
+	for callsign, alias := range aliases {
+		a := store.TacticalAlias{
+			Callsign:   callsign,
+			Alias:      alias,
+			AssignedBy: "aprs",
+			UpdatedAt:  time.Now().UTC(),
+		}
+		if err := s.store.SaveTacticalAlias(a); err != nil {
+			log.Printf("[server] save aprs tactical alias %s: %v", callsign, err)
+			continue
+		}
+		s.broadcastTactical("tactical_set", a)
+		log.Printf("[tactical] APRS alias: %s → %s", callsign, alias)
 	}
 }
