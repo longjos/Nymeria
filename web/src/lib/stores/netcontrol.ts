@@ -43,12 +43,17 @@ export const missionsWithPosition = derived(missions, ($ms) =>
 
 export const assignmentLines = derived([checkIns, missions], ([$cis, $ms]) => {
 	const missionMap = new Map($ms.map((m) => [m.id, m]));
-	return $cis
-		.filter((ci) => ci.missionId && ci.lat != null && ci.lon != null)
-		.map((ci) => ({ operator: ci, mission: missionMap.get(ci.missionId!) }))
-		.filter((pair): pair is { operator: NetCheckIn; mission: NetMission } =>
-			pair.mission != null && pair.mission.lat != null && pair.mission.lon != null
-		);
+	const lines: { operator: NetCheckIn; mission: NetMission }[] = [];
+	for (const ci of $cis) {
+		if (!ci.missionIds?.length || ci.lat == null || ci.lon == null) continue;
+		for (const mid of ci.missionIds) {
+			const mission = missionMap.get(mid);
+			if (mission && mission.lat != null && mission.lon != null) {
+				lines.push({ operator: ci, mission });
+			}
+		}
+	}
+	return lines;
 });
 
 let initialized = false;

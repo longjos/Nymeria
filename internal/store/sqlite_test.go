@@ -494,8 +494,8 @@ func TestV2SchemaVersion(t *testing.T) {
 	if err != nil {
 		t.Fatalf("query schema_version: %v", err)
 	}
-	if version != 8 {
-		t.Errorf("expected schema version 8, got %d", version)
+	if version != 9 {
+		t.Errorf("expected schema version 9, got %d", version)
 	}
 }
 
@@ -994,8 +994,8 @@ func TestV3SchemaVersion(t *testing.T) {
 	if err != nil {
 		t.Fatalf("query schema_version: %v", err)
 	}
-	if version != 8 {
-		t.Errorf("expected schema version 8, got %d", version)
+	if version != 9 {
+		t.Errorf("expected schema version 9, got %d", version)
 	}
 }
 
@@ -1484,7 +1484,7 @@ func TestNetCheckInMissionID(t *testing.T) {
 		Status:      "assigned",
 		Traffic:     "none",
 		Source:      "voice",
-		MissionID:   "mission-42",
+		MissionIDs:  []string{"mission-42", "mission-43"},
 		CheckedInAt: now,
 		LastHeard:   now,
 	}
@@ -1496,8 +1496,8 @@ func TestNetCheckInMissionID(t *testing.T) {
 	if len(loaded) != 1 {
 		t.Fatalf("expected 1, got %d", len(loaded))
 	}
-	if loaded[0].MissionID != "mission-42" {
-		t.Errorf("missionId: got %q, want %q", loaded[0].MissionID, "mission-42")
+	if len(loaded[0].MissionIDs) != 2 || loaded[0].MissionIDs[0] != "mission-42" || loaded[0].MissionIDs[1] != "mission-43" {
+		t.Errorf("missionIds: got %v, want [mission-42 mission-43]", loaded[0].MissionIDs)
 	}
 }
 
@@ -1616,8 +1616,8 @@ func TestV5MigrationAddsTrackedStationsColumn(t *testing.T) {
 
 	var version int
 	s.db.QueryRow("SELECT version FROM schema_version LIMIT 1").Scan(&version)
-	if version != 8 {
-		t.Errorf("expected schema version 8, got %d", version)
+	if version != 9 {
+		t.Errorf("expected schema version 9, got %d", version)
 	}
 }
 
@@ -1723,8 +1723,8 @@ func TestV6MigrationCreatesTacticalAliasesTable(t *testing.T) {
 
 	var version int
 	s.db.QueryRow("SELECT version FROM schema_version LIMIT 1").Scan(&version)
-	if version != 8 {
-		t.Errorf("expected schema version 8, got %d", version)
+	if version != 9 {
+		t.Errorf("expected schema version 9, got %d", version)
 	}
 }
 
@@ -1891,8 +1891,8 @@ func TestV7MigrationAddsAnnotationColumns(t *testing.T) {
 
 	var version int
 	s.db.QueryRow("SELECT version FROM schema_version LIMIT 1").Scan(&version)
-	if version != 8 {
-		t.Errorf("expected schema version 8, got %d", version)
+	if version != 9 {
+		t.Errorf("expected schema version 9, got %d", version)
 	}
 }
 
@@ -1918,7 +1918,7 @@ func TestSaveAndLoadAnnotationNewFields(t *testing.T) {
 		Status:      "active",
 		Priority:    "priority",
 		OperationID: "op-42",
-		MissionID:   "mission-7",
+		MissionIDs:  []string{"mission-7"},
 		Resources:   `[{"type":"medical","qty":2}]`,
 		ReportedBy:  "KD7BBC",
 		ReportedAt:  &reportedAt,
@@ -1950,8 +1950,8 @@ func TestSaveAndLoadAnnotationNewFields(t *testing.T) {
 	if got.OperationID != "op-42" {
 		t.Errorf("operationId: got %q, want %q", got.OperationID, "op-42")
 	}
-	if got.MissionID != "mission-7" {
-		t.Errorf("missionId: got %q, want %q", got.MissionID, "mission-7")
+	if len(got.MissionIDs) != 1 || got.MissionIDs[0] != "mission-7" {
+		t.Errorf("missionIds: got %v, want [mission-7]", got.MissionIDs)
 	}
 	if got.Resources != `[{"type":"medical","qty":2}]` {
 		t.Errorf("resources: got %q", got.Resources)
@@ -2194,8 +2194,8 @@ func TestMigrateV8CreatesOperationsTable(t *testing.T) {
 
 	var version int
 	s.db.QueryRow("SELECT version FROM schema_version LIMIT 1").Scan(&version)
-	if version != 8 {
-		t.Errorf("expected schema version 8, got %d", version)
+	if version != 9 {
+		t.Errorf("expected schema version 9, got %d", version)
 	}
 
 	// Verify operations table exists by doing a query.

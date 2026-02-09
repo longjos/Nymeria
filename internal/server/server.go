@@ -298,16 +298,18 @@ func (s *Server) bridgeAnnotationEvents() {
 		s.hub.Broadcast(data)
 
 		// Sync annotation status change → mission status.
-		if evt.Type == annotation.EventAnnotationStatusChanged && s.netMgr != nil && evt.Data.MissionID != "" {
-			missionID, missionStatus, err := s.annMgr.SyncStatusToMission(evt.Data.ID)
+		if evt.Type == annotation.EventAnnotationStatusChanged && s.netMgr != nil && len(evt.Data.MissionIDs) > 0 {
+			missionIDs, missionStatus, err := s.annMgr.SyncStatusToMission(evt.Data.ID)
 			if err == nil {
-				// Find the mission to get its full state.
+				// Find each linked mission and update its status.
 				for _, n := range s.netMgr.GetNets() {
 					for _, m := range s.netMgr.GetMissions(n.ID) {
-						if m.ID == missionID && m.Status != missionStatus {
-							m.Status = missionStatus
-							s.netMgr.UpdateMission(m)
-							break
+						for _, mid := range missionIDs {
+							if m.ID == mid && m.Status != missionStatus {
+								m.Status = missionStatus
+								s.netMgr.UpdateMission(m)
+								break
+							}
 						}
 					}
 				}

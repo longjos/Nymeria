@@ -846,7 +846,7 @@ func TestGetByMissionID(t *testing.T) {
 
 	ann, _ := mgr.Create(Annotation{
 		Type: TypePoint, Label: "Linked", Geometry: `{"type":"Point","coordinates":[0,0]}`,
-		Category: CategoryAssignment, Status: "planned", MissionID: "m-1",
+		Category: CategoryAssignment, Status: "planned", MissionIDs: []string{"m-1"},
 	})
 
 	found, ok := mgr.GetByMissionID("m-1")
@@ -860,6 +860,86 @@ func TestGetByMissionID(t *testing.T) {
 	_, ok = mgr.GetByMissionID("m-nonexistent")
 	if ok {
 		t.Error("expected not found for nonexistent mission ID")
+	}
+}
+
+func TestGetAllByMissionID(t *testing.T) {
+	mgr := newTestManager(t)
+
+	mgr.Create(Annotation{
+		Type: TypePoint, Label: "Ann1", Geometry: `{"type":"Point","coordinates":[0,0]}`,
+		Category: CategoryAssignment, Status: "planned", MissionIDs: []string{"m-1", "m-2"},
+	})
+	mgr.Create(Annotation{
+		Type: TypePoint, Label: "Ann2", Geometry: `{"type":"Point","coordinates":[1,1]}`,
+		Category: CategoryAssignment, Status: "planned", MissionIDs: []string{"m-1"},
+	})
+	mgr.Create(Annotation{
+		Type: TypePoint, Label: "Ann3", Geometry: `{"type":"Point","coordinates":[2,2]}`,
+		Category: CategoryAssignment, Status: "planned", MissionIDs: []string{"m-3"},
+	})
+
+	results := mgr.GetAllByMissionID("m-1")
+	if len(results) != 2 {
+		t.Fatalf("expected 2 annotations for m-1, got %d", len(results))
+	}
+
+	results = mgr.GetAllByMissionID("m-3")
+	if len(results) != 1 {
+		t.Fatalf("expected 1 annotation for m-3, got %d", len(results))
+	}
+
+	results = mgr.GetAllByMissionID("m-nonexistent")
+	if len(results) != 0 {
+		t.Fatalf("expected 0 annotations, got %d", len(results))
+	}
+}
+
+func TestAddMissionLink(t *testing.T) {
+	mgr := newTestManager(t)
+
+	ann, _ := mgr.Create(Annotation{
+		Type: TypePoint, Label: "Link Test", Geometry: `{"type":"Point","coordinates":[0,0]}`,
+		Category: CategoryAssignment, Status: "planned", MissionIDs: []string{"m-1"},
+	})
+
+	updated, err := mgr.AddMissionLink(ann.ID, "m-2")
+	if err != nil {
+		t.Fatalf("AddMissionLink: %v", err)
+	}
+	if len(updated.MissionIDs) != 2 || updated.MissionIDs[1] != "m-2" {
+		t.Errorf("missionIds: got %v, want [m-1 m-2]", updated.MissionIDs)
+	}
+}
+
+func TestAddMissionLinkDuplicate(t *testing.T) {
+	mgr := newTestManager(t)
+
+	ann, _ := mgr.Create(Annotation{
+		Type: TypePoint, Label: "Dup Test", Geometry: `{"type":"Point","coordinates":[0,0]}`,
+		Category: CategoryAssignment, Status: "planned", MissionIDs: []string{"m-1"},
+	})
+
+	_, err := mgr.AddMissionLink(ann.ID, "m-1")
+	if err == nil {
+		t.Error("expected error for duplicate mission link")
+	}
+}
+
+func TestRemoveMissionLink(t *testing.T) {
+	mgr := newTestManager(t)
+
+	ann, _ := mgr.Create(Annotation{
+		Type: TypePoint, Label: "Remove Test", Geometry: `{"type":"Point","coordinates":[0,0]}`,
+		Category: CategoryAssignment, Status: "planned", MissionIDs: []string{"m-1", "m-2"},
+	})
+
+	updated, err := mgr.RemoveMissionLink(ann.ID, "m-1")
+	if err != nil {
+		t.Fatalf("RemoveMissionLink: %v", err)
+	}
+	if len(updated.MissionIDs) != 1 || updated.MissionIDs[0] != "m-2" {
+		t.Errorf("missionIds: got %v, want [m-2]", updated.MissionIDs)
 	}
 }
 
@@ -885,8 +965,8 @@ func TestCreateFromMission(t *testing.T) {
 	if ann.Category != CategoryAssignment {
 		t.Errorf("category: got %q, want %q", ann.Category, CategoryAssignment)
 	}
-	if ann.MissionID != "m-1" {
-		t.Errorf("missionID: got %q, want %q", ann.MissionID, "m-1")
+	if len(ann.MissionIDs) != 1 || ann.MissionIDs[0] != "m-1" {
+		t.Errorf("missionIDs: got %v, want [m-1]", ann.MissionIDs)
 	}
 	if ann.Label != "Search Sector Alpha" {
 		t.Errorf("label: got %q, want %q", ann.Label, "Search Sector Alpha")
@@ -995,15 +1075,15 @@ func TestSyncStatusToMission(t *testing.T) {
 
 	ann, _ := mgr.Create(Annotation{
 		Type: TypePoint, Label: "Mission Link", Geometry: `{"type":"Point","coordinates":[0,0]}`,
-		Category: CategoryAssignment, Status: "in-progress", MissionID: "m-to",
+		Category: CategoryAssignment, Status: "in-progress", MissionIDs: []string{"m-to"},
 	})
 
-	missionID, missionStatus, err := mgr.SyncStatusToMission(ann.ID)
+	missionIDs, missionStatus, err := mgr.SyncStatusToMission(ann.ID)
 	if err != nil {
 		t.Fatalf("SyncStatusToMission: %v", err)
 	}
-	if missionID != "m-to" {
-		t.Errorf("missionID: got %q, want %q", missionID, "m-to")
+	if len(missionIDs) != 1 || missionIDs[0] != "m-to" {
+		t.Errorf("missionIDs: got %v, want [m-to]", missionIDs)
 	}
 	if missionStatus != "active" {
 		t.Errorf("missionStatus: got %q, want %q", missionStatus, "active")
@@ -1029,21 +1109,21 @@ func TestClearMissionLink(t *testing.T) {
 
 	ann, _ := mgr.Create(Annotation{
 		Type: TypePoint, Label: "Clear Link", Geometry: `{"type":"Point","coordinates":[0,0]}`,
-		Category: CategoryAssignment, Status: "planned", MissionID: "m-clear",
+		Category: CategoryAssignment, Status: "planned", MissionIDs: []string{"m-clear", "m-other"},
 	})
 
 	updated, err := mgr.ClearMissionLink(ann.ID)
 	if err != nil {
 		t.Fatalf("ClearMissionLink: %v", err)
 	}
-	if updated.MissionID != "" {
-		t.Errorf("missionID should be empty, got %q", updated.MissionID)
+	if len(updated.MissionIDs) != 0 {
+		t.Errorf("missionIDs should be empty, got %v", updated.MissionIDs)
 	}
 
 	// Verify persisted
 	reloaded, _ := mgr.Get(ann.ID)
-	if reloaded.MissionID != "" {
-		t.Errorf("persisted missionID should be empty, got %q", reloaded.MissionID)
+	if len(reloaded.MissionIDs) != 0 {
+		t.Errorf("persisted missionIDs should be empty, got %v", reloaded.MissionIDs)
 	}
 }
 

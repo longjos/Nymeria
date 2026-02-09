@@ -14,7 +14,7 @@ import (
 	_ "modernc.org/sqlite"
 )
 
-const currentSchemaVersion = 8
+const currentSchemaVersion = 9
 
 // SQLiteStore implements Store using modernc.org/sqlite.
 type SQLiteStore struct {
@@ -109,6 +109,12 @@ func (s *SQLiteStore) migrate() error {
 
 	if version < 8 {
 		if err := s.migrateV8(); err != nil {
+			return err
+		}
+	}
+
+	if version < 9 {
+		if err := s.migrateV9(); err != nil {
 			return err
 		}
 	}
@@ -599,15 +605,23 @@ func (s *SQLiteStore) SaveAnnotation(a Annotation) error {
 		expiresAt = a.ExpiresAt.UTC()
 	}
 
-	_, err := s.db.Exec(`
+	missionIDsJSON, err := json.Marshal(a.MissionIDs)
+	if err != nil {
+		return fmt.Errorf("marshal mission_ids: %w", err)
+	}
+	if a.MissionIDs == nil {
+		missionIDsJSON = []byte("[]")
+	}
+
+	_, err = s.db.Exec(`
 		INSERT OR REPLACE INTO annotations
 			(id, type, label, description, geometry, style, created_by, created_by_name,
-			 created_at, updated_at, category, status, priority, operation_id, mission_id,
+			 created_at, updated_at, category, status, priority, operation_id, mission_ids,
 			 resources, reported_by, reported_at, resolved_at, expires_at)
 		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
 		a.ID, a.Type, a.Label, a.Description, a.Geometry, a.Style,
 		a.CreatedBy, a.CreatedByName, a.CreatedAt.UTC(), a.UpdatedAt.UTC(),
-		a.Category, a.Status, a.Priority, a.OperationID, a.MissionID,
+		a.Category, a.Status, a.Priority, a.OperationID, string(missionIDsJSON),
 		a.Resources, a.ReportedBy, reportedAt, resolvedAt, expiresAt,
 	)
 	if err != nil {
@@ -620,7 +634,7 @@ func (s *SQLiteStore) LoadAnnotations() ([]Annotation, error) {
 	return s.loadAnnotationsQuery(`
 		SELECT id, type, label, description, geometry, style,
 		       created_by, created_by_name, created_at, updated_at,
-		       category, status, priority, operation_id, mission_id,
+		       category, status, priority, operation_id, mission_ids,
 		       resources, reported_by, reported_at, resolved_at, expires_at
 		FROM annotations
 		ORDER BY created_at ASC`)
@@ -658,7 +672,7 @@ func (s *SQLiteStore) LoadAnnotationsFiltered(filter AnnotationFilter) ([]Annota
 
 	query := `SELECT id, type, label, description, geometry, style,
 		       created_by, created_by_name, created_at, updated_at,
-		       category, status, priority, operation_id, mission_id,
+		       category, status, priority, operation_id, mission_ids,
 		       resources, reported_by, reported_at, resolved_at, expires_at
 		FROM annotations` + where + ` ORDER BY created_at ASC`
 
@@ -681,7 +695,8 @@ func (s *SQLiteStore) loadAnnotationsQueryArgs(query string, args ...interface{}
 		var a Annotation
 		var createdAt, updatedAt string
 		var description, style, createdBy, createdByName sql.NullString
-		var category, status, priority, operationID, missionID sql.NullString
+		var category, status, priority, operationID sql.NullString
+		var missionIDsJSON string
 		var resources, reportedBy sql.NullString
 		var reportedAt, resolvedAt, expiresAt sql.NullString
 
@@ -689,7 +704,7 @@ func (s *SQLiteStore) loadAnnotationsQueryArgs(query string, args ...interface{}
 			&a.ID, &a.Type, &a.Label, &description,
 			&a.Geometry, &style, &createdBy, &createdByName,
 			&createdAt, &updatedAt,
-			&category, &status, &priority, &operationID, &missionID,
+			&category, &status, &priority, &operationID, &missionIDsJSON,
 			&resources, &reportedBy, &reportedAt, &resolvedAt, &expiresAt,
 		); err != nil {
 			return nil, fmt.Errorf("scan annotation: %w", err)
@@ -728,8 +743,10 @@ func (s *SQLiteStore) loadAnnotationsQueryArgs(query string, args ...interface{}
 		if operationID.Valid {
 			a.OperationID = operationID.String
 		}
-		if missionID.Valid {
-			a.MissionID = missionID.String
+		if missionIDsJSON != "" && missionIDsJSON != "[]" {
+			if err := json.Unmarshal([]byte(missionIDsJSON), &a.MissionIDs); err != nil {
+				return nil, fmt.Errorf("unmarshal annotation mission_ids: %w", err)
+			}
 		}
 		if resources.Valid {
 			a.Resources = resources.String
@@ -1012,9 +1029,8 @@ func (s *SQLiteStore) DeleteNet(id string) error {
 }
 
 func (s *SQLiteStore) SaveNetCheckIn(ci NetCheckIn) error {
-	var lat, lon, assignLat, assignLon sql.NullFloat64
+	var lat, lon sql.NullFloat64
 	var checkedOutAt interface{}
-	var missionID interface{}
 
 	if ci.Lat != nil {
 		lat = sql.NullFloat64{Float64: *ci.Lat, Valid: true}
@@ -1022,17 +1038,8 @@ func (s *SQLiteStore) SaveNetCheckIn(ci NetCheckIn) error {
 	if ci.Lon != nil {
 		lon = sql.NullFloat64{Float64: *ci.Lon, Valid: true}
 	}
-	if ci.AssignmentLat != nil {
-		assignLat = sql.NullFloat64{Float64: *ci.AssignmentLat, Valid: true}
-	}
-	if ci.AssignmentLon != nil {
-		assignLon = sql.NullFloat64{Float64: *ci.AssignmentLon, Valid: true}
-	}
 	if ci.CheckedOutAt != nil {
 		checkedOutAt = ci.CheckedOutAt.UTC()
-	}
-	if ci.MissionID != "" {
-		missionID = ci.MissionID
 	}
 
 	source := ci.Source
@@ -1049,16 +1056,25 @@ func (s *SQLiteStore) SaveNetCheckIn(ci NetCheckIn) error {
 		trackedJSON = string(b)
 	}
 
+	missionIDsJSON := "[]"
+	if len(ci.MissionIDs) > 0 {
+		b, err := json.Marshal(ci.MissionIDs)
+		if err != nil {
+			return fmt.Errorf("marshal mission ids: %w", err)
+		}
+		missionIDsJSON = string(b)
+	}
+
 	_, err := s.db.Exec(`
 		INSERT OR REPLACE INTO net_check_ins
 			(id, net_id, callsign, tactical_call, operator_name, status, traffic,
-			 source, location, lat, lon, assignment, assignment_lat, assignment_lon,
-			 mission_id, tracked_stations, checked_in_at, checked_out_at, last_heard, missed_roll_calls)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+			 source, location, lat, lon, assignment,
+			 mission_ids, tracked_stations, checked_in_at, checked_out_at, last_heard, missed_roll_calls)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
 		ci.ID, ci.NetID, ci.Callsign, ci.TacticalCall, ci.OperatorName,
 		ci.Status, ci.Traffic, source, ci.Location,
-		lat, lon, ci.Assignment, assignLat, assignLon,
-		missionID, trackedJSON, ci.CheckedInAt.UTC(), checkedOutAt, ci.LastHeard.UTC(), ci.MissedRollCalls,
+		lat, lon, ci.Assignment,
+		missionIDsJSON, trackedJSON, ci.CheckedInAt.UTC(), checkedOutAt, ci.LastHeard.UTC(), ci.MissedRollCalls,
 	)
 	if err != nil {
 		return fmt.Errorf("save net check-in: %w", err)
@@ -1069,8 +1085,8 @@ func (s *SQLiteStore) SaveNetCheckIn(ci NetCheckIn) error {
 func (s *SQLiteStore) LoadNetCheckIns(netID string) ([]NetCheckIn, error) {
 	rows, err := s.db.Query(`
 		SELECT id, net_id, callsign, tactical_call, operator_name, status, traffic,
-		       source, location, lat, lon, assignment, assignment_lat, assignment_lon,
-		       mission_id, tracked_stations, checked_in_at, checked_out_at, last_heard, missed_roll_calls
+		       source, location, lat, lon, assignment,
+		       mission_ids, tracked_stations, checked_in_at, checked_out_at, last_heard, missed_roll_calls
 		FROM net_check_ins WHERE net_id = ? ORDER BY checked_in_at ASC`, netID)
 	if err != nil {
 		return nil, fmt.Errorf("query net check-ins: %w", err)
@@ -1080,21 +1096,24 @@ func (s *SQLiteStore) LoadNetCheckIns(netID string) ([]NetCheckIn, error) {
 	var checkIns []NetCheckIn
 	for rows.Next() {
 		var ci NetCheckIn
-		var lat, lon, assignLat, assignLon sql.NullFloat64
+		var lat, lon sql.NullFloat64
 		var checkedInAt, lastHeard string
-		var checkedOutAt, missionID sql.NullString
-		var trackedJSON string
+		var checkedOutAt sql.NullString
+		var trackedJSON, missionIDsJSON string
 
 		if err := rows.Scan(
 			&ci.ID, &ci.NetID, &ci.Callsign, &ci.TacticalCall, &ci.OperatorName,
 			&ci.Status, &ci.Traffic, &ci.Source, &ci.Location,
-			&lat, &lon, &ci.Assignment, &assignLat, &assignLon,
-			&missionID, &trackedJSON, &checkedInAt, &checkedOutAt, &lastHeard, &ci.MissedRollCalls,
+			&lat, &lon, &ci.Assignment,
+			&missionIDsJSON, &trackedJSON, &checkedInAt, &checkedOutAt, &lastHeard, &ci.MissedRollCalls,
 		); err != nil {
 			return nil, fmt.Errorf("scan net check-in: %w", err)
 		}
-		if missionID.Valid {
-			ci.MissionID = missionID.String
+
+		// Unmarshal mission IDs JSON.
+		ci.MissionIDs = []string{}
+		if missionIDsJSON != "" {
+			json.Unmarshal([]byte(missionIDsJSON), &ci.MissionIDs)
 		}
 
 		// Unmarshal tracked stations JSON.
@@ -1124,12 +1143,6 @@ func (s *SQLiteStore) LoadNetCheckIns(netID string) ([]NetCheckIn, error) {
 		}
 		if lon.Valid {
 			ci.Lon = &lon.Float64
-		}
-		if assignLat.Valid {
-			ci.AssignmentLat = &assignLat.Float64
-		}
-		if assignLon.Valid {
-			ci.AssignmentLon = &assignLon.Float64
 		}
 
 		checkIns = append(checkIns, ci)
@@ -1622,6 +1635,40 @@ func (s *SQLiteStore) DeleteTacticalAlias(callsign string) error {
 	if err != nil {
 		return fmt.Errorf("delete tactical alias: %w", err)
 	}
+	return nil
+}
+
+func (s *SQLiteStore) migrateV9() error {
+	// Add mission_ids JSON columns to net_check_ins and annotations.
+	for _, stmt := range []string{
+		"ALTER TABLE net_check_ins ADD COLUMN mission_ids TEXT NOT NULL DEFAULT '[]'",
+		"ALTER TABLE annotations ADD COLUMN mission_ids TEXT NOT NULL DEFAULT '[]'",
+	} {
+		if _, err := s.db.Exec(stmt); err != nil {
+			if !isDuplicateColumnError(err) {
+				return fmt.Errorf("migrate v9: %w", err)
+			}
+		}
+	}
+
+	// Migrate existing single mission_id data into mission_ids JSON array.
+	for _, stmt := range []string{
+		`UPDATE net_check_ins SET mission_ids = '["' || mission_id || '"]' WHERE mission_id IS NOT NULL AND mission_id != ''`,
+		`UPDATE annotations SET mission_ids = '["' || mission_id || '"]' WHERE mission_id IS NOT NULL AND mission_id != ''`,
+	} {
+		if _, err := s.db.Exec(stmt); err != nil {
+			return fmt.Errorf("migrate v9 data: %w", err)
+		}
+	}
+
+	// Update schema version.
+	if _, err := s.db.Exec("DELETE FROM schema_version"); err != nil {
+		return fmt.Errorf("clear schema_version: %w", err)
+	}
+	if _, err := s.db.Exec("INSERT INTO schema_version (version) VALUES (?)", 9); err != nil {
+		return fmt.Errorf("set schema_version: %w", err)
+	}
+
 	return nil
 }
 

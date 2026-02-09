@@ -63,9 +63,7 @@ type NetCheckIn struct {
 	Lat             *float64         `json:"lat,omitempty"`
 	Lon             *float64         `json:"lon,omitempty"`
 	Assignment      string           `json:"assignment"`
-	AssignmentLat   *float64         `json:"assignmentLat,omitempty"`
-	AssignmentLon   *float64         `json:"assignmentLon,omitempty"`
-	MissionID       string           `json:"missionId,omitempty"`
+	MissionIDs      []string         `json:"missionIds"`
 	TrackedStations []TrackedStation `json:"trackedStations"`
 	CheckedInAt     time.Time        `json:"checkedInAt"`
 	CheckedOutAt    *time.Time       `json:"checkedOutAt,omitempty"`
@@ -136,7 +134,7 @@ type Annotation struct {
 	Status        string     `json:"status"`
 	Priority      string     `json:"priority"`
 	OperationID   string     `json:"operationId,omitempty"`
-	MissionID     string     `json:"missionId,omitempty"`
+	MissionIDs    []string   `json:"missionIds"`
 	Resources     string     `json:"resources,omitempty"`
 	ReportedBy    string     `json:"reportedBy,omitempty"`
 	ReportedAt    *time.Time `json:"reportedAt,omitempty"`

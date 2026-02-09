@@ -332,10 +332,10 @@
 		}
 	}
 
-	async function handleUnassignMission(ciId: string) {
+	async function handleUnassignMission(ciId: string, missionId: string) {
 		if (!$activeNet) return;
 		try {
-			await api.unassignMission($activeNet.id, ciId);
+			await api.unassignMission($activeNet.id, ciId, missionId);
 		} catch (e) {
 			console.error('Unassign mission failed:', e);
 		}
@@ -379,9 +379,9 @@
 		}
 	}
 
-	// Operators assigned to each mission (by FK)
+	// Operators assigned to each mission
 	function operatorsForMission(missionId: string): NetCheckIn[] {
-		return $checkIns.filter((ci) => ci.missionId === missionId && ci.status !== 'released');
+		return $checkIns.filter((ci) => ci.missionIds?.includes(missionId) && ci.status !== 'released');
 	}
 
 	// Sort missions: emergency > priority > welfare > routine, then active > open > complete
@@ -430,10 +430,10 @@
 		}
 	}
 
-	async function handleUnassignFromMission(ciId: string) {
+	async function handleUnassignFromMission(ciId: string, missionId: string) {
 		if (!$activeNet) return;
 		try {
-			await api.unassignMission($activeNet.id, ciId);
+			await api.unassignMission($activeNet.id, ciId, missionId);
 		} catch (e) {
 			console.error('Unassign from mission failed:', e);
 		}
@@ -650,15 +650,17 @@
 								{#if ci.assignment}
 									<div class="op-assignment">📋 {ci.assignment}</div>
 								{/if}
-								{#if ci.missionId}
-									{@const linkedMission = $missions.find((m) => m.id === ci.missionId)}
-									{#if linkedMission}
-										<div class="op-mission-link">
-											<span class="mission-link-icon">🎯</span>
-											<span class="mission-link-title">{linkedMission.title}</span>
-											<button class="op-btn" title="Unassign mission" onclick={() => handleUnassignMission(ci.id)}>✕</button>
-										</div>
-									{/if}
+								{#if ci.missionIds?.length > 0}
+									{#each ci.missionIds as mid}
+										{@const linkedMission = $missions.find((m) => m.id === mid)}
+										{#if linkedMission}
+											<div class="op-mission-link">
+												<span class="mission-link-icon">🎯</span>
+												<span class="mission-link-title">{linkedMission.title}</span>
+												<button class="op-btn" title="Unassign mission" onclick={() => handleUnassignMission(ci.id, mid)}>✕</button>
+											</div>
+										{/if}
+									{/each}
 								{/if}
 								{#if ci.missedRollCalls > 0}
 									<div class="missed-badge">Missed {ci.missedRollCalls} roll call{ci.missedRollCalls > 1 ? 's' : ''}</div>
@@ -690,14 +692,14 @@
 								<!-- Mission assignment picker -->
 								{#if assigningCheckInId === ci.id}
 									<div class="assign-picker">
-										{#each $missions.filter((m) => m.status !== 'complete') as m}
+										{#each $missions.filter((m) => m.status !== 'complete' && !ci.missionIds?.includes(m.id)) as m}
 											<button class="assign-option" onclick={() => handleAssignMission(ci.id, m.id)}>
 												<span class="priority-dot" style="background: {trafficColors[m.priority] ?? '#6b7280'}"></span>
 												{m.title}
 											</button>
 										{/each}
-										{#if $missions.filter((m) => m.status !== 'complete').length === 0}
-											<span class="assign-empty">No active missions</span>
+										{#if $missions.filter((m) => m.status !== 'complete' && !ci.missionIds?.includes(m.id)).length === 0}
+											<span class="assign-empty">No available missions</span>
 										{/if}
 									</div>
 								{/if}
@@ -824,7 +826,7 @@
 												<span class="mission-op-call">{op.callsign}</span>
 												<span class="mission-op-status">{op.status}</span>
 												{#if m.status !== 'complete'}
-													<button class="mission-op-remove" title="Unassign" onclick={() => handleUnassignFromMission(op.id)}>✕</button>
+													<button class="mission-op-remove" title="Unassign" onclick={() => handleUnassignFromMission(op.id, m.id)}>✕</button>
 												{/if}
 											</div>
 										{/each}
@@ -839,7 +841,7 @@
 								<!-- Assign operator picker (from mission side) -->
 								{#if assigningMissionId === m.id}
 									<div class="assign-picker">
-										{#each $activeCheckIns.filter((ci) => !ci.missionId) as ci}
+										{#each $activeCheckIns.filter((ci) => !ci.missionIds?.includes(m.id)) as ci}
 											<button class="assign-option" onclick={() => handleAssignOperatorToMission(m.id, ci.id)}>
 												<span class="mission-op-dot" style="background: {statusColors[ci.status]}"></span>
 												{ci.callsign}
@@ -848,7 +850,7 @@
 												{/if}
 											</button>
 										{/each}
-										{#if $activeCheckIns.filter((ci) => !ci.missionId).length === 0}
+										{#if $activeCheckIns.filter((ci) => !ci.missionIds?.includes(m.id)).length === 0}
 											<span class="assign-empty">No available operators</span>
 										{/if}
 									</div>
