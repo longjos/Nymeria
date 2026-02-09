@@ -494,8 +494,8 @@ func TestV2SchemaVersion(t *testing.T) {
 	if err != nil {
 		t.Fatalf("query schema_version: %v", err)
 	}
-	if version != 5 {
-		t.Errorf("expected schema version 5, got %d", version)
+	if version != 6 {
+		t.Errorf("expected schema version 6, got %d", version)
 	}
 }
 
@@ -994,8 +994,8 @@ func TestV3SchemaVersion(t *testing.T) {
 	if err != nil {
 		t.Fatalf("query schema_version: %v", err)
 	}
-	if version != 5 {
-		t.Errorf("expected schema version 5, got %d", version)
+	if version != 6 {
+		t.Errorf("expected schema version 6, got %d", version)
 	}
 }
 
@@ -1616,8 +1616,8 @@ func TestV5MigrationAddsTrackedStationsColumn(t *testing.T) {
 
 	var version int
 	s.db.QueryRow("SELECT version FROM schema_version LIMIT 1").Scan(&version)
-	if version != 5 {
-		t.Errorf("expected schema version 5, got %d", version)
+	if version != 6 {
+		t.Errorf("expected schema version 6, got %d", version)
 	}
 }
 
@@ -1706,5 +1706,172 @@ func TestNetCheckInTrackedStationsDefault(t *testing.T) {
 	}
 	if len(got.TrackedStations) != 0 {
 		t.Errorf("expected 0 tracked stations, got %d", len(got.TrackedStations))
+	}
+}
+
+// --- V6 Migration & Tactical Alias Tests ---
+
+func TestV6MigrationCreatesTacticalAliasesTable(t *testing.T) {
+	s, _ := newTestStore(t)
+	defer s.Close()
+
+	// Verify the tactical_aliases table exists.
+	_, err := s.db.Exec(`SELECT callsign, alias, assigned_by, updated_at FROM tactical_aliases WHERE 1=0`)
+	if err != nil {
+		t.Errorf("tactical_aliases table not created: %v", err)
+	}
+
+	var version int
+	s.db.QueryRow("SELECT version FROM schema_version LIMIT 1").Scan(&version)
+	if version != 6 {
+		t.Errorf("expected schema version 6, got %d", version)
+	}
+}
+
+func TestSaveAndLoadTacticalAliasRoundtrip(t *testing.T) {
+	s, _ := newTestStore(t)
+	defer s.Close()
+
+	now := time.Now().Truncate(time.Second).UTC()
+
+	a := TacticalAlias{
+		Callsign:   "W4ABC-9",
+		Alias:      "SHELTER-1",
+		AssignedBy: "config",
+		UpdatedAt:  now,
+	}
+
+	if err := s.SaveTacticalAlias(a); err != nil {
+		t.Fatalf("SaveTacticalAlias failed: %v", err)
+	}
+
+	loaded, err := s.LoadTacticalAliases()
+	if err != nil {
+		t.Fatalf("LoadTacticalAliases failed: %v", err)
+	}
+	if len(loaded) != 1 {
+		t.Fatalf("expected 1 alias, got %d", len(loaded))
+	}
+
+	got := loaded[0]
+	if got.Callsign != a.Callsign {
+		t.Errorf("callsign: got %q, want %q", got.Callsign, a.Callsign)
+	}
+	if got.Alias != a.Alias {
+		t.Errorf("alias: got %q, want %q", got.Alias, a.Alias)
+	}
+	if got.AssignedBy != a.AssignedBy {
+		t.Errorf("assignedBy: got %q, want %q", got.AssignedBy, a.AssignedBy)
+	}
+	if !got.UpdatedAt.Equal(a.UpdatedAt) {
+		t.Errorf("updatedAt: got %v, want %v", got.UpdatedAt, a.UpdatedAt)
+	}
+}
+
+func TestSaveTacticalAliasUpsert(t *testing.T) {
+	s, _ := newTestStore(t)
+	defer s.Close()
+
+	now := time.Now().Truncate(time.Second).UTC()
+
+	a := TacticalAlias{
+		Callsign:   "W4ABC-9",
+		Alias:      "SHELTER-1",
+		AssignedBy: "config",
+		UpdatedAt:  now,
+	}
+	if err := s.SaveTacticalAlias(a); err != nil {
+		t.Fatalf("SaveTacticalAlias (first) failed: %v", err)
+	}
+
+	// Update alias.
+	a.Alias = "NET-CTRL"
+	a.AssignedBy = "ui"
+	a.UpdatedAt = now.Add(time.Minute)
+	if err := s.SaveTacticalAlias(a); err != nil {
+		t.Fatalf("SaveTacticalAlias (update) failed: %v", err)
+	}
+
+	loaded, err := s.LoadTacticalAliases()
+	if err != nil {
+		t.Fatalf("LoadTacticalAliases failed: %v", err)
+	}
+	if len(loaded) != 1 {
+		t.Fatalf("expected 1 alias after upsert, got %d", len(loaded))
+	}
+	if loaded[0].Alias != "NET-CTRL" {
+		t.Errorf("alias: got %q, want %q", loaded[0].Alias, "NET-CTRL")
+	}
+	if loaded[0].AssignedBy != "ui" {
+		t.Errorf("assignedBy: got %q, want %q", loaded[0].AssignedBy, "ui")
+	}
+}
+
+func TestDeleteTacticalAlias(t *testing.T) {
+	s, _ := newTestStore(t)
+	defer s.Close()
+
+	now := time.Now().Truncate(time.Second).UTC()
+
+	s.SaveTacticalAlias(TacticalAlias{Callsign: "W4ABC-9", Alias: "SHELTER-1", AssignedBy: "config", UpdatedAt: now})
+	s.SaveTacticalAlias(TacticalAlias{Callsign: "N5XYZ", Alias: "NET-CTRL", AssignedBy: "ui", UpdatedAt: now})
+
+	if err := s.DeleteTacticalAlias("W4ABC-9"); err != nil {
+		t.Fatalf("DeleteTacticalAlias failed: %v", err)
+	}
+
+	loaded, err := s.LoadTacticalAliases()
+	if err != nil {
+		t.Fatalf("LoadTacticalAliases failed: %v", err)
+	}
+	if len(loaded) != 1 {
+		t.Fatalf("expected 1 alias after delete, got %d", len(loaded))
+	}
+	if loaded[0].Callsign != "N5XYZ" {
+		t.Errorf("expected remaining alias N5XYZ, got %q", loaded[0].Callsign)
+	}
+}
+
+func TestLoadTacticalAliasesEmpty(t *testing.T) {
+	s, _ := newTestStore(t)
+	defer s.Close()
+
+	loaded, err := s.LoadTacticalAliases()
+	if err != nil {
+		t.Fatalf("LoadTacticalAliases failed: %v", err)
+	}
+	if loaded != nil {
+		t.Errorf("expected nil for empty result, got %d entries", len(loaded))
+	}
+}
+
+func TestMultipleTacticalAliasesOrderedByCallsign(t *testing.T) {
+	s, _ := newTestStore(t)
+	defer s.Close()
+
+	now := time.Now().Truncate(time.Second).UTC()
+
+	// Insert in reverse order.
+	s.SaveTacticalAlias(TacticalAlias{Callsign: "N5XYZ", Alias: "NET-CTRL", AssignedBy: "ui", UpdatedAt: now})
+	s.SaveTacticalAlias(TacticalAlias{Callsign: "KD0ABC-5", Alias: "EOC", AssignedBy: "config", UpdatedAt: now})
+	s.SaveTacticalAlias(TacticalAlias{Callsign: "W4ABC-9", Alias: "SHELTER-1", AssignedBy: "aprs", UpdatedAt: now})
+
+	loaded, err := s.LoadTacticalAliases()
+	if err != nil {
+		t.Fatalf("LoadTacticalAliases failed: %v", err)
+	}
+	if len(loaded) != 3 {
+		t.Fatalf("expected 3 aliases, got %d", len(loaded))
+	}
+
+	// Should be ordered by callsign ascending.
+	if loaded[0].Callsign != "KD0ABC-5" {
+		t.Errorf("first: got %q, want KD0ABC-5", loaded[0].Callsign)
+	}
+	if loaded[1].Callsign != "N5XYZ" {
+		t.Errorf("second: got %q, want N5XYZ", loaded[1].Callsign)
+	}
+	if loaded[2].Callsign != "W4ABC-9" {
+		t.Errorf("third: got %q, want W4ABC-9", loaded[2].Callsign)
 	}
 }

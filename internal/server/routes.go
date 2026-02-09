@@ -44,12 +44,17 @@ func (s *Server) routes() {
 		r.Delete("/session", s.handleLogout)
 		r.Get("/users", s.handleGetUsers)
 
-		// Plotter endpoints — annotations write access
+		// Tactical aliases — read access for observers
+		r.Get("/tactical", s.handleGetTacticalAliases)
+
+		// Plotter endpoints — annotations + tactical aliases write access
 		r.Group(func(r chi.Router) {
 			r.Use(RequireRole(session.RolePlotter))
 			r.Post("/annotations", s.handleCreateAnnotation)
 			r.Put("/annotations/{id}", s.handleUpdateAnnotation)
 			r.Delete("/annotations/{id}", s.handleDeleteAnnotation)
+			r.Put("/tactical/{callsign}", s.handleSetTacticalAlias)
+			r.Delete("/tactical/{callsign}", s.handleDeleteTacticalAlias)
 		})
 
 		// Operator endpoints — messages, objects, beacon
@@ -748,6 +753,104 @@ func (s *Server) handleDeleteAnnotation(w http.ResponseWriter, r *http.Request) 
 			UserName:  user.Name,
 			Action:    activity.ActionAnnotationDeleted,
 			Target:    id,
+		})
+	}
+}
+
+// --- Tactical alias handlers ---
+
+func (s *Server) handleGetTacticalAliases(w http.ResponseWriter, _ *http.Request) {
+	if s.store == nil {
+		writeJSON(w, http.StatusOK, []any{})
+		return
+	}
+	aliases, err := s.store.LoadTacticalAliases()
+	if err != nil {
+		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
+		return
+	}
+	if aliases == nil {
+		aliases = []store.TacticalAlias{}
+	}
+	writeJSON(w, http.StatusOK, aliases)
+}
+
+func (s *Server) handleSetTacticalAlias(w http.ResponseWriter, r *http.Request) {
+	if s.store == nil {
+		writeJSON(w, http.StatusServiceUnavailable, map[string]string{"error": "store not available"})
+		return
+	}
+
+	callsign := chi.URLParam(r, "callsign")
+
+	var req struct {
+		Alias string `json:"alias"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid request body"})
+		return
+	}
+	if strings.TrimSpace(req.Alias) == "" {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "alias is required"})
+		return
+	}
+
+	alias := store.TacticalAlias{
+		Callsign:   strings.ToUpper(callsign),
+		Alias:      strings.TrimSpace(req.Alias),
+		AssignedBy: "ui",
+		UpdatedAt:  time.Now().UTC(),
+	}
+
+	if err := s.store.SaveTacticalAlias(alias); err != nil {
+		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
+		return
+	}
+
+	writeJSON(w, http.StatusOK, alias)
+
+	// Broadcast via WebSocket.
+	s.broadcastTactical("tactical_set", alias)
+
+	if s.actLogger != nil {
+		user, _ := UserFromContext(r.Context())
+		s.actLogger.Log(activity.Entry{
+			Timestamp: time.Now(),
+			UserID:    user.ID,
+			UserName:  user.Name,
+			Action:    "tactical_set",
+			Target:    alias.Callsign,
+			Details:   alias.Alias,
+		})
+	}
+}
+
+func (s *Server) handleDeleteTacticalAlias(w http.ResponseWriter, r *http.Request) {
+	if s.store == nil {
+		writeJSON(w, http.StatusServiceUnavailable, map[string]string{"error": "store not available"})
+		return
+	}
+
+	callsign := strings.ToUpper(chi.URLParam(r, "callsign"))
+
+	if err := s.store.DeleteTacticalAlias(callsign); err != nil {
+		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
+		return
+	}
+
+	writeJSON(w, http.StatusOK, map[string]string{"status": "deleted"})
+
+	// Broadcast via WebSocket.
+	s.broadcastTactical("tactical_removed", map[string]string{"callsign": callsign})
+
+	if s.actLogger != nil {
+		user, _ := UserFromContext(r.Context())
+		s.actLogger.Log(activity.Entry{
+			Timestamp: time.Now(),
+			UserID:    user.ID,
+			UserName:  user.Name,
+			Action:    "tactical_removed",
+			Target:    callsign,
 		})
 	}
 }

@@ -6,7 +6,8 @@
 	import { api } from '$lib/api';
 	import { stations } from '$lib/stores/stations';
 	import { conversations, loadMessages } from '$lib/stores/messages';
-	import { canOperate } from '$lib/stores/session';
+	import { canOperate, canPlot } from '$lib/stores/session';
+	import { getTacticalAlias, tacticalAliases } from '$lib/stores/tactical';
 	import { symbolInfo } from '$lib/symbols';
 	import { timeAgo, formatCoord, formatSpeed, formatAltitude, formatCourse, stationDisplayName } from '$lib/utils';
 	import type { Station } from '$lib/types';
@@ -29,6 +30,57 @@
 	let station = $state<Station | null>(null);
 	let loaded = $state(false);
 	let scrollEl: HTMLDivElement;
+
+	// Tactical alias state
+	let tacAlias = $derived($getTacticalAlias(stationKey));
+	let editingAlias = $state(false);
+	let aliasInput = $state('');
+
+	function startEditAlias() {
+		aliasInput = tacAlias ?? '';
+		editingAlias = true;
+	}
+
+	async function saveAlias() {
+		const val = aliasInput.trim();
+		editingAlias = false;
+		if (!val) {
+			// Delete alias if cleared
+			if (tacAlias) {
+				try {
+					await api.deleteTacticalAlias(stationKey);
+					tacticalAliases.update((m) => {
+						const next = new Map(m);
+						next.delete(stationKey);
+						return next;
+					});
+				} catch { /* ignore */ }
+			}
+			return;
+		}
+		try {
+			const result = await api.setTacticalAlias(stationKey, val);
+			tacticalAliases.update((m) => {
+				const next = new Map(m);
+				next.set(result.callsign, result);
+				return next;
+			});
+		} catch { /* ignore */ }
+	}
+
+	function cancelEditAlias() {
+		editingAlias = false;
+	}
+
+	function handleAliasKeydown(e: KeyboardEvent) {
+		if (e.key === 'Enter') saveAlias();
+		if (e.key === 'Escape') cancelEditAlias();
+	}
+
+	function autofocus(node: HTMLInputElement) {
+		node.focus();
+		node.select();
+	}
 
 	let convo = $derived($conversations.get(stationKey));
 	let messages = $derived(convo?.messages ?? []);
@@ -126,8 +178,35 @@
 		<div class="detail-header">
 			<APRSIcon symbol={station.symbol} size={36} />
 			<div class="header-text">
-				<span class="callsign">{displayName}</span>
-				{#if info}
+				{#if editingAlias}
+					<div class="alias-edit">
+						<input
+							type="text"
+							class="alias-input"
+							bind:value={aliasInput}
+							onkeydown={handleAliasKeydown}
+							onblur={saveAlias}
+							placeholder="Tactical alias..."
+							use:autofocus
+						/>
+					</div>
+				{:else if tacAlias}
+					<span class="tac-alias">
+						{tacAlias}
+						{#if $canPlot}
+							<button class="alias-edit-btn" onclick={startEditAlias} title="Edit tactical alias">&#9998;</button>
+						{/if}
+					</span>
+					<span class="callsign secondary">{displayName}</span>
+				{:else}
+					<span class="callsign">
+						{displayName}
+						{#if $canPlot}
+							<button class="alias-edit-btn" onclick={startEditAlias} title="Set tactical alias">&#9998;</button>
+						{/if}
+					</span>
+				{/if}
+				{#if info && !editingAlias}
 					<span class="symbol-label">{info.label}</span>
 				{/if}
 			</div>
@@ -428,5 +507,57 @@
 		font-size: 0.8rem;
 		font-style: italic;
 		border-top: 1px solid var(--color-primary);
+	}
+
+	.tac-alias {
+		font-weight: 600;
+		font-size: 1.1rem;
+		color: var(--color-accent);
+		display: flex;
+		align-items: center;
+		gap: 0.35rem;
+	}
+
+	.callsign.secondary {
+		font-size: 0.85rem;
+		color: var(--color-text-muted);
+		font-weight: 400;
+	}
+
+	.alias-edit-btn {
+		background: none;
+		border: none;
+		color: var(--color-text-muted);
+		cursor: pointer;
+		font-size: 0.85rem;
+		padding: 0 2px;
+		line-height: 1;
+		opacity: 0.5;
+		transition: opacity var(--duration-fast);
+	}
+
+	.alias-edit-btn:hover {
+		opacity: 1;
+		color: var(--color-accent);
+	}
+
+	.alias-edit {
+		display: flex;
+		align-items: center;
+		gap: 0.25rem;
+	}
+
+	.alias-input {
+		padding: 0.2rem 0.4rem;
+		background: var(--color-surface);
+		border: 1px solid var(--color-accent);
+		border-radius: var(--radius-sm);
+		color: var(--color-text);
+		font-size: 0.95rem;
+		font-family: monospace;
+		font-weight: 600;
+		outline: none;
+		width: 100%;
+		max-width: 180px;
 	}
 </style>

@@ -131,6 +131,53 @@ transports:
 	}
 }
 
+func TestLoadConfigWithTacticalAliases(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "tac.yaml")
+
+	yaml := `
+server:
+  listen: ":9090"
+station:
+  callsign: "N0CALL"
+  tactical_aliases:
+    W4ABC-9: SHELTER-1
+    N5XYZ: NET-CTRL
+    KD0ABC-5: EOC
+`
+	if err := os.WriteFile(path, []byte(yaml), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	cfg, err := Load(path)
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+
+	if cfg.Station.TacticalAliases == nil {
+		t.Fatal("TacticalAliases should not be nil")
+	}
+	if len(cfg.Station.TacticalAliases) != 3 {
+		t.Fatalf("expected 3 aliases, got %d", len(cfg.Station.TacticalAliases))
+	}
+	if cfg.Station.TacticalAliases["W4ABC-9"] != "SHELTER-1" {
+		t.Errorf("W4ABC-9 alias: got %q, want SHELTER-1", cfg.Station.TacticalAliases["W4ABC-9"])
+	}
+	if cfg.Station.TacticalAliases["N5XYZ"] != "NET-CTRL" {
+		t.Errorf("N5XYZ alias: got %q, want NET-CTRL", cfg.Station.TacticalAliases["N5XYZ"])
+	}
+	if cfg.Station.TacticalAliases["KD0ABC-5"] != "EOC" {
+		t.Errorf("KD0ABC-5 alias: got %q, want EOC", cfg.Station.TacticalAliases["KD0ABC-5"])
+	}
+}
+
+func TestDefaultConfigNilTacticalAliases(t *testing.T) {
+	cfg := DefaultConfig()
+	if cfg.Station.TacticalAliases != nil {
+		t.Errorf("expected nil TacticalAliases in default config, got %v", cfg.Station.TacticalAliases)
+	}
+}
+
 func TestEnvOverrides(t *testing.T) {
 	dir := t.TempDir()
 	path := filepath.Join(dir, "test.yaml")

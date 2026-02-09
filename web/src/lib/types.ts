@@ -209,6 +209,13 @@ export interface NetEvent {
 	createdAt: string;
 }
 
+export interface TacticalAlias {
+	callsign: string;
+	alias: string;
+	assignedBy: string;
+	updatedAt: string;
+}
+
 export interface NetSummary {
 	netId: string;
 	name: string;

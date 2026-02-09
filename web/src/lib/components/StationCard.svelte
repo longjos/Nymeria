@@ -3,6 +3,7 @@
 	import APRSIcon from './APRSIcon.svelte';
 	import { timeAgo, stationDisplayName, stationKey, formatCoord, formatSpeed } from '$lib/utils';
 	import { symbolInfo } from '$lib/symbols';
+	import { getTacticalAlias } from '$lib/stores/tactical';
 
 	let {
 		station,
@@ -18,6 +19,7 @@
 
 	let key = $derived(stationKey(station));
 	let displayName = $derived(stationDisplayName(station.callsign, station.ssid));
+	let tacAlias = $derived($getTacticalAlias(key));
 	let info = $derived(symbolInfo(station.symbol));
 	let coords = $derived(
 		station.position ? formatCoord(station.position.lat, station.position.lon) : ''
@@ -32,7 +34,11 @@
 		</div>
 		<div class="card-body">
 			<div class="card-header">
-				<span class="callsign">{displayName}</span>
+				{#if tacAlias}
+					<span class="callsign"><span class="tac-alias">{tacAlias}</span> <span class="tac-callsign">{displayName}</span></span>
+				{:else}
+					<span class="callsign">{displayName}</span>
+				{/if}
 				<span class="time">{timeAgo(station.lastHeard)}</span>
 			</div>
 			{#if !compact}
@@ -58,7 +64,11 @@
 		</div>
 		<div class="card-body">
 			<div class="card-header">
-				<span class="callsign">{displayName}</span>
+				{#if tacAlias}
+					<span class="callsign"><span class="tac-alias">{tacAlias}</span> <span class="tac-callsign">{displayName}</span></span>
+				{:else}
+					<span class="callsign">{displayName}</span>
+				{/if}
 				<span class="time">{timeAgo(station.lastHeard)}</span>
 			</div>
 			{#if !compact}
@@ -130,6 +140,16 @@
 		font-weight: 600;
 		font-size: 0.95rem;
 		font-family: monospace;
+	}
+
+	.tac-alias {
+		color: var(--color-accent);
+	}
+
+	.tac-callsign {
+		font-size: 0.8rem;
+		color: var(--color-text-muted);
+		font-weight: 400;
 	}
 
 	.time {

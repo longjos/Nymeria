@@ -3,6 +3,8 @@
 	import type { Station, Annotation, NetCheckIn, NetMission } from '$lib/types';
 	import { symbolInfo, symbolChar } from '$lib/symbols';
 	import { stationDisplayName } from '$lib/utils';
+	import { getTacticalAlias } from '$lib/stores/tactical';
+	import { get } from 'svelte/store';
 	import L from 'leaflet';
 
 	const DEFAULT_ANN_COLOR = '#e63946';
@@ -661,7 +663,9 @@
 
 			const info = symbolInfo(st.symbol);
 			const char = symbolChar(st.symbol);
-			const name = stationDisplayName(st.callsign, st.ssid);
+			const baseName = stationDisplayName(st.callsign, st.ssid);
+			const tacAlias = get(getTacticalAlias)(key);
+			const name = tacAlias ? `${tacAlias} (${baseName})` : baseName;
 			const isSelected = key === selectedCallsign;
 
 			// Update or create marker
@@ -674,6 +678,13 @@
 					weight: isSelected ? 3 : 1,
 					color: isSelected ? '#fff' : info.color,
 					fillOpacity: isSelected ? 1 : 0.9,
+				});
+				// Update tooltip in case tactical alias changed
+				marker.unbindTooltip();
+				marker.bindTooltip(name, {
+					permanent: false,
+					direction: 'top',
+					className: 'station-tooltip',
 				});
 			} else {
 				marker = L.circleMarker([st.position.lat, st.position.lon], {

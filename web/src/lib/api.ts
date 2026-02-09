@@ -1,7 +1,7 @@
 import type {
 	Station, Message, Conversation, HealthResponse, TransportStatus,
 	SessionUser, PublicUser, ConfigResponse, Annotation, ActivityResponse,
-	Net, NetCheckIn, NetMission, NetNote, NetEvent, NetSummary
+	Net, NetCheckIn, NetMission, NetNote, NetEvent, NetSummary, TacticalAlias
 } from './types';
 
 const BASE = '/api';
@@ -150,5 +150,12 @@ export const api = {
 		post<NetCheckIn>(`/nets/${netId}/checkin/${ciId}/devices`, { callsign }),
 	removeTrackedStation: (netId: string, ciId: string, callsign: string) =>
 		del<NetCheckIn>(`/nets/${netId}/checkin/${ciId}/devices/${encodeURIComponent(callsign)}`),
-	rosterExportUrl: (netId: string) => `${BASE}/nets/${netId}/roster/export`
+	rosterExportUrl: (netId: string) => `${BASE}/nets/${netId}/roster/export`,
+
+	// Tactical Aliases
+	tacticalAliases: () => get<TacticalAlias[]>('/tactical'),
+	setTacticalAlias: (callsign: string, alias: string) =>
+		put<TacticalAlias>(`/tactical/${encodeURIComponent(callsign)}`, { alias }),
+	deleteTacticalAlias: (callsign: string) =>
+		del<{ status: string }>(`/tactical/${encodeURIComponent(callsign)}`)
 };

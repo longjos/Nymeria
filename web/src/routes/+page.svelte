@@ -25,6 +25,7 @@
 		activeNet, operatorsWithPosition, missionsWithPosition, assignmentLines,
 		opsView
 	} from '$lib/stores/netcontrol';
+	import { initTacticalStore } from '$lib/stores/tactical';
 	import { isLoggedIn, initSession } from '$lib/stores/session';
 	import {
 		selectedStation, panelMode, detailTab, searchOpen, sheetState,
@@ -62,6 +63,7 @@
 			initTransportStore();
 			initAnnotationStore();
 			initNetControlStore();
+			initTacticalStore();
 		}
 	});
 

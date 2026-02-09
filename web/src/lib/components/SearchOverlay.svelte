@@ -1,6 +1,7 @@
 <script lang="ts">
 	import { stationList } from '$lib/stores/stations';
 	import { stationKey as getStationKey } from '$lib/utils';
+	import { getTacticalAlias } from '$lib/stores/tactical';
 
 	let {
 		onClose,
@@ -16,8 +17,13 @@
 	let results = $derived.by(() => {
 		if (!query) return $stationList.slice(0, 20);
 		const q = query.toUpperCase();
+		const lookup = $getTacticalAlias;
 		return $stationList
-			.filter((s) => s.callsign.includes(q) || (s.comment ?? '').toUpperCase().includes(q))
+			.filter((s) =>
+				s.callsign.includes(q) ||
+				(s.comment ?? '').toUpperCase().includes(q) ||
+				(lookup(getStationKey(s)) ?? '').toUpperCase().includes(q)
+			)
 			.slice(0, 20);
 	});
 
@@ -51,8 +57,13 @@
 	<div class="search-results">
 		{#each results as station (station.callsign + '-' + station.ssid)}
 			{@const key = getStationKey(station)}
+			{@const alias = $getTacticalAlias(key)}
 			<button class="result-row" onclick={() => handleSelect(key)}>
-				<span class="result-call">{station.ssid > 0 ? `${station.callsign}-${station.ssid}` : station.callsign}</span>
+				{#if alias}
+					<span class="result-call"><span class="result-alias">{alias}</span> <span class="result-secondary">{station.ssid > 0 ? `${station.callsign}-${station.ssid}` : station.callsign}</span></span>
+				{:else}
+					<span class="result-call">{station.ssid > 0 ? `${station.callsign}-${station.ssid}` : station.callsign}</span>
+				{/if}
 				{#if station.comment}
 					<span class="result-comment">{station.comment}</span>
 				{/if}
@@ -132,6 +143,16 @@
 		font-family: monospace;
 		font-weight: 600;
 		font-size: 0.95rem;
+	}
+
+	.result-alias {
+		color: var(--color-accent);
+	}
+
+	.result-secondary {
+		font-size: 0.8rem;
+		color: var(--color-text-muted);
+		font-weight: 400;
 	}
 
 	.result-comment {
