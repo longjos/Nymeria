@@ -48,7 +48,7 @@
 	.side-panel {
 		position: fixed;
 		top: 0;
-		right: 0;
+		right: var(--rail-width);
 		bottom: 0;
 		width: var(--panel-width);
 		background: var(--color-bg);
