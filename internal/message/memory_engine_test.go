@@ -480,6 +480,199 @@ func TestInboundWithoutMsgNoUniqueIDs(t *testing.T) {
 	}
 }
 
+func TestBulletins_GroupedBySenderAndID(t *testing.T) {
+	eng, _ := newTestEngine()
+	defer eng.Close()
+
+	parser := aprs.NewParser()
+
+	// Two different senders to the same bulletin ID
+	frames := []aprs.APRSFrame{
+		{Source: aprs.Address{Call: "W3ADO"}, Destination: aprs.Address{Call: "APRS"}, Payload: ":BLN3     :Weather alert for area"},
+		{Source: aprs.Address{Call: "KJ4ERJ"}, Destination: aprs.Address{Call: "APRS"}, Payload: ":BLN3     :Another weather alert"},
+	}
+	for _, f := range frames {
+		pkt, _ := parser.Parse(f)
+		eng.HandlePacket(pkt)
+	}
+
+	bulletins := eng.Bulletins()
+	if len(bulletins) != 2 {
+		t.Fatalf("got %d bulletins, want 2", len(bulletins))
+	}
+
+	// Both should be BLN3
+	for _, b := range bulletins {
+		if b.BulletinID != "BLN3" {
+			t.Errorf("bulletinId = %q, want BLN3", b.BulletinID)
+		}
+	}
+}
+
+func TestBulletins_LatestReplacesOlder(t *testing.T) {
+	eng, _ := newTestEngine()
+	defer eng.Close()
+
+	parser := aprs.NewParser()
+
+	// Same sender, same BLN — the latest should replace the earlier one
+	pkt1Frame := aprs.APRSFrame{
+		Source: aprs.Address{Call: "W3ADO"}, Destination: aprs.Address{Call: "APRS"},
+		Payload: ":BLN3     :Old weather alert",
+	}
+	pkt1, _ := parser.Parse(pkt1Frame)
+	eng.HandlePacket(pkt1)
+
+	// Small delay so timestamps differ
+	time.Sleep(2 * time.Millisecond)
+
+	pkt2Frame := aprs.APRSFrame{
+		Source: aprs.Address{Call: "W3ADO"}, Destination: aprs.Address{Call: "APRS"},
+		Payload: ":BLN3     :Updated weather alert",
+	}
+	pkt2, _ := parser.Parse(pkt2Frame)
+	eng.HandlePacket(pkt2)
+
+	bulletins := eng.Bulletins()
+	if len(bulletins) != 1 {
+		t.Fatalf("got %d bulletins, want 1 (latest replaces older)", len(bulletins))
+	}
+	if bulletins[0].Body != "Updated weather alert" {
+		t.Errorf("body = %q, want Updated weather alert", bulletins[0].Body)
+	}
+}
+
+func TestBulletins_Announcements(t *testing.T) {
+	eng, _ := newTestEngine()
+	defer eng.Close()
+
+	parser := aprs.NewParser()
+
+	frame := aprs.APRSFrame{
+		Source: aprs.Address{Call: "KG4YFA"}, Destination: aprs.Address{Call: "APRS"},
+		Payload: ":ANN      :Club meeting Friday",
+	}
+	pkt, _ := parser.Parse(frame)
+	eng.HandlePacket(pkt)
+
+	bulletins := eng.Bulletins()
+	if len(bulletins) != 1 {
+		t.Fatalf("got %d bulletins, want 1", len(bulletins))
+	}
+	if !bulletins[0].IsAnnouncement {
+		t.Error("expected announcement, got regular bulletin")
+	}
+	if bulletins[0].BulletinID != "ANN" {
+		t.Errorf("bulletinId = %q, want ANN", bulletins[0].BulletinID)
+	}
+}
+
+func TestBulletins_SortedByNumber(t *testing.T) {
+	eng, _ := newTestEngine()
+	defer eng.Close()
+
+	parser := aprs.NewParser()
+
+	// Add bulletins in non-sorted order
+	frames := []aprs.APRSFrame{
+		{Source: aprs.Address{Call: "W3ADO"}, Destination: aprs.Address{Call: "APRS"}, Payload: ":BLN5     :Bulletin five"},
+		{Source: aprs.Address{Call: "W3ADO"}, Destination: aprs.Address{Call: "APRS"}, Payload: ":BLN1     :Bulletin one"},
+		{Source: aprs.Address{Call: "W3ADO"}, Destination: aprs.Address{Call: "APRS"}, Payload: ":BLN9     :Bulletin nine"},
+	}
+	for _, f := range frames {
+		pkt, _ := parser.Parse(f)
+		eng.HandlePacket(pkt)
+	}
+
+	bulletins := eng.Bulletins()
+	if len(bulletins) != 3 {
+		t.Fatalf("got %d bulletins, want 3", len(bulletins))
+	}
+
+	expected := []string{"BLN1", "BLN5", "BLN9"}
+	for i, b := range bulletins {
+		if b.BulletinID != expected[i] {
+			t.Errorf("bulletins[%d].bulletinId = %q, want %q", i, b.BulletinID, expected[i])
+		}
+	}
+}
+
+func TestBulletins_ExcludedFromConversations(t *testing.T) {
+	eng, _ := newTestEngine()
+	defer eng.Close()
+
+	parser := aprs.NewParser()
+
+	// One DM and one bulletin
+	dmFrame := aprs.APRSFrame{
+		Source: aprs.Address{Call: "W3ADO"}, Destination: aprs.Address{Call: "N0CALL"},
+		Payload: ":N0CALL   :Hello there",
+	}
+	blnFrame := aprs.APRSFrame{
+		Source: aprs.Address{Call: "KJ4ERJ"}, Destination: aprs.Address{Call: "APRS"},
+		Payload: ":BLN3     :Weather alert",
+	}
+
+	pkt1, _ := parser.Parse(dmFrame)
+	pkt2, _ := parser.Parse(blnFrame)
+	eng.HandlePacket(pkt1)
+	eng.HandlePacket(pkt2)
+
+	convos := eng.Conversations()
+	if len(convos) != 1 {
+		t.Fatalf("got %d conversations, want 1 (bulletins excluded)", len(convos))
+	}
+	if convos[0].Callsign != "W3ADO" {
+		t.Errorf("conversation callsign = %q, want W3ADO", convos[0].Callsign)
+	}
+
+	// Bulletins should still be available
+	bulletins := eng.Bulletins()
+	if len(bulletins) != 1 {
+		t.Fatalf("got %d bulletins, want 1", len(bulletins))
+	}
+}
+
+func TestImport_BulletinKeying(t *testing.T) {
+	eng, _ := newTestEngine()
+	defer eng.Close()
+
+	now := time.Now()
+	msgs := []Message{
+		{ID: "b1", From: "W3ADO", To: "BLN3", Body: "Weather alert", MsgNo: "1", State: StateAcked, Inbound: true, Timestamp: now},
+		{ID: "b2", From: "KJ4ERJ", To: "BLN3", Body: "Another alert", MsgNo: "2", State: StateAcked, Inbound: true, Timestamp: now},
+		{ID: "d1", From: "W3ADO", To: "N0CALL", Body: "Hello", MsgNo: "3", State: StateAcked, Inbound: true, Timestamp: now},
+	}
+
+	eng.Import(msgs)
+
+	// Bulletins should be keyed by "BLN3" (the To field), not by sender
+	blnMsgs := eng.Messages("BLN3")
+	if len(blnMsgs) != 2 {
+		t.Fatalf("BLN3 messages = %d, want 2", len(blnMsgs))
+	}
+
+	// DM should still be keyed by sender
+	dmMsgs := eng.Messages("W3ADO")
+	if len(dmMsgs) != 1 {
+		t.Fatalf("W3ADO messages = %d, want 1", len(dmMsgs))
+	}
+
+	// Bulletins should be available via Bulletins()
+	bulletins := eng.Bulletins()
+	if len(bulletins) != 2 {
+		t.Fatalf("got %d bulletins, want 2", len(bulletins))
+	}
+
+	// Conversations should NOT include bulletins
+	convos := eng.Conversations()
+	for _, c := range convos {
+		if strings.HasPrefix(c.Callsign, "BLN") || strings.HasPrefix(c.Callsign, "ANN") {
+			t.Errorf("bulletin %q should not appear in Conversations()", c.Callsign)
+		}
+	}
+}
+
 func TestImport(t *testing.T) {
 	eng, _ := newTestEngine()
 	defer eng.Close()

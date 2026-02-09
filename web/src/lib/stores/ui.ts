@@ -1,6 +1,6 @@
 import { writable, get } from 'svelte/store';
 
-export type PanelMode = 'closed' | 'stations' | 'detail' | 'messages' | 'convo' | 'transports' | 'activity' | 'annotations' | 'netcontrol';
+export type PanelMode = 'closed' | 'stations' | 'detail' | 'messages' | 'convo' | 'transports' | 'activity' | 'annotations' | 'netcontrol' | 'bulletins';
 export type DetailTab = 'info' | 'messages' | 'track';
 export type SheetState = 'peek' | 'half' | 'full';
 export type ConnectionState = 'connected' | 'disconnected' | 'reconnecting';
@@ -68,6 +68,12 @@ export function openNetControl(): void {
 	sheetState.set('half');
 }
 
+export function openBulletins(): void {
+	panelMode.set('bulletins');
+	selectedStation.set(null);
+	sheetState.set('half');
+}
+
 /** Toggle a panel: if it's already open, close it; otherwise open it. */
 export function togglePanel(mode: PanelMode): void {
 	if (get(panelMode) === mode) {
@@ -80,6 +86,7 @@ export function togglePanel(mode: PanelMode): void {
 			case 'activity': openActivity(); break;
 			case 'annotations': openAnnotations(); break;
 			case 'netcontrol': openNetControl(); break;
+			case 'bulletins': openBulletins(); break;
 			default: closePanel();
 		}
 	}
