@@ -8,21 +8,23 @@ import (
 	"net/http"
 	"os"
 	"os/signal"
+	"path/filepath"
 	"syscall"
 	"time"
 
 	"github.com/narvel/nymeria/internal/activity"
 	"github.com/narvel/nymeria/internal/annotation"
 	"github.com/narvel/nymeria/internal/aprs"
-	"github.com/narvel/nymeria/internal/netcontrol"
 	"github.com/narvel/nymeria/internal/beacon"
 	"github.com/narvel/nymeria/internal/config"
 	"github.com/narvel/nymeria/internal/message"
+	"github.com/narvel/nymeria/internal/netcontrol"
 	"github.com/narvel/nymeria/internal/object"
 	"github.com/narvel/nymeria/internal/server"
 	"github.com/narvel/nymeria/internal/session"
 	"github.com/narvel/nymeria/internal/station"
 	"github.com/narvel/nymeria/internal/store"
+	"github.com/narvel/nymeria/internal/tilecache"
 	"github.com/narvel/nymeria/internal/transport"
 	"github.com/narvel/nymeria/internal/transport/aprsis"
 	"github.com/narvel/nymeria/internal/transport/kisstcp"
@@ -209,13 +211,33 @@ func main() {
 		log.Printf("warning: failed to load nets: %v", err)
 	}
 
+	// Initialize tile cache
+	var tc *tilecache.Cache
+	if cfg.TileCache.Enabled {
+		dataDir := cfg.TileCache.DataDir
+		if dataDir == "" {
+			dataDir = filepath.Join(filepath.Dir(cfg.Store.Path), "tiles")
+		}
+		var err error
+		tc, err = tilecache.New(tilecache.Config{
+			DataDir: dataDir,
+			TileURL: cfg.TileCache.TileURL,
+			MaxZoom: cfg.TileCache.MaxZoom,
+		})
+		if err != nil {
+			log.Printf("warning: tile cache init failed: %v", err)
+		} else {
+			log.Printf("tile cache enabled (dir: %s, max zoom: %d)", dataDir, cfg.TileCache.MaxZoom)
+		}
+	}
+
 	// Override listen address if provided
 	if *listenAddr != "" {
 		cfg.Server.Listen = *listenAddr
 	}
 
 	// Create and start server
-	srv := server.New(tracker, tm, msgEngine, db,
+	serverOpts := []server.Option{
 		server.WithBeaconManager(bcn),
 		server.WithObjectManager(objMgr),
 		server.WithSessionManager(sessMgr),
@@ -223,7 +245,11 @@ func main() {
 		server.WithAnnotationManager(annMgr),
 		server.WithNetControlManager(netMgr),
 		server.WithStationConfig(cfg.Station),
-	)
+	}
+	if tc != nil {
+		serverOpts = append(serverOpts, server.WithTileCache(tc))
+	}
+	srv := server.New(tracker, tm, msgEngine, db, serverOpts...)
 
 	// Frame processing loop: parse frames → tracker + message engine + object manager + tactical
 	go func() {
