@@ -267,3 +267,41 @@ export interface NetSummary {
 	totalMissions: number;
 	trafficCounts: Record<string, number>;
 }
+
+// --- ICS-309 ---
+
+export interface ICS309Header {
+	incidentName: string;
+	dateFrom: string;
+	dateTo: string;
+	operatorName: string;
+	stationId: string;
+}
+
+export interface ICS309Row {
+	dateTime: string;
+	from: string;
+	to: string;
+	subject: string;
+	method: string;
+}
+
+export interface ICS309Report {
+	header: ICS309Header;
+	rows: ICS309Row[];
+}
+
+// --- Tile Cache ---
+
+export interface TileCacheStatus {
+	enabled: boolean;
+	tileCount: number;
+	diskUsage: number;
+	maxZoom?: number;
+}
+
+export interface TilePreloadProgress {
+	done: number;
+	total: number;
+	skipped: number;
+}

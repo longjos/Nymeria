@@ -2,6 +2,7 @@
 	import { onMount } from 'svelte';
 	import { api } from '$lib/api';
 	import { timeAgo } from '$lib/utils';
+	import { openICS309 } from '$lib/stores/ui';
 	import type { Net, NetCheckIn, NetMission, NetEvent, OperatorStatus, TrafficType } from '$lib/types';
 	import {
 		activeNet, checkIns, missions, timeline,
@@ -546,6 +547,12 @@
 				<button class="action-btn" onclick={handleRollCall} title="Roll Call">
 					<svg width="14" height="14" viewBox="0 0 16 16" fill="none">
 						<path d="M1 8h3l2-5 3 10 2-5h4" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/>
+					</svg>
+				</button>
+				<button class="action-btn" onclick={() => openICS309($activeNet?.id)} title="ICS-309 Log">
+					<svg width="14" height="14" viewBox="0 0 16 16" fill="none">
+						<path d="M4 2h8a1 1 0 0 1 1 1v10a1 1 0 0 1-1 1H4a1 1 0 0 1-1-1V3a1 1 0 0 1 1-1z" stroke="currentColor" stroke-width="1.5"/>
+						<path d="M6 5h4M6 8h4M6 11h2" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/>
 					</svg>
 				</button>
 				<button class="action-btn danger" onclick={handleCloseNet} title="Close Net">
