@@ -14,6 +14,7 @@ import (
 	"github.com/narvel/nymeria/internal/activity"
 	"github.com/narvel/nymeria/internal/annotation"
 	"github.com/narvel/nymeria/internal/aprs"
+	"github.com/narvel/nymeria/internal/netcontrol"
 	"github.com/narvel/nymeria/internal/beacon"
 	"github.com/narvel/nymeria/internal/config"
 	"github.com/narvel/nymeria/internal/message"
@@ -223,6 +224,12 @@ func main() {
 		log.Printf("warning: failed to load annotations: %v", err)
 	}
 
+	// Create net control manager
+	netMgr := netcontrol.NewManager(db, tracker)
+	if err := netMgr.Load(); err != nil {
+		log.Printf("warning: failed to load nets: %v", err)
+	}
+
 	// Override listen address if provided
 	if *listenAddr != "" {
 		cfg.Server.Listen = *listenAddr
@@ -235,6 +242,7 @@ func main() {
 		server.WithSessionManager(sessMgr),
 		server.WithActivityLogger(actLogger),
 		server.WithAnnotationManager(annMgr),
+		server.WithNetControlManager(netMgr),
 	)
 
 	httpSrv := &http.Server{

@@ -11,6 +11,7 @@
 	import TransportPanel from '$lib/components/TransportPanel.svelte';
 	import ActivityPanel from '$lib/components/ActivityPanel.svelte';
 	import AnnotationPanel from '$lib/components/AnnotationPanel.svelte';
+	import NetControlPanel from '$lib/components/NetControlPanel.svelte';
 	import ConnectionStatus from '$lib/components/ConnectionStatus.svelte';
 	import SearchOverlay from '$lib/components/SearchOverlay.svelte';
 	import LoginOverlay from '$lib/components/LoginOverlay.svelte';
@@ -18,10 +19,11 @@
 	import { initMessageStore, conversationList } from '$lib/stores/messages';
 	import { initTransportStore } from '$lib/stores/transports';
 	import { annotationList, initAnnotationStore } from '$lib/stores/annotations';
+	import { initNetControlStore } from '$lib/stores/netcontrol';
 	import { isLoggedIn, initSession } from '$lib/stores/session';
 	import {
 		selectedStation, panelMode, detailTab, searchOpen, sheetState,
-		selectStation, closePanel, openStationList, openMessages, openConversation, openTransports, openActivity, openAnnotations
+		selectStation, closePanel, openStationList, openMessages, openConversation, openTransports, openActivity, openAnnotations, openNetControl
 	} from '$lib/stores/ui';
 	import type { SheetState, DetailTab } from '$lib/stores/ui';
 	import type { Annotation } from '$lib/types';
@@ -52,6 +54,7 @@
 			initMessageStore();
 			initTransportStore();
 			initAnnotationStore();
+			initNetControlStore();
 		}
 	});
 
@@ -197,6 +200,7 @@
 		onTransportsOpen={openTransports}
 		onActivityOpen={openActivity}
 		onAnnotationsOpen={openAnnotations}
+		onNetControlOpen={openNetControl}
 		onSelectStation={handleSearchSelect}
 	/>
 
@@ -245,6 +249,8 @@
 					onStartEdit={handleStartEdit}
 					onStopEdit={handleStopEdit}
 				/>
+			{:else if $panelMode === 'netcontrol'}
+				<NetControlPanel />
 			{/if}
 		</SidePanel>
 	{/if}
@@ -300,6 +306,8 @@
 					onStartEdit={handleStartEdit}
 					onStopEdit={handleStopEdit}
 				/>
+			{:else if $panelMode === 'netcontrol'}
+				<NetControlPanel />
 			{/if}
 		</BottomSheet>
 	{/if}

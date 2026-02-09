@@ -1,6 +1,7 @@
 import type {
 	Station, Message, Conversation, HealthResponse, TransportStatus,
-	SessionUser, PublicUser, ConfigResponse, Annotation, ActivityResponse
+	SessionUser, PublicUser, ConfigResponse, Annotation, ActivityResponse,
+	Net, NetCheckIn, NetMission, NetNote, NetEvent, NetSummary
 } from './types';
 
 const BASE = '/api';
@@ -121,5 +122,24 @@ export const api = {
 	activityExportUrl: (params?: Record<string, string>) => {
 		const qs = params ? '?' + new URLSearchParams(params).toString() : '';
 		return `${BASE}/activity/export${qs}`;
-	}
+	},
+
+	// Net Control
+	nets: () => get<Net[]>('/nets'),
+	net: (id: string) => get<{ net: Net; checkIns: NetCheckIn[]; missions: NetMission[] }>(`/nets/${id}`),
+	createNet: (data: Partial<Net>) => post<Net>('/nets', data),
+	openNet: (id: string) => post<Net>(`/nets/${id}/open`, {}),
+	closeNet: (id: string) => post<{ net: Net; summary: NetSummary }>(`/nets/${id}/close`, {}),
+	transferNCS: (id: string, callsign: string, userId: string) => post<Net>(`/nets/${id}/transfer`, { callsign, userId }),
+	checkIn: (netId: string, callsign: string, traffic?: string) => post<NetCheckIn>(`/nets/${netId}/checkin`, { callsign, traffic }),
+	updateCheckIn: (netId: string, ciId: string, data: Partial<NetCheckIn>) => put<NetCheckIn>(`/nets/${netId}/checkin/${ciId}`, data),
+	checkOut: (netId: string, ciId: string) => post<{ status: string }>(`/nets/${netId}/checkout/${ciId}`, {}),
+	createMission: (netId: string, data: Partial<NetMission>) => post<NetMission>(`/nets/${netId}/missions`, data),
+	updateMission: (netId: string, mId: string, data: Partial<NetMission>) => put<NetMission>(`/nets/${netId}/missions/${mId}`, data),
+	addNetNote: (netId: string, data: { checkInId?: string; content: string }) => post<NetNote>(`/nets/${netId}/notes`, data),
+	netEvents: (netId: string) => get<NetEvent[]>(`/nets/${netId}/events`),
+	netNotes: (netId: string) => get<NetNote[]>(`/nets/${netId}/notes`),
+	initiateRollCall: (netId: string) => post<{ status: string }>(`/nets/${netId}/rollcall`, {}),
+	recordRollCallResponse: (netId: string, ciId: string) => post<{ status: string }>(`/nets/${netId}/rollcall/${ciId}`, {}),
+	searchOperators: (q: string) => get<Station[]>(`/nets/search?q=${encodeURIComponent(q)}`)
 };

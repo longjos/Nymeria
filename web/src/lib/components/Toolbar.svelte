@@ -4,6 +4,8 @@
 	import ConnectionStatus from './ConnectionStatus.svelte';
 	import UserMenu from './UserMenu.svelte';
 
+	import { activeNet, activeCheckIns } from '$lib/stores/netcontrol';
+
 	let {
 		unreadCount = 0,
 		onSearchOpen,
@@ -12,6 +14,7 @@
 		onTransportsOpen,
 		onActivityOpen,
 		onAnnotationsOpen,
+		onNetControlOpen,
 		onSelectStation
 	}: {
 		unreadCount?: number;
@@ -21,8 +24,12 @@
 		onTransportsOpen?: () => void;
 		onActivityOpen?: () => void;
 		onAnnotationsOpen?: () => void;
+		onNetControlOpen?: () => void;
 		onSelectStation?: (key: string) => void;
 	} = $props();
+
+	let netActive = $derived($activeNet?.status === 'open');
+	let netOpCount = $derived($activeCheckIns.length);
 
 	let searchFocused = $state(false);
 	let searchQuery = $state('');
@@ -112,6 +119,15 @@
 		</svg>
 	</button>
 
+	<button class="toolbar-btn" class:net-active={netActive} onclick={onNetControlOpen} title="Net Control">
+		<svg width="14" height="14" viewBox="0 0 16 16" fill="none">
+			<path d="M8 1v4M4.5 3L6 6M11.5 3L10 6M8 6v5M5 11h6M3 14h10" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/>
+		</svg>
+		{#if netActive}
+			<span class="net-indicator">{netOpCount}</span>
+		{/if}
+	</button>
+
 	<ConnectionStatus />
 	<UserMenu />
 </div>
@@ -142,6 +158,14 @@
 		<svg width="18" height="18" viewBox="0 0 16 16" fill="none">
 			<path d="M8 1a5 5 0 00-5 5c0 4 5 9 5 9s5-5 5-9a5 5 0 00-5-5zm0 7a2 2 0 110-4 2 2 0 010 4z" stroke="currentColor" stroke-width="1.2" fill="none" stroke-linecap="round" stroke-linejoin="round"/>
 		</svg>
+	</button>
+	<button class="fab" class:net-active={netActive} onclick={onNetControlOpen} title="Net Control">
+		<svg width="18" height="18" viewBox="0 0 16 16" fill="none">
+			<path d="M8 1v4M4.5 3L6 6M11.5 3L10 6M8 6v5M5 11h6M3 14h10" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/>
+		</svg>
+		{#if netActive}
+			<span class="fab-badge">{netOpCount}</span>
+		{/if}
 	</button>
 </div>
 
@@ -266,6 +290,20 @@
 		color: var(--color-text);
 	}
 
+	.toolbar-btn.net-active {
+		border-color: #22c55e;
+		color: #22c55e;
+	}
+
+	.net-indicator {
+		background: #22c55e;
+		color: #000;
+		font-size: 0.6rem;
+		font-weight: 700;
+		padding: 1px 5px;
+		border-radius: 10px;
+	}
+
 	.unread-badge {
 		background: var(--color-accent);
 		color: white;
@@ -300,6 +338,11 @@
 		cursor: pointer;
 		box-shadow: var(--shadow-md);
 		position: relative;
+	}
+
+	.fab.net-active {
+		border-color: #22c55e;
+		color: #22c55e;
 	}
 
 	.fab-badge {

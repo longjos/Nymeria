@@ -13,7 +13,7 @@ import (
 	_ "modernc.org/sqlite"
 )
 
-const currentSchemaVersion = 2
+const currentSchemaVersion = 3
 
 // SQLiteStore implements Store using modernc.org/sqlite.
 type SQLiteStore struct {
@@ -72,6 +72,12 @@ func (s *SQLiteStore) migrate() error {
 
 	if version < 2 {
 		if err := s.migrateV2(); err != nil {
+			return err
+		}
+	}
+
+	if version < 3 {
+		if err := s.migrateV3(); err != nil {
 			return err
 		}
 	}
@@ -663,6 +669,483 @@ func parseTime(s string) (time.Time, error) {
 		}
 	}
 	return time.Time{}, fmt.Errorf("unrecognized time format: %s", s)
+}
+
+func (s *SQLiteStore) migrateV3() error {
+	ddl := `
+CREATE TABLE IF NOT EXISTS nets (
+    id TEXT PRIMARY KEY,
+    name TEXT NOT NULL,
+    type TEXT NOT NULL DEFAULT 'tactical',
+    frequency TEXT NOT NULL DEFAULT '',
+    ncs_callsign TEXT NOT NULL DEFAULT '',
+    ncs_user_id TEXT NOT NULL DEFAULT '',
+    status TEXT NOT NULL DEFAULT 'draft',
+    opened_at DATETIME,
+    closed_at DATETIME,
+    notes TEXT NOT NULL DEFAULT ''
+);
+
+CREATE TABLE IF NOT EXISTS net_check_ins (
+    id TEXT PRIMARY KEY,
+    net_id TEXT NOT NULL REFERENCES nets(id),
+    callsign TEXT NOT NULL,
+    tactical_call TEXT NOT NULL DEFAULT '',
+    operator_name TEXT NOT NULL DEFAULT '',
+    status TEXT NOT NULL DEFAULT 'available',
+    traffic TEXT NOT NULL DEFAULT 'none',
+    location TEXT NOT NULL DEFAULT '',
+    lat REAL,
+    lon REAL,
+    assignment TEXT NOT NULL DEFAULT '',
+    assignment_lat REAL,
+    assignment_lon REAL,
+    checked_in_at DATETIME NOT NULL,
+    checked_out_at DATETIME,
+    last_heard DATETIME NOT NULL,
+    missed_roll_calls INTEGER NOT NULL DEFAULT 0
+);
+CREATE INDEX IF NOT EXISTS idx_net_checkins_net ON net_check_ins(net_id);
+
+CREATE TABLE IF NOT EXISTS net_missions (
+    id TEXT PRIMARY KEY,
+    net_id TEXT NOT NULL REFERENCES nets(id),
+    title TEXT NOT NULL,
+    description TEXT NOT NULL DEFAULT '',
+    priority TEXT NOT NULL DEFAULT 'routine',
+    status TEXT NOT NULL DEFAULT 'open',
+    assigned_to TEXT NOT NULL DEFAULT '',
+    created_at DATETIME NOT NULL,
+    completed_at DATETIME
+);
+CREATE INDEX IF NOT EXISTS idx_net_missions_net ON net_missions(net_id);
+
+CREATE TABLE IF NOT EXISTS net_notes (
+    id TEXT PRIMARY KEY,
+    net_id TEXT NOT NULL REFERENCES nets(id),
+    check_in_id TEXT,
+    author_id TEXT NOT NULL DEFAULT '',
+    author_name TEXT NOT NULL DEFAULT '',
+    content TEXT NOT NULL,
+    created_at DATETIME NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_net_notes_net ON net_notes(net_id);
+CREATE INDEX IF NOT EXISTS idx_net_notes_checkin ON net_notes(check_in_id);
+
+CREATE TABLE IF NOT EXISTS net_events (
+    id TEXT PRIMARY KEY,
+    net_id TEXT NOT NULL REFERENCES nets(id),
+    type TEXT NOT NULL,
+    callsign TEXT NOT NULL DEFAULT '',
+    summary TEXT NOT NULL,
+    details TEXT NOT NULL DEFAULT '{}',
+    created_at DATETIME NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_net_events_net ON net_events(net_id);
+CREATE INDEX IF NOT EXISTS idx_net_events_time ON net_events(created_at);
+`
+	if _, err := s.db.Exec(ddl); err != nil {
+		return fmt.Errorf("create v3 tables: %w", err)
+	}
+
+	// Update schema version.
+	if _, err := s.db.Exec("DELETE FROM schema_version"); err != nil {
+		return fmt.Errorf("clear schema_version: %w", err)
+	}
+	if _, err := s.db.Exec("INSERT INTO schema_version (version) VALUES (?)", 3); err != nil {
+		return fmt.Errorf("set schema_version: %w", err)
+	}
+
+	return nil
+}
+
+// --- Net Control CRUD ---
+
+func (s *SQLiteStore) SaveNet(n Net) error {
+	var openedAt, closedAt interface{}
+	if n.OpenedAt != nil {
+		openedAt = n.OpenedAt.UTC()
+	}
+	if n.ClosedAt != nil {
+		closedAt = n.ClosedAt.UTC()
+	}
+
+	_, err := s.db.Exec(`
+		INSERT OR REPLACE INTO nets
+			(id, name, type, frequency, ncs_callsign, ncs_user_id, status, opened_at, closed_at, notes)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		n.ID, n.Name, n.Type, n.Frequency, n.NCSCallsign, n.NCSUserID,
+		n.Status, openedAt, closedAt, n.Notes,
+	)
+	if err != nil {
+		return fmt.Errorf("save net: %w", err)
+	}
+	return nil
+}
+
+func (s *SQLiteStore) LoadNet(id string) (*Net, error) {
+	var n Net
+	var openedAt, closedAt sql.NullString
+
+	err := s.db.QueryRow(`
+		SELECT id, name, type, frequency, ncs_callsign, ncs_user_id,
+		       status, opened_at, closed_at, notes
+		FROM nets WHERE id = ?`, id).Scan(
+		&n.ID, &n.Name, &n.Type, &n.Frequency, &n.NCSCallsign, &n.NCSUserID,
+		&n.Status, &openedAt, &closedAt, &n.Notes,
+	)
+	if err != nil {
+		if err == sql.ErrNoRows {
+			return nil, fmt.Errorf("net %q not found", id)
+		}
+		return nil, fmt.Errorf("load net: %w", err)
+	}
+
+	if openedAt.Valid {
+		t, err := parseTime(openedAt.String)
+		if err != nil {
+			return nil, fmt.Errorf("parse opened_at: %w", err)
+		}
+		n.OpenedAt = &t
+	}
+	if closedAt.Valid {
+		t, err := parseTime(closedAt.String)
+		if err != nil {
+			return nil, fmt.Errorf("parse closed_at: %w", err)
+		}
+		n.ClosedAt = &t
+	}
+
+	return &n, nil
+}
+
+func (s *SQLiteStore) LoadNets() ([]Net, error) {
+	rows, err := s.db.Query(`
+		SELECT id, name, type, frequency, ncs_callsign, ncs_user_id,
+		       status, opened_at, closed_at, notes
+		FROM nets ORDER BY rowid ASC`)
+	if err != nil {
+		return nil, fmt.Errorf("query nets: %w", err)
+	}
+	defer rows.Close()
+
+	var nets []Net
+	for rows.Next() {
+		var n Net
+		var openedAt, closedAt sql.NullString
+
+		if err := rows.Scan(
+			&n.ID, &n.Name, &n.Type, &n.Frequency, &n.NCSCallsign, &n.NCSUserID,
+			&n.Status, &openedAt, &closedAt, &n.Notes,
+		); err != nil {
+			return nil, fmt.Errorf("scan net: %w", err)
+		}
+
+		if openedAt.Valid {
+			t, err := parseTime(openedAt.String)
+			if err != nil {
+				return nil, fmt.Errorf("parse opened_at: %w", err)
+			}
+			n.OpenedAt = &t
+		}
+		if closedAt.Valid {
+			t, err := parseTime(closedAt.String)
+			if err != nil {
+				return nil, fmt.Errorf("parse closed_at: %w", err)
+			}
+			n.ClosedAt = &t
+		}
+
+		nets = append(nets, n)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("iterate nets: %w", err)
+	}
+	return nets, nil
+}
+
+func (s *SQLiteStore) DeleteNet(id string) error {
+	_, err := s.db.Exec("DELETE FROM nets WHERE id = ?", id)
+	if err != nil {
+		return fmt.Errorf("delete net: %w", err)
+	}
+	return nil
+}
+
+func (s *SQLiteStore) SaveNetCheckIn(ci NetCheckIn) error {
+	var lat, lon, assignLat, assignLon sql.NullFloat64
+	var checkedOutAt interface{}
+
+	if ci.Lat != nil {
+		lat = sql.NullFloat64{Float64: *ci.Lat, Valid: true}
+	}
+	if ci.Lon != nil {
+		lon = sql.NullFloat64{Float64: *ci.Lon, Valid: true}
+	}
+	if ci.AssignmentLat != nil {
+		assignLat = sql.NullFloat64{Float64: *ci.AssignmentLat, Valid: true}
+	}
+	if ci.AssignmentLon != nil {
+		assignLon = sql.NullFloat64{Float64: *ci.AssignmentLon, Valid: true}
+	}
+	if ci.CheckedOutAt != nil {
+		checkedOutAt = ci.CheckedOutAt.UTC()
+	}
+
+	_, err := s.db.Exec(`
+		INSERT OR REPLACE INTO net_check_ins
+			(id, net_id, callsign, tactical_call, operator_name, status, traffic,
+			 location, lat, lon, assignment, assignment_lat, assignment_lon,
+			 checked_in_at, checked_out_at, last_heard, missed_roll_calls)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		ci.ID, ci.NetID, ci.Callsign, ci.TacticalCall, ci.OperatorName,
+		ci.Status, ci.Traffic, ci.Location,
+		lat, lon, ci.Assignment, assignLat, assignLon,
+		ci.CheckedInAt.UTC(), checkedOutAt, ci.LastHeard.UTC(), ci.MissedRollCalls,
+	)
+	if err != nil {
+		return fmt.Errorf("save net check-in: %w", err)
+	}
+	return nil
+}
+
+func (s *SQLiteStore) LoadNetCheckIns(netID string) ([]NetCheckIn, error) {
+	rows, err := s.db.Query(`
+		SELECT id, net_id, callsign, tactical_call, operator_name, status, traffic,
+		       location, lat, lon, assignment, assignment_lat, assignment_lon,
+		       checked_in_at, checked_out_at, last_heard, missed_roll_calls
+		FROM net_check_ins WHERE net_id = ? ORDER BY checked_in_at ASC`, netID)
+	if err != nil {
+		return nil, fmt.Errorf("query net check-ins: %w", err)
+	}
+	defer rows.Close()
+
+	var checkIns []NetCheckIn
+	for rows.Next() {
+		var ci NetCheckIn
+		var lat, lon, assignLat, assignLon sql.NullFloat64
+		var checkedInAt, lastHeard string
+		var checkedOutAt sql.NullString
+
+		if err := rows.Scan(
+			&ci.ID, &ci.NetID, &ci.Callsign, &ci.TacticalCall, &ci.OperatorName,
+			&ci.Status, &ci.Traffic, &ci.Location,
+			&lat, &lon, &ci.Assignment, &assignLat, &assignLon,
+			&checkedInAt, &checkedOutAt, &lastHeard, &ci.MissedRollCalls,
+		); err != nil {
+			return nil, fmt.Errorf("scan net check-in: %w", err)
+		}
+
+		ci.CheckedInAt, err = parseTime(checkedInAt)
+		if err != nil {
+			return nil, fmt.Errorf("parse checked_in_at: %w", err)
+		}
+		ci.LastHeard, err = parseTime(lastHeard)
+		if err != nil {
+			return nil, fmt.Errorf("parse last_heard: %w", err)
+		}
+		if checkedOutAt.Valid {
+			t, err := parseTime(checkedOutAt.String)
+			if err != nil {
+				return nil, fmt.Errorf("parse checked_out_at: %w", err)
+			}
+			ci.CheckedOutAt = &t
+		}
+
+		if lat.Valid {
+			ci.Lat = &lat.Float64
+		}
+		if lon.Valid {
+			ci.Lon = &lon.Float64
+		}
+		if assignLat.Valid {
+			ci.AssignmentLat = &assignLat.Float64
+		}
+		if assignLon.Valid {
+			ci.AssignmentLon = &assignLon.Float64
+		}
+
+		checkIns = append(checkIns, ci)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("iterate net check-ins: %w", err)
+	}
+	return checkIns, nil
+}
+
+func (s *SQLiteStore) DeleteNetCheckIn(id string) error {
+	_, err := s.db.Exec("DELETE FROM net_check_ins WHERE id = ?", id)
+	if err != nil {
+		return fmt.Errorf("delete net check-in: %w", err)
+	}
+	return nil
+}
+
+func (s *SQLiteStore) SaveNetMission(m NetMission) error {
+	var completedAt interface{}
+	if m.CompletedAt != nil {
+		completedAt = m.CompletedAt.UTC()
+	}
+
+	_, err := s.db.Exec(`
+		INSERT OR REPLACE INTO net_missions
+			(id, net_id, title, description, priority, status, assigned_to, created_at, completed_at)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		m.ID, m.NetID, m.Title, m.Description, m.Priority,
+		m.Status, m.AssignedTo, m.CreatedAt.UTC(), completedAt,
+	)
+	if err != nil {
+		return fmt.Errorf("save net mission: %w", err)
+	}
+	return nil
+}
+
+func (s *SQLiteStore) LoadNetMissions(netID string) ([]NetMission, error) {
+	rows, err := s.db.Query(`
+		SELECT id, net_id, title, description, priority, status, assigned_to,
+		       created_at, completed_at
+		FROM net_missions WHERE net_id = ? ORDER BY created_at ASC`, netID)
+	if err != nil {
+		return nil, fmt.Errorf("query net missions: %w", err)
+	}
+	defer rows.Close()
+
+	var missions []NetMission
+	for rows.Next() {
+		var m NetMission
+		var createdAt string
+		var completedAt sql.NullString
+
+		if err := rows.Scan(
+			&m.ID, &m.NetID, &m.Title, &m.Description, &m.Priority,
+			&m.Status, &m.AssignedTo, &createdAt, &completedAt,
+		); err != nil {
+			return nil, fmt.Errorf("scan net mission: %w", err)
+		}
+
+		m.CreatedAt, err = parseTime(createdAt)
+		if err != nil {
+			return nil, fmt.Errorf("parse created_at: %w", err)
+		}
+		if completedAt.Valid {
+			t, err := parseTime(completedAt.String)
+			if err != nil {
+				return nil, fmt.Errorf("parse completed_at: %w", err)
+			}
+			m.CompletedAt = &t
+		}
+
+		missions = append(missions, m)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("iterate net missions: %w", err)
+	}
+	return missions, nil
+}
+
+func (s *SQLiteStore) SaveNetNote(n NetNote) error {
+	var checkInID interface{}
+	if n.CheckInID != "" {
+		checkInID = n.CheckInID
+	}
+
+	_, err := s.db.Exec(`
+		INSERT OR REPLACE INTO net_notes
+			(id, net_id, check_in_id, author_id, author_name, content, created_at)
+		VALUES (?, ?, ?, ?, ?, ?, ?)`,
+		n.ID, n.NetID, checkInID, n.AuthorID, n.AuthorName,
+		n.Content, n.CreatedAt.UTC(),
+	)
+	if err != nil {
+		return fmt.Errorf("save net note: %w", err)
+	}
+	return nil
+}
+
+func (s *SQLiteStore) LoadNetNotes(netID string) ([]NetNote, error) {
+	rows, err := s.db.Query(`
+		SELECT id, net_id, check_in_id, author_id, author_name, content, created_at
+		FROM net_notes WHERE net_id = ? ORDER BY created_at ASC`, netID)
+	if err != nil {
+		return nil, fmt.Errorf("query net notes: %w", err)
+	}
+	defer rows.Close()
+
+	var notes []NetNote
+	for rows.Next() {
+		var n NetNote
+		var createdAt string
+		var checkInID sql.NullString
+
+		if err := rows.Scan(
+			&n.ID, &n.NetID, &checkInID, &n.AuthorID, &n.AuthorName,
+			&n.Content, &createdAt,
+		); err != nil {
+			return nil, fmt.Errorf("scan net note: %w", err)
+		}
+
+		n.CreatedAt, err = parseTime(createdAt)
+		if err != nil {
+			return nil, fmt.Errorf("parse created_at: %w", err)
+		}
+		if checkInID.Valid {
+			n.CheckInID = checkInID.String
+		}
+
+		notes = append(notes, n)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("iterate net notes: %w", err)
+	}
+	return notes, nil
+}
+
+func (s *SQLiteStore) SaveNetEvent(e NetEvent) error {
+	_, err := s.db.Exec(`
+		INSERT OR REPLACE INTO net_events
+			(id, net_id, type, callsign, summary, details, created_at)
+		VALUES (?, ?, ?, ?, ?, ?, ?)`,
+		e.ID, e.NetID, e.Type, e.Callsign, e.Summary,
+		e.Details, e.CreatedAt.UTC(),
+	)
+	if err != nil {
+		return fmt.Errorf("save net event: %w", err)
+	}
+	return nil
+}
+
+func (s *SQLiteStore) LoadNetEvents(netID string) ([]NetEvent, error) {
+	rows, err := s.db.Query(`
+		SELECT id, net_id, type, callsign, summary, details, created_at
+		FROM net_events WHERE net_id = ? ORDER BY created_at ASC`, netID)
+	if err != nil {
+		return nil, fmt.Errorf("query net events: %w", err)
+	}
+	defer rows.Close()
+
+	var events []NetEvent
+	for rows.Next() {
+		var e NetEvent
+		var createdAt string
+
+		if err := rows.Scan(
+			&e.ID, &e.NetID, &e.Type, &e.Callsign, &e.Summary,
+			&e.Details, &createdAt,
+		); err != nil {
+			return nil, fmt.Errorf("scan net event: %w", err)
+		}
+
+		e.CreatedAt, err = parseTime(createdAt)
+		if err != nil {
+			return nil, fmt.Errorf("parse created_at: %w", err)
+		}
+
+		events = append(events, e)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("iterate net events: %w", err)
+	}
+	return events, nil
 }
 
 // Compile-time check that SQLiteStore implements Store.

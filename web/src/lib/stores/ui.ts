@@ -1,6 +1,6 @@
 import { writable, get } from 'svelte/store';
 
-export type PanelMode = 'closed' | 'stations' | 'detail' | 'messages' | 'convo' | 'transports' | 'activity' | 'annotations';
+export type PanelMode = 'closed' | 'stations' | 'detail' | 'messages' | 'convo' | 'transports' | 'activity' | 'annotations' | 'netcontrol';
 export type DetailTab = 'info' | 'messages' | 'track';
 export type SheetState = 'peek' | 'half' | 'full';
 export type ConnectionState = 'connected' | 'disconnected' | 'reconnecting';
@@ -58,6 +58,12 @@ export function openActivity(): void {
 
 export function openAnnotations(): void {
 	panelMode.set('annotations');
+	selectedStation.set(null);
+	sheetState.set('half');
+}
+
+export function openNetControl(): void {
+	panelMode.set('netcontrol');
 	selectedStation.set(null);
 	sheetState.set('half');
 }
