@@ -43,27 +43,34 @@ type Net struct {
 	MissionBrief string     `json:"missionBrief"`
 }
 
+// TrackedStation represents a device linked to a checked-in operator.
+type TrackedStation struct {
+	Callsign   string `json:"callsign"`
+	AutoLinked bool   `json:"autoLinked"`
+}
+
 // NetCheckIn represents an operator check-in to a net.
 type NetCheckIn struct {
-	ID              string     `json:"id"`
-	NetID           string     `json:"netId"`
-	Callsign        string     `json:"callsign"`
-	TacticalCall    string     `json:"tacticalCall"`
-	OperatorName    string     `json:"operatorName"`
-	Status          string     `json:"status"`
-	Traffic         string     `json:"traffic"`
-	Source          string     `json:"source"`
-	Location        string     `json:"location"`
-	Lat             *float64   `json:"lat,omitempty"`
-	Lon             *float64   `json:"lon,omitempty"`
-	Assignment      string     `json:"assignment"`
-	AssignmentLat   *float64   `json:"assignmentLat,omitempty"`
-	AssignmentLon   *float64   `json:"assignmentLon,omitempty"`
-	MissionID       string     `json:"missionId,omitempty"`
-	CheckedInAt     time.Time  `json:"checkedInAt"`
-	CheckedOutAt    *time.Time `json:"checkedOutAt,omitempty"`
-	LastHeard       time.Time  `json:"lastHeard"`
-	MissedRollCalls int        `json:"missedRollCalls"`
+	ID              string           `json:"id"`
+	NetID           string           `json:"netId"`
+	Callsign        string           `json:"callsign"`
+	TacticalCall    string           `json:"tacticalCall"`
+	OperatorName    string           `json:"operatorName"`
+	Status          string           `json:"status"`
+	Traffic         string           `json:"traffic"`
+	Source          string           `json:"source"`
+	Location        string           `json:"location"`
+	Lat             *float64         `json:"lat,omitempty"`
+	Lon             *float64         `json:"lon,omitempty"`
+	Assignment      string           `json:"assignment"`
+	AssignmentLat   *float64         `json:"assignmentLat,omitempty"`
+	AssignmentLon   *float64         `json:"assignmentLon,omitempty"`
+	MissionID       string           `json:"missionId,omitempty"`
+	TrackedStations []TrackedStation `json:"trackedStations"`
+	CheckedInAt     time.Time        `json:"checkedInAt"`
+	CheckedOutAt    *time.Time       `json:"checkedOutAt,omitempty"`
+	LastHeard       time.Time        `json:"lastHeard"`
+	MissedRollCalls int              `json:"missedRollCalls"`
 }
 
 // NetMission represents a task assigned during a net.

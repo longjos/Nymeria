@@ -146,5 +146,9 @@ export const api = {
 		post<NetCheckIn>(`/nets/${netId}/checkin/${ciId}/assign`, { missionId }),
 	unassignMission: (netId: string, ciId: string) =>
 		del<NetCheckIn>(`/nets/${netId}/checkin/${ciId}/assign`),
+	addTrackedStation: (netId: string, ciId: string, callsign: string) =>
+		post<NetCheckIn>(`/nets/${netId}/checkin/${ciId}/devices`, { callsign }),
+	removeTrackedStation: (netId: string, ciId: string, callsign: string) =>
+		del<NetCheckIn>(`/nets/${netId}/checkin/${ciId}/devices/${encodeURIComponent(callsign)}`),
 	rosterExportUrl: (netId: string) => `${BASE}/nets/${netId}/roster/export`
 };

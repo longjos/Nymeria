@@ -192,6 +192,12 @@ func (s *Server) bridgeTrackerEvents() {
 			}
 		}
 
+		// Bridge to net control for tracked device position updates
+		if s.netMgr != nil && evt.Type != station.EventStationExpired && evt.Station.Position != nil {
+			key := aprs.Address{Call: evt.Station.Callsign, SSID: evt.Station.SSID}.String()
+			s.netMgr.OnStationUpdate(key, evt.Station.Position, evt.Station.LastHeard)
+		}
+
 		// Broadcast via WebSocket
 		name, ok := eventNames[evt.Type]
 		if !ok {

@@ -13,26 +13,34 @@ import (
 	"github.com/narvel/nymeria/internal/store"
 )
 
+// trackedRef maps a tracked station callsign back to its check-in.
+type trackedRef struct {
+	netID     string
+	checkInID string
+}
+
 // Manager manages net control operations with persistence and events.
 type Manager struct {
-	store    store.Store
-	tracker  station.Tracker
-	mu       sync.RWMutex
-	nets     map[string]store.Net
-	checkIns map[string][]store.NetCheckIn // keyed by netID
-	missions map[string][]store.NetMission // keyed by netID
-	events   chan Event
+	store        store.Store
+	tracker      station.Tracker
+	mu           sync.RWMutex
+	nets         map[string]store.Net
+	checkIns     map[string][]store.NetCheckIn // keyed by netID
+	missions     map[string][]store.NetMission // keyed by netID
+	trackedIndex map[string]trackedRef         // station callsign → check-in reference
+	events       chan Event
 }
 
 // NewManager creates a new net control Manager.
 func NewManager(s store.Store, t station.Tracker) *Manager {
 	return &Manager{
-		store:    s,
-		tracker:  t,
-		nets:     make(map[string]store.Net),
-		checkIns: make(map[string][]store.NetCheckIn),
-		missions: make(map[string][]store.NetMission),
-		events:   make(chan Event, 64),
+		store:        s,
+		tracker:      t,
+		nets:         make(map[string]store.Net),
+		checkIns:     make(map[string][]store.NetCheckIn),
+		missions:     make(map[string][]store.NetMission),
+		trackedIndex: make(map[string]trackedRef),
+		events:       make(chan Event, 64),
 	}
 }
 
@@ -64,6 +72,8 @@ func (m *Manager) Load() error {
 		}
 		m.missions[n.ID] = missions
 	}
+
+	m.rebuildTrackedIndex()
 
 	return nil
 }
@@ -243,6 +253,7 @@ func (m *Manager) CheckIn(netID, callsign, traffic string) (*store.NetCheckIn, e
 	// Auto-populate from tracker if known.
 	if m.tracker != nil {
 		m.autoPopulate(&ci)
+		m.discoverDevices(&ci)
 	}
 
 	// Set source based on whether position data was found.
@@ -328,6 +339,11 @@ func (m *Manager) CheckOut(netID, checkInID string) error {
 			now := time.Now().UTC()
 			cis[i].Status = OpReleased
 			cis[i].CheckedOutAt = &now
+
+			// Remove tracked stations from index.
+			for _, ts := range cis[i].TrackedStations {
+				delete(m.trackedIndex, ts.Callsign)
+			}
 
 			if err := m.store.SaveNetCheckIn(cis[i]); err != nil {
 				m.mu.Unlock()
@@ -720,7 +736,7 @@ func ExportRosterCSV(w io.Writer, checkIns []store.NetCheckIn) error {
 
 	header := []string{
 		"callsign", "tacticalCall", "operatorName", "status", "traffic",
-		"source", "location", "assignment", "checkedInAt", "checkedOutAt",
+		"source", "location", "assignment", "trackedDevices", "checkedInAt", "checkedOutAt",
 		"lastHeard", "missedRollCalls",
 	}
 	if err := cw.Write(header); err != nil {
@@ -732,6 +748,10 @@ func ExportRosterCSV(w io.Writer, checkIns []store.NetCheckIn) error {
 		if ci.CheckedOutAt != nil {
 			checkedOut = ci.CheckedOutAt.Format(time.RFC3339)
 		}
+		var deviceNames []string
+		for _, ts := range ci.TrackedStations {
+			deviceNames = append(deviceNames, ts.Callsign)
+		}
 		row := []string{
 			ci.Callsign,
 			ci.TacticalCall,
@@ -741,6 +761,7 @@ func ExportRosterCSV(w io.Writer, checkIns []store.NetCheckIn) error {
 			ci.Source,
 			ci.Location,
 			ci.Assignment,
+			strings.Join(deviceNames, ","),
 			ci.CheckedInAt.Format(time.RFC3339),
 			checkedOut,
 			ci.LastHeard.Format(time.RFC3339),
@@ -811,6 +832,261 @@ func (m *Manager) emit(evt Event) {
 	select {
 	case m.events <- evt:
 	default:
+	}
+}
+
+// discoverDevices auto-links SSID variants of the operator's callsign.
+func (m *Manager) discoverDevices(ci *store.NetCheckIn) {
+	root := RootCallsign(ci.Callsign)
+	results := m.tracker.Search(root)
+	if len(results) == 0 {
+		return
+	}
+
+	seen := make(map[string]bool)
+	for _, st := range results {
+		key := st.Callsign
+		if st.SSID > 0 {
+			key = fmt.Sprintf("%s-%d", st.Callsign, st.SSID)
+		}
+		// Only link SSID variants of the same root callsign.
+		if RootCallsign(key) != root {
+			continue
+		}
+		if seen[key] {
+			continue
+		}
+		seen[key] = true
+		ci.TrackedStations = append(ci.TrackedStations, store.TrackedStation{
+			Callsign:   key,
+			AutoLinked: true,
+		})
+		m.trackedIndex[key] = trackedRef{netID: ci.NetID, checkInID: ci.ID}
+	}
+
+	m.resolveTrackedPosition(ci)
+}
+
+// resolveTrackedPosition picks the best position from all tracked devices.
+func (m *Manager) resolveTrackedPosition(ci *store.NetCheckIn) {
+	if m.tracker == nil || len(ci.TrackedStations) == 0 {
+		return
+	}
+
+	var bestLat, bestLon float64
+	var bestTime time.Time
+	found := false
+
+	for _, ts := range ci.TrackedStations {
+		st, ok := m.tracker.Get(ts.Callsign)
+		if !ok || st.Position == nil {
+			continue
+		}
+		if !found || st.LastHeard.After(bestTime) {
+			bestLat = st.Position.Lat
+			bestLon = st.Position.Lon
+			bestTime = st.LastHeard
+			found = true
+		}
+	}
+
+	if found {
+		ci.Lat = &bestLat
+		ci.Lon = &bestLon
+		ci.LastHeard = bestTime
+		ci.Source = "aprs"
+	}
+}
+
+// AddTrackedStation manually associates a station with a check-in.
+func (m *Manager) AddTrackedStation(netID, checkInID, callsign string) (*store.NetCheckIn, error) {
+	callsign = strings.ToUpper(strings.TrimSpace(callsign))
+	if callsign == "" {
+		return nil, fmt.Errorf("callsign is required")
+	}
+
+	m.mu.Lock()
+	cis, ok := m.checkIns[netID]
+	if !ok {
+		m.mu.Unlock()
+		return nil, fmt.Errorf("net %q not found", netID)
+	}
+
+	var ci *store.NetCheckIn
+	var idx int
+	for i := range cis {
+		if cis[i].ID == checkInID {
+			ci = &cis[i]
+			idx = i
+			break
+		}
+	}
+	if ci == nil {
+		m.mu.Unlock()
+		return nil, fmt.Errorf("check-in %q not found", checkInID)
+	}
+
+	// Reject duplicates.
+	for _, ts := range ci.TrackedStations {
+		if ts.Callsign == callsign {
+			m.mu.Unlock()
+			return nil, fmt.Errorf("station %q already tracked", callsign)
+		}
+	}
+
+	ci.TrackedStations = append(ci.TrackedStations, store.TrackedStation{
+		Callsign:   callsign,
+		AutoLinked: false,
+	})
+	m.trackedIndex[callsign] = trackedRef{netID: netID, checkInID: checkInID}
+
+	m.resolveTrackedPosition(ci)
+	cis[idx] = *ci
+	m.checkIns[netID] = cis
+	updated := *ci
+	m.mu.Unlock()
+
+	if err := m.store.SaveNetCheckIn(updated); err != nil {
+		return nil, fmt.Errorf("persist check-in: %w", err)
+	}
+
+	m.logEvent(netID, "device_added", ci.Callsign, fmt.Sprintf("Added tracked device %s for %s", callsign, ci.Callsign))
+	m.emit(Event{Type: EventCheckInUpdated, Data: updated})
+
+	return &updated, nil
+}
+
+// RemoveTrackedStation removes a station association from a check-in.
+func (m *Manager) RemoveTrackedStation(netID, checkInID, callsign string) (*store.NetCheckIn, error) {
+	callsign = strings.ToUpper(strings.TrimSpace(callsign))
+
+	m.mu.Lock()
+	cis, ok := m.checkIns[netID]
+	if !ok {
+		m.mu.Unlock()
+		return nil, fmt.Errorf("net %q not found", netID)
+	}
+
+	var ci *store.NetCheckIn
+	var idx int
+	for i := range cis {
+		if cis[i].ID == checkInID {
+			ci = &cis[i]
+			idx = i
+			break
+		}
+	}
+	if ci == nil {
+		m.mu.Unlock()
+		return nil, fmt.Errorf("check-in %q not found", checkInID)
+	}
+
+	found := false
+	filtered := ci.TrackedStations[:0]
+	for _, ts := range ci.TrackedStations {
+		if ts.Callsign == callsign {
+			found = true
+			continue
+		}
+		filtered = append(filtered, ts)
+	}
+	if !found {
+		m.mu.Unlock()
+		return nil, fmt.Errorf("station %q not tracked", callsign)
+	}
+
+	ci.TrackedStations = filtered
+	delete(m.trackedIndex, callsign)
+
+	m.resolveTrackedPosition(ci)
+	cis[idx] = *ci
+	m.checkIns[netID] = cis
+	updated := *ci
+	m.mu.Unlock()
+
+	if err := m.store.SaveNetCheckIn(updated); err != nil {
+		return nil, fmt.Errorf("persist check-in: %w", err)
+	}
+
+	m.logEvent(netID, "device_removed", ci.Callsign, fmt.Sprintf("Removed tracked device %s from %s", callsign, ci.Callsign))
+	m.emit(Event{Type: EventCheckInUpdated, Data: updated})
+
+	return &updated, nil
+}
+
+// OnStationUpdate is called from the server's bridgeTrackerEvents when any
+// station is heard. If the station is tracked by a net operator, the operator's
+// position is re-resolved and updated.
+func (m *Manager) OnStationUpdate(callsign string, pos *station.Position, lastHeard time.Time) {
+	m.mu.Lock()
+	ref, ok := m.trackedIndex[callsign]
+	if !ok {
+		m.mu.Unlock()
+		return
+	}
+
+	cis, ok := m.checkIns[ref.netID]
+	if !ok {
+		m.mu.Unlock()
+		return
+	}
+
+	var ci *store.NetCheckIn
+	var idx int
+	for i := range cis {
+		if cis[i].ID == ref.checkInID {
+			ci = &cis[i]
+			idx = i
+			break
+		}
+	}
+	if ci == nil || ci.Status == OpReleased {
+		m.mu.Unlock()
+		return
+	}
+
+	oldLat := ci.Lat
+	oldLon := ci.Lon
+
+	m.resolveTrackedPosition(ci)
+
+	// Check if position actually changed.
+	changed := false
+	if oldLat == nil && ci.Lat != nil {
+		changed = true
+	} else if oldLat != nil && ci.Lat != nil && (*oldLat != *ci.Lat || *oldLon != *ci.Lon) {
+		changed = true
+	}
+
+	if !changed {
+		m.mu.Unlock()
+		return
+	}
+
+	cis[idx] = *ci
+	m.checkIns[ref.netID] = cis
+	updated := *ci
+	m.mu.Unlock()
+
+	if err := m.store.SaveNetCheckIn(updated); err != nil {
+		return
+	}
+
+	m.emit(Event{Type: EventCheckInUpdated, Data: updated})
+}
+
+// rebuildTrackedIndex populates trackedIndex from loaded check-ins.
+func (m *Manager) rebuildTrackedIndex() {
+	m.trackedIndex = make(map[string]trackedRef)
+	for netID, cis := range m.checkIns {
+		for _, ci := range cis {
+			if ci.Status == OpReleased {
+				continue
+			}
+			for _, ts := range ci.TrackedStations {
+				m.trackedIndex[ts.Callsign] = trackedRef{netID: netID, checkInID: ci.ID}
+			}
+		}
 	}
 }
 

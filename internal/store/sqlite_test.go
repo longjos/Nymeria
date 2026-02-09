@@ -494,8 +494,8 @@ func TestV2SchemaVersion(t *testing.T) {
 	if err != nil {
 		t.Fatalf("query schema_version: %v", err)
 	}
-	if version != 4 {
-		t.Errorf("expected schema version 4, got %d", version)
+	if version != 5 {
+		t.Errorf("expected schema version 5, got %d", version)
 	}
 }
 
@@ -994,8 +994,8 @@ func TestV3SchemaVersion(t *testing.T) {
 	if err != nil {
 		t.Fatalf("query schema_version: %v", err)
 	}
-	if version != 4 {
-		t.Errorf("expected schema version 4, got %d", version)
+	if version != 5 {
+		t.Errorf("expected schema version 5, got %d", version)
 	}
 }
 
@@ -1599,5 +1599,112 @@ func TestNetMissionBrief(t *testing.T) {
 	}
 	if !found {
 		t.Error("LoadNets did not return net with missionBrief")
+	}
+}
+
+// --- V5 Migration Tests ---
+
+func TestV5MigrationAddsTrackedStationsColumn(t *testing.T) {
+	s, _ := newTestStore(t)
+	defer s.Close()
+
+	// Verify the tracked_stations column exists.
+	_, err := s.db.Exec(`SELECT tracked_stations FROM net_check_ins WHERE 1=0`)
+	if err != nil {
+		t.Errorf("net_check_ins missing tracked_stations column: %v", err)
+	}
+
+	var version int
+	s.db.QueryRow("SELECT version FROM schema_version LIMIT 1").Scan(&version)
+	if version != 5 {
+		t.Errorf("expected schema version 5, got %d", version)
+	}
+}
+
+func TestNetCheckInTrackedStationsRoundtrip(t *testing.T) {
+	s, _ := newTestStore(t)
+	defer s.Close()
+
+	s.SaveNet(Net{ID: "net-1", Name: "Test", Type: "tactical", Status: "open"})
+
+	now := time.Now().Truncate(time.Second).UTC()
+	ci := NetCheckIn{
+		ID:          "ci-ts",
+		NetID:       "net-1",
+		Callsign:    "KG4YFA",
+		Status:      "available",
+		Traffic:     "none",
+		Source:      "aprs",
+		CheckedInAt: now,
+		LastHeard:   now,
+		TrackedStations: []TrackedStation{
+			{Callsign: "KG4YFA", AutoLinked: true},
+			{Callsign: "KG4YFA-4", AutoLinked: true},
+			{Callsign: "A2SV-4", AutoLinked: false},
+		},
+	}
+
+	if err := s.SaveNetCheckIn(ci); err != nil {
+		t.Fatalf("SaveNetCheckIn failed: %v", err)
+	}
+
+	loaded, err := s.LoadNetCheckIns("net-1")
+	if err != nil {
+		t.Fatalf("LoadNetCheckIns failed: %v", err)
+	}
+	if len(loaded) != 1 {
+		t.Fatalf("expected 1 check-in, got %d", len(loaded))
+	}
+
+	got := loaded[0]
+	if len(got.TrackedStations) != 3 {
+		t.Fatalf("expected 3 tracked stations, got %d", len(got.TrackedStations))
+	}
+	if got.TrackedStations[0].Callsign != "KG4YFA" || !got.TrackedStations[0].AutoLinked {
+		t.Errorf("tracked station 0: got %+v", got.TrackedStations[0])
+	}
+	if got.TrackedStations[1].Callsign != "KG4YFA-4" || !got.TrackedStations[1].AutoLinked {
+		t.Errorf("tracked station 1: got %+v", got.TrackedStations[1])
+	}
+	if got.TrackedStations[2].Callsign != "A2SV-4" || got.TrackedStations[2].AutoLinked {
+		t.Errorf("tracked station 2: got %+v", got.TrackedStations[2])
+	}
+}
+
+func TestNetCheckInTrackedStationsDefault(t *testing.T) {
+	s, _ := newTestStore(t)
+	defer s.Close()
+
+	s.SaveNet(Net{ID: "net-1", Name: "Test", Type: "tactical", Status: "open"})
+
+	now := time.Now().Truncate(time.Second).UTC()
+	ci := NetCheckIn{
+		ID:          "ci-def",
+		NetID:       "net-1",
+		Callsign:    "W1AW",
+		Status:      "available",
+		Traffic:     "none",
+		CheckedInAt: now,
+		LastHeard:   now,
+	}
+
+	if err := s.SaveNetCheckIn(ci); err != nil {
+		t.Fatalf("SaveNetCheckIn failed: %v", err)
+	}
+
+	loaded, err := s.LoadNetCheckIns("net-1")
+	if err != nil {
+		t.Fatalf("LoadNetCheckIns failed: %v", err)
+	}
+	if len(loaded) != 1 {
+		t.Fatalf("expected 1 check-in, got %d", len(loaded))
+	}
+
+	got := loaded[0]
+	if got.TrackedStations == nil {
+		t.Fatal("TrackedStations should be empty slice, not nil")
+	}
+	if len(got.TrackedStations) != 0 {
+		t.Errorf("expected 0 tracked stations, got %d", len(got.TrackedStations))
 	}
 }

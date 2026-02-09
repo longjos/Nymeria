@@ -145,6 +145,11 @@ export interface Net {
 	missionBrief: string;
 }
 
+export interface TrackedStation {
+	callsign: string;
+	autoLinked: boolean;
+}
+
 export interface NetCheckIn {
 	id: string;
 	netId: string;
@@ -161,6 +166,7 @@ export interface NetCheckIn {
 	assignmentLat?: number;
 	assignmentLon?: number;
 	missionId?: string;
+	trackedStations: TrackedStation[];
 	checkedInAt: string;
 	checkedOutAt?: string;
 	lastHeard: string;
