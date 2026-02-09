@@ -2,6 +2,7 @@
 	import { api } from '$lib/api';
 	import { canPlot, canOperate } from '$lib/stores/session';
 	import { annotationList, operations, activeOperationId } from '$lib/stores/annotations';
+	import { missions as netMissions, activeNet } from '$lib/stores/netcontrol';
 	import { timeAgo } from '$lib/utils';
 	import type { Annotation, AnnotationCategory, AnnotationPriority, AnnotationTemplate } from '$lib/types';
 	import {
@@ -201,6 +202,30 @@
 		}
 	}
 
+	async function handleUnlinkSpecific(ann: Annotation, missionId: string, e: MouseEvent) {
+		e.stopPropagation();
+		try {
+			await api.unlinkAnnotation(ann.id, missionId);
+		} catch (err: any) {
+			console.error('Unlink specific failed:', err.message);
+		}
+	}
+
+	async function handleAddToMission(ann: Annotation, missionId: string, e: MouseEvent) {
+		e.stopPropagation();
+		addMissionPickerId = null;
+		try {
+			await api.linkAnnotation(ann.id, missionId);
+		} catch (err: any) {
+			console.error('Add to mission failed:', err.message);
+		}
+	}
+
+	function toggleAddMissionPicker(annId: string, e: MouseEvent) {
+		e.stopPropagation();
+		addMissionPickerId = addMissionPickerId === annId ? null : annId;
+	}
+
 	async function handleTransmit(ann: Annotation, e: MouseEvent) {
 		e.stopPropagation();
 		try {
@@ -223,6 +248,16 @@
 		e.stopPropagation();
 		statusDropdownId = statusDropdownId === id ? null : id;
 	}
+
+	// Add-to-mission picker
+	let addMissionPickerId = $state<string | null>(null);
+
+	const trafficColors: Record<string, string> = {
+		routine: '#22c55e',
+		priority: '#f59e0b',
+		welfare: '#3b82f6',
+		emergency: '#ef4444'
+	};
 
 	// Inline color editing
 	let colorEditId = $state<string | null>(null);
@@ -495,18 +530,63 @@
 							&middot; {timeAgo(ann.createdAt)}
 						</span>
 						{#if ann.missionIds?.length > 0}
-							<span class="mission-badge">
-								<svg width="10" height="10" viewBox="0 0 16 16" fill="none"><path d="M4 2h8v12H4zM7 5h2M7 8h2" stroke="currentColor" stroke-width="1.2" fill="none" stroke-linecap="round"/></svg>
-								{ann.missionIds.length} mission{ann.missionIds.length > 1 ? 's' : ''}
-								{#if $canPlot}
-									<button class="unlink-btn" onclick={(e) => handleUnlink(ann, e)}>Unlink all</button>
+							<div class="mission-chips">
+								{#each ann.missionIds as mid}
+									{@const linkedMission = $netMissions.find((m) => m.id === mid)}
+									{#if linkedMission}
+										<span class="mission-chip">
+											<span class="mission-chip-dot" style="background: {trafficColors[linkedMission.priority] ?? '#6b7280'}"></span>
+											<span class="mission-chip-title">{linkedMission.title}</span>
+											{#if $canPlot}
+												<button class="mission-chip-remove" onclick={(e) => handleUnlinkSpecific(ann, mid, e)}>×</button>
+											{/if}
+										</span>
+									{:else}
+										<span class="mission-chip mission-chip-unknown">
+											<span class="mission-chip-title">Mission</span>
+											{#if $canPlot}
+												<button class="mission-chip-remove" onclick={(e) => handleUnlinkSpecific(ann, mid, e)}>×</button>
+											{/if}
+										</span>
+									{/if}
+								{/each}
+								{#if $canPlot && $activeNet && !isTerminalStatus(ann.status)}
+									{@const availableMissions = $netMissions.filter((m) => m.status !== 'complete' && !ann.missionIds?.includes(m.id))}
+									{#if availableMissions.length > 0}
+										<button class="add-mission-btn" onclick={(e) => toggleAddMissionPicker(ann.id, e)}>+ Mission</button>
+									{/if}
 								{/if}
-							</span>
-						{:else if $canPlot && ann.type === 'point' && !isTerminalStatus(ann.status)}
-							<button class="promote-btn" onclick={(e) => handlePromoteToMission(ann, e)}>
-								<svg width="10" height="10" viewBox="0 0 16 16" fill="none"><path d="M4 2h8v12H4zM7 5h2M7 8h2" stroke="currentColor" stroke-width="1.2" fill="none" stroke-linecap="round"/></svg>
-								Create Mission
-							</button>
+							</div>
+						{:else}
+							<div class="mission-chips">
+								{#if $canPlot && ann.type === 'point' && !isTerminalStatus(ann.status)}
+									<button class="promote-btn" onclick={(e) => handlePromoteToMission(ann, e)}>
+										<svg width="10" height="10" viewBox="0 0 16 16" fill="none"><path d="M4 2h8v12H4zM7 5h2M7 8h2" stroke="currentColor" stroke-width="1.2" fill="none" stroke-linecap="round"/></svg>
+										Create Mission
+									</button>
+								{/if}
+								{#if $canPlot && $activeNet && !isTerminalStatus(ann.status)}
+									{@const availableMissions = $netMissions.filter((m) => m.status !== 'complete')}
+									{#if availableMissions.length > 0}
+										<button class="add-mission-btn" onclick={(e) => toggleAddMissionPicker(ann.id, e)}>+ Add to mission</button>
+									{/if}
+								{/if}
+							</div>
+						{/if}
+						{#if addMissionPickerId === ann.id}
+							<!-- svelte-ignore a11y_no_static_element_interactions -->
+							<div class="add-mission-picker" onclick={(e) => e.stopPropagation()}>
+								{#each $netMissions.filter((m) => m.status !== 'complete' && !ann.missionIds?.includes(m.id)) as m}
+									<button class="add-mission-option" onclick={(e) => handleAddToMission(ann, m.id, e)}>
+										<span class="mission-chip-dot" style="background: {trafficColors[m.priority] ?? '#6b7280'}"></span>
+										<span class="add-mission-title">{m.title}</span>
+										<span class="add-mission-status">{m.status}</span>
+									</button>
+								{/each}
+								{#if $netMissions.filter((m) => m.status !== 'complete' && !ann.missionIds?.includes(m.id)).length === 0}
+									<span class="add-mission-empty">No available missions</span>
+								{/if}
+							</div>
 						{/if}
 						{#if $canOperate && ann.type === 'point' && !isTerminalStatus(ann.status)}
 							{#if ann.transmitting}
@@ -1085,30 +1165,133 @@
 		font-weight: 600;
 	}
 
-	.mission-badge {
+	/* Mission chips */
+	.mission-chips {
 		display: flex;
-		align-items: center;
+		flex-wrap: wrap;
 		gap: 4px;
-		font-size: 0.68rem;
-		color: var(--color-accent);
+		align-items: center;
 		padding: 2px 0;
 	}
 
-	.unlink-btn {
-		margin-left: 4px;
-		padding: 0 4px;
+	.mission-chip {
+		display: inline-flex;
+		align-items: center;
+		gap: 3px;
+		background: var(--color-surface);
+		border: 1px solid var(--color-primary);
+		border-radius: var(--radius-sm);
+		padding: 1px 6px;
+		font-size: 0.65rem;
+		color: var(--color-accent);
+	}
+
+	.mission-chip-unknown {
+		color: var(--color-text-muted);
+	}
+
+	.mission-chip-dot {
+		width: 5px;
+		height: 5px;
+		border-radius: 50%;
+		flex-shrink: 0;
+	}
+
+	.mission-chip-title {
+		max-width: 100px;
+		overflow: hidden;
+		text-overflow: ellipsis;
+		white-space: nowrap;
+	}
+
+	.mission-chip-remove {
+		background: none;
+		border: none;
+		color: var(--color-text-muted);
+		font-size: 0.7rem;
+		padding: 0 1px;
+		cursor: pointer;
+		line-height: 1;
+	}
+
+	.mission-chip-remove:hover {
+		color: #ef4444;
+	}
+
+	.add-mission-btn {
+		display: inline-flex;
+		align-items: center;
+		gap: 3px;
+		padding: 1px 6px;
 		background: none;
 		border: 1px solid var(--color-primary);
-		border-radius: 4px;
+		border-radius: var(--radius-sm);
 		color: var(--color-text-muted);
 		font-size: 0.62rem;
 		cursor: pointer;
 		transition: color var(--duration-fast), border-color var(--duration-fast);
 	}
 
-	.unlink-btn:hover {
+	.add-mission-btn:hover {
 		color: var(--color-accent);
 		border-color: var(--color-accent);
+	}
+
+	.add-mission-picker {
+		display: flex;
+		flex-direction: column;
+		gap: 1px;
+		background: var(--color-surface);
+		border: 1px solid var(--color-primary);
+		border-radius: var(--radius-sm);
+		margin-top: 4px;
+		max-height: 120px;
+		overflow-y: auto;
+	}
+
+	.add-mission-option {
+		display: flex;
+		align-items: center;
+		gap: 6px;
+		padding: 4px 8px;
+		background: none;
+		border: none;
+		border-bottom: 1px solid var(--color-primary);
+		color: var(--color-text);
+		font-size: 0.7rem;
+		text-align: left;
+		cursor: pointer;
+		transition: background var(--duration-fast);
+	}
+
+	.add-mission-option:hover {
+		background: var(--color-primary);
+	}
+
+	.add-mission-option:last-child {
+		border-bottom: none;
+	}
+
+	.add-mission-title {
+		flex: 1;
+		min-width: 0;
+		overflow: hidden;
+		text-overflow: ellipsis;
+		white-space: nowrap;
+	}
+
+	.add-mission-status {
+		font-size: 0.55rem;
+		color: var(--color-text-muted);
+		text-transform: uppercase;
+		flex-shrink: 0;
+	}
+
+	.add-mission-empty {
+		padding: 6px 8px;
+		font-size: 0.65rem;
+		color: var(--color-text-muted);
+		font-style: italic;
 	}
 
 	.promote-btn {

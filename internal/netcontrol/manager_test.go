@@ -1120,6 +1120,156 @@ func TestTrackedStationsRoundtrip(t *testing.T) {
 	}
 }
 
+// --- Auto-Unassign on Mission Completion Tests ---
+
+func TestCompleteMissionAutoUnassigns(t *testing.T) {
+	mgr := newTestManager(t)
+
+	n, _ := mgr.CreateNet(store.Net{Name: "Test Net"})
+	mgr.OpenNet(n.ID)
+
+	ci1, _ := mgr.CheckIn(n.ID, "KD7BBC", "")
+	ci2, _ := mgr.CheckIn(n.ID, "W1AW", "")
+	m, _ := mgr.CreateMission(store.NetMission{NetID: n.ID, Title: "Deploy"})
+	mgr.AssignMission(n.ID, ci1.ID, m.ID)
+	mgr.AssignMission(n.ID, ci2.ID, m.ID)
+	drainEvents(mgr)
+
+	// Complete the mission.
+	m.Status = "complete"
+	_, err := mgr.UpdateMission(*m)
+	if err != nil {
+		t.Fatalf("UpdateMission failed: %v", err)
+	}
+	drainEvents(mgr)
+
+	// Both operators should be unassigned and available.
+	cis := mgr.GetCheckIns(n.ID)
+	for _, ci := range cis {
+		if ci.ID == ci1.ID || ci.ID == ci2.ID {
+			if len(ci.MissionIDs) != 0 {
+				t.Errorf("%s should have no mission IDs, got %v", ci.Callsign, ci.MissionIDs)
+			}
+			if ci.Status != OpAvailable {
+				t.Errorf("%s status should be %q, got %q", ci.Callsign, OpAvailable, ci.Status)
+			}
+		}
+	}
+}
+
+func TestCompleteMissionKeepsOtherMissions(t *testing.T) {
+	mgr := newTestManager(t)
+
+	n, _ := mgr.CreateNet(store.Net{Name: "Test Net"})
+	mgr.OpenNet(n.ID)
+
+	ci, _ := mgr.CheckIn(n.ID, "KD7BBC", "")
+	m1, _ := mgr.CreateMission(store.NetMission{NetID: n.ID, Title: "Mission A"})
+	m2, _ := mgr.CreateMission(store.NetMission{NetID: n.ID, Title: "Mission B"})
+	mgr.AssignMission(n.ID, ci.ID, m1.ID)
+	mgr.AssignMission(n.ID, ci.ID, m2.ID)
+	drainEvents(mgr)
+
+	// Complete mission A only.
+	m1.Status = "complete"
+	mgr.UpdateMission(*m1)
+	drainEvents(mgr)
+
+	// Operator should still have mission B and remain assigned.
+	cis := mgr.GetCheckIns(n.ID)
+	for _, c := range cis {
+		if c.ID == ci.ID {
+			if len(c.MissionIDs) != 1 || c.MissionIDs[0] != m2.ID {
+				t.Errorf("expected only mission B (%s), got %v", m2.ID, c.MissionIDs)
+			}
+			if c.Status != OpAssigned {
+				t.Errorf("status should remain %q, got %q", OpAssigned, c.Status)
+			}
+		}
+	}
+}
+
+func TestCompleteMissionLogsEvents(t *testing.T) {
+	mgr := newTestManager(t)
+
+	n, _ := mgr.CreateNet(store.Net{Name: "Test Net"})
+	mgr.OpenNet(n.ID)
+
+	ci1, _ := mgr.CheckIn(n.ID, "KD7BBC", "")
+	ci2, _ := mgr.CheckIn(n.ID, "W1AW", "")
+	m, _ := mgr.CreateMission(store.NetMission{NetID: n.ID, Title: "Deploy"})
+	mgr.AssignMission(n.ID, ci1.ID, m.ID)
+	mgr.AssignMission(n.ID, ci2.ID, m.ID)
+	drainEvents(mgr)
+
+	m.Status = "complete"
+	mgr.UpdateMission(*m)
+	drainEvents(mgr)
+
+	events, err := mgr.GetEvents(n.ID)
+	if err != nil {
+		t.Fatalf("GetEvents failed: %v", err)
+	}
+
+	// Look for auto-unassign events in the timeline.
+	autoUnassignCount := 0
+	for _, e := range events {
+		if e.Type == "assignment" && strings.Contains(e.Summary, "auto-unassigned") {
+			autoUnassignCount++
+		}
+	}
+	if autoUnassignCount != 2 {
+		t.Errorf("expected 2 auto-unassign events, got %d", autoUnassignCount)
+	}
+}
+
+func TestCompleteMissionNoOpWhenNoOperators(t *testing.T) {
+	mgr := newTestManager(t)
+
+	n, _ := mgr.CreateNet(store.Net{Name: "Test Net"})
+	mgr.OpenNet(n.ID)
+
+	m, _ := mgr.CreateMission(store.NetMission{NetID: n.ID, Title: "Unassigned Mission"})
+	drainEvents(mgr)
+
+	// Complete a mission with no operators assigned — should not error.
+	m.Status = "complete"
+	_, err := mgr.UpdateMission(*m)
+	if err != nil {
+		t.Fatalf("UpdateMission failed: %v", err)
+	}
+}
+
+func TestCompleteMissionSkipsReleased(t *testing.T) {
+	mgr := newTestManager(t)
+
+	n, _ := mgr.CreateNet(store.Net{Name: "Test Net"})
+	mgr.OpenNet(n.ID)
+
+	ci, _ := mgr.CheckIn(n.ID, "KD7BBC", "")
+	m, _ := mgr.CreateMission(store.NetMission{NetID: n.ID, Title: "Deploy"})
+	mgr.AssignMission(n.ID, ci.ID, m.ID)
+	drainEvents(mgr)
+
+	// Check out the operator (releases them).
+	mgr.CheckOut(n.ID, ci.ID)
+	drainEvents(mgr)
+
+	// Complete the mission — released operator should be untouched.
+	m.Status = "complete"
+	mgr.UpdateMission(*m)
+	drainEvents(mgr)
+
+	cis := mgr.GetCheckIns(n.ID)
+	for _, c := range cis {
+		if c.ID == ci.ID {
+			if c.Status != OpReleased {
+				t.Errorf("released operator status should remain %q, got %q", OpReleased, c.Status)
+			}
+		}
+	}
+}
+
 // drainEvents reads all pending events from the channel.
 func drainEvents(mgr *Manager) {
 	for {

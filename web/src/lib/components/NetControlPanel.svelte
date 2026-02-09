@@ -3,13 +3,15 @@
 	import { api } from '$lib/api';
 	import { timeAgo } from '$lib/utils';
 	import { openICS309 } from '$lib/stores/ui';
-	import type { Net, NetCheckIn, NetMission, NetEvent, OperatorStatus, TrafficType } from '$lib/types';
+	import type { Net, NetCheckIn, NetMission, NetEvent, OperatorStatus, TrafficType, Annotation } from '$lib/types';
 	import {
 		activeNet, checkIns, missions, timeline,
 		sortedCheckIns, activeCheckIns,
 		initNetControlStore, loadNetData, clearNetControl,
 		opsView
 	} from '$lib/stores/netcontrol';
+	import { annotationList } from '$lib/stores/annotations';
+	import { categoryMeta, isTerminalStatus } from '$lib/annotationMeta';
 
 	let {
 		onFlyTo,
@@ -56,6 +58,12 @@
 
 	// Mission-side operator assignment
 	let assigningMissionId = $state<string | null>(null);
+
+	// Annotation linking in mission creation form
+	let selectedAnnotationIds = $state<string[]>([]);
+
+	// Annotation linking on mission cards
+	let linkingAnnotationMissionId = $state<string | null>(null);
 
 	// Mission filter
 	let missionFilter = $state<'all' | 'active' | 'complete'>('all');
@@ -299,7 +307,15 @@
 				data.lat = lat;
 				data.lon = lon;
 			}
-			await api.createMission($activeNet.id, data);
+			const mission = await api.createMission($activeNet.id, data);
+			// Link selected annotations to the new mission.
+			for (const annId of selectedAnnotationIds) {
+				try {
+					await api.linkAnnotation(annId, mission.id);
+				} catch (err) {
+					console.error('Link annotation failed:', err);
+				}
+			}
 			showMissionForm = false;
 			newMissionTitle = '';
 			newMissionDesc = '';
@@ -308,6 +324,7 @@
 			newMissionLocation = '';
 			newMissionLat = '';
 			newMissionLon = '';
+			selectedAnnotationIds = [];
 		} catch (e) {
 			console.error('Create mission failed:', e);
 		}
@@ -407,6 +424,16 @@
 		})
 	);
 
+	// Annotations linked to a specific mission
+	function annotationsForMission(missionId: string): Annotation[] {
+		return $annotationList.filter((a) => a.missionIds?.includes(missionId));
+	}
+
+	// Annotations available for linking (non-terminal)
+	let linkableAnnotations = $derived(
+		$annotationList.filter((a) => !isTerminalStatus(a.status))
+	);
+
 	let activeMissionCount = $derived($missions.filter((m) => m.status !== 'complete').length);
 	let completeMissionCount = $derived($missions.filter((m) => m.status === 'complete').length);
 
@@ -436,6 +463,32 @@
 			await api.unassignMission($activeNet.id, ciId, missionId);
 		} catch (e) {
 			console.error('Unassign from mission failed:', e);
+		}
+	}
+
+	async function handleLinkAnnotationToMission(missionId: string, annId: string) {
+		try {
+			await api.linkAnnotation(annId, missionId);
+			linkingAnnotationMissionId = null;
+		} catch (e) {
+			console.error('Link annotation to mission failed:', e);
+		}
+	}
+
+	async function handleUnlinkAnnotationFromMission(annId: string, missionId: string) {
+		try {
+			await api.unlinkAnnotation(annId, missionId);
+		} catch (e) {
+			console.error('Unlink annotation from mission failed:', e);
+		}
+	}
+
+	function toggleAnnotationSelector(annId: string) {
+		const idx = selectedAnnotationIds.indexOf(annId);
+		if (idx >= 0) {
+			selectedAnnotationIds = selectedAnnotationIds.filter((id) => id !== annId);
+		} else {
+			selectedAnnotationIds = [...selectedAnnotationIds, annId];
 		}
 	}
 
@@ -790,8 +843,29 @@
 							<input type="text" bind:value={newMissionLat} placeholder="Lat" inputmode="decimal" />
 							<input type="text" bind:value={newMissionLon} placeholder="Lon" inputmode="decimal" />
 						</div>
+						{#if linkableAnnotations.length > 0}
+							<div class="annotation-link-section">
+								<span class="field-label-sm">Link Annotations {#if selectedAnnotationIds.length > 0}<span class="link-count">({selectedAnnotationIds.length})</span>{/if}</span>
+								<div class="annotation-chips-wrap">
+									{#each linkableAnnotations as ann}
+										{@const cat = ann.category || 'general'}
+										{@const selected = selectedAnnotationIds.includes(ann.id)}
+										<button
+											class="annotation-chip"
+											class:selected
+											onclick={() => toggleAnnotationSelector(ann.id)}
+										>
+											<svg width="10" height="10" viewBox="0 0 16 16" fill="none">
+												<path d={categoryMeta[cat].icon} stroke="currentColor" stroke-width="1.2" fill="none" stroke-linecap="round" stroke-linejoin="round"/>
+											</svg>
+											{ann.label}
+										</button>
+									{/each}
+								</div>
+							</div>
+						{/if}
 						<div class="form-actions">
-							<button class="btn-secondary" onclick={() => (showMissionForm = false)}>Cancel</button>
+							<button class="btn-secondary" onclick={() => { showMissionForm = false; selectedAnnotationIds = []; }}>Cancel</button>
 							<button class="btn-primary" onclick={handleCreateMission} disabled={!newMissionTitle.trim()}>Create</button>
 						</div>
 					</div>
@@ -838,6 +912,43 @@
 									{/if}
 								</div>
 
+								<!-- Linked annotations -->
+								{#if annotationsForMission(m.id).length > 0}
+									<div class="mission-annotations">
+										{#each annotationsForMission(m.id) as ann}
+											{@const annCat = ann.category || 'general'}
+											<div class="mission-ann-chip">
+												<svg width="10" height="10" viewBox="0 0 16 16" fill="none">
+													<path d={categoryMeta[annCat].icon} stroke="currentColor" stroke-width="1.2" fill="none" stroke-linecap="round" stroke-linejoin="round"/>
+												</svg>
+												<span class="mission-ann-label">{ann.label}</span>
+												{#if m.status !== 'complete'}
+													<button class="mission-ann-remove" title="Unlink" onclick={() => handleUnlinkAnnotationFromMission(ann.id, m.id)}>×</button>
+												{/if}
+											</div>
+										{/each}
+									</div>
+								{/if}
+
+								<!-- Annotation link picker -->
+								{#if linkingAnnotationMissionId === m.id}
+									{@const availableAnns = linkableAnnotations.filter((a) => !a.missionIds?.includes(m.id))}
+									<div class="assign-picker">
+										{#each availableAnns as ann}
+											{@const annCat = ann.category || 'general'}
+											<button class="assign-option" onclick={() => handleLinkAnnotationToMission(m.id, ann.id)}>
+												<svg width="10" height="10" viewBox="0 0 16 16" fill="none">
+													<path d={categoryMeta[annCat].icon} stroke="currentColor" stroke-width="1.2" fill="none" stroke-linecap="round" stroke-linejoin="round"/>
+												</svg>
+												{ann.label}
+											</button>
+										{/each}
+										{#if availableAnns.length === 0}
+											<span class="assign-empty">No available annotations</span>
+										{/if}
+									</div>
+								{/if}
+
 								<!-- Assign operator picker (from mission side) -->
 								{#if assigningMissionId === m.id}
 									<div class="assign-picker">
@@ -860,6 +971,7 @@
 									<span class="mission-status-badge mission-status-{m.status}">{m.status}</span>
 									<div class="mission-actions">
 										{#if m.status !== 'complete'}
+											<button class="op-btn" title="Link annotation" onclick={() => { linkingAnnotationMissionId = linkingAnnotationMissionId === m.id ? null : m.id; }}>+ Ann</button>
 											<button class="op-btn" title="Assign operator" onclick={() => { assigningMissionId = assigningMissionId === m.id ? null : m.id; }}>+ Assign</button>
 										{/if}
 										{#if m.status === 'open'}
@@ -1740,6 +1852,97 @@
 
 	.mission-status-complete {
 		color: #6b7280;
+	}
+
+	/* Annotation linking in mission form */
+	.annotation-link-section {
+		display: flex;
+		flex-direction: column;
+		gap: 4px;
+	}
+
+	.field-label-sm {
+		font-size: 0.7rem;
+		color: var(--color-text-muted);
+		font-weight: 500;
+	}
+
+	.link-count {
+		color: var(--color-accent);
+	}
+
+	.annotation-chips-wrap {
+		display: flex;
+		flex-wrap: wrap;
+		gap: 4px;
+		max-height: 100px;
+		overflow-y: auto;
+	}
+
+	.annotation-chip {
+		display: inline-flex;
+		align-items: center;
+		gap: 3px;
+		padding: 2px 8px;
+		background: none;
+		border: 1px solid var(--color-primary);
+		border-radius: var(--radius-full);
+		color: var(--color-text-muted);
+		font-size: 0.65rem;
+		cursor: pointer;
+		transition: all var(--duration-fast);
+	}
+
+	.annotation-chip:hover {
+		border-color: var(--color-text-muted);
+		color: var(--color-text);
+	}
+
+	.annotation-chip.selected {
+		border-color: var(--color-accent);
+		color: var(--color-accent);
+		background: rgba(230, 57, 70, 0.08);
+	}
+
+	/* Annotation chips on mission cards */
+	.mission-annotations {
+		display: flex;
+		flex-wrap: wrap;
+		gap: 4px;
+		margin-top: var(--space-xs);
+	}
+
+	.mission-ann-chip {
+		display: inline-flex;
+		align-items: center;
+		gap: 3px;
+		background: var(--color-bg);
+		border: 1px solid var(--color-primary);
+		border-radius: var(--radius-sm);
+		padding: 2px 6px;
+		font-size: 0.65rem;
+		color: var(--color-text-muted);
+	}
+
+	.mission-ann-label {
+		max-width: 100px;
+		overflow: hidden;
+		text-overflow: ellipsis;
+		white-space: nowrap;
+	}
+
+	.mission-ann-remove {
+		background: none;
+		border: none;
+		color: var(--color-text-muted);
+		font-size: 0.7rem;
+		padding: 0 2px;
+		cursor: pointer;
+		line-height: 1;
+	}
+
+	.mission-ann-remove:hover {
+		color: #ef4444;
 	}
 
 	/* Timeline */

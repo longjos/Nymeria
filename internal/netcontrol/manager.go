@@ -456,7 +456,55 @@ func (m *Manager) UpdateMission(mission store.NetMission) (*store.NetMission, er
 	m.logEvent(mission.NetID, "mission_updated", mission.AssignedTo, fmt.Sprintf("Mission %q → %s", mission.Title, mission.Status))
 	m.emit(Event{Type: EventMissionUpdated, Data: mission})
 
+	if mission.Status == "complete" {
+		m.autoUnassignCompletedMission(mission.NetID, mission.ID, mission.Title)
+	}
+
 	return &mission, nil
+}
+
+// autoUnassignCompletedMission removes a completed mission from all operators.
+func (m *Manager) autoUnassignCompletedMission(netID, missionID, missionTitle string) {
+	m.mu.Lock()
+	cis := m.checkIns[netID]
+
+	type affected struct {
+		ci       store.NetCheckIn
+		callsign string
+	}
+
+	var updates []affected
+	for i, ci := range cis {
+		if ci.Status == OpReleased {
+			continue
+		}
+		found := false
+		newIDs := make([]string, 0, len(ci.MissionIDs))
+		for _, mid := range ci.MissionIDs {
+			if mid == missionID {
+				found = true
+			} else {
+				newIDs = append(newIDs, mid)
+			}
+		}
+		if !found {
+			continue
+		}
+		cis[i].MissionIDs = newIDs
+		if len(newIDs) == 0 && cis[i].Status == OpAssigned {
+			cis[i].Status = OpAvailable
+		}
+		updates = append(updates, affected{ci: cis[i], callsign: ci.Callsign})
+	}
+	m.checkIns[netID] = cis
+	m.mu.Unlock()
+
+	for _, u := range updates {
+		m.store.SaveNetCheckIn(u.ci)
+		m.logEvent(netID, "assignment", u.callsign,
+			fmt.Sprintf("%s auto-unassigned from completed mission %q", u.callsign, missionTitle))
+		m.emit(Event{Type: EventCheckInUpdated, Data: u.ci})
+	}
 }
 
 // AddNote adds a note to a net.
