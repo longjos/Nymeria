@@ -113,7 +113,7 @@ export interface Annotation {
 	status: string;
 	priority: AnnotationPriority;
 	operationId?: string;
-	missionId?: string;
+	missionIds: string[];
 	resources?: string;
 	reportedBy?: string;
 	reportedAt?: string;
@@ -186,9 +186,7 @@ export interface NetCheckIn {
 	lat?: number;
 	lon?: number;
 	assignment: string;
-	assignmentLat?: number;
-	assignmentLon?: number;
-	missionId?: string;
+	missionIds: string[];
 	trackedStations: TrackedStation[];
 	checkedInAt: string;
 	checkedOutAt?: string;

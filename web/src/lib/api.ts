@@ -122,7 +122,12 @@ export const api = {
 	deleteAnnotation: (id: string) => del<{ status: string }>(`/annotations/${id}`),
 	changeAnnotationStatus: (id: string, status: string) => post<Annotation>(`/annotations/${id}/status`, { status }),
 	promoteAnnotation: (id: string) => post<{ annotation: Annotation; mission: NetMission }>(`/annotations/${id}/promote`, {}),
-	unlinkAnnotation: (id: string) => del<Annotation>(`/annotations/${id}/link`),
+	linkAnnotation: (id: string, missionId: string) =>
+		post<Annotation>(`/annotations/${id}/link`, { missionId }),
+	unlinkAnnotation: (id: string, missionId?: string) => {
+		const qs = missionId ? `?missionId=${encodeURIComponent(missionId)}` : '';
+		return del<Annotation>(`/annotations/${id}/link${qs}`);
+	},
 
 	// Templates & Operations
 	annotationTemplates: () => get<AnnotationTemplate[]>('/annotation-templates'),
@@ -165,8 +170,8 @@ export const api = {
 	searchOperators: (q: string) => get<Station[]>(`/nets/search?q=${encodeURIComponent(q)}`),
 	assignMission: (netId: string, ciId: string, missionId: string) =>
 		post<NetCheckIn>(`/nets/${netId}/checkin/${ciId}/assign`, { missionId }),
-	unassignMission: (netId: string, ciId: string) =>
-		del<NetCheckIn>(`/nets/${netId}/checkin/${ciId}/assign`),
+	unassignMission: (netId: string, ciId: string, missionId: string) =>
+		del<NetCheckIn>(`/nets/${netId}/checkin/${ciId}/assign?missionId=${encodeURIComponent(missionId)}`),
 	addTrackedStation: (netId: string, ciId: string, callsign: string) =>
 		post<NetCheckIn>(`/nets/${netId}/checkin/${ciId}/devices`, { callsign }),
 	removeTrackedStation: (netId: string, ciId: string, callsign: string) =>

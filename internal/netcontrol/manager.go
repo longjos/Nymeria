@@ -637,7 +637,7 @@ func (m *Manager) GetEvents(netID string) ([]store.NetEvent, error) {
 	return m.store.LoadNetEvents(netID)
 }
 
-// AssignMission assigns a mission to an operator.
+// AssignMission assigns a mission to an operator (appends to MissionIDs).
 func (m *Manager) AssignMission(netID, checkInID, missionID string) (*store.NetCheckIn, error) {
 	m.mu.Lock()
 	cis, ok := m.checkIns[netID]
@@ -664,11 +664,14 @@ func (m *Manager) AssignMission(netID, checkInID, missionID string) (*store.NetC
 	var updated store.NetCheckIn
 	for i, ci := range cis {
 		if ci.ID == checkInID {
-			cis[i].MissionID = missionID
-			if mission.Lat != nil && mission.Lon != nil {
-				cis[i].AssignmentLat = mission.Lat
-				cis[i].AssignmentLon = mission.Lon
+			// Reject duplicate assignment.
+			for _, mid := range cis[i].MissionIDs {
+				if mid == missionID {
+					m.mu.Unlock()
+					return nil, fmt.Errorf("operator already assigned to mission %q", missionID)
+				}
 			}
+			cis[i].MissionIDs = append(cis[i].MissionIDs, missionID)
 			if cis[i].Status == OpAvailable {
 				cis[i].Status = OpAssigned
 			}
@@ -697,8 +700,8 @@ func (m *Manager) AssignMission(netID, checkInID, missionID string) (*store.NetC
 	return &updated, nil
 }
 
-// UnassignMission removes a mission assignment from an operator.
-func (m *Manager) UnassignMission(netID, checkInID string) (*store.NetCheckIn, error) {
+// UnassignMission removes a specific mission assignment from an operator.
+func (m *Manager) UnassignMission(netID, checkInID, missionID string) (*store.NetCheckIn, error) {
 	m.mu.Lock()
 	cis, ok := m.checkIns[netID]
 	if !ok {
@@ -710,10 +713,22 @@ func (m *Manager) UnassignMission(netID, checkInID string) (*store.NetCheckIn, e
 	var updated store.NetCheckIn
 	for i, ci := range cis {
 		if ci.ID == checkInID {
-			cis[i].MissionID = ""
-			cis[i].AssignmentLat = nil
-			cis[i].AssignmentLon = nil
-			if cis[i].Status == OpAssigned {
+			// Remove specific mission from the list.
+			newIDs := make([]string, 0, len(cis[i].MissionIDs))
+			removed := false
+			for _, mid := range cis[i].MissionIDs {
+				if mid == missionID {
+					removed = true
+				} else {
+					newIDs = append(newIDs, mid)
+				}
+			}
+			if !removed {
+				m.mu.Unlock()
+				return nil, fmt.Errorf("operator not assigned to mission %q", missionID)
+			}
+			cis[i].MissionIDs = newIDs
+			if len(cis[i].MissionIDs) == 0 && cis[i].Status == OpAssigned {
 				cis[i].Status = OpAvailable
 			}
 			updated = cis[i]
@@ -736,6 +751,48 @@ func (m *Manager) UnassignMission(netID, checkInID string) (*store.NetCheckIn, e
 
 	m.logEvent(netID, "assignment", updated.Callsign,
 		fmt.Sprintf("%s unassigned from mission", updated.Callsign))
+	m.emit(Event{Type: EventCheckInUpdated, Data: updated})
+
+	return &updated, nil
+}
+
+// UnassignAllMissions removes all mission assignments from an operator.
+func (m *Manager) UnassignAllMissions(netID, checkInID string) (*store.NetCheckIn, error) {
+	m.mu.Lock()
+	cis, ok := m.checkIns[netID]
+	if !ok {
+		m.mu.Unlock()
+		return nil, fmt.Errorf("net %q not found", netID)
+	}
+
+	found := false
+	var updated store.NetCheckIn
+	for i, ci := range cis {
+		if ci.ID == checkInID {
+			cis[i].MissionIDs = nil
+			if cis[i].Status == OpAssigned {
+				cis[i].Status = OpAvailable
+			}
+			updated = cis[i]
+			found = true
+			break
+		}
+	}
+
+	if !found {
+		m.mu.Unlock()
+		return nil, fmt.Errorf("check-in %q not found", checkInID)
+	}
+
+	m.checkIns[netID] = cis
+	m.mu.Unlock()
+
+	if err := m.store.SaveNetCheckIn(updated); err != nil {
+		return nil, fmt.Errorf("persist check-in: %w", err)
+	}
+
+	m.logEvent(netID, "assignment", updated.Callsign,
+		fmt.Sprintf("%s unassigned from all missions", updated.Callsign))
 	m.emit(Event{Type: EventCheckInUpdated, Data: updated})
 
 	return &updated, nil

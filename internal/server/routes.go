@@ -69,6 +69,7 @@ func (s *Server) routes() {
 			r.Delete("/annotations/{id}", s.handleDeleteAnnotation)
 			r.Post("/annotations/{id}/status", s.handleChangeAnnotationStatus)
 			r.Post("/annotations/{id}/promote", s.handlePromoteAnnotationToMission)
+			r.Post("/annotations/{id}/link", s.handleLinkAnnotation)
 			r.Delete("/annotations/{id}/link", s.handleUnlinkAnnotation)
 			r.Post("/operations", s.handleCreateOperation)
 			r.Post("/operations/{id}/archive", s.handleArchiveOperation)
@@ -885,7 +886,7 @@ func (s *Server) handlePromoteAnnotationToMission(w http.ResponseWriter, r *http
 		return
 	}
 
-	if ann.MissionID != "" {
+	if len(ann.MissionIDs) > 0 {
 		writeJSON(w, http.StatusConflict, map[string]string{"error": "annotation already linked to a mission"})
 		return
 	}
@@ -931,7 +932,7 @@ func (s *Server) handlePromoteAnnotationToMission(w http.ResponseWriter, r *http
 
 	// Link the annotation to the new mission.
 	existing := *ann
-	existing.MissionID = mission.ID
+	existing.MissionIDs = []string{mission.ID}
 	updated, err := s.annMgr.Update(existing)
 	if err != nil {
 		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
@@ -953,6 +954,31 @@ func (s *Server) handlePromoteAnnotationToMission(w http.ResponseWriter, r *http
 	}
 }
 
+func (s *Server) handleLinkAnnotation(w http.ResponseWriter, r *http.Request) {
+	if s.annMgr == nil {
+		writeJSON(w, http.StatusServiceUnavailable, map[string]string{"error": "annotations not available"})
+		return
+	}
+
+	id := chi.URLParam(r, "id")
+
+	var req struct {
+		MissionID string `json:"missionId"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil || req.MissionID == "" {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "missionId required"})
+		return
+	}
+
+	ann, err := s.annMgr.AddMissionLink(id, req.MissionID)
+	if err != nil {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
+		return
+	}
+
+	writeJSON(w, http.StatusOK, ann)
+}
+
 func (s *Server) handleUnlinkAnnotation(w http.ResponseWriter, r *http.Request) {
 	if s.annMgr == nil {
 		writeJSON(w, http.StatusServiceUnavailable, map[string]string{"error": "annotations not available"})
@@ -960,6 +986,20 @@ func (s *Server) handleUnlinkAnnotation(w http.ResponseWriter, r *http.Request) 
 	}
 
 	id := chi.URLParam(r, "id")
+
+	// Check for specific missionId to unlink (query param).
+	missionID := r.URL.Query().Get("missionId")
+	if missionID != "" {
+		ann, err := s.annMgr.RemoveMissionLink(id, missionID)
+		if err != nil {
+			writeJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
+			return
+		}
+		writeJSON(w, http.StatusOK, ann)
+		return
+	}
+
+	// No missionId specified — clear all links.
 	ann, err := s.annMgr.ClearMissionLink(id)
 	if err != nil {
 		writeJSON(w, http.StatusNotFound, map[string]string{"error": err.Error()})
@@ -1873,7 +1913,24 @@ func (s *Server) handleUnassignMission(w http.ResponseWriter, r *http.Request) {
 	id := chi.URLParam(r, "id")
 	ciId := chi.URLParam(r, "ciId")
 
-	ci, err := s.netMgr.UnassignMission(id, ciId)
+	// Check for missionId in query param or body.
+	missionID := r.URL.Query().Get("missionId")
+	if missionID == "" {
+		var req struct {
+			MissionID string `json:"missionId"`
+		}
+		if err := json.NewDecoder(r.Body).Decode(&req); err == nil && req.MissionID != "" {
+			missionID = req.MissionID
+		}
+	}
+
+	var ci *store.NetCheckIn
+	var err error
+	if missionID != "" {
+		ci, err = s.netMgr.UnassignMission(id, ciId, missionID)
+	} else {
+		ci, err = s.netMgr.UnassignAllMissions(id, ciId)
+	}
 	if err != nil {
 		writeJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
 		return

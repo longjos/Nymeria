@@ -358,17 +358,105 @@ func (m *Manager) ChangeStatus(id, newStatus string) (*Annotation, error) {
 	return &ann, nil
 }
 
-// GetByMissionID returns an annotation linked to a mission by its MissionID.
+// GetByMissionID returns the first annotation linked to a mission.
 func (m *Manager) GetByMissionID(missionID string) (*Annotation, bool) {
 	m.mu.RLock()
 	defer m.mu.RUnlock()
 
 	for _, a := range m.annotations {
-		if a.MissionID == missionID {
-			return &a, true
+		for _, mid := range a.MissionIDs {
+			if mid == missionID {
+				return &a, true
+			}
 		}
 	}
 	return nil, false
+}
+
+// GetAllByMissionID returns all annotations linked to a mission.
+func (m *Manager) GetAllByMissionID(missionID string) []Annotation {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+
+	var result []Annotation
+	for _, a := range m.annotations {
+		for _, mid := range a.MissionIDs {
+			if mid == missionID {
+				result = append(result, a)
+				break
+			}
+		}
+	}
+	return result
+}
+
+// AddMissionLink adds a mission ID to an annotation's MissionIDs (rejects duplicates).
+func (m *Manager) AddMissionLink(id, missionID string) (*Annotation, error) {
+	m.mu.RLock()
+	ann, exists := m.annotations[id]
+	m.mu.RUnlock()
+
+	if !exists {
+		return nil, fmt.Errorf("annotation %q not found", id)
+	}
+
+	for _, mid := range ann.MissionIDs {
+		if mid == missionID {
+			return nil, fmt.Errorf("annotation already linked to mission %q", missionID)
+		}
+	}
+
+	ann.MissionIDs = append(ann.MissionIDs, missionID)
+	ann.UpdatedAt = time.Now().UTC()
+
+	if err := m.store.SaveAnnotation(ann); err != nil {
+		return nil, fmt.Errorf("persist annotation: %w", err)
+	}
+
+	m.mu.Lock()
+	m.annotations[id] = ann
+	m.mu.Unlock()
+
+	m.emit(Event{Type: EventAnnotationUpdated, Data: ann})
+	return &ann, nil
+}
+
+// RemoveMissionLink removes a specific mission ID from an annotation's MissionIDs.
+func (m *Manager) RemoveMissionLink(id, missionID string) (*Annotation, error) {
+	m.mu.RLock()
+	ann, exists := m.annotations[id]
+	m.mu.RUnlock()
+
+	if !exists {
+		return nil, fmt.Errorf("annotation %q not found", id)
+	}
+
+	newIDs := make([]string, 0, len(ann.MissionIDs))
+	removed := false
+	for _, mid := range ann.MissionIDs {
+		if mid == missionID {
+			removed = true
+		} else {
+			newIDs = append(newIDs, mid)
+		}
+	}
+	if !removed {
+		return nil, fmt.Errorf("annotation not linked to mission %q", missionID)
+	}
+
+	ann.MissionIDs = newIDs
+	ann.UpdatedAt = time.Now().UTC()
+
+	if err := m.store.SaveAnnotation(ann); err != nil {
+		return nil, fmt.Errorf("persist annotation: %w", err)
+	}
+
+	m.mu.Lock()
+	m.annotations[id] = ann
+	m.mu.Unlock()
+
+	m.emit(Event{Type: EventAnnotationUpdated, Data: ann})
+	return &ann, nil
 }
 
 // CreateFromMission creates an annotation from a net mission's location data.
@@ -386,7 +474,7 @@ func (m *Manager) CreateFromMission(mission store.NetMission, createdBy, created
 		Geometry:      geom,
 		Category:      CategoryAssignment,
 		Priority:      mission.Priority,
-		MissionID:     mission.ID,
+		MissionIDs:    []string{mission.ID},
 		CreatedBy:     createdBy,
 		CreatedByName: createdByName,
 	})
@@ -452,23 +540,24 @@ func (m *Manager) SyncStatusFromMission(missionID, missionStatus string) error {
 }
 
 // SyncStatusToMission returns the mapped mission status for an annotation's current status.
-func (m *Manager) SyncStatusToMission(annID string) (missionID string, missionStatus string, err error) {
+// Returns all linked mission IDs and the mapped status.
+func (m *Manager) SyncStatusToMission(annID string) (missionIDs []string, missionStatus string, err error) {
 	ann, found := m.Get(annID)
 	if !found {
-		return "", "", fmt.Errorf("annotation %q not found", annID)
+		return nil, "", fmt.Errorf("annotation %q not found", annID)
 	}
-	if ann.MissionID == "" {
-		return "", "", fmt.Errorf("annotation has no linked mission")
+	if len(ann.MissionIDs) == 0 {
+		return nil, "", fmt.Errorf("annotation has no linked mission")
 	}
 
 	mapped, ok := annotationToMissionStatus[ann.Status]
 	if !ok {
 		mapped = "open"
 	}
-	return ann.MissionID, mapped, nil
+	return ann.MissionIDs, mapped, nil
 }
 
-// ClearMissionLink removes the mission link from an annotation.
+// ClearMissionLink removes all mission links from an annotation.
 func (m *Manager) ClearMissionLink(id string) (*Annotation, error) {
 	m.mu.RLock()
 	ann, exists := m.annotations[id]
@@ -478,7 +567,7 @@ func (m *Manager) ClearMissionLink(id string) (*Annotation, error) {
 		return nil, fmt.Errorf("annotation %q not found", id)
 	}
 
-	ann.MissionID = ""
+	ann.MissionIDs = nil
 	ann.UpdatedAt = time.Now().UTC()
 
 	if err := m.store.SaveAnnotation(ann); err != nil {

@@ -494,12 +494,12 @@
 							{/if}
 							&middot; {timeAgo(ann.createdAt)}
 						</span>
-						{#if ann.missionId}
+						{#if ann.missionIds?.length > 0}
 							<span class="mission-badge">
 								<svg width="10" height="10" viewBox="0 0 16 16" fill="none"><path d="M4 2h8v12H4zM7 5h2M7 8h2" stroke="currentColor" stroke-width="1.2" fill="none" stroke-linecap="round"/></svg>
-								Linked to mission
+								{ann.missionIds.length} mission{ann.missionIds.length > 1 ? 's' : ''}
 								{#if $canPlot}
-									<button class="unlink-btn" onclick={(e) => handleUnlink(ann, e)}>Unlink</button>
+									<button class="unlink-btn" onclick={(e) => handleUnlink(ann, e)}>Unlink all</button>
 								{/if}
 							</span>
 						{:else if $canPlot && ann.type === 'point' && !isTerminalStatus(ann.status)}

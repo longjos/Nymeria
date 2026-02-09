@@ -632,43 +632,82 @@ func TestAssignMission(t *testing.T) {
 	if err != nil {
 		t.Fatalf("AssignMission failed: %v", err)
 	}
-	if updated.MissionID != m.ID {
-		t.Errorf("missionId: got %q, want %q", updated.MissionID, m.ID)
+	if len(updated.MissionIDs) != 1 || updated.MissionIDs[0] != m.ID {
+		t.Errorf("missionIds: got %v, want [%s]", updated.MissionIDs, m.ID)
 	}
 	if updated.Status != OpAssigned {
 		t.Errorf("status: got %q, want %q", updated.Status, OpAssigned)
 	}
 }
 
-func TestAssignMissionCopiesCoords(t *testing.T) {
+func TestAssignMultipleMissions(t *testing.T) {
 	mgr := newTestManager(t)
 
 	n, _ := mgr.CreateNet(store.Net{Name: "Test Net"})
 	mgr.OpenNet(n.ID)
 
 	ci, _ := mgr.CheckIn(n.ID, "KD7BBC", "")
-	lat, lon := 34.05, -118.24
-	m, _ := mgr.CreateMission(store.NetMission{
-		NetID: n.ID,
-		Title: "Deploy to shelter",
-		Lat:   &lat,
-		Lon:   &lon,
-	})
+	m1, _ := mgr.CreateMission(store.NetMission{NetID: n.ID, Title: "Mission A"})
+	m2, _ := mgr.CreateMission(store.NetMission{NetID: n.ID, Title: "Mission B"})
 	drainEvents(mgr)
 
-	updated, err := mgr.AssignMission(n.ID, ci.ID, m.ID)
+	mgr.AssignMission(n.ID, ci.ID, m1.ID)
+	updated, err := mgr.AssignMission(n.ID, ci.ID, m2.ID)
 	if err != nil {
-		t.Fatalf("AssignMission failed: %v", err)
+		t.Fatalf("AssignMission second failed: %v", err)
 	}
-	if updated.AssignmentLat == nil || *updated.AssignmentLat != lat {
-		t.Errorf("assignmentLat: got %v, want %f", updated.AssignmentLat, lat)
+	if len(updated.MissionIDs) != 2 {
+		t.Fatalf("expected 2 mission IDs, got %d", len(updated.MissionIDs))
 	}
-	if updated.AssignmentLon == nil || *updated.AssignmentLon != lon {
-		t.Errorf("assignmentLon: got %v, want %f", updated.AssignmentLon, lon)
+	if updated.MissionIDs[0] != m1.ID || updated.MissionIDs[1] != m2.ID {
+		t.Errorf("missionIds: got %v, want [%s %s]", updated.MissionIDs, m1.ID, m2.ID)
 	}
 }
 
-func TestUnassignMission(t *testing.T) {
+func TestAssignMissionRejectDuplicate(t *testing.T) {
+	mgr := newTestManager(t)
+
+	n, _ := mgr.CreateNet(store.Net{Name: "Test Net"})
+	mgr.OpenNet(n.ID)
+
+	ci, _ := mgr.CheckIn(n.ID, "KD7BBC", "")
+	m, _ := mgr.CreateMission(store.NetMission{NetID: n.ID, Title: "Deploy"})
+	drainEvents(mgr)
+
+	mgr.AssignMission(n.ID, ci.ID, m.ID)
+	_, err := mgr.AssignMission(n.ID, ci.ID, m.ID)
+	if err == nil {
+		t.Error("expected error for duplicate assignment")
+	}
+}
+
+func TestUnassignSpecificMission(t *testing.T) {
+	mgr := newTestManager(t)
+
+	n, _ := mgr.CreateNet(store.Net{Name: "Test Net"})
+	mgr.OpenNet(n.ID)
+
+	ci, _ := mgr.CheckIn(n.ID, "KD7BBC", "")
+	m1, _ := mgr.CreateMission(store.NetMission{NetID: n.ID, Title: "Mission A"})
+	m2, _ := mgr.CreateMission(store.NetMission{NetID: n.ID, Title: "Mission B"})
+	mgr.AssignMission(n.ID, ci.ID, m1.ID)
+	mgr.AssignMission(n.ID, ci.ID, m2.ID)
+	drainEvents(mgr)
+
+	updated, err := mgr.UnassignMission(n.ID, ci.ID, m1.ID)
+	if err != nil {
+		t.Fatalf("UnassignMission failed: %v", err)
+	}
+	if len(updated.MissionIDs) != 1 || updated.MissionIDs[0] != m2.ID {
+		t.Errorf("missionIds: got %v, want [%s]", updated.MissionIDs, m2.ID)
+	}
+	// Should still be assigned (has one mission left).
+	if updated.Status != OpAssigned {
+		t.Errorf("status: got %q, want %q", updated.Status, OpAssigned)
+	}
+}
+
+func TestUnassignLastMissionRestoresAvailable(t *testing.T) {
 	mgr := newTestManager(t)
 
 	n, _ := mgr.CreateNet(store.Net{Name: "Test Net"})
@@ -679,18 +718,40 @@ func TestUnassignMission(t *testing.T) {
 	mgr.AssignMission(n.ID, ci.ID, m.ID)
 	drainEvents(mgr)
 
-	updated, err := mgr.UnassignMission(n.ID, ci.ID)
+	updated, err := mgr.UnassignMission(n.ID, ci.ID, m.ID)
 	if err != nil {
 		t.Fatalf("UnassignMission failed: %v", err)
 	}
-	if updated.MissionID != "" {
-		t.Errorf("missionId should be empty, got %q", updated.MissionID)
+	if len(updated.MissionIDs) != 0 {
+		t.Errorf("missionIds should be empty, got %v", updated.MissionIDs)
 	}
 	if updated.Status != OpAvailable {
 		t.Errorf("status: got %q, want %q", updated.Status, OpAvailable)
 	}
-	if updated.AssignmentLat != nil {
-		t.Errorf("assignmentLat should be nil, got %v", updated.AssignmentLat)
+}
+
+func TestUnassignAllMissions(t *testing.T) {
+	mgr := newTestManager(t)
+
+	n, _ := mgr.CreateNet(store.Net{Name: "Test Net"})
+	mgr.OpenNet(n.ID)
+
+	ci, _ := mgr.CheckIn(n.ID, "KD7BBC", "")
+	m1, _ := mgr.CreateMission(store.NetMission{NetID: n.ID, Title: "Mission A"})
+	m2, _ := mgr.CreateMission(store.NetMission{NetID: n.ID, Title: "Mission B"})
+	mgr.AssignMission(n.ID, ci.ID, m1.ID)
+	mgr.AssignMission(n.ID, ci.ID, m2.ID)
+	drainEvents(mgr)
+
+	updated, err := mgr.UnassignAllMissions(n.ID, ci.ID)
+	if err != nil {
+		t.Fatalf("UnassignAllMissions failed: %v", err)
+	}
+	if len(updated.MissionIDs) != 0 {
+		t.Errorf("missionIds should be empty, got %v", updated.MissionIDs)
+	}
+	if updated.Status != OpAvailable {
+		t.Errorf("status: got %q, want %q", updated.Status, OpAvailable)
 	}
 }
 
