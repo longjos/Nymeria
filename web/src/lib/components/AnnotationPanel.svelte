@@ -125,6 +125,26 @@
 		await api.deleteAnnotation(id);
 	}
 
+	// Inline color editing
+	let colorEditId = $state<string | null>(null);
+
+	function getAnnotationColor(ann: Annotation): string {
+		if (ann.style) {
+			try { return JSON.parse(ann.style).color ?? '#e63946'; } catch { /* skip */ }
+		}
+		return '#e63946';
+	}
+
+	function toggleColorEdit(id: string) {
+		colorEditId = colorEditId === id ? null : id;
+	}
+
+	async function handleColorChange(ann: Annotation, color: string) {
+		colorEditId = null;
+		const style = JSON.stringify({ color });
+		await api.updateAnnotation(ann.id, { style });
+	}
+
 	function handleClick(ann: Annotation) {
 		onFlyToAnnotation?.(ann);
 	}
@@ -247,11 +267,16 @@
 		{:else}
 			{#each $annotationList as ann (ann.id)}
 				<div class="entry" role="button" tabindex="0" onclick={() => handleClick(ann)} onkeydown={(e) => e.key === 'Enter' && handleClick(ann)}>
-					<div class="entry-icon">
-						<svg width="16" height="16" viewBox="0 0 16 16" fill="none">
-							<path d={typeIcons[ann.type] ?? typeIcons.point} stroke="currentColor" stroke-width="1.2" fill="none" stroke-linecap="round" stroke-linejoin="round"/>
-						</svg>
-					</div>
+					{#if $canPlot}
+						<button
+							class="entry-color-dot"
+							style="background: {getAnnotationColor(ann)}"
+							title="Change color"
+							onclick={(e) => { e.stopPropagation(); toggleColorEdit(ann.id); }}
+						></button>
+					{:else}
+						<div class="entry-color-dot static" style="background: {getAnnotationColor(ann)}"></div>
+					{/if}
 					<div class="entry-info">
 						<span class="entry-label">{ann.label}</span>
 						{#if ann.description}
@@ -263,6 +288,20 @@
 							{/if}
 							{timeAgo(ann.createdAt)}
 						</span>
+						{#if colorEditId === ann.id}
+							<!-- svelte-ignore a11y_no_static_element_interactions -->
+							<div class="inline-swatches" onclick={(e) => e.stopPropagation()}>
+								{#each COLORS as c}
+									<button
+										class="swatch"
+										class:selected={getAnnotationColor(ann) === c}
+										style="background: {c}"
+										onclick={() => handleColorChange(ann, c)}
+										aria-label="Color {c}"
+									></button>
+								{/each}
+							</div>
+						{/if}
 					</div>
 					{#if $canPlot}
 						{#if editingId === ann.id}
@@ -565,10 +604,36 @@
 		background: var(--color-primary);
 	}
 
-	.entry-icon {
+	.entry-color-dot {
 		flex-shrink: 0;
-		margin-top: 2px;
-		color: var(--color-text-muted);
+		width: 14px;
+		height: 14px;
+		border-radius: 50%;
+		border: 2px solid transparent;
+		margin-top: 3px;
+		cursor: pointer;
+		transition: transform var(--duration-fast), border-color var(--duration-fast);
+	}
+
+	.entry-color-dot:hover {
+		transform: scale(1.3);
+		border-color: var(--color-text);
+	}
+
+	.entry-color-dot.static {
+		cursor: default;
+	}
+
+	.entry-color-dot.static:hover {
+		transform: none;
+		border-color: transparent;
+	}
+
+	.inline-swatches {
+		display: flex;
+		gap: 4px;
+		flex-wrap: wrap;
+		padding-top: 4px;
 	}
 
 	.entry-info {
