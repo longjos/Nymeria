@@ -1,6 +1,6 @@
 import { writable, get } from 'svelte/store';
 
-export type PanelMode = 'closed' | 'stations' | 'detail' | 'messages' | 'convo' | 'transports' | 'activity';
+export type PanelMode = 'closed' | 'stations' | 'detail' | 'messages' | 'convo' | 'transports' | 'activity' | 'annotations';
 export type DetailTab = 'info' | 'messages' | 'track';
 export type SheetState = 'peek' | 'half' | 'full';
 export type ConnectionState = 'connected' | 'disconnected' | 'reconnecting';
@@ -52,6 +52,12 @@ export function openTransports(): void {
 
 export function openActivity(): void {
 	panelMode.set('activity');
+	selectedStation.set(null);
+	sheetState.set('half');
+}
+
+export function openAnnotations(): void {
+	panelMode.set('annotations');
 	selectedStation.set(null);
 	sheetState.set('half');
 }

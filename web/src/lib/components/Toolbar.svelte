@@ -11,6 +11,7 @@
 		onMessagesOpen,
 		onTransportsOpen,
 		onActivityOpen,
+		onAnnotationsOpen,
 		onSelectStation
 	}: {
 		unreadCount?: number;
@@ -19,6 +20,7 @@
 		onMessagesOpen?: () => void;
 		onTransportsOpen?: () => void;
 		onActivityOpen?: () => void;
+		onAnnotationsOpen?: () => void;
 		onSelectStation?: (key: string) => void;
 	} = $props();
 
@@ -104,6 +106,12 @@
 		</svg>
 	</button>
 
+	<button class="toolbar-btn" onclick={onAnnotationsOpen} title="Annotations">
+		<svg width="14" height="14" viewBox="0 0 16 16" fill="none">
+			<path d="M8 1a5 5 0 00-5 5c0 4 5 9 5 9s5-5 5-9a5 5 0 00-5-5zm0 7a2 2 0 110-4 2 2 0 010 4z" stroke="currentColor" stroke-width="1.2" fill="none" stroke-linecap="round" stroke-linejoin="round"/>
+		</svg>
+	</button>
+
 	<ConnectionStatus />
 	<UserMenu />
 </div>
@@ -128,6 +136,11 @@
 		<svg width="18" height="18" viewBox="0 0 16 16" fill="none">
 			<path d="M8 1v4M8 11v4M1 8h4M11 8h4" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/>
 			<circle cx="8" cy="8" r="3" stroke="currentColor" stroke-width="1.5"/>
+		</svg>
+	</button>
+	<button class="fab" onclick={onAnnotationsOpen} title="Annotations">
+		<svg width="18" height="18" viewBox="0 0 16 16" fill="none">
+			<path d="M8 1a5 5 0 00-5 5c0 4 5 9 5 9s5-5 5-9a5 5 0 00-5-5zm0 7a2 2 0 110-4 2 2 0 010 4z" stroke="currentColor" stroke-width="1.2" fill="none" stroke-linecap="round" stroke-linejoin="round"/>
 		</svg>
 	</button>
 </div>

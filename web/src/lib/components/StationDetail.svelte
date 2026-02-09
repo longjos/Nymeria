@@ -6,6 +6,7 @@
 	import { api } from '$lib/api';
 	import { stations } from '$lib/stores/stations';
 	import { conversations, loadMessages } from '$lib/stores/messages';
+	import { canOperate } from '$lib/stores/session';
 	import { symbolInfo } from '$lib/symbols';
 	import { timeAgo, formatCoord, formatSpeed, formatAltitude, formatCourse, stationDisplayName } from '$lib/utils';
 	import type { Station } from '$lib/types';
@@ -115,7 +116,11 @@
 					{/each}
 				{/if}
 			</div>
-			<MessageCompose to={stationKey} onSent={() => {}} />
+			{#if $canOperate}
+				<MessageCompose to={stationKey} onSent={() => {}} />
+			{:else}
+				<p class="role-hint">Operator role required to send messages</p>
+			{/if}
 		</div>
 	{:else if station}
 		<div class="detail-header">
@@ -209,7 +214,11 @@
 						{/each}
 					{/if}
 				</div>
-				<MessageCompose to={stationKey} onSent={() => {}} />
+				{#if $canOperate}
+					<MessageCompose to={stationKey} onSent={() => {}} />
+				{:else}
+					<p class="role-hint">Operator role required to send messages</p>
+				{/if}
 			</div>
 		{:else if activeTab === 'track'}
 			<div class="tab-content">
@@ -410,5 +419,14 @@
 		text-align: center;
 		color: var(--color-text-muted);
 		font-size: 0.85rem;
+	}
+
+	.role-hint {
+		padding: 0.75rem var(--space-md);
+		text-align: center;
+		color: var(--color-text-muted);
+		font-size: 0.8rem;
+		font-style: italic;
+		border-top: 1px solid var(--color-primary);
 	}
 </style>
