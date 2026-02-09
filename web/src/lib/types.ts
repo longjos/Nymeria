@@ -56,6 +56,15 @@ export interface Conversation {
 	claimedName?: string;
 }
 
+export interface Bulletin {
+	id: string;
+	from: string;
+	bulletinId: string;
+	body: string;
+	timestamp: string;
+	isAnnouncement: boolean;
+}
+
 export interface HealthResponse {
 	status: string;
 }
@@ -86,6 +95,9 @@ export interface ConfigResponse {
 	pinRequired: boolean;
 }
 
+export type AnnotationCategory = 'incident' | 'resource' | 'checkpoint' | 'hazard' | 'route' | 'boundary' | 'assignment' | 'general';
+export type AnnotationPriority = 'routine' | 'priority' | 'urgent' | 'emergency';
+
 export interface Annotation {
 	id: string;
 	type: 'point' | 'line' | 'area';
@@ -97,6 +109,16 @@ export interface Annotation {
 	createdByName?: string;
 	createdAt: string;
 	updatedAt: string;
+	category: AnnotationCategory;
+	status: string;
+	priority: AnnotationPriority;
+	operationId?: string;
+	missionId?: string;
+	resources?: string;
+	reportedBy?: string;
+	reportedAt?: string;
+	resolvedAt?: string;
+	expiresAt?: string;
 }
 
 export interface ActivityEntry {

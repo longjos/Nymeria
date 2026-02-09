@@ -1,5 +1,5 @@
 import type {
-	Station, Message, Conversation, HealthResponse, TransportStatus,
+	Station, Message, Conversation, Bulletin, HealthResponse, TransportStatus,
 	SessionUser, PublicUser, ConfigResponse, Annotation, ActivityResponse,
 	Net, NetCheckIn, NetMission, NetNote, NetEvent, NetSummary, TacticalAlias
 } from './types';
@@ -96,6 +96,9 @@ export const api = {
 	searchStations: (q: string) => get<Station[]>(`/stations?q=${encodeURIComponent(q)}`),
 	station: (callsign: string) => get<Station>(`/stations/${encodeURIComponent(callsign)}`),
 
+	// Bulletins
+	bulletins: () => get<Bulletin[]>('/bulletins'),
+
 	// Messages
 	conversations: () => get<Conversation[]>('/messages'),
 	messages: (callsign: string) => get<Message[]>(`/messages/${encodeURIComponent(callsign)}`),
@@ -109,10 +112,14 @@ export const api = {
 	transports: () => get<TransportStatus[]>('/transports'),
 
 	// Annotations
-	annotations: () => get<Annotation[]>('/annotations'),
+	annotations: (params?: Record<string, string>) => {
+		const qs = params ? '?' + new URLSearchParams(params).toString() : '';
+		return get<Annotation[]>(`/annotations${qs}`);
+	},
 	createAnnotation: (ann: Partial<Annotation>) => post<Annotation>('/annotations', ann),
 	updateAnnotation: (id: string, ann: Partial<Annotation>) => put<Annotation>(`/annotations/${id}`, ann),
 	deleteAnnotation: (id: string) => del<{ status: string }>(`/annotations/${id}`),
+	changeAnnotationStatus: (id: string, status: string) => post<Annotation>(`/annotations/${id}/status`, { status }),
 
 	// Activity
 	activity: (params?: Record<string, string>) => {

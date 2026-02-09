@@ -24,7 +24,8 @@ const (
 	ActionSessionEnded        Action = "session_ended"
 	ActionBeaconSent          Action = "beacon_sent"
 	ActionTransportConnect    Action = "transport_connect"
-	ActionTransportDisconnect Action = "transport_disconnect"
+	ActionTransportDisconnect      Action = "transport_disconnect"
+	ActionAnnotationStatusChanged  Action = "annotation_status_changed"
 )
 
 // Entry represents a single activity log entry.

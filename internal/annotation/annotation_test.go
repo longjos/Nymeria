@@ -437,3 +437,425 @@ func TestPersistenceAcrossReload(t *testing.T) {
 		t.Errorf("label: got %q, want %q", all[0].Label, "Persisted")
 	}
 }
+
+// --- Phase A (#53): Extended Annotation Model Tests ---
+
+func TestValidateCategory(t *testing.T) {
+	valid := []string{"incident", "resource", "checkpoint", "hazard", "route", "boundary", "assignment", "general"}
+	for _, cat := range valid {
+		if err := ValidateCategory(cat); err != nil {
+			t.Errorf("ValidateCategory(%q) should succeed: %v", cat, err)
+		}
+	}
+
+	invalid := []string{"unknown", "fire", ""}
+	for _, cat := range invalid {
+		if err := ValidateCategory(cat); err == nil {
+			t.Errorf("ValidateCategory(%q) should fail", cat)
+		}
+	}
+}
+
+func TestValidatePriority(t *testing.T) {
+	valid := []string{"routine", "priority", "urgent", "emergency"}
+	for _, pri := range valid {
+		if err := ValidatePriority(pri); err != nil {
+			t.Errorf("ValidatePriority(%q) should succeed: %v", pri, err)
+		}
+	}
+
+	invalid := []string{"unknown", "high", ""}
+	for _, pri := range invalid {
+		if err := ValidatePriority(pri); err == nil {
+			t.Errorf("ValidatePriority(%q) should fail", pri)
+		}
+	}
+}
+
+func TestCategoryGeometryCompatibility(t *testing.T) {
+	tests := []struct {
+		category string
+		geomType string
+		wantErr  bool
+	}{
+		{"incident", "point", false},
+		{"incident", "line", true},
+		{"incident", "area", true},
+		{"resource", "point", false},
+		{"resource", "line", true},
+		{"checkpoint", "point", false},
+		{"checkpoint", "area", true},
+		{"hazard", "point", false},
+		{"hazard", "area", false},
+		{"hazard", "line", true},
+		{"route", "line", false},
+		{"route", "point", true},
+		{"boundary", "area", false},
+		{"boundary", "point", true},
+		{"assignment", "point", false},
+		{"assignment", "area", false},
+		{"assignment", "line", true},
+		{"general", "point", false},
+		{"general", "line", false},
+		{"general", "area", false},
+	}
+
+	for _, tt := range tests {
+		err := ValidateCategoryGeometry(tt.category, tt.geomType)
+		if (err != nil) != tt.wantErr {
+			t.Errorf("ValidateCategoryGeometry(%q, %q): got err=%v, wantErr=%v", tt.category, tt.geomType, err, tt.wantErr)
+		}
+	}
+}
+
+func TestValidateStatusForCategory(t *testing.T) {
+	tests := []struct {
+		category string
+		status   string
+		wantErr  bool
+	}{
+		// incident statuses
+		{"incident", "reported", false},
+		{"incident", "responding", false},
+		{"incident", "on-scene", false},
+		{"incident", "resolved", false},
+		{"incident", "escalated", false},
+		{"incident", "cleared", true},
+		{"incident", "open", true},
+
+		// resource statuses
+		{"resource", "planned", false},
+		{"resource", "open", false},
+		{"resource", "active", false},
+		{"resource", "at-capacity", false},
+		{"resource", "closing", false},
+		{"resource", "closed", false},
+		{"resource", "resolved", true},
+
+		// checkpoint statuses
+		{"checkpoint", "planned", false},
+		{"checkpoint", "open", false},
+		{"checkpoint", "closed", false},
+		{"checkpoint", "resolved", true},
+
+		// hazard statuses
+		{"hazard", "reported", false},
+		{"hazard", "confirmed", false},
+		{"hazard", "mitigated", false},
+		{"hazard", "cleared", false},
+		{"hazard", "active", true},
+
+		// route statuses
+		{"route", "planned", false},
+		{"route", "active", false},
+		{"route", "closed", false},
+		{"route", "resolved", true},
+
+		// boundary statuses
+		{"boundary", "planned", false},
+		{"boundary", "active", false},
+		{"boundary", "complete", false},
+		{"boundary", "needs-re-search", false},
+		{"boundary", "closed", true},
+
+		// assignment statuses
+		{"assignment", "planned", false},
+		{"assignment", "assigned", false},
+		{"assignment", "in-progress", false},
+		{"assignment", "complete", false},
+		{"assignment", "incomplete", false},
+		{"assignment", "closed", true},
+
+		// general statuses
+		{"general", "active", false},
+		{"general", "resolved", false},
+		{"general", "closed", true},
+	}
+
+	for _, tt := range tests {
+		err := ValidateStatusForCategory(tt.category, tt.status)
+		if (err != nil) != tt.wantErr {
+			t.Errorf("ValidateStatusForCategory(%q, %q): got err=%v, wantErr=%v", tt.category, tt.status, err, tt.wantErr)
+		}
+	}
+}
+
+func TestChangeStatus(t *testing.T) {
+	mgr := newTestManager(t)
+
+	ann, err := mgr.Create(Annotation{
+		Type:     TypePoint,
+		Label:    "Fire on Main St",
+		Geometry: `{"type":"Point","coordinates":[-118.24,34.05]}`,
+		Category: CategoryIncident,
+		Status:   "reported",
+		Priority: PriorityUrgent,
+	})
+	if err != nil {
+		t.Fatalf("Create failed: %v", err)
+	}
+
+	// Change to responding.
+	updated, err := mgr.ChangeStatus(ann.ID, "responding")
+	if err != nil {
+		t.Fatalf("ChangeStatus to responding: %v", err)
+	}
+	if updated.Status != "responding" {
+		t.Errorf("status: got %q, want %q", updated.Status, "responding")
+	}
+	if updated.ResolvedAt != nil {
+		t.Error("resolvedAt should be nil for non-terminal status")
+	}
+
+	// Change to resolved (terminal).
+	updated, err = mgr.ChangeStatus(ann.ID, "resolved")
+	if err != nil {
+		t.Fatalf("ChangeStatus to resolved: %v", err)
+	}
+	if updated.Status != "resolved" {
+		t.Errorf("status: got %q, want %q", updated.Status, "resolved")
+	}
+	if updated.ResolvedAt == nil {
+		t.Error("resolvedAt should be set for terminal status")
+	}
+}
+
+func TestChangeStatusInvalidTransition(t *testing.T) {
+	mgr := newTestManager(t)
+
+	ann, _ := mgr.Create(Annotation{
+		Type:     TypePoint,
+		Label:    "Fire",
+		Geometry: `{"type":"Point","coordinates":[0,0]}`,
+		Category: CategoryIncident,
+		Status:   "reported",
+	})
+
+	// "cleared" is not valid for incident category.
+	_, err := mgr.ChangeStatus(ann.ID, "cleared")
+	if err == nil {
+		t.Error("expected error for invalid status transition")
+	}
+}
+
+func TestChangeStatusNotFound(t *testing.T) {
+	mgr := newTestManager(t)
+
+	_, err := mgr.ChangeStatus("nonexistent", "resolved")
+	if err == nil {
+		t.Error("expected error for nonexistent annotation")
+	}
+}
+
+func TestCreateAnnotationWithCategory(t *testing.T) {
+	mgr := newTestManager(t)
+
+	ann, err := mgr.Create(Annotation{
+		Type:     TypePoint,
+		Label:    "Aid Station Alpha",
+		Geometry: `{"type":"Point","coordinates":[-118.24,34.05]}`,
+		Category: CategoryResource,
+	})
+	if err != nil {
+		t.Fatalf("Create failed: %v", err)
+	}
+
+	if ann.Category != CategoryResource {
+		t.Errorf("category: got %q, want %q", ann.Category, CategoryResource)
+	}
+	// Default status and priority should be set.
+	if ann.Status != "active" {
+		t.Errorf("status: got %q, want %q", ann.Status, "active")
+	}
+	if ann.Priority != PriorityRoutine {
+		t.Errorf("priority: got %q, want %q", ann.Priority, PriorityRoutine)
+	}
+}
+
+func TestCreateAnnotationCategoryGeometryMismatch(t *testing.T) {
+	mgr := newTestManager(t)
+
+	_, err := mgr.Create(Annotation{
+		Type:     TypeLine,
+		Label:    "Should fail",
+		Geometry: `{"type":"LineString","coordinates":[[0,0],[1,1]]}`,
+		Category: CategoryIncident, // incident only allows point
+	})
+	if err == nil {
+		t.Error("expected error for category-geometry mismatch")
+	}
+}
+
+func TestAllFilteredByCategory(t *testing.T) {
+	mgr := newTestManager(t)
+
+	mgr.Create(Annotation{
+		Type: TypePoint, Label: "Inc1", Geometry: `{"type":"Point","coordinates":[0,0]}`,
+		Category: CategoryIncident, Status: "reported",
+	})
+	mgr.Create(Annotation{
+		Type: TypePoint, Label: "Res1", Geometry: `{"type":"Point","coordinates":[1,1]}`,
+		Category: CategoryResource, Status: "active",
+	})
+	mgr.Create(Annotation{
+		Type: TypePoint, Label: "Inc2", Geometry: `{"type":"Point","coordinates":[2,2]}`,
+		Category: CategoryIncident, Status: "reported",
+	})
+
+	filtered := mgr.AllFiltered(store.AnnotationFilter{Category: "incident"})
+	if len(filtered) != 2 {
+		t.Fatalf("expected 2 incident annotations, got %d", len(filtered))
+	}
+	for _, a := range filtered {
+		if a.Category != CategoryIncident {
+			t.Errorf("expected incident category, got %q", a.Category)
+		}
+	}
+}
+
+func TestAllFilteredExcludesExpired(t *testing.T) {
+	mgr := newTestManager(t)
+
+	past := time.Now().Add(-1 * time.Hour)
+	future := time.Now().Add(1 * time.Hour)
+
+	ann1, _ := mgr.Create(Annotation{
+		Type: TypePoint, Label: "Expired", Geometry: `{"type":"Point","coordinates":[0,0]}`,
+		Category: CategoryGeneral, Status: "active",
+	})
+	// Set ExpiresAt to past.
+	ann1.ExpiresAt = &past
+	mgr.Update(*ann1)
+
+	ann2, _ := mgr.Create(Annotation{
+		Type: TypePoint, Label: "NotExpired", Geometry: `{"type":"Point","coordinates":[1,1]}`,
+		Category: CategoryGeneral, Status: "active",
+	})
+	ann2.ExpiresAt = &future
+	mgr.Update(*ann2)
+
+	// Without IncludeExpired: should exclude the expired one.
+	filtered := mgr.AllFiltered(store.AnnotationFilter{})
+	if len(filtered) != 1 {
+		t.Fatalf("expected 1 non-expired annotation, got %d", len(filtered))
+	}
+	if filtered[0].Label != "NotExpired" {
+		t.Errorf("expected NotExpired, got %q", filtered[0].Label)
+	}
+
+	// With IncludeExpired: should include both.
+	allFiltered := mgr.AllFiltered(store.AnnotationFilter{IncludeExpired: true})
+	if len(allFiltered) != 2 {
+		t.Fatalf("expected 2 annotations with IncludeExpired, got %d", len(allFiltered))
+	}
+}
+
+func TestBackwardCompatibility(t *testing.T) {
+	mgr := newTestManager(t)
+
+	// Create with no category/status/priority — should get defaults.
+	ann, err := mgr.Create(Annotation{
+		Type:     TypePoint,
+		Label:    "Legacy",
+		Geometry: `{"type":"Point","coordinates":[0,0]}`,
+	})
+	if err != nil {
+		t.Fatalf("Create failed: %v", err)
+	}
+
+	if ann.Category != CategoryGeneral {
+		t.Errorf("default category: got %q, want %q", ann.Category, CategoryGeneral)
+	}
+	if ann.Status != "active" {
+		t.Errorf("default status: got %q, want %q", ann.Status, "active")
+	}
+	if ann.Priority != PriorityRoutine {
+		t.Errorf("default priority: got %q, want %q", ann.Priority, PriorityRoutine)
+	}
+}
+
+func TestAllFilteredByStatus(t *testing.T) {
+	mgr := newTestManager(t)
+
+	mgr.Create(Annotation{
+		Type: TypePoint, Label: "Active", Geometry: `{"type":"Point","coordinates":[0,0]}`,
+		Category: CategoryGeneral, Status: "active",
+	})
+	mgr.Create(Annotation{
+		Type: TypePoint, Label: "Resolved", Geometry: `{"type":"Point","coordinates":[1,1]}`,
+		Category: CategoryGeneral, Status: "resolved",
+	})
+
+	filtered := mgr.AllFiltered(store.AnnotationFilter{Status: "active"})
+	if len(filtered) != 1 {
+		t.Fatalf("expected 1 active annotation, got %d", len(filtered))
+	}
+	if filtered[0].Label != "Active" {
+		t.Errorf("expected Active, got %q", filtered[0].Label)
+	}
+}
+
+func TestAllFilteredByPriority(t *testing.T) {
+	mgr := newTestManager(t)
+
+	mgr.Create(Annotation{
+		Type: TypePoint, Label: "Routine", Geometry: `{"type":"Point","coordinates":[0,0]}`,
+		Category: CategoryGeneral, Status: "active", Priority: PriorityRoutine,
+	})
+	mgr.Create(Annotation{
+		Type: TypePoint, Label: "Urgent", Geometry: `{"type":"Point","coordinates":[1,1]}`,
+		Category: CategoryGeneral, Status: "active", Priority: PriorityUrgent,
+	})
+
+	filtered := mgr.AllFiltered(store.AnnotationFilter{Priority: "urgent"})
+	if len(filtered) != 1 {
+		t.Fatalf("expected 1 urgent annotation, got %d", len(filtered))
+	}
+	if filtered[0].Label != "Urgent" {
+		t.Errorf("expected Urgent, got %q", filtered[0].Label)
+	}
+}
+
+func TestAllFilteredByOperationID(t *testing.T) {
+	mgr := newTestManager(t)
+
+	mgr.Create(Annotation{
+		Type: TypePoint, Label: "Op1", Geometry: `{"type":"Point","coordinates":[0,0]}`,
+		Category: CategoryGeneral, Status: "active", OperationID: "op-1",
+	})
+	mgr.Create(Annotation{
+		Type: TypePoint, Label: "Op2", Geometry: `{"type":"Point","coordinates":[1,1]}`,
+		Category: CategoryGeneral, Status: "active", OperationID: "op-2",
+	})
+
+	filtered := mgr.AllFiltered(store.AnnotationFilter{OperationID: "op-1"})
+	if len(filtered) != 1 {
+		t.Fatalf("expected 1 annotation for op-1, got %d", len(filtered))
+	}
+	if filtered[0].Label != "Op1" {
+		t.Errorf("expected Op1, got %q", filtered[0].Label)
+	}
+}
+
+func TestChangeStatusEmitsEvent(t *testing.T) {
+	mgr := newTestManager(t)
+	events := mgr.Events()
+
+	ann, _ := mgr.Create(Annotation{
+		Type: TypePoint, Label: "Test", Geometry: `{"type":"Point","coordinates":[0,0]}`,
+		Category: CategoryIncident, Status: "reported",
+	})
+	// Drain create event.
+	<-events
+
+	mgr.ChangeStatus(ann.ID, "responding")
+
+	select {
+	case evt := <-events:
+		if evt.Type != EventAnnotationStatusChanged {
+			t.Errorf("event type: got %q, want %q", evt.Type, EventAnnotationStatusChanged)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("timeout waiting for status change event")
+	}
+}
