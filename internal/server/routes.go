@@ -28,6 +28,7 @@ func (s *Server) routes() {
 		// Public endpoints — no auth required
 		r.Get("/health", s.handleHealth)
 		r.Get("/config", s.handleGetConfig)
+		r.Post("/setup", s.handleSetup)
 		r.Post("/session", s.handleLogin)
 
 		// Read-only endpoints — observers and above
@@ -372,10 +373,15 @@ func (s *Server) handleBeaconNow(w http.ResponseWriter, r *http.Request) {
 
 func (s *Server) handleGetConfig(w http.ResponseWriter, _ *http.Request) {
 	pinRequired := s.sessions != nil
+	needsSetup := false
+	if s.configMgr != nil {
+		needsSetup = s.configMgr.Get().Station.Callsign == "N0CALL"
+	}
 	writeJSON(w, http.StatusOK, map[string]any{
 		"transports":  len(s.transports.Statuses()),
 		"wsClients":   s.hub.ClientCount(),
 		"pinRequired": pinRequired,
+		"needsSetup":  needsSetup,
 	})
 }
 

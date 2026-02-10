@@ -4,6 +4,7 @@ import { api, setAuthToken, loadSavedToken } from '$lib/api';
 
 export const currentUser = writable<SessionUser | null>(null);
 export const pinRequired = writable<boolean>(false);
+export const needsSetup = writable<boolean>(false);
 
 export const isLoggedIn = derived(currentUser, ($u) => $u !== null);
 export const userRole = derived(currentUser, ($u) => $u?.role ?? null);
@@ -40,8 +41,10 @@ export async function initSession() {
 	try {
 		const cfg = await api.config();
 		pinRequired.set(cfg.pinRequired);
+		needsSetup.set(cfg.needsSetup);
 	} catch {
 		pinRequired.set(false);
+		needsSetup.set(false);
 	}
 
 	// Restore session from saved token
