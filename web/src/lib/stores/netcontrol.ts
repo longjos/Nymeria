@@ -188,9 +188,13 @@ export function initNetControlStore(): void {
 		if (!data) return;
 
 		// If the data has 'content' and 'category', it's a NetNote (emitted as timeline entry).
+		// Deduplicate against notes already added optimistically from API responses.
 		if (data.content && data.category) {
 			const note = data as NetNote;
-			notes.update((list) => [...list, note]);
+			notes.update((list) => {
+				if (list.some((n) => n.id === note.id)) return list;
+				return [...list, note];
+			});
 		}
 
 		// Always push to timeline (logEvent creates a separate NetEvent).
