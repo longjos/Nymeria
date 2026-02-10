@@ -1,6 +1,6 @@
 import { writable, get } from 'svelte/store';
 
-export type PanelMode = 'closed' | 'stations' | 'detail' | 'messages' | 'convo' | 'transports' | 'activity' | 'annotations' | 'netcontrol' | 'bulletins' | 'ics309' | 'weather' | 'settings';
+export type PanelMode = 'closed' | 'stations' | 'detail' | 'messages' | 'convo' | 'transports' | 'activity' | 'annotations' | 'netcontrol' | 'bulletins' | 'ics309' | 'weather' | 'df' | 'settings';
 export type DetailTab = 'info' | 'messages' | 'track';
 export type SheetState = 'peek' | 'half' | 'full';
 export type ConnectionState = 'connected' | 'disconnected' | 'reconnecting';
@@ -85,6 +85,12 @@ export function openWeather(): void {
 	sheetState.set('half');
 }
 
+export function openDF(): void {
+	panelMode.set('df');
+	selectedStation.set(null);
+	sheetState.set('half');
+}
+
 export function openSettings(): void {
 	panelMode.set('settings');
 	selectedStation.set(null);
@@ -115,6 +121,7 @@ export function togglePanel(mode: PanelMode): void {
 			case 'bulletins': openBulletins(); break;
 			case 'ics309': openICS309(); break;
 			case 'weather': openWeather(); break;
+			case 'df': openDF(); break;
 			case 'settings': openSettings(); break;
 			default: closePanel();
 		}

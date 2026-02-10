@@ -137,6 +137,15 @@ func (p *DefaultParser) Parse(frame APRSFrame) (*Packet, error) {
 		pkt.Type = PacketTypeUnknown
 	}
 
+	// Direction Finding: extract DF data when DF symbol detected
+	if pkt.Position != nil && isDFSymbol(pkt.Position.Symbol) {
+		df, remain := parseDFComment(pkt.Position.Comment)
+		if df != nil {
+			pkt.DF = df
+			pkt.Position.Comment = remain
+		}
+	}
+
 	// APRS 1.2: Extract frequency data from position comments
 	if pkt.Position != nil && pkt.Position.Comment != "" {
 		pkt.Frequency = parseFrequency(pkt.Position.Comment)

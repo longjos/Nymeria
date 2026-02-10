@@ -41,6 +41,13 @@ export interface WeatherConfig {
 	units: 'metric' | 'imperial';
 }
 
+export interface DFData {
+	bearing: number;
+	number: number;
+	range: number;
+	quality: number;
+}
+
 export interface Station {
 	callsign: string;
 	ssid: number;
@@ -51,6 +58,7 @@ export interface Station {
 	track: TrackPoint[];
 	source: string;
 	weather?: WeatherData;
+	df?: DFData;
 }
 
 export interface Position {
@@ -137,6 +145,19 @@ export interface ConfigResponse {
 	transports: number;
 	wsClients: number;
 	pinRequired: boolean;
+	needsSetup: boolean;
+}
+
+export interface SetupData {
+	callsign: string;
+	ssid: number;
+	comment: string;
+	lat: number;
+	lon: number;
+	aprisEnabled: boolean;
+	aprisHost: string;
+	aprisPort: number;
+	aprisFilter: string;
 }
 
 export type AnnotationCategory = 'incident' | 'resource' | 'checkpoint' | 'hazard' | 'route' | 'boundary' | 'assignment' | 'general';

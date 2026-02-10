@@ -33,6 +33,7 @@ type Station struct {
 	Track     []TrackPoint      `json:"track"`
 	Source    string            `json:"source"`
 	Weather   *aprs.WeatherData `json:"weather,omitempty"`
+	DF        *aprs.DFData      `json:"df,omitempty"`
 }
 
 // EventType identifies the kind of station event.

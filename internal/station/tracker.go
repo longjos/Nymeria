@@ -117,6 +117,9 @@ func (t *MemoryTracker) HandlePacket(pkt *aprs.Packet, source string) {
 	if pkt.Weather != nil {
 		s.Weather = pkt.Weather
 	}
+	if pkt.DF != nil {
+		s.DF = pkt.DF
+	}
 
 	// Append track point
 	s.Track = append(s.Track, TrackPoint{

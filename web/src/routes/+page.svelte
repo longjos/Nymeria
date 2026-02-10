@@ -16,10 +16,12 @@
 	import BulletinPanel from '$lib/components/BulletinPanel.svelte';
 	import ICS309Panel from '$lib/components/ICS309Panel.svelte';
 	import WeatherPanel from '$lib/components/WeatherPanel.svelte';
+	import DFPanel from '$lib/components/DFPanel.svelte';
 	import SettingsPanel from '$lib/components/SettingsPanel.svelte';
 	import ConnectionStatus from '$lib/components/ConnectionStatus.svelte';
 	import SearchOverlay from '$lib/components/SearchOverlay.svelte';
 	import LoginOverlay from '$lib/components/LoginOverlay.svelte';
+	import SetupWizard from '$lib/components/SetupWizard.svelte';
 	import CommandPalette from '$lib/components/CommandPalette.svelte';
 	import { stations, stationList, initStationStore } from '$lib/stores/stations';
 	import { initMessageStore, conversationList } from '$lib/stores/messages';
@@ -34,10 +36,11 @@
 	import { initTacticalStore } from '$lib/stores/tactical';
 	import { initBulletinStore } from '$lib/stores/bulletins';
 	import { initWeatherStore, weatherStations, selectedWeatherStation } from '$lib/stores/weather';
-	import { isLoggedIn, initSession } from '$lib/stores/session';
+	import { dfStations } from '$lib/stores/df';
+	import { isLoggedIn, needsSetup, initSession } from '$lib/stores/session';
 	import {
 		selectedStation, panelMode, detailTab, searchOpen, sheetState,
-		selectStation, closePanel, openStationList, openMessages, openConversation, openTransports, openActivity, openAnnotations, openNetControl, openBulletins, openICS309, openWeather, openSettings,
+		selectStation, closePanel, openStationList, openMessages, openConversation, openTransports, openActivity, openAnnotations, openNetControl, openBulletins, openICS309, openWeather, openDF, openSettings,
 		togglePanel, commandPaletteOpen, toggleCommandPalette
 	} from '$lib/stores/ui';
 	import type { SheetState, DetailTab, PanelMode } from '$lib/stores/ui';
@@ -251,8 +254,10 @@
 </svelte:head>
 
 <div class="app-container">
-	<!-- Login gate -->
-	{#if sessionReady && !$isLoggedIn}
+	<!-- Setup wizard takes priority over login -->
+	{#if sessionReady && $needsSetup}
+		<SetupWizard />
+	{:else if sessionReady && !$isLoggedIn}
 		<LoginOverlay />
 	{/if}
 
@@ -285,6 +290,8 @@
 			highlightedCheckInId={$hoveredCheckInId}
 			weatherOverlay={$weatherStations}
 			showWeatherOverlay={$panelMode === 'weather'}
+			dfOverlay={$dfStations}
+			showDFOverlay={$panelMode === 'df'}
 		/>
 	</div>
 
@@ -320,6 +327,7 @@
 		onAnnotationsOpen={openAnnotations}
 		onNetControlOpen={openNetControl}
 		onWeatherOpen={openWeather}
+		onDFOpen={openDF}
 		onSettingsOpen={openSettings}
 		onCommandPalette={toggleCommandPalette}
 	/>
@@ -380,6 +388,8 @@
 				/>
 			{:else if $panelMode === 'weather'}
 				<WeatherPanel onFlyTo={handleFlyTo} />
+			{:else if $panelMode === 'df'}
+				<DFPanel onFlyTo={handleFlyTo} onFlyToTarget={handleFlyTo} />
 			{:else if $panelMode === 'ics309'}
 				<ICS309Panel />
 			{:else if $panelMode === 'settings'}
@@ -450,6 +460,8 @@
 				/>
 			{:else if $panelMode === 'weather'}
 				<WeatherPanel onFlyTo={handleFlyTo} />
+			{:else if $panelMode === 'df'}
+				<DFPanel onFlyTo={handleFlyTo} onFlyToTarget={handleFlyTo} />
 			{:else if $panelMode === 'ics309'}
 				<ICS309Panel />
 			{:else if $panelMode === 'settings'}

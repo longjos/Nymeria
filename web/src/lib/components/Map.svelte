@@ -39,6 +39,8 @@
 		highlightedCheckInId = null,
 		weatherOverlay = [],
 		showWeatherOverlay = false,
+		dfOverlay = [],
+		showDFOverlay = false,
 	}: {
 		stations?: Station[];
 		annotations?: Annotation[];
@@ -65,6 +67,8 @@
 		highlightedCheckInId?: string | null;
 		weatherOverlay?: Station[];
 		showWeatherOverlay?: boolean;
+		dfOverlay?: Station[];
+		showDFOverlay?: boolean;
 	} = $props();
 
 	let mapEl: HTMLDivElement;
@@ -101,6 +105,11 @@
 	let operatorHighlight: L.Layer | null = null;
 	// Weather overlay markers
 	let wxMarkers: Map<string, L.Marker> = new Map();
+	// DF overlay layers
+	let dfLines: Map<string, L.Polyline> = new Map();
+	let dfRangeCircles: Map<string, L.Circle> = new Map();
+	let dfTargetMarker: L.Marker | null = null;
+	let dfTargetCircle: L.Circle | null = null;
 
 	const netStatusColors: Record<string, string> = {
 		available: '#22c55e',
@@ -551,6 +560,198 @@
 			wxMarkers.set(key, marker);
 		}
 	});
+
+	// DF overlay: bearing lines, range circles, and intersection target
+	$effect(() => {
+		if (!map) return;
+		const show = showDFOverlay;
+		const dfStations = dfOverlay;
+
+		// Clear existing DF layers
+		for (const [, line] of dfLines) line.remove();
+		dfLines.clear();
+		for (const [, circle] of dfRangeCircles) circle.remove();
+		dfRangeCircles.clear();
+		dfTargetMarker?.remove();
+		dfTargetMarker = null;
+		dfTargetCircle?.remove();
+		dfTargetCircle = null;
+
+		if (!show || !dfStations.length) return;
+
+		const DEFAULT_RANGE_MI = 50;
+		const MI_TO_M = 1609.344;
+
+		for (const s of dfStations) {
+			if (!s.position || !s.df) continue;
+			const key = s.ssid > 0 ? `${s.callsign}-${s.ssid}` : s.callsign;
+			const q = s.df.quality;
+			const rangeMi = s.df.range > 0 ? s.df.range : DEFAULT_RANGE_MI;
+
+			// Line color based on quality
+			let lineColor: string;
+			if (q >= 7) lineColor = '#22c55e';
+			else if (q >= 4) lineColor = '#f59e0b';
+			else lineColor = '#ef4444';
+
+			// Line style based on quality
+			let dashArray: string | undefined;
+			if (q < 4) dashArray = '4 6';
+			else if (q < 7) dashArray = '8 4';
+
+			// Calculate bearing endpoint
+			const toRad = Math.PI / 180;
+			const brg = s.df.bearing * toRad;
+			const lat1 = s.position.lat;
+			const lon1 = s.position.lon;
+			const cosLat = Math.cos(lat1 * toRad);
+			// Approximate degrees per mile
+			const dLat = rangeMi * (1 / 69.0);
+			const dLon = rangeMi * (1 / (69.0 * cosLat));
+			const lat2 = lat1 + dLat * Math.cos(brg);
+			const lon2 = lon1 + dLon * Math.sin(brg);
+
+			const lineOpts: L.PolylineOptions = {
+				color: lineColor,
+				weight: 2.5,
+				opacity: Math.max(0.4, q / 9),
+			};
+			if (dashArray) lineOpts.dashArray = dashArray;
+
+			const line = L.polyline(
+				[[lat1, lon1], [lat2, lon2]],
+				lineOpts
+			).addTo(map);
+
+			line.bindTooltip(`${key}: ${s.df.bearing.toFixed(0)}° Q${q}`, {
+				permanent: false,
+				direction: 'center',
+				className: 'df-tooltip',
+			});
+
+			dfLines.set(key, line);
+
+			// Range circle (subtle)
+			if (s.df.range > 0) {
+				const circle = L.circle([lat1, lon1], {
+					radius: s.df.range * MI_TO_M,
+					color: lineColor,
+					weight: 1,
+					opacity: 0.25,
+					fillColor: lineColor,
+					fillOpacity: 0.04,
+					interactive: false,
+				}).addTo(map);
+				dfRangeCircles.set(key, circle);
+			}
+		}
+
+		// Compute intersection target when 2+ DF stations
+		if (dfStations.length >= 2) {
+			const intersections: Array<{ lat: number; lon: number }> = [];
+
+			for (let i = 0; i < dfStations.length; i++) {
+				for (let j = i + 1; j < dfStations.length; j++) {
+					const a = dfStations[i];
+					const b = dfStations[j];
+					if (!a.position || !b.position || !a.df || !b.df) continue;
+
+					const pt = dfBearingIntersection(
+						a.position.lat, a.position.lon, a.df.bearing,
+						b.position.lat, b.position.lon, b.df.bearing
+					);
+					if (pt) intersections.push(pt);
+				}
+			}
+
+			if (intersections.length > 0) {
+				let latSum = 0, lonSum = 0;
+				for (const p of intersections) {
+					latSum += p.lat;
+					lonSum += p.lon;
+				}
+				const cLat = latSum / intersections.length;
+				const cLon = lonSum / intersections.length;
+
+				// Spread for uncertainty circle
+				let maxDist = 0;
+				for (const p of intersections) {
+					const d = dfHaversineKm(cLat, cLon, p.lat, p.lon);
+					if (d > maxDist) maxDist = d;
+				}
+
+				// Target crosshair marker
+				const targetHtml = `<div class="df-target-icon">
+					<svg width="20" height="20" viewBox="0 0 20 20">
+						<circle cx="10" cy="10" r="7" fill="none" stroke="#ef4444" stroke-width="2"/>
+						<circle cx="10" cy="10" r="2" fill="#ef4444"/>
+						<path d="M10 1v5M10 14v5M1 10h5M14 10h5" stroke="#ef4444" stroke-width="1.5"/>
+					</svg>
+				</div>`;
+
+				const targetIcon = L.divIcon({
+					className: 'df-target-marker',
+					html: targetHtml,
+					iconSize: [20, 20],
+					iconAnchor: [10, 10],
+				});
+
+				dfTargetMarker = L.marker([cLat, cLon], { icon: targetIcon, interactive: false }).addTo(map);
+				dfTargetMarker.bindTooltip(
+					`Est. target: ${cLat.toFixed(4)}, ${cLon.toFixed(4)}`,
+					{ permanent: false, direction: 'top', className: 'df-tooltip' }
+				);
+
+				// Uncertainty circle
+				if (maxDist > 0.01) {
+					dfTargetCircle = L.circle([cLat, cLon], {
+						radius: maxDist * 1000, // km to meters
+						color: '#ef4444',
+						weight: 1.5,
+						opacity: 0.4,
+						fillColor: '#ef4444',
+						fillOpacity: 0.06,
+						dashArray: '6 4',
+						interactive: false,
+					}).addTo(map);
+				}
+			}
+		}
+	});
+
+	function dfBearingIntersection(
+		lat1: number, lon1: number, brg1: number,
+		lat2: number, lon2: number, brg2: number
+	): { lat: number; lon: number } | null {
+		const toRad = Math.PI / 180;
+		const b1 = brg1 * toRad;
+		const b2 = brg2 * toRad;
+		const dx1 = Math.sin(b1);
+		const dy1 = Math.cos(b1);
+		const dx2 = Math.sin(b2);
+		const dy2 = Math.cos(b2);
+		const det = dx1 * dy2 - dx2 * dy1;
+		if (Math.abs(det) < 1e-10) return null;
+		const cosLat = Math.cos(((lat1 + lat2) / 2) * toRad);
+		const dLon = (lon2 - lon1) * cosLat;
+		const dLat = lat2 - lat1;
+		const t = (dLon * dy2 - dLat * dx2) / det;
+		if (t < 0) return null;
+		const lat = lat1 + t * dy1;
+		const lon = lon1 + t * dx1 / cosLat;
+		if (dfHaversineKm(lat1, lon1, lat, lon) > 500) return null;
+		return { lat, lon };
+	}
+
+	function dfHaversineKm(lat1: number, lon1: number, lat2: number, lon2: number): number {
+		const R = 6371;
+		const toRad = Math.PI / 180;
+		const dLat = (lat2 - lat1) * toRad;
+		const dLon = (lon2 - lon1) * toRad;
+		const a = Math.sin(dLat / 2) ** 2 +
+			Math.cos(lat1 * toRad) * Math.cos(lat2 * toRad) * Math.sin(dLon / 2) ** 2;
+		return R * 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
+	}
 
 	function setupVertexHandles(geojsonStr: string, color: string, onChange: (geom: string) => void) {
 		let geom: { type: string; coordinates: unknown };
@@ -1063,5 +1264,21 @@
 	:global(.wx-marker-pill .wx-wind) {
 		color: #94a3b8;
 		font-size: 10px;
+	}
+
+	/* DF overlay */
+	:global(.df-target-marker) {
+		background: none !important;
+		border: none !important;
+	}
+
+	:global(.df-target-icon) {
+		filter: drop-shadow(0 1px 3px rgba(0, 0, 0, 0.5));
+	}
+
+	:global(.df-tooltip) {
+		font-family: monospace;
+		font-weight: 600;
+		font-size: 11px;
 	}
 </style>
