@@ -1,6 +1,6 @@
 import type {
 	Station, Message, Conversation, Bulletin, HealthResponse, TransportStatus,
-	SessionUser, PublicUser, ConfigResponse, Annotation, ActivityResponse,
+	SessionUser, PublicUser, ConfigResponse, SetupData, Annotation, ActivityResponse,
 	Net, NetCheckIn, NetMission, NetNote, NetEvent, NetSummary, TacticalAlias,
 	AnnotationTemplate, Operation, ICS309Report, TileCacheStatus,
 	WeatherReading, WeatherConfig,
@@ -92,6 +92,7 @@ export const api = {
 	// Public
 	health: () => get<HealthResponse>('/health'),
 	config: () => get<ConfigResponse>('/config'),
+	setup: (data: SetupData) => post<{ status: string; restartRequired: boolean }>('/setup', data),
 
 	// Session
 	login: (name: string, pin?: string) => post<SessionUser>('/session', { name, pin }),
