@@ -75,6 +75,7 @@ func New(tracker station.Tracker, tm *transport.Manager, eng message.Engine, db 
 	go s.hub.Run()
 	go s.bridgeTrackerEvents()
 	go s.weatherPurgeLoop()
+	go s.telemetryPurgeLoop()
 	if eng != nil {
 		go s.bridgeMessageEvents()
 	}
@@ -255,6 +256,26 @@ func (s *Server) bridgeTrackerEvents() {
 			}
 			if err := s.store.SaveWeatherReading(wr); err != nil {
 				log.Printf("[server] save weather reading: %v", err)
+			}
+		}
+
+		// Persist telemetry readings
+		if s.store != nil && evt.Station.Telemetry != nil && (evt.Type == station.EventNewStation || evt.Type == station.EventStationUpdate) {
+			tel := evt.Station.Telemetry
+			key := aprs.Address{Call: evt.Station.Callsign, SSID: evt.Station.SSID}.String()
+			tr := store.TelemetryReading{
+				Callsign:  key,
+				Timestamp: evt.Station.LastHeard,
+				Seq:       tel.Seq,
+				Analog1:   tel.Analog[0],
+				Analog2:   tel.Analog[1],
+				Analog3:   tel.Analog[2],
+				Analog4:   tel.Analog[3],
+				Analog5:   tel.Analog[4],
+				Digital:   int(tel.Digital),
+			}
+			if err := s.store.SaveTelemetryReading(tr); err != nil {
+				log.Printf("[server] save telemetry reading: %v", err)
 			}
 		}
 
@@ -501,6 +522,29 @@ func (s *Server) weatherPurgeLoop() {
 			log.Printf("[server] purge weather readings: %v", err)
 		} else if n > 0 {
 			log.Printf("[server] purged %d old weather readings", n)
+		}
+	}
+}
+
+// telemetryPurgeLoop periodically deletes old telemetry readings (reuses weather retention config).
+func (s *Server) telemetryPurgeLoop() {
+	days := s.weatherCfg.RetentionDays
+	if days <= 0 {
+		days = 7
+	}
+	if s.store == nil {
+		return
+	}
+
+	ticker := time.NewTicker(6 * time.Hour)
+	defer ticker.Stop()
+
+	for range ticker.C {
+		cutoff := time.Now().Add(-time.Duration(days) * 24 * time.Hour)
+		if n, err := s.store.PurgeTelemetryReadings(cutoff); err != nil {
+			log.Printf("[server] purge telemetry readings: %v", err)
+		} else if n > 0 {
+			log.Printf("[server] purged %d old telemetry readings", n)
 		}
 	}
 }

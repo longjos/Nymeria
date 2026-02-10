@@ -14,7 +14,7 @@ import (
 	_ "modernc.org/sqlite"
 )
 
-const currentSchemaVersion = 12
+const currentSchemaVersion = 13
 
 // SQLiteStore implements Store using modernc.org/sqlite.
 type SQLiteStore struct {
@@ -142,6 +142,12 @@ func (s *SQLiteStore) migrate() error {
 
 	if version < 12 {
 		if err := s.migrateV12(); err != nil {
+			return err
+		}
+	}
+
+	if version < 13 {
+		if err := s.migrateV13(); err != nil {
 			return err
 		}
 	}
@@ -1938,6 +1944,128 @@ func (s *SQLiteStore) LoadWeatherStations() ([]WeatherReading, error) {
 
 func (s *SQLiteStore) PurgeWeatherReadings(olderThan time.Time) (int64, error) {
 	result, err := s.db.Exec("DELETE FROM weather_readings WHERE timestamp < ?", olderThan.UTC())
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected()
+}
+
+func (s *SQLiteStore) migrateV13() error {
+	ddl := `
+CREATE TABLE IF NOT EXISTS telemetry_readings (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    callsign TEXT NOT NULL,
+    timestamp DATETIME NOT NULL,
+    seq INTEGER NOT NULL DEFAULT 0,
+    analog1 REAL NOT NULL DEFAULT 0,
+    analog2 REAL NOT NULL DEFAULT 0,
+    analog3 REAL NOT NULL DEFAULT 0,
+    analog4 REAL NOT NULL DEFAULT 0,
+    analog5 REAL NOT NULL DEFAULT 0,
+    digital INTEGER NOT NULL DEFAULT 0
+);
+CREATE INDEX IF NOT EXISTS idx_telemetry_callsign_time ON telemetry_readings(callsign, timestamp);
+`
+	if _, err := s.db.Exec(ddl); err != nil {
+		return fmt.Errorf("migrate v13 create telemetry_readings: %w", err)
+	}
+
+	if _, err := s.db.Exec("DELETE FROM schema_version"); err != nil {
+		return fmt.Errorf("clear schema_version: %w", err)
+	}
+	if _, err := s.db.Exec("INSERT INTO schema_version (version) VALUES (?)", 13); err != nil {
+		return fmt.Errorf("set schema_version: %w", err)
+	}
+
+	return nil
+}
+
+func (s *SQLiteStore) SaveTelemetryReading(r TelemetryReading) error {
+	_, err := s.db.Exec(`INSERT INTO telemetry_readings
+		(callsign, timestamp, seq, analog1, analog2, analog3, analog4, analog5, digital)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		r.Callsign, r.Timestamp.UTC(), r.Seq,
+		r.Analog1, r.Analog2, r.Analog3, r.Analog4, r.Analog5,
+		r.Digital,
+	)
+	return err
+}
+
+func (s *SQLiteStore) LoadTelemetryReadings(filter TelemetryFilter) ([]TelemetryReading, error) {
+	query := "SELECT id, callsign, timestamp, seq, analog1, analog2, analog3, analog4, analog5, digital FROM telemetry_readings WHERE 1=1"
+	var args []any
+
+	if filter.Callsign != "" {
+		query += " AND callsign = ?"
+		args = append(args, filter.Callsign)
+	}
+	if filter.Since != nil {
+		query += " AND timestamp >= ?"
+		args = append(args, filter.Since.UTC())
+	}
+	if filter.Until != nil {
+		query += " AND timestamp <= ?"
+		args = append(args, filter.Until.UTC())
+	}
+	query += " ORDER BY timestamp DESC"
+	if filter.Limit > 0 {
+		query += fmt.Sprintf(" LIMIT %d", filter.Limit)
+	}
+
+	rows, err := s.db.Query(query, args...)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var readings []TelemetryReading
+	for rows.Next() {
+		var r TelemetryReading
+		var ts string
+		if err := rows.Scan(&r.ID, &r.Callsign, &ts, &r.Seq,
+			&r.Analog1, &r.Analog2, &r.Analog3, &r.Analog4, &r.Analog5,
+			&r.Digital,
+		); err != nil {
+			return nil, err
+		}
+		r.Timestamp, _ = parseTime(ts)
+		readings = append(readings, r)
+	}
+	return readings, rows.Err()
+}
+
+func (s *SQLiteStore) LoadTelemetryStations() ([]TelemetryReading, error) {
+	query := `SELECT t.id, t.callsign, t.timestamp, t.seq, t.analog1, t.analog2, t.analog3, t.analog4, t.analog5, t.digital
+		FROM telemetry_readings t
+		INNER JOIN (
+			SELECT callsign, MAX(timestamp) as max_ts FROM telemetry_readings GROUP BY callsign
+		) latest ON t.callsign = latest.callsign AND t.timestamp = latest.max_ts
+		ORDER BY t.callsign`
+
+	rows, err := s.db.Query(query)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var readings []TelemetryReading
+	for rows.Next() {
+		var r TelemetryReading
+		var ts string
+		if err := rows.Scan(&r.ID, &r.Callsign, &ts, &r.Seq,
+			&r.Analog1, &r.Analog2, &r.Analog3, &r.Analog4, &r.Analog5,
+			&r.Digital,
+		); err != nil {
+			return nil, err
+		}
+		r.Timestamp, _ = parseTime(ts)
+		readings = append(readings, r)
+	}
+	return readings, rows.Err()
+}
+
+func (s *SQLiteStore) PurgeTelemetryReadings(olderThan time.Time) (int64, error) {
+	result, err := s.db.Exec("DELETE FROM telemetry_readings WHERE timestamp < ?", olderThan.UTC())
 	if err != nil {
 		return 0, err
 	}

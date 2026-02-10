@@ -54,10 +54,56 @@ type ItemData struct {
 
 // TelemetryData holds parsed APRS telemetry data.
 type TelemetryData struct {
-	Seq     int
-	Analog  [5]float64
-	Digital byte
-	Comment string
+	Seq     int        `json:"seq"`
+	Analog  [5]float64 `json:"analog"`
+	Digital byte       `json:"digital"`
+	Comment string     `json:"comment,omitempty"`
+}
+
+// TelemetryParams holds PARM/UNIT/EQNS/BITS metadata for a telemetry station.
+type TelemetryParams struct {
+	ParamNames   [5]string      `json:"paramNames"`
+	UnitLabels   [5]string      `json:"unitLabels"`
+	Equations    [5][3]float64  `json:"equations"`    // a*x^2 + b*x + c per channel
+	BitSense     byte           `json:"bitSense"`     // 1=active-high per bit
+	BitLabels    [8]string      `json:"bitLabels"`    // labels for digital bits
+	ProjectTitle string         `json:"projectTitle,omitempty"`
+}
+
+// ApplyEquation converts a raw analog value to engineering units using the
+// EQNS coefficients for the given channel: a*v^2 + b*v + c.
+// If no equation is set (all zeros), the raw value is returned unchanged.
+func (p *TelemetryParams) ApplyEquation(channel int, raw float64) float64 {
+	if channel < 0 || channel > 4 {
+		return raw
+	}
+	a, b, c := p.Equations[channel][0], p.Equations[channel][1], p.Equations[channel][2]
+	if a == 0 && b == 0 && c == 0 {
+		return raw
+	}
+	return a*raw*raw + b*raw + c
+}
+
+// TelemetryMetaType identifies the kind of telemetry metadata message.
+type TelemetryMetaType string
+
+const (
+	TelemetryMetaPARM TelemetryMetaType = "PARM"
+	TelemetryMetaUNIT TelemetryMetaType = "UNIT"
+	TelemetryMetaEQNS TelemetryMetaType = "EQNS"
+	TelemetryMetaBITS TelemetryMetaType = "BITS"
+)
+
+// TelemetryMetaMessage holds a parsed PARM/UNIT/EQNS/BITS message.
+type TelemetryMetaMessage struct {
+	Target       string            `json:"target"`       // target callsign
+	MetaType     TelemetryMetaType `json:"metaType"`
+	ParamNames   [5]string         `json:"paramNames,omitempty"`
+	UnitLabels   [5]string         `json:"unitLabels,omitempty"`
+	Equations    [5][3]float64     `json:"equations,omitempty"`
+	BitSense     byte              `json:"bitSense,omitempty"`
+	BitLabels    [8]string         `json:"bitLabels,omitempty"`
+	ProjectTitle string            `json:"projectTitle,omitempty"`
 }
 
 // DFData holds parsed APRS direction finding report data.

@@ -75,6 +75,18 @@ func (t *MemoryTracker) Events() <-chan Event {
 
 // HandlePacket processes a parsed APRS packet into station state.
 func (t *MemoryTracker) HandlePacket(pkt *aprs.Packet, source string) {
+	// Handle telemetry data (T# packets) — no position, updates existing station only
+	if pkt.Type == aprs.PacketTypeTelemetry && pkt.Telemetry != nil && pkt.TelemetryMeta == nil {
+		t.handleTelemetryPacket(pkt, source)
+		return
+	}
+
+	// Handle telemetry metadata (PARM/UNIT/EQNS/BITS) — updates existing station only
+	if pkt.TelemetryMeta != nil {
+		t.handleTelemetryMeta(pkt)
+		return
+	}
+
 	callsign, ssid, pos := t.extractStationData(pkt)
 	if pos == nil {
 		return // non-position packet, nothing to track
@@ -334,6 +346,69 @@ func (t *MemoryTracker) combinedHash(stationKey string, payloadHash uint64) uint
 	}
 	h.Write(b[:])
 	return h.Sum64()
+}
+
+// handleTelemetryPacket updates an existing station's telemetry data.
+// T# packets carry no position, so they cannot create new stations.
+func (t *MemoryTracker) handleTelemetryPacket(pkt *aprs.Packet, source string) {
+	callsign := pkt.Frame.Source.Call
+	ssid := pkt.Frame.Source.SSID
+	key := t.stationKey(callsign, ssid)
+
+	t.mu.Lock()
+	existing, exists := t.stations[key]
+	if !exists {
+		t.mu.Unlock()
+		return // telemetry can only update existing stations
+	}
+
+	existing.Telemetry = pkt.Telemetry
+	existing.LastHeard = time.Now()
+	existing.Source = t.mergeSource(existing.Source, source)
+	t.stations[key] = existing
+	t.mu.Unlock()
+
+	t.emit(Event{Type: EventStationUpdate, Station: existing})
+}
+
+// handleTelemetryMeta applies PARM/UNIT/EQNS/BITS metadata to an existing station.
+func (t *MemoryTracker) handleTelemetryMeta(pkt *aprs.Packet) {
+	meta := pkt.TelemetryMeta
+
+	// The target field holds the addressee callsign (e.g., "N0CALL-1")
+	key := strings.TrimSpace(meta.Target)
+	if key == "" {
+		return
+	}
+
+	t.mu.Lock()
+	existing, exists := t.stations[key]
+	if !exists {
+		t.mu.Unlock()
+		return // metadata can only update existing stations
+	}
+
+	if existing.TelemetryParams == nil {
+		existing.TelemetryParams = &aprs.TelemetryParams{}
+	}
+
+	switch meta.MetaType {
+	case aprs.TelemetryMetaPARM:
+		existing.TelemetryParams.ParamNames = meta.ParamNames
+		existing.TelemetryParams.BitLabels = meta.BitLabels
+	case aprs.TelemetryMetaUNIT:
+		existing.TelemetryParams.UnitLabels = meta.UnitLabels
+	case aprs.TelemetryMetaEQNS:
+		existing.TelemetryParams.Equations = meta.Equations
+	case aprs.TelemetryMetaBITS:
+		existing.TelemetryParams.BitSense = meta.BitSense
+		existing.TelemetryParams.ProjectTitle = meta.ProjectTitle
+	}
+
+	t.stations[key] = existing
+	t.mu.Unlock()
+
+	t.emit(Event{Type: EventStationUpdate, Station: existing})
 }
 
 // mergeSource returns the combined source string.

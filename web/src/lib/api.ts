@@ -3,7 +3,7 @@ import type {
 	SessionUser, PublicUser, ConfigResponse, SetupData, Annotation, ActivityResponse,
 	Net, NetCheckIn, NetMission, NetNote, NetEvent, NetSummary, TacticalAlias,
 	AnnotationTemplate, Operation, ICS309Report, TileCacheStatus,
-	WeatherReading, WeatherConfig,
+	WeatherReading, WeatherConfig, TelemetryReading, TelemetryReadingsResponse,
 	SettingsResponse, SettingsUpdateResponse,
 	StationSettings, ServerSettings, TransportSettings, BeaconSettings,
 	SessionSettings, LoggingSettings, WeatherSettings, TileCacheSettings
@@ -219,6 +219,13 @@ export const api = {
 		return get<WeatherReading[]>(`/weather/${encodeURIComponent(callsign)}${qs}`);
 	},
 	weatherConfig: () => get<WeatherConfig>('/weather/config'),
+
+	// Telemetry
+	telemetryStations: () => get<TelemetryReading[]>('/telemetry/stations'),
+	telemetryReadings: (callsign: string, params?: Record<string, string>) => {
+		const qs = params ? '?' + new URLSearchParams(params).toString() : '';
+		return get<TelemetryReadingsResponse>(`/telemetry/${encodeURIComponent(callsign)}${qs}`);
+	},
 
 	// Tile Cache
 	tileCacheStatus: () => get<TileCacheStatus>('/tiles/cache'),

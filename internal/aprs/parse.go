@@ -57,6 +57,17 @@ func (p *DefaultParser) Parse(frame APRSFrame) (*Packet, error) {
 		if err != nil {
 			return nil, fmt.Errorf("message parse: %w", err)
 		}
+		// Intercept telemetry metadata (PARM/UNIT/EQNS/BITS) before it
+		// reaches the message engine as a normal user message.
+		if msg != nil && !msg.IsAck && !msg.IsRej && IsTelemetryMeta(msg.Text) {
+			meta, metaErr := ParseTelemetryMeta(msg.Text)
+			if metaErr == nil {
+				meta.Target = msg.Addressee
+				pkt.Type = PacketTypeTelemetry
+				pkt.TelemetryMeta = meta
+				break
+			}
+		}
 		pkt.Type = PacketTypeMessage
 		pkt.Message = msg
 

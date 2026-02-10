@@ -48,6 +48,40 @@ export interface DFData {
 	quality: number;
 }
 
+export interface TelemetryData {
+	seq: number;
+	analog: [number, number, number, number, number];
+	digital: number;
+	comment?: string;
+}
+
+export interface TelemetryParams {
+	paramNames: [string, string, string, string, string];
+	unitLabels: [string, string, string, string, string];
+	equations: [[number, number, number], [number, number, number], [number, number, number], [number, number, number], [number, number, number]];
+	bitSense: number;
+	bitLabels: [string, string, string, string, string, string, string, string];
+	projectTitle?: string;
+}
+
+export interface TelemetryReading {
+	id: number;
+	callsign: string;
+	timestamp: string;
+	seq: number;
+	analog1: number;
+	analog2: number;
+	analog3: number;
+	analog4: number;
+	analog5: number;
+	digital: number;
+}
+
+export interface TelemetryReadingsResponse {
+	readings: TelemetryReading[];
+	params: TelemetryParams | null;
+}
+
 export interface Station {
 	callsign: string;
 	ssid: number;
@@ -59,6 +93,8 @@ export interface Station {
 	source: string;
 	weather?: WeatherData;
 	df?: DFData;
+	telemetry?: TelemetryData;
+	telemetryParams?: TelemetryParams;
 }
 
 export interface Position {
