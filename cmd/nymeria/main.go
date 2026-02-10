@@ -53,6 +53,9 @@ func main() {
 		cfg = config.DefaultConfig()
 	}
 
+	// Create config manager for settings API
+	cfgMgr := config.NewManager(*configPath, cfg)
+
 	// Initialize store
 	db := store.NewSQLiteStore(cfg.Store.Path)
 	if err := db.Init(); err != nil {
@@ -75,15 +78,42 @@ func main() {
 	if stations, err := db.LoadStations(); err != nil {
 		log.Printf("warning: failed to load stations from db: %v", err)
 	} else {
+		// Load latest weather readings to hydrate station weather data
+		wxMap := make(map[string]store.WeatherReading)
+		if wxStations, err := db.LoadWeatherStations(); err != nil {
+			log.Printf("warning: failed to load weather stations from db: %v", err)
+		} else {
+			for _, wr := range wxStations {
+				wxMap[wr.Callsign] = wr
+			}
+		}
+
 		for _, s := range stations {
 			key := aprs.Address{Call: s.Callsign, SSID: s.SSID}.String()
 			if tracks, err := db.LoadTrackPoints(key, cfg.Station.TrackMaxPoints); err == nil {
 				s.Track = tracks
 			}
+			if wr, ok := wxMap[key]; ok {
+				s.Weather = &aprs.WeatherData{
+					Temperature: wr.Temperature,
+					WindDir:     wr.WindDir,
+					WindSpeed:   wr.WindSpeed,
+					WindGust:    wr.WindGust,
+					Humidity:    wr.Humidity,
+					Pressure:    wr.Pressure,
+					Rain1h:      wr.Rain1h,
+					Rain24h:     wr.Rain24h,
+					RainToday:   wr.RainToday,
+					Luminosity:  wr.Luminosity,
+				}
+			}
 			tracker.Update(s)
 		}
 		if len(stations) > 0 {
 			log.Printf("loaded %d stations from database", len(stations))
+		}
+		if len(wxMap) > 0 {
+			log.Printf("hydrated %d weather stations from database", len(wxMap))
 		}
 	}
 
@@ -231,6 +261,34 @@ func main() {
 		}
 	}
 
+	// Register config change callbacks for live reload
+	cfgMgr.OnChange(func(old, new config.Config) {
+		// Beacon: update config and restart if needed
+		bcn.UpdateConfig(beacon.Config{
+			Enabled:  new.Beacon.Enabled,
+			Interval: new.Beacon.Interval,
+			Comment:  new.Beacon.Comment,
+		})
+		if new.Beacon.Enabled && !bcn.IsRunning() {
+			bcn.Start(ctx)
+			log.Println("[config] beacon started")
+		} else if !new.Beacon.Enabled && bcn.IsRunning() {
+			bcn.Stop()
+			log.Println("[config] beacon stopped")
+		}
+
+		// Session: update PIN and timeout
+		sessMgr.UpdateConfig(session.MemoryManagerConfig{
+			PIN:               new.Session.PIN,
+			InactivityTimeout: new.Session.InactivityTimeout,
+		})
+
+		// Logging: update log level
+		if old.Logging.Level != new.Logging.Level {
+			log.Printf("[config] log level changed: %s → %s", old.Logging.Level, new.Logging.Level)
+		}
+	})
+
 	// Override listen address if provided
 	if *listenAddr != "" {
 		cfg.Server.Listen = *listenAddr
@@ -244,7 +302,9 @@ func main() {
 		server.WithActivityLogger(actLogger),
 		server.WithAnnotationManager(annMgr),
 		server.WithNetControlManager(netMgr),
+		server.WithConfigManager(cfgMgr),
 		server.WithStationConfig(cfg.Station),
+		server.WithWeatherConfig(cfg.Weather),
 	}
 	if tc != nil {
 		serverOpts = append(serverOpts, server.WithTileCache(tc))

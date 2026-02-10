@@ -494,8 +494,8 @@ func TestV2SchemaVersion(t *testing.T) {
 	if err != nil {
 		t.Fatalf("query schema_version: %v", err)
 	}
-	if version != 11 {
-		t.Errorf("expected schema version 11, got %d", version)
+	if version != 12 {
+		t.Errorf("expected schema version 12, got %d", version)
 	}
 }
 
@@ -994,8 +994,8 @@ func TestV3SchemaVersion(t *testing.T) {
 	if err != nil {
 		t.Fatalf("query schema_version: %v", err)
 	}
-	if version != 11 {
-		t.Errorf("expected schema version 11, got %d", version)
+	if version != 12 {
+		t.Errorf("expected schema version 12, got %d", version)
 	}
 }
 
@@ -1616,8 +1616,8 @@ func TestV5MigrationAddsTrackedStationsColumn(t *testing.T) {
 
 	var version int
 	s.db.QueryRow("SELECT version FROM schema_version LIMIT 1").Scan(&version)
-	if version != 11 {
-		t.Errorf("expected schema version 11, got %d", version)
+	if version != 12 {
+		t.Errorf("expected schema version 12, got %d", version)
 	}
 }
 
@@ -1723,8 +1723,8 @@ func TestV6MigrationCreatesTacticalAliasesTable(t *testing.T) {
 
 	var version int
 	s.db.QueryRow("SELECT version FROM schema_version LIMIT 1").Scan(&version)
-	if version != 11 {
-		t.Errorf("expected schema version 11, got %d", version)
+	if version != 12 {
+		t.Errorf("expected schema version 12, got %d", version)
 	}
 }
 
@@ -1891,8 +1891,8 @@ func TestV7MigrationAddsAnnotationColumns(t *testing.T) {
 
 	var version int
 	s.db.QueryRow("SELECT version FROM schema_version LIMIT 1").Scan(&version)
-	if version != 11 {
-		t.Errorf("expected schema version 11, got %d", version)
+	if version != 12 {
+		t.Errorf("expected schema version 12, got %d", version)
 	}
 }
 
@@ -2194,8 +2194,8 @@ func TestMigrateV8CreatesOperationsTable(t *testing.T) {
 
 	var version int
 	s.db.QueryRow("SELECT version FROM schema_version LIMIT 1").Scan(&version)
-	if version != 11 {
-		t.Errorf("expected schema version 11, got %d", version)
+	if version != 12 {
+		t.Errorf("expected schema version 12, got %d", version)
 	}
 
 	// Verify operations table exists by doing a query.
@@ -2214,8 +2214,8 @@ func TestMigrateV11AddsOpsViewColumns(t *testing.T) {
 
 	var version int
 	s.db.QueryRow("SELECT version FROM schema_version LIMIT 1").Scan(&version)
-	if version != 11 {
-		t.Errorf("expected schema version 11, got %d", version)
+	if version != 12 {
+		t.Errorf("expected schema version 12, got %d", version)
 	}
 
 	// Verify ops_view columns exist.
@@ -2353,5 +2353,238 @@ func TestUpdateNotePinned(t *testing.T) {
 		if n.ID == note.ID && n.Pinned {
 			t.Error("note should be unpinned after UpdateNotePinned(false)")
 		}
+	}
+}
+
+func TestMigrateV12CreatesWeatherReadingsTable(t *testing.T) {
+	s, _ := newTestStore(t)
+	defer s.Close()
+
+	var count int
+	err := s.db.QueryRow("SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name='weather_readings'").Scan(&count)
+	if err != nil {
+		t.Fatalf("query: %v", err)
+	}
+	if count != 1 {
+		t.Errorf("weather_readings table not created by v12 migration")
+	}
+}
+
+func TestSaveAndLoadWeatherReadingRoundtrip(t *testing.T) {
+	s, _ := newTestStore(t)
+	defer s.Close()
+
+	temp := 22.5
+	windDir := 180.0
+	windSpeed := 5.3
+	windGust := 8.1
+	humidity := 65
+	pressure := 1013.25
+	rain1h := 2.5
+	rain24h := 10.0
+	rainToday := 5.0
+	luminosity := 800
+
+	now := time.Now().UTC().Truncate(time.Second)
+	r := WeatherReading{
+		Callsign:    "WX1AW",
+		Timestamp:   now,
+		Temperature: &temp,
+		WindDir:     &windDir,
+		WindSpeed:   &windSpeed,
+		WindGust:    &windGust,
+		Humidity:    &humidity,
+		Pressure:    &pressure,
+		Rain1h:      &rain1h,
+		Rain24h:     &rain24h,
+		RainToday:   &rainToday,
+		Luminosity:  &luminosity,
+	}
+
+	if err := s.SaveWeatherReading(r); err != nil {
+		t.Fatalf("save: %v", err)
+	}
+
+	readings, err := s.LoadWeatherReadings(WeatherFilter{Callsign: "WX1AW"})
+	if err != nil {
+		t.Fatalf("load: %v", err)
+	}
+	if len(readings) != 1 {
+		t.Fatalf("got %d readings, want 1", len(readings))
+	}
+
+	got := readings[0]
+	if got.Callsign != "WX1AW" {
+		t.Errorf("callsign = %q, want WX1AW", got.Callsign)
+	}
+	if got.Temperature == nil || *got.Temperature != 22.5 {
+		t.Errorf("temperature = %v, want 22.5", got.Temperature)
+	}
+	if got.WindDir == nil || *got.WindDir != 180.0 {
+		t.Errorf("windDir = %v, want 180.0", got.WindDir)
+	}
+	if got.WindSpeed == nil || *got.WindSpeed != 5.3 {
+		t.Errorf("windSpeed = %v, want 5.3", got.WindSpeed)
+	}
+	if got.WindGust == nil || *got.WindGust != 8.1 {
+		t.Errorf("windGust = %v, want 8.1", got.WindGust)
+	}
+	if got.Humidity == nil || *got.Humidity != 65 {
+		t.Errorf("humidity = %v, want 65", got.Humidity)
+	}
+	if got.Pressure == nil || *got.Pressure != 1013.25 {
+		t.Errorf("pressure = %v, want 1013.25", got.Pressure)
+	}
+	if got.Rain1h == nil || *got.Rain1h != 2.5 {
+		t.Errorf("rain1h = %v, want 2.5", got.Rain1h)
+	}
+	if got.Rain24h == nil || *got.Rain24h != 10.0 {
+		t.Errorf("rain24h = %v, want 10.0", got.Rain24h)
+	}
+	if got.RainToday == nil || *got.RainToday != 5.0 {
+		t.Errorf("rainToday = %v, want 5.0", got.RainToday)
+	}
+	if got.Luminosity == nil || *got.Luminosity != 800 {
+		t.Errorf("luminosity = %v, want 800", got.Luminosity)
+	}
+	if got.ID == 0 {
+		t.Error("expected non-zero ID")
+	}
+}
+
+func TestLoadWeatherReadingsFiltered(t *testing.T) {
+	s, _ := newTestStore(t)
+	defer s.Close()
+
+	base := time.Now().UTC().Truncate(time.Second)
+	temp1, temp2, temp3 := 20.0, 25.0, 30.0
+
+	for i, temp := range []*float64{&temp1, &temp2, &temp3} {
+		if err := s.SaveWeatherReading(WeatherReading{
+			Callsign:    "WX1AW",
+			Timestamp:   base.Add(time.Duration(i) * time.Hour),
+			Temperature: temp,
+		}); err != nil {
+			t.Fatalf("save %d: %v", i, err)
+		}
+	}
+
+	// Filter by since
+	since := base.Add(30 * time.Minute)
+	readings, err := s.LoadWeatherReadings(WeatherFilter{Callsign: "WX1AW", Since: &since})
+	if err != nil {
+		t.Fatalf("load: %v", err)
+	}
+	if len(readings) != 2 {
+		t.Errorf("got %d readings with since filter, want 2", len(readings))
+	}
+
+	// Limit
+	readings, err = s.LoadWeatherReadings(WeatherFilter{Callsign: "WX1AW", Limit: 1})
+	if err != nil {
+		t.Fatalf("load: %v", err)
+	}
+	if len(readings) != 1 {
+		t.Errorf("got %d readings with limit=1, want 1", len(readings))
+	}
+}
+
+func TestLoadWeatherStations(t *testing.T) {
+	s, _ := newTestStore(t)
+	defer s.Close()
+
+	temp1, temp2 := 20.0, 25.0
+	now := time.Now().UTC()
+
+	// Two stations, two readings each
+	if err := s.SaveWeatherReading(WeatherReading{Callsign: "WX1AW", Timestamp: now.Add(-time.Hour), Temperature: &temp1}); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.SaveWeatherReading(WeatherReading{Callsign: "WX1AW", Timestamp: now, Temperature: &temp2}); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.SaveWeatherReading(WeatherReading{Callsign: "WX2BW", Timestamp: now, Temperature: &temp1}); err != nil {
+		t.Fatal(err)
+	}
+
+	stations, err := s.LoadWeatherStations()
+	if err != nil {
+		t.Fatalf("load weather stations: %v", err)
+	}
+	if len(stations) != 2 {
+		t.Fatalf("got %d weather stations, want 2", len(stations))
+	}
+
+	// WX1AW should have the latest reading (temp2)
+	for _, ws := range stations {
+		if ws.Callsign == "WX1AW" {
+			if ws.Temperature == nil || *ws.Temperature != 25.0 {
+				t.Errorf("WX1AW latest temp = %v, want 25.0", ws.Temperature)
+			}
+		}
+	}
+}
+
+func TestPurgeWeatherReadings(t *testing.T) {
+	s, _ := newTestStore(t)
+	defer s.Close()
+
+	temp := 20.0
+	now := time.Now().UTC()
+
+	// Old reading
+	if err := s.SaveWeatherReading(WeatherReading{Callsign: "WX1AW", Timestamp: now.Add(-48 * time.Hour), Temperature: &temp}); err != nil {
+		t.Fatal(err)
+	}
+	// Recent reading
+	if err := s.SaveWeatherReading(WeatherReading{Callsign: "WX1AW", Timestamp: now, Temperature: &temp}); err != nil {
+		t.Fatal(err)
+	}
+
+	deleted, err := s.PurgeWeatherReadings(now.Add(-24 * time.Hour))
+	if err != nil {
+		t.Fatalf("purge: %v", err)
+	}
+	if deleted != 1 {
+		t.Errorf("purged %d rows, want 1", deleted)
+	}
+
+	readings, _ := s.LoadWeatherReadings(WeatherFilter{Callsign: "WX1AW"})
+	if len(readings) != 1 {
+		t.Errorf("got %d readings after purge, want 1", len(readings))
+	}
+}
+
+func TestWeatherReadingNullableFields(t *testing.T) {
+	s, _ := newTestStore(t)
+	defer s.Close()
+
+	// Save with only temperature set (all others nil)
+	temp := 15.0
+	now := time.Now().UTC().Truncate(time.Second)
+	if err := s.SaveWeatherReading(WeatherReading{
+		Callsign:    "WX1AW",
+		Timestamp:   now,
+		Temperature: &temp,
+	}); err != nil {
+		t.Fatalf("save: %v", err)
+	}
+
+	readings, _ := s.LoadWeatherReadings(WeatherFilter{Callsign: "WX1AW"})
+	if len(readings) != 1 {
+		t.Fatalf("got %d, want 1", len(readings))
+	}
+	got := readings[0]
+	if got.Temperature == nil || *got.Temperature != 15.0 {
+		t.Errorf("temperature = %v, want 15.0", got.Temperature)
+	}
+	if got.WindDir != nil {
+		t.Errorf("windDir should be nil, got %v", got.WindDir)
+	}
+	if got.Humidity != nil {
+		t.Errorf("humidity should be nil, got %v", got.Humidity)
+	}
+	if got.Luminosity != nil {
+		t.Errorf("luminosity should be nil, got %v", got.Luminosity)
 	}
 }

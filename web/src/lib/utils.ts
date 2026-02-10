@@ -12,13 +12,19 @@ export function timeAgo(dateStr: string): string {
 	return `${days}d ago`;
 }
 
-export function formatSpeed(kmh: number | undefined): string {
+export function formatSpeed(kmh: number | undefined, units: 'metric' | 'imperial' = 'metric'): string {
 	if (!kmh) return '';
+	if (units === 'imperial') {
+		return `${Math.round(kmh * 0.6214)} mph`;
+	}
 	return `${Math.round(kmh)} km/h`;
 }
 
-export function formatAltitude(m: number | undefined): string {
+export function formatAltitude(m: number | undefined, units: 'metric' | 'imperial' = 'metric'): string {
 	if (!m) return '';
+	if (units === 'imperial') {
+		return `${Math.round(m * 3.281)} ft`;
+	}
 	return `${Math.round(m)} m`;
 }
 

@@ -33,15 +33,15 @@ func TestRoleLevel(t *testing.T) {
 }
 
 func TestCreateNoPINConfigured(t *testing.T) {
-	// No PIN configured → everyone gets Operator (field-friendly).
+	// No PIN configured → first user auto-promoted to Admin.
 	m := newTestManager("", 30*time.Minute)
 
 	user, err := m.Create("Alice", "")
 	if err != nil {
 		t.Fatalf("Create: %v", err)
 	}
-	if user.Role != RoleOperator {
-		t.Errorf("role = %q, want %q", user.Role, RoleOperator)
+	if user.Role != RoleAdmin {
+		t.Errorf("first user role = %q, want %q (auto-promote)", user.Role, RoleAdmin)
 	}
 	if user.Name != "Alice" {
 		t.Errorf("name = %q, want %q", user.Name, "Alice")
@@ -58,11 +58,20 @@ func TestCreateNoPINConfigured(t *testing.T) {
 	if user.LastActivity.IsZero() {
 		t.Error("LastActivity is zero")
 	}
+
+	// Second user should be Operator, not Admin.
+	user2, _ := m.Create("Bob", "")
+	if user2.Role != RoleOperator {
+		t.Errorf("second user role = %q, want %q", user2.Role, RoleOperator)
+	}
 }
 
 func TestCreateNoPINConfiguredWithRandomInput(t *testing.T) {
 	// No PIN configured → even if user sends a PIN, still Operator.
+	// First user auto-promotes to Admin, so create a throwaway first.
 	m := newTestManager("", 30*time.Minute)
+	m.Create("First", "") // auto-promoted to Admin
+
 	user, err := m.Create("Bob", "anything")
 	if err != nil {
 		t.Fatalf("Create: %v", err)
@@ -86,6 +95,10 @@ func TestCreateWithPIN(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			m := newTestManager("secret123", 30*time.Minute)
+			// Create a first user with correct PIN to claim admin slot,
+			// so the test subject gets their natural role.
+			m.Create("Admin", "secret123") // auto-promoted to Admin
+
 			user, err := m.Create("Bob", tt.pin)
 			if err != nil {
 				t.Fatalf("Create: %v", err)

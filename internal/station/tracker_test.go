@@ -252,6 +252,12 @@ func TestHandlePacketWeatherWithPosition(t *testing.T) {
 	if s.Position.Lat != 40.0 {
 		t.Errorf("lat = %f, want %f", s.Position.Lat, 40.0)
 	}
+	if s.Weather == nil {
+		t.Fatal("weather data should be populated from weather packet")
+	}
+	if s.Weather.Temperature == nil || *s.Weather.Temperature != 22.0 {
+		t.Errorf("temperature = %v, want 22.0", s.Weather.Temperature)
+	}
 }
 
 func TestHandlePacketNonPosition(t *testing.T) {

@@ -23,19 +23,19 @@ type ObjectData struct {
 
 // WeatherData holds parsed APRS weather data.
 type WeatherData struct {
-	WindDir     *float64 // degrees
-	WindSpeed   *float64 // m/s
-	WindGust    *float64 // m/s
-	Temperature *float64 // Celsius
-	Humidity    *int
-	Pressure    *float64 // hPa
-	Rain1h      *float64 // mm
-	Rain24h     *float64 // mm
-	RainToday   *float64 // mm
-	Luminosity  *int
-	Radiation   *float64 // nanosieverts/hour
-	Voltage     *float64 // volts
-	FloodLevel  *float64 // feet (raw from APRS)
+	WindDir     *float64 `json:"windDir,omitempty"`     // degrees
+	WindSpeed   *float64 `json:"windSpeed,omitempty"`   // m/s
+	WindGust    *float64 `json:"windGust,omitempty"`    // m/s
+	Temperature *float64 `json:"temperature,omitempty"` // Celsius
+	Humidity    *int     `json:"humidity,omitempty"`
+	Pressure    *float64 `json:"pressure,omitempty"`    // hPa
+	Rain1h      *float64 `json:"rain1h,omitempty"`      // mm
+	Rain24h     *float64 `json:"rain24h,omitempty"`     // mm
+	RainToday   *float64 `json:"rainToday,omitempty"`   // mm
+	Luminosity  *int     `json:"luminosity,omitempty"`
+	Radiation   *float64 `json:"radiation,omitempty"`   // nanosieverts/hour
+	Voltage     *float64 `json:"voltage,omitempty"`     // volts
+	FloodLevel  *float64 `json:"floodLevel,omitempty"`  // feet (raw from APRS)
 }
 
 // StatusData holds parsed APRS status data.

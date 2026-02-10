@@ -1,6 +1,6 @@
 import { writable, get } from 'svelte/store';
 
-export type PanelMode = 'closed' | 'stations' | 'detail' | 'messages' | 'convo' | 'transports' | 'activity' | 'annotations' | 'netcontrol' | 'bulletins' | 'ics309';
+export type PanelMode = 'closed' | 'stations' | 'detail' | 'messages' | 'convo' | 'transports' | 'activity' | 'annotations' | 'netcontrol' | 'bulletins' | 'ics309' | 'weather' | 'settings';
 export type DetailTab = 'info' | 'messages' | 'track';
 export type SheetState = 'peek' | 'half' | 'full';
 export type ConnectionState = 'connected' | 'disconnected' | 'reconnecting';
@@ -79,6 +79,18 @@ export function openBulletins(): void {
 	sheetState.set('half');
 }
 
+export function openWeather(): void {
+	panelMode.set('weather');
+	selectedStation.set(null);
+	sheetState.set('half');
+}
+
+export function openSettings(): void {
+	panelMode.set('settings');
+	selectedStation.set(null);
+	sheetState.set('full');
+}
+
 export function openICS309(netId?: string): void {
 	ics309NetId.set(netId ?? null);
 	panelMode.set('ics309');
@@ -102,6 +114,8 @@ export function togglePanel(mode: PanelMode): void {
 			case 'netcontrol': openNetControl(); break;
 			case 'bulletins': openBulletins(); break;
 			case 'ics309': openICS309(); break;
+			case 'weather': openWeather(); break;
+			case 'settings': openSettings(); break;
 			default: closePanel();
 		}
 	}

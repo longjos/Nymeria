@@ -15,6 +15,8 @@
 	import NetControlPanel from '$lib/components/NetControlPanel.svelte';
 	import BulletinPanel from '$lib/components/BulletinPanel.svelte';
 	import ICS309Panel from '$lib/components/ICS309Panel.svelte';
+	import WeatherPanel from '$lib/components/WeatherPanel.svelte';
+	import SettingsPanel from '$lib/components/SettingsPanel.svelte';
 	import ConnectionStatus from '$lib/components/ConnectionStatus.svelte';
 	import SearchOverlay from '$lib/components/SearchOverlay.svelte';
 	import LoginOverlay from '$lib/components/LoginOverlay.svelte';
@@ -31,10 +33,11 @@
 	} from '$lib/stores/netcontrol';
 	import { initTacticalStore } from '$lib/stores/tactical';
 	import { initBulletinStore } from '$lib/stores/bulletins';
+	import { initWeatherStore, weatherStations, selectedWeatherStation } from '$lib/stores/weather';
 	import { isLoggedIn, initSession } from '$lib/stores/session';
 	import {
 		selectedStation, panelMode, detailTab, searchOpen, sheetState,
-		selectStation, closePanel, openStationList, openMessages, openConversation, openTransports, openActivity, openAnnotations, openNetControl, openBulletins, openICS309,
+		selectStation, closePanel, openStationList, openMessages, openConversation, openTransports, openActivity, openAnnotations, openNetControl, openBulletins, openICS309, openWeather, openSettings,
 		togglePanel, commandPaletteOpen, toggleCommandPalette
 	} from '$lib/stores/ui';
 	import type { SheetState, DetailTab, PanelMode } from '$lib/stores/ui';
@@ -71,6 +74,7 @@
 			initNetControlStore();
 			initTacticalStore();
 			initBulletinStore();
+			initWeatherStore();
 		}
 	});
 
@@ -88,9 +92,14 @@
 	});
 
 	function handleStationClick(key: string) {
-		selectStation(key);
-		// Fly to the station
 		const st = $stations.get(key);
+		// Weather stations → open the weather panel detail instead
+		if (st?.weather) {
+			selectedWeatherStation.set(key);
+			openWeather();
+			return;
+		}
+		selectStation(key);
 		if (st?.position) {
 			flyToTarget = { lat: st.position.lat, lon: st.position.lon };
 		}
@@ -274,6 +283,8 @@
 			{flyToBounds}
 			highlightedMissionId={$hoveredMissionId}
 			highlightedCheckInId={$hoveredCheckInId}
+			weatherOverlay={$weatherStations}
+			showWeatherOverlay={$panelMode === 'weather'}
 		/>
 	</div>
 
@@ -308,6 +319,8 @@
 		onTransportsOpen={openTransports}
 		onAnnotationsOpen={openAnnotations}
 		onNetControlOpen={openNetControl}
+		onWeatherOpen={openWeather}
+		onSettingsOpen={openSettings}
 		onCommandPalette={toggleCommandPalette}
 	/>
 
@@ -365,8 +378,12 @@
 					onSetOpsView={handleSetOpsView}
 					onGoToOpsView={handleGoToOpsView}
 				/>
+			{:else if $panelMode === 'weather'}
+				<WeatherPanel onFlyTo={handleFlyTo} />
 			{:else if $panelMode === 'ics309'}
 				<ICS309Panel />
+			{:else if $panelMode === 'settings'}
+				<SettingsPanel />
 			{/if}
 		</SidePanel>
 	{/if}
@@ -431,8 +448,12 @@
 					onSetOpsView={handleSetOpsView}
 					onGoToOpsView={handleGoToOpsView}
 				/>
+			{:else if $panelMode === 'weather'}
+				<WeatherPanel onFlyTo={handleFlyTo} />
 			{:else if $panelMode === 'ics309'}
 				<ICS309Panel />
+			{:else if $panelMode === 'settings'}
+				<SettingsPanel />
 			{/if}
 		</BottomSheet>
 	{/if}

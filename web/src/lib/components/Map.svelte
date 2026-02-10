@@ -5,6 +5,9 @@
 	import { createStationIcon } from '$lib/aprs-icons';
 	import { stationDisplayName } from '$lib/utils';
 	import { getTacticalAlias } from '$lib/stores/tactical';
+	import { weatherUnits } from '$lib/stores/weather';
+	import { convertTemp, convertWindSpeed } from '$lib/units';
+	import type { UnitSystem } from '$lib/units';
 	import { get } from 'svelte/store';
 	import L from 'leaflet';
 
@@ -34,6 +37,8 @@
 		flyToBounds = null,
 		highlightedMissionId = null,
 		highlightedCheckInId = null,
+		weatherOverlay = [],
+		showWeatherOverlay = false,
 	}: {
 		stations?: Station[];
 		annotations?: Annotation[];
@@ -58,6 +63,8 @@
 		flyToBounds?: Array<{ lat: number; lon: number }> | null;
 		highlightedMissionId?: string | null;
 		highlightedCheckInId?: string | null;
+		weatherOverlay?: Station[];
+		showWeatherOverlay?: boolean;
 	} = $props();
 
 	let mapEl: HTMLDivElement;
@@ -92,6 +99,8 @@
 	let highlightOverlays: L.Layer[] = [];
 	// Single operator highlight (assign picker hover)
 	let operatorHighlight: L.Layer | null = null;
+	// Weather overlay markers
+	let wxMarkers: Map<string, L.Marker> = new Map();
 
 	const netStatusColors: Record<string, string> = {
 		available: '#22c55e',
@@ -498,6 +507,49 @@
 			opacity: 0.9,
 			className: 'highlight-pulse-ring',
 		}).addTo(map);
+	});
+
+	// Weather overlay markers
+	$effect(() => {
+		if (!map) return;
+		const show = showWeatherOverlay;
+		const wxStations = weatherOverlay;
+		const units = get(weatherUnits) as UnitSystem;
+
+		// Remove all existing weather markers when hidden or data changes
+		for (const [, m] of wxMarkers) m.remove();
+		wxMarkers.clear();
+
+		if (!show || !wxStations.length) return;
+
+		for (const s of wxStations) {
+			if (!s.position || !s.weather) continue;
+			const key = s.ssid > 0 ? `${s.callsign}-${s.ssid}` : s.callsign;
+			const temp = s.weather.temperature;
+			const windDir = s.weather.windDir;
+			const windSpeed = s.weather.windSpeed;
+
+			const tempStr = temp != null ? `${Math.round(convertTemp(temp, units))}°` : '—';
+			const windArrow = windDir != null
+				? `<span style="display:inline-block;transform:rotate(${windDir}deg);font-size:10px;">↓</span>`
+				: '';
+			const windStr = windSpeed != null ? `${Math.round(convertWindSpeed(windSpeed, units))}` : '';
+
+			const html = `<div class="wx-marker-pill">
+				<span class="wx-temp">${tempStr}</span>
+				${windArrow || windStr ? `<span class="wx-wind">${windArrow}${windStr}</span>` : ''}
+			</div>`;
+
+			const icon = L.divIcon({
+				className: 'wx-marker',
+				html,
+				iconSize: [60, 24],
+				iconAnchor: [30, 12],
+			});
+
+			const marker = L.marker([s.position.lat, s.position.lon], { icon, interactive: false }).addTo(map);
+			wxMarkers.set(key, marker);
+		}
 	});
 
 	function setupVertexHandles(geojsonStr: string, color: string, onChange: (geom: string) => void) {
@@ -981,5 +1033,35 @@
 	@keyframes highlight-pulse {
 		0%, 100% { opacity: 0.6; }
 		50% { opacity: 1; }
+	}
+
+	/* Weather overlay markers — must be :global since injected via L.divIcon */
+	:global(.wx-marker) {
+		background: none !important;
+		border: none !important;
+	}
+
+	:global(.wx-marker-pill) {
+		display: inline-flex;
+		align-items: center;
+		gap: 3px;
+		background: rgba(10, 15, 30, 0.82);
+		border: 1px solid rgba(255, 255, 255, 0.15);
+		border-radius: 10px;
+		padding: 2px 7px;
+		font-size: 11px;
+		font-weight: 600;
+		color: #e0e0e0;
+		white-space: nowrap;
+		pointer-events: none;
+	}
+
+	:global(.wx-marker-pill .wx-temp) {
+		color: #fbbf24;
+	}
+
+	:global(.wx-marker-pill .wx-wind) {
+		color: #94a3b8;
+		font-size: 10px;
 	}
 </style>

@@ -43,7 +43,9 @@ type Server struct {
 	annMgr     *annotation.Manager
 	netMgr     *netcontrol.Manager
 	tileCache  *tilecache.Cache
+	configMgr  *config.Manager
 	stationCfg config.StationConfig
+	weatherCfg config.WeatherConfig
 }
 
 // New creates a new Server.
@@ -72,6 +74,7 @@ func New(tracker station.Tracker, tm *transport.Manager, eng message.Engine, db 
 
 	go s.hub.Run()
 	go s.bridgeTrackerEvents()
+	go s.weatherPurgeLoop()
 	if eng != nil {
 		go s.bridgeMessageEvents()
 	}
@@ -157,6 +160,20 @@ func WithStationConfig(cfg config.StationConfig) Option {
 	}
 }
 
+// WithWeatherConfig provides weather dashboard configuration.
+func WithWeatherConfig(cfg config.WeatherConfig) Option {
+	return func(s *Server) {
+		s.weatherCfg = cfg
+	}
+}
+
+// WithConfigManager sets the config manager for settings API.
+func WithConfigManager(mgr *config.Manager) Option {
+	return func(s *Server) {
+		s.configMgr = mgr
+	}
+}
+
 // ServeHTTP implements http.Handler.
 func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	s.router.ServeHTTP(w, r)
@@ -215,6 +232,29 @@ func (s *Server) bridgeTrackerEvents() {
 						log.Printf("[server] save track point: %v", err)
 					}
 				}
+			}
+		}
+
+		// Persist weather readings
+		if s.store != nil && evt.Station.Weather != nil && (evt.Type == station.EventNewStation || evt.Type == station.EventStationUpdate) {
+			wx := evt.Station.Weather
+			key := aprs.Address{Call: evt.Station.Callsign, SSID: evt.Station.SSID}.String()
+			wr := store.WeatherReading{
+				Callsign:    key,
+				Timestamp:   evt.Station.LastHeard,
+				Temperature: wx.Temperature,
+				WindDir:     wx.WindDir,
+				WindSpeed:   wx.WindSpeed,
+				WindGust:    wx.WindGust,
+				Humidity:    wx.Humidity,
+				Pressure:    wx.Pressure,
+				Rain1h:      wx.Rain1h,
+				Rain24h:     wx.Rain24h,
+				RainToday:   wx.RainToday,
+				Luminosity:  wx.Luminosity,
+			}
+			if err := s.store.SaveWeatherReading(wr); err != nil {
+				log.Printf("[server] save weather reading: %v", err)
 			}
 		}
 
@@ -439,6 +479,29 @@ func (s *Server) bridgeTileCacheEvents() {
 			continue
 		}
 		s.hub.Broadcast(data)
+	}
+}
+
+// weatherPurgeLoop periodically deletes old weather readings based on RetentionDays config.
+func (s *Server) weatherPurgeLoop() {
+	days := s.weatherCfg.RetentionDays
+	if days <= 0 {
+		days = 7
+	}
+	if s.store == nil {
+		return
+	}
+
+	ticker := time.NewTicker(6 * time.Hour)
+	defer ticker.Stop()
+
+	for range ticker.C {
+		cutoff := time.Now().Add(-time.Duration(days) * 24 * time.Hour)
+		if n, err := s.store.PurgeWeatherReadings(cutoff); err != nil {
+			log.Printf("[server] purge weather readings: %v", err)
+		} else if n > 0 {
+			log.Printf("[server] purged %d old weather readings", n)
+		}
 	}
 }
 

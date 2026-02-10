@@ -1,3 +1,46 @@
+export interface WeatherData {
+	windDir?: number;
+	windSpeed?: number;
+	windGust?: number;
+	temperature?: number;
+	humidity?: number;
+	pressure?: number;
+	rain1h?: number;
+	rain24h?: number;
+	rainToday?: number;
+	luminosity?: number;
+	radiation?: number;
+	voltage?: number;
+	floodLevel?: number;
+}
+
+export interface WeatherReading {
+	id: number;
+	callsign: string;
+	timestamp: string;
+	temperature?: number;
+	windDir?: number;
+	windSpeed?: number;
+	windGust?: number;
+	humidity?: number;
+	pressure?: number;
+	rain1h?: number;
+	rain24h?: number;
+	rainToday?: number;
+	luminosity?: number;
+}
+
+export interface WeatherAlertThreshold {
+	min?: number;
+	max?: number;
+}
+
+export interface WeatherConfig {
+	retentionDays: number;
+	alerts?: Record<string, WeatherAlertThreshold>;
+	units: 'metric' | 'imperial';
+}
+
 export interface Station {
 	callsign: string;
 	ssid: number;
@@ -7,6 +50,7 @@ export interface Station {
 	comment?: string;
 	track: TrackPoint[];
 	source: string;
+	weather?: WeatherData;
 }
 
 export interface Position {
@@ -311,4 +355,84 @@ export interface TilePreloadProgress {
 	done: number;
 	total: number;
 	skipped: number;
+}
+
+// --- Settings ---
+
+export interface SettingsResponse {
+	station: StationSettings;
+	server: ServerSettings;
+	beacon: BeaconSettings;
+	session: SessionSettings;
+	logging: LoggingSettings;
+	transports: TransportSettings[];
+	tileCache: TileCacheSettings;
+	weather: WeatherSettings;
+	store: StoreSettings;
+}
+
+export interface StationSettings {
+	callsign: string;
+	ssid: number;
+	lat: number;
+	lon: number;
+	symbolTable: string;
+	symbolCode: string;
+	comment: string;
+	trackMaxPoints: number;
+	staleTimeout: string;
+	dedupWindow: string;
+	tacticalAliases?: Record<string, string>;
+}
+
+export interface ServerSettings {
+	listen: string;
+}
+
+export interface BeaconSettings {
+	enabled: boolean;
+	interval: string;
+	comment: string;
+}
+
+export interface SessionSettings {
+	pinConfigured: boolean;
+	pin?: string;
+	inactivityTimeout: string;
+}
+
+export interface LoggingSettings {
+	level: string;
+}
+
+export interface TransportSettings {
+	type: string;
+	host?: string;
+	port?: number;
+	device?: string;
+	baud?: number;
+	filter?: string;
+	callsign?: string;
+	passcode?: string;
+}
+
+export interface TileCacheSettings {
+	enabled: boolean;
+	dataDir: string;
+	tileUrl: string;
+	maxZoom: number;
+}
+
+export interface WeatherSettings {
+	retentionDays: number;
+	alerts?: Record<string, WeatherAlertThreshold>;
+	units: string;
+}
+
+export interface StoreSettings {
+	path: string;
+}
+
+export interface SettingsUpdateResponse {
+	restartRequired: boolean;
 }

@@ -129,6 +129,13 @@ func (m *Manager) IsRunning() bool {
 	return m.running
 }
 
+// UpdateConfig updates the beacon configuration under mutex.
+func (m *Manager) UpdateConfig(cfg Config) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.cfg = cfg
+}
+
 // loop runs the periodic beacon timer.
 func (m *Manager) loop(ctx context.Context) {
 	defer func() {
