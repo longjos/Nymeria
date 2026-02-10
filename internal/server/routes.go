@@ -52,6 +52,10 @@ func (s *Server) routes() {
 		r.Get("/weather/config", s.handleGetWeatherConfig)
 		r.Get("/weather/{callsign}", s.handleGetWeatherReadings)
 
+		// Telemetry
+		r.Get("/telemetry/stations", s.handleGetTelemetryStations)
+		r.Get("/telemetry/{callsign}", s.handleGetTelemetryReadings)
+
 		// ICS-309 Communications Log
 		r.Get("/ics309", s.handleGetICS309)
 		r.Get("/ics309/export", s.handleExportICS309CSV)
@@ -1311,6 +1315,68 @@ func (s *Server) handleGetWeatherReadings(w http.ResponseWriter, r *http.Request
 
 func (s *Server) handleGetWeatherConfig(w http.ResponseWriter, _ *http.Request) {
 	writeJSON(w, http.StatusOK, s.weatherCfg)
+}
+
+// --- Telemetry handlers ---
+
+func (s *Server) handleGetTelemetryStations(w http.ResponseWriter, _ *http.Request) {
+	if s.store == nil {
+		writeJSON(w, http.StatusOK, []any{})
+		return
+	}
+	stations, err := s.store.LoadTelemetryStations()
+	if err != nil {
+		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
+		return
+	}
+	if stations == nil {
+		stations = []store.TelemetryReading{}
+	}
+	writeJSON(w, http.StatusOK, stations)
+}
+
+func (s *Server) handleGetTelemetryReadings(w http.ResponseWriter, r *http.Request) {
+	if s.store == nil {
+		writeJSON(w, http.StatusOK, map[string]any{"readings": []any{}, "params": nil})
+		return
+	}
+
+	callsign := chi.URLParam(r, "callsign")
+	filter := store.TelemetryFilter{Callsign: callsign}
+
+	if v := r.URL.Query().Get("since"); v != "" {
+		if t, err := time.Parse(time.RFC3339, v); err == nil {
+			filter.Since = &t
+		}
+	}
+	if v := r.URL.Query().Get("until"); v != "" {
+		if t, err := time.Parse(time.RFC3339, v); err == nil {
+			filter.Until = &t
+		}
+	}
+	if v := r.URL.Query().Get("limit"); v != "" {
+		if n, err := strconv.Atoi(v); err == nil {
+			filter.Limit = n
+		}
+	}
+
+	readings, err := s.store.LoadTelemetryReadings(filter)
+	if err != nil {
+		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
+		return
+	}
+	if readings == nil {
+		readings = []store.TelemetryReading{}
+	}
+
+	// Look up telemetry params from the live station tracker.
+	var params *aprs.TelemetryParams
+	st, ok := s.tracker.Get(callsign)
+	if ok && st.TelemetryParams != nil {
+		params = st.TelemetryParams
+	}
+
+	writeJSON(w, http.StatusOK, map[string]any{"readings": readings, "params": params})
 }
 
 // --- Activity log handlers ---

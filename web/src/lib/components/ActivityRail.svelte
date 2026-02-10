@@ -267,6 +267,18 @@
 
 		<button
 			class="rail-btn"
+			class:active={panelMode === 'telemetry'}
+			onclick={() => onToggle?.('telemetry')}
+			title="Telemetry"
+			aria-label="Telemetry"
+		>
+			<svg width="18" height="18" viewBox="0 0 16 16" fill="none">
+				<path d="M1 12l3-4 3 2 4-6 4 5" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/>
+			</svg>
+		</button>
+
+		<button
+			class="rail-btn"
 			class:active={panelMode === 'df'}
 			onclick={() => onToggle?.('df')}
 			title="Direction Finding"

@@ -63,3 +63,124 @@ func parseTelemetryPayload(payload string) (*TelemetryData, error) {
 
 	return tel, nil
 }
+
+// IsTelemetryMeta returns true if the message text starts with a telemetry
+// metadata prefix (PARM, UNIT, EQNS, or BITS).
+func IsTelemetryMeta(text string) bool {
+	for _, prefix := range []string{"PARM.", "UNIT.", "EQNS.", "BITS."} {
+		if strings.HasPrefix(text, prefix) {
+			return true
+		}
+	}
+	return false
+}
+
+// ParseTelemetryPARM parses a PARM. message into parameter names.
+// Format: PARM.name1,name2,name3,name4,name5[,bit1,...,bit8]
+func ParseTelemetryPARM(text string) (*TelemetryMetaMessage, error) {
+	if !strings.HasPrefix(text, "PARM.") {
+		return nil, fmt.Errorf("not a PARM message")
+	}
+	rest := text[5:]
+	parts := strings.Split(rest, ",")
+
+	meta := &TelemetryMetaMessage{MetaType: TelemetryMetaPARM}
+	for i := 0; i < 5 && i < len(parts); i++ {
+		meta.ParamNames[i] = strings.TrimSpace(parts[i])
+	}
+	// Bits 6-13 are digital channel labels
+	for i := 5; i < 13 && i < len(parts); i++ {
+		meta.BitLabels[i-5] = strings.TrimSpace(parts[i])
+	}
+	return meta, nil
+}
+
+// ParseTelemetryUNIT parses a UNIT. message into unit labels.
+// Format: UNIT.unit1,unit2,unit3,unit4,unit5[,bunit1,...,bunit8]
+func ParseTelemetryUNIT(text string) (*TelemetryMetaMessage, error) {
+	if !strings.HasPrefix(text, "UNIT.") {
+		return nil, fmt.Errorf("not a UNIT message")
+	}
+	rest := text[5:]
+	parts := strings.Split(rest, ",")
+
+	meta := &TelemetryMetaMessage{MetaType: TelemetryMetaUNIT}
+	for i := 0; i < 5 && i < len(parts); i++ {
+		meta.UnitLabels[i] = strings.TrimSpace(parts[i])
+	}
+	// Bits 6-13 are digital channel unit labels (stored in BitLabels)
+	for i := 5; i < 13 && i < len(parts); i++ {
+		meta.BitLabels[i-5] = strings.TrimSpace(parts[i])
+	}
+	return meta, nil
+}
+
+// ParseTelemetryEQNS parses an EQNS. message into equation coefficients.
+// Format: EQNS.a1,b1,c1,a2,b2,c2,...,a5,b5,c5 (15 values total)
+func ParseTelemetryEQNS(text string) (*TelemetryMetaMessage, error) {
+	if !strings.HasPrefix(text, "EQNS.") {
+		return nil, fmt.Errorf("not an EQNS message")
+	}
+	rest := text[5:]
+	parts := strings.Split(rest, ",")
+	if len(parts) < 15 {
+		return nil, fmt.Errorf("EQNS needs 15 coefficients, got %d", len(parts))
+	}
+
+	meta := &TelemetryMetaMessage{MetaType: TelemetryMetaEQNS}
+	for ch := 0; ch < 5; ch++ {
+		for j := 0; j < 3; j++ {
+			v, err := strconv.ParseFloat(strings.TrimSpace(parts[ch*3+j]), 64)
+			if err != nil {
+				return nil, fmt.Errorf("invalid EQNS coefficient [%d][%d]: %w", ch, j, err)
+			}
+			meta.Equations[ch][j] = v
+		}
+	}
+	return meta, nil
+}
+
+// ParseTelemetryBITS parses a BITS. message into bit sense and project title.
+// Format: BITS.XXXXXXXX[,project title]
+// X = 0 or 1, indicating the active sense for each digital bit.
+func ParseTelemetryBITS(text string) (*TelemetryMetaMessage, error) {
+	if !strings.HasPrefix(text, "BITS.") {
+		return nil, fmt.Errorf("not a BITS message")
+	}
+	rest := text[5:]
+
+	meta := &TelemetryMetaMessage{MetaType: TelemetryMetaBITS}
+
+	// Split on comma — first part is bit sense, rest is project title
+	if idx := strings.IndexByte(rest, ','); idx >= 0 {
+		meta.ProjectTitle = strings.TrimSpace(rest[idx+1:])
+		rest = rest[:idx]
+	}
+
+	if len(rest) >= 8 {
+		var bits byte
+		for i := 0; i < 8; i++ {
+			if rest[i] == '1' {
+				bits |= 1 << (7 - i)
+			}
+		}
+		meta.BitSense = bits
+	}
+	return meta, nil
+}
+
+// ParseTelemetryMeta dispatches to the appropriate metadata parser based on prefix.
+func ParseTelemetryMeta(text string) (*TelemetryMetaMessage, error) {
+	switch {
+	case strings.HasPrefix(text, "PARM."):
+		return ParseTelemetryPARM(text)
+	case strings.HasPrefix(text, "UNIT."):
+		return ParseTelemetryUNIT(text)
+	case strings.HasPrefix(text, "EQNS."):
+		return ParseTelemetryEQNS(text)
+	case strings.HasPrefix(text, "BITS."):
+		return ParseTelemetryBITS(text)
+	default:
+		return nil, fmt.Errorf("unknown telemetry metadata prefix")
+	}
+}

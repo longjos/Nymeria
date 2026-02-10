@@ -16,6 +16,7 @@
 	import BulletinPanel from '$lib/components/BulletinPanel.svelte';
 	import ICS309Panel from '$lib/components/ICS309Panel.svelte';
 	import WeatherPanel from '$lib/components/WeatherPanel.svelte';
+	import TelemetryPanel from '$lib/components/TelemetryPanel.svelte';
 	import DFPanel from '$lib/components/DFPanel.svelte';
 	import SettingsPanel from '$lib/components/SettingsPanel.svelte';
 	import ConnectionStatus from '$lib/components/ConnectionStatus.svelte';
@@ -40,7 +41,7 @@
 	import { isLoggedIn, needsSetup, initSession } from '$lib/stores/session';
 	import {
 		selectedStation, panelMode, detailTab, searchOpen, sheetState,
-		selectStation, closePanel, openStationList, openMessages, openConversation, openTransports, openActivity, openAnnotations, openNetControl, openBulletins, openICS309, openWeather, openDF, openSettings,
+		selectStation, closePanel, openStationList, openMessages, openConversation, openTransports, openActivity, openAnnotations, openNetControl, openBulletins, openICS309, openWeather, openTelemetry, openDF, openSettings,
 		togglePanel, commandPaletteOpen, toggleCommandPalette
 	} from '$lib/stores/ui';
 	import type { SheetState, DetailTab, PanelMode } from '$lib/stores/ui';
@@ -388,6 +389,8 @@
 				/>
 			{:else if $panelMode === 'weather'}
 				<WeatherPanel onFlyTo={handleFlyTo} />
+			{:else if $panelMode === 'telemetry'}
+				<TelemetryPanel onFlyTo={handleFlyTo} />
 			{:else if $panelMode === 'df'}
 				<DFPanel onFlyTo={handleFlyTo} onFlyToTarget={handleFlyTo} />
 			{:else if $panelMode === 'ics309'}
@@ -460,6 +463,8 @@
 				/>
 			{:else if $panelMode === 'weather'}
 				<WeatherPanel onFlyTo={handleFlyTo} />
+			{:else if $panelMode === 'telemetry'}
+				<TelemetryPanel onFlyTo={handleFlyTo} />
 			{:else if $panelMode === 'df'}
 				<DFPanel onFlyTo={handleFlyTo} onFlyToTarget={handleFlyTo} />
 			{:else if $panelMode === 'ics309'}

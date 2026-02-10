@@ -494,8 +494,8 @@ func TestV2SchemaVersion(t *testing.T) {
 	if err != nil {
 		t.Fatalf("query schema_version: %v", err)
 	}
-	if version != 12 {
-		t.Errorf("expected schema version 12, got %d", version)
+	if version != 13 {
+		t.Errorf("expected schema version 13, got %d", version)
 	}
 }
 
@@ -994,8 +994,8 @@ func TestV3SchemaVersion(t *testing.T) {
 	if err != nil {
 		t.Fatalf("query schema_version: %v", err)
 	}
-	if version != 12 {
-		t.Errorf("expected schema version 12, got %d", version)
+	if version != 13 {
+		t.Errorf("expected schema version 13, got %d", version)
 	}
 }
 
@@ -1616,8 +1616,8 @@ func TestV5MigrationAddsTrackedStationsColumn(t *testing.T) {
 
 	var version int
 	s.db.QueryRow("SELECT version FROM schema_version LIMIT 1").Scan(&version)
-	if version != 12 {
-		t.Errorf("expected schema version 12, got %d", version)
+	if version != 13 {
+		t.Errorf("expected schema version 13, got %d", version)
 	}
 }
 
@@ -1723,8 +1723,8 @@ func TestV6MigrationCreatesTacticalAliasesTable(t *testing.T) {
 
 	var version int
 	s.db.QueryRow("SELECT version FROM schema_version LIMIT 1").Scan(&version)
-	if version != 12 {
-		t.Errorf("expected schema version 12, got %d", version)
+	if version != 13 {
+		t.Errorf("expected schema version 13, got %d", version)
 	}
 }
 
@@ -1891,8 +1891,8 @@ func TestV7MigrationAddsAnnotationColumns(t *testing.T) {
 
 	var version int
 	s.db.QueryRow("SELECT version FROM schema_version LIMIT 1").Scan(&version)
-	if version != 12 {
-		t.Errorf("expected schema version 12, got %d", version)
+	if version != 13 {
+		t.Errorf("expected schema version 13, got %d", version)
 	}
 }
 
@@ -2194,8 +2194,8 @@ func TestMigrateV8CreatesOperationsTable(t *testing.T) {
 
 	var version int
 	s.db.QueryRow("SELECT version FROM schema_version LIMIT 1").Scan(&version)
-	if version != 12 {
-		t.Errorf("expected schema version 12, got %d", version)
+	if version != 13 {
+		t.Errorf("expected schema version 13, got %d", version)
 	}
 
 	// Verify operations table exists by doing a query.
@@ -2214,8 +2214,8 @@ func TestMigrateV11AddsOpsViewColumns(t *testing.T) {
 
 	var version int
 	s.db.QueryRow("SELECT version FROM schema_version LIMIT 1").Scan(&version)
-	if version != 12 {
-		t.Errorf("expected schema version 12, got %d", version)
+	if version != 13 {
+		t.Errorf("expected schema version 13, got %d", version)
 	}
 
 	// Verify ops_view columns exist.
@@ -2586,5 +2586,157 @@ func TestWeatherReadingNullableFields(t *testing.T) {
 	}
 	if got.Luminosity != nil {
 		t.Errorf("luminosity should be nil, got %v", got.Luminosity)
+	}
+}
+
+func TestMigrateV13CreatesTelemetryReadingsTable(t *testing.T) {
+	s, _ := newTestStore(t)
+	defer s.Close()
+
+	var count int
+	err := s.db.QueryRow("SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name='telemetry_readings'").Scan(&count)
+	if err != nil {
+		t.Fatalf("query: %v", err)
+	}
+	if count != 1 {
+		t.Errorf("telemetry_readings table not created by v13 migration")
+	}
+
+	var version int
+	s.db.QueryRow("SELECT version FROM schema_version LIMIT 1").Scan(&version)
+	if version != 13 {
+		t.Errorf("expected schema version 13, got %d", version)
+	}
+}
+
+func TestSaveAndLoadTelemetryReadingRoundtrip(t *testing.T) {
+	s, _ := newTestStore(t)
+	defer s.Close()
+
+	now := time.Now().UTC().Truncate(time.Second)
+	r := TelemetryReading{
+		Callsign:  "TEL1",
+		Timestamp: now,
+		Seq:       42,
+		Analog1:   100,
+		Analog2:   200,
+		Analog3:   300,
+		Analog4:   400,
+		Analog5:   500,
+		Digital:   0b10101010,
+	}
+
+	if err := s.SaveTelemetryReading(r); err != nil {
+		t.Fatalf("save: %v", err)
+	}
+
+	readings, err := s.LoadTelemetryReadings(TelemetryFilter{Callsign: "TEL1"})
+	if err != nil {
+		t.Fatalf("load: %v", err)
+	}
+	if len(readings) != 1 {
+		t.Fatalf("got %d readings, want 1", len(readings))
+	}
+
+	got := readings[0]
+	if got.Callsign != "TEL1" {
+		t.Errorf("callsign = %q, want TEL1", got.Callsign)
+	}
+	if got.Seq != 42 {
+		t.Errorf("seq = %d, want 42", got.Seq)
+	}
+	if got.Analog1 != 100 {
+		t.Errorf("analog1 = %f, want 100", got.Analog1)
+	}
+	if got.Analog5 != 500 {
+		t.Errorf("analog5 = %f, want 500", got.Analog5)
+	}
+	if got.Digital != 0b10101010 {
+		t.Errorf("digital = %d, want %d", got.Digital, 0b10101010)
+	}
+	if got.ID == 0 {
+		t.Error("expected non-zero ID")
+	}
+}
+
+func TestLoadTelemetryStations(t *testing.T) {
+	s, _ := newTestStore(t)
+	defer s.Close()
+
+	now := time.Now().UTC()
+
+	// Two stations with multiple readings
+	s.SaveTelemetryReading(TelemetryReading{Callsign: "TEL1", Timestamp: now.Add(-time.Hour), Seq: 1, Analog1: 10})
+	s.SaveTelemetryReading(TelemetryReading{Callsign: "TEL1", Timestamp: now, Seq: 2, Analog1: 20})
+	s.SaveTelemetryReading(TelemetryReading{Callsign: "TEL2", Timestamp: now, Seq: 1, Analog1: 30})
+
+	stations, err := s.LoadTelemetryStations()
+	if err != nil {
+		t.Fatalf("load: %v", err)
+	}
+	if len(stations) != 2 {
+		t.Fatalf("got %d stations, want 2", len(stations))
+	}
+
+	// TEL1 should have latest reading (seq=2, analog1=20)
+	for _, st := range stations {
+		if st.Callsign == "TEL1" {
+			if st.Seq != 2 || st.Analog1 != 20 {
+				t.Errorf("TEL1 latest: seq=%d analog1=%f, want seq=2 analog1=20", st.Seq, st.Analog1)
+			}
+		}
+	}
+}
+
+func TestPurgeTelemetryReadings(t *testing.T) {
+	s, _ := newTestStore(t)
+	defer s.Close()
+
+	now := time.Now().UTC()
+	s.SaveTelemetryReading(TelemetryReading{Callsign: "TEL1", Timestamp: now.Add(-48 * time.Hour), Seq: 1})
+	s.SaveTelemetryReading(TelemetryReading{Callsign: "TEL1", Timestamp: now, Seq: 2})
+
+	deleted, err := s.PurgeTelemetryReadings(now.Add(-24 * time.Hour))
+	if err != nil {
+		t.Fatalf("purge: %v", err)
+	}
+	if deleted != 1 {
+		t.Errorf("purged %d rows, want 1", deleted)
+	}
+
+	readings, _ := s.LoadTelemetryReadings(TelemetryFilter{Callsign: "TEL1"})
+	if len(readings) != 1 {
+		t.Errorf("got %d after purge, want 1", len(readings))
+	}
+}
+
+func TestLoadTelemetryReadingsFiltered(t *testing.T) {
+	s, _ := newTestStore(t)
+	defer s.Close()
+
+	base := time.Now().UTC().Truncate(time.Second)
+	for i := 0; i < 3; i++ {
+		s.SaveTelemetryReading(TelemetryReading{
+			Callsign:  "TEL1",
+			Timestamp: base.Add(time.Duration(i) * time.Hour),
+			Seq:       i,
+			Analog1:   float64(i * 10),
+		})
+	}
+
+	// Since filter
+	since := base.Add(30 * time.Minute)
+	readings, err := s.LoadTelemetryReadings(TelemetryFilter{Callsign: "TEL1", Since: &since})
+	if err != nil {
+		t.Fatalf("load: %v", err)
+	}
+	if len(readings) != 2 {
+		t.Errorf("got %d with since filter, want 2", len(readings))
+	}
+
+	// Limit
+	readings, _ = s.LoadTelemetryReadings(TelemetryFilter{Callsign: "TEL1", Limit: 1})
+	if len(readings) != 1 {
+		t.Errorf("got %d with limit=1, want 1", len(readings))
 	}
 }

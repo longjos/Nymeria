@@ -193,6 +193,28 @@ type WeatherFilter struct {
 	Limit    int
 }
 
+// TelemetryReading represents a single telemetry observation stored in the database.
+type TelemetryReading struct {
+	ID        int64      `json:"id"`
+	Callsign  string     `json:"callsign"`
+	Timestamp time.Time  `json:"timestamp"`
+	Seq       int        `json:"seq"`
+	Analog1   float64    `json:"analog1"`
+	Analog2   float64    `json:"analog2"`
+	Analog3   float64    `json:"analog3"`
+	Analog4   float64    `json:"analog4"`
+	Analog5   float64    `json:"analog5"`
+	Digital   int        `json:"digital"`
+}
+
+// TelemetryFilter controls telemetry reading queries.
+type TelemetryFilter struct {
+	Callsign string
+	Since    *time.Time
+	Until    *time.Time
+	Limit    int
+}
+
 // Store provides persistent storage for stations, messages, and configuration.
 type Store interface {
 	// Init initializes the store (creates tables, etc).
@@ -276,4 +298,10 @@ type Store interface {
 	LoadWeatherReadings(filter WeatherFilter) ([]WeatherReading, error)
 	LoadWeatherStations() ([]WeatherReading, error)
 	PurgeWeatherReadings(olderThan time.Time) (int64, error)
+
+	// Telemetry
+	SaveTelemetryReading(r TelemetryReading) error
+	LoadTelemetryReadings(filter TelemetryFilter) ([]TelemetryReading, error)
+	LoadTelemetryStations() ([]TelemetryReading, error)
+	PurgeTelemetryReadings(olderThan time.Time) (int64, error)
 }
