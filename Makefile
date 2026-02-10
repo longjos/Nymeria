@@ -1,4 +1,4 @@
-.PHONY: build run dev clean docker frontend backend
+.PHONY: build run dev clean docker frontend backend windows
 
 VERSION ?= dev
 LDFLAGS := -ldflags "-X main.version=$(VERSION)"
@@ -20,8 +20,11 @@ dev:
 	@echo "Starting Go server..."
 	go run $(LDFLAGS) ./cmd/nymeria --dev
 
+windows: frontend
+	GOOS=windows GOARCH=amd64 go build $(LDFLAGS) -o nymeria.exe ./cmd/nymeria
+
 clean:
-	rm -f nymeria
+	rm -f nymeria nymeria.exe
 	rm -rf web/build web/.svelte-kit web/node_modules
 
 docker:
