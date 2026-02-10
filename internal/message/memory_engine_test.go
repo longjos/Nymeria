@@ -2,6 +2,7 @@ package message
 
 import (
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -10,12 +11,31 @@ import (
 
 // mockSendFunc captures sent frames for verification.
 type mockSendFunc struct {
+	mu     sync.Mutex
 	frames []aprs.APRSFrame
 }
 
 func (m *mockSendFunc) send(frame aprs.APRSFrame) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
 	m.frames = append(m.frames, frame)
 	return nil
+}
+
+// getFrames returns a snapshot of all captured frames.
+func (m *mockSendFunc) getFrames() []aprs.APRSFrame {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	cp := make([]aprs.APRSFrame, len(m.frames))
+	copy(cp, m.frames)
+	return cp
+}
+
+// frameCount returns the current number of captured frames.
+func (m *mockSendFunc) frameCount() int {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	return len(m.frames)
 }
 
 func newTestEngine() (*MemoryEngine, *mockSendFunc) {
@@ -54,11 +74,12 @@ func TestSendFormat(t *testing.T) {
 	}
 
 	// Check frame was sent
-	if len(mock.frames) == 0 {
+	frames := mock.getFrames()
+	if len(frames) == 0 {
 		t.Fatal("no frames sent")
 	}
 
-	frame := mock.frames[0]
+	frame := frames[0]
 	if frame.Source.Call != "N0CALL" {
 		t.Errorf("frame source = %q, want N0CALL", frame.Source.Call)
 	}
@@ -92,7 +113,7 @@ func TestAckCancelsRetry(t *testing.T) {
 
 	// Wait a bit, then send ack
 	time.Sleep(5 * time.Millisecond)
-	initialFrameCount := len(mock.frames)
+	initialFrameCount := mock.frameCount()
 
 	// Simulate inbound ack packet
 	ackFrame := aprs.APRSFrame{
@@ -124,8 +145,9 @@ func TestAckCancelsRetry(t *testing.T) {
 
 	// Wait for what would be a retry interval — no new frames should arrive
 	time.Sleep(30 * time.Millisecond)
-	if len(mock.frames) > initialFrameCount {
-		t.Errorf("got %d extra frames after ack, expected 0", len(mock.frames)-initialFrameCount)
+	finalCount := mock.frameCount()
+	if finalCount > initialFrameCount {
+		t.Errorf("got %d extra frames after ack, expected 0", finalCount-initialFrameCount)
 	}
 }
 
@@ -147,11 +169,12 @@ func TestInboundTriggersAck(t *testing.T) {
 	eng.HandlePacket(pkt)
 
 	// Should have sent an ack frame
-	if len(mock.frames) == 0 {
+	frames := mock.getFrames()
+	if len(frames) == 0 {
 		t.Fatal("no ack frame sent")
 	}
 
-	ackFrame := mock.frames[0]
+	ackFrame := frames[0]
 	// Ack format: :ADDRESSEE :ackNNN
 	if !strings.Contains(ackFrame.Payload, ":ack789") {
 		t.Errorf("ack payload = %q, want to contain :ack789", ackFrame.Payload)
@@ -194,7 +217,7 @@ func TestInboundDedup(t *testing.T) {
 
 	// Should have sent two acks though (ack is always sent)
 	ackCount := 0
-	for _, f := range mock.frames {
+	for _, f := range mock.getFrames() {
 		if strings.Contains(f.Payload, ":ack555") {
 			ackCount++
 		}
@@ -268,8 +291,9 @@ func TestRetryExhaustion(t *testing.T) {
 	time.Sleep(200 * time.Millisecond)
 
 	// Should have sent initial + retries
-	if len(mock.frames) < 2 {
-		t.Errorf("expected at least 2 frames (initial + retries), got %d", len(mock.frames))
+	frameCount := mock.frameCount()
+	if frameCount < 2 {
+		t.Errorf("expected at least 2 frames (initial + retries), got %d", frameCount)
 	}
 
 	// Check message state is now failed
@@ -718,5 +742,42 @@ func TestImport(t *testing.T) {
 	w3ado = eng.Messages("W3ADO")
 	if len(w3ado) != 2 {
 		t.Errorf("after dedup W3ADO messages = %d, want 2", len(w3ado))
+	}
+}
+
+func TestUpdateCallsign(t *testing.T) {
+	eng, mock := newTestEngine()
+	defer eng.Close()
+
+	// Send with original callsign
+	msg1, err := eng.Send("W3ADO", "before change")
+	if err != nil {
+		t.Fatalf("Send: %v", err)
+	}
+	if msg1.From != "N0CALL" {
+		t.Errorf("msg1.From = %q, want N0CALL", msg1.From)
+	}
+	frames := mock.getFrames()
+	if frames[0].Source.Call != "N0CALL" {
+		t.Errorf("frame source = %q, want N0CALL", frames[0].Source.Call)
+	}
+
+	// Update callsign
+	eng.UpdateCallsign("W1AW")
+
+	// Send with new callsign
+	msg2, err := eng.Send("KJ4ERJ", "after change")
+	if err != nil {
+		t.Fatalf("Send: %v", err)
+	}
+	if msg2.From != "W1AW" {
+		t.Errorf("msg2.From = %q, want W1AW", msg2.From)
+	}
+
+	// Verify the frame used new callsign
+	frames = mock.getFrames()
+	lastFrame := frames[len(frames)-1]
+	if lastFrame.Source.Call != "W1AW" {
+		t.Errorf("frame source after update = %q, want W1AW", lastFrame.Source.Call)
 	}
 }

@@ -105,6 +105,6 @@ func (s *Server) handleSetup(w http.ResponseWriter, r *http.Request) {
 
 	writeJSON(w, http.StatusOK, map[string]any{
 		"status":          "ok",
-		"restartRequired": true,
+		"restartRequired": false,
 	})
 }

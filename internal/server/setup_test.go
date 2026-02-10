@@ -64,8 +64,8 @@ func TestSetupSucceeds(t *testing.T) {
 	if resp["status"] != "ok" {
 		t.Errorf("expected status ok, got %v", resp["status"])
 	}
-	if resp["restartRequired"] != true {
-		t.Errorf("expected restartRequired true, got %v", resp["restartRequired"])
+	if resp["restartRequired"] != false {
+		t.Errorf("expected restartRequired false, got %v", resp["restartRequired"])
 	}
 
 	// Verify config was updated

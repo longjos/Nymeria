@@ -29,6 +29,7 @@ type Manager struct {
 	mu         sync.RWMutex
 	transports map[string]Transport
 	stats      map[string]*transportStats
+	cancels    map[string]context.CancelFunc // per-transport context cancellers
 	frames     chan aprs.APRSFrame
 	tagged     chan TransportFrame
 
@@ -44,6 +45,7 @@ func NewManager() *Manager {
 	return &Manager{
 		transports:  make(map[string]Transport),
 		stats:       make(map[string]*transportStats),
+		cancels:     make(map[string]context.CancelFunc),
 		frames:      make(chan aprs.APRSFrame, 256),
 		tagged:      make(chan TransportFrame, 256),
 		DedupWindow: 30 * time.Second,
@@ -60,16 +62,59 @@ func (m *Manager) Add(id string, t Transport) {
 
 // ConnectAll connects all registered transports and starts frame forwarding.
 func (m *Manager) ConnectAll(ctx context.Context) error {
-	m.mu.RLock()
-	defer m.mu.RUnlock()
+	m.mu.Lock()
+	defer m.mu.Unlock()
 	for id, t := range m.transports {
-		if err := t.Connect(ctx); err != nil {
+		tCtx, tCancel := context.WithCancel(ctx)
+		m.cancels[id] = tCancel
+		if err := t.Connect(tCtx); err != nil {
 			log.Printf("[transport] failed to connect %s: %v", id, err)
+			tCancel()
 			return err
 		}
-		go m.forwardFrames(ctx, id, t)
+		go m.forwardFrames(tCtx, id, t)
 	}
 	return nil
+}
+
+// ConnectOne connects a single transport by ID and starts its frame forwarding.
+// The transport must already be registered via Add.
+func (m *Manager) ConnectOne(ctx context.Context, id string) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	t, ok := m.transports[id]
+	if !ok {
+		return fmt.Errorf("transport %q not found", id)
+	}
+	tCtx, tCancel := context.WithCancel(ctx)
+	m.cancels[id] = tCancel
+	if err := t.Connect(tCtx); err != nil {
+		tCancel()
+		return err
+	}
+	go m.forwardFrames(tCtx, id, t)
+	return nil
+}
+
+// Remove stops and removes a transport by ID.
+func (m *Manager) Remove(id string) error {
+	m.mu.Lock()
+	t, ok := m.transports[id]
+	if !ok {
+		m.mu.Unlock()
+		return fmt.Errorf("transport %q not found", id)
+	}
+	// Cancel the forwarding goroutine
+	if cancel, ok := m.cancels[id]; ok {
+		cancel()
+		delete(m.cancels, id)
+	}
+	delete(m.transports, id)
+	delete(m.stats, id)
+	m.mu.Unlock()
+
+	// Close outside of lock to avoid holding lock during network I/O
+	return t.Close()
 }
 
 // forwardFrames reads from a single transport's Receive channel and
@@ -90,7 +135,10 @@ func (m *Manager) forwardFrames(ctx context.Context, id string, t Transport) {
 			}
 
 			// Track stats
-			if st, ok := m.stats[id]; ok {
+			m.mu.RLock()
+			st := m.stats[id]
+			m.mu.RUnlock()
+			if st != nil {
 				st.packetsRx.Add(1)
 			}
 
@@ -153,6 +201,14 @@ func (m *Manager) frameHash(frame aprs.APRSFrame) uint64 {
 
 // CloseAll shuts down all transports.
 func (m *Manager) CloseAll() error {
+	m.mu.Lock()
+	// Cancel all forwarding goroutines first
+	for id, cancel := range m.cancels {
+		cancel()
+		delete(m.cancels, id)
+	}
+	m.mu.Unlock()
+
 	m.mu.RLock()
 	defer m.mu.RUnlock()
 	for _, t := range m.transports {

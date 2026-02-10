@@ -254,7 +254,7 @@ func fromWeatherDTO(d weatherDTO) config.WeatherConfig {
 // classifyRestart returns true if the section requires a server restart.
 func classifyRestart(section string) bool {
 	switch section {
-	case "station", "server", "transports", "tilecache", "store":
+	case "server", "tilecache", "store":
 		return true
 	default:
 		return false
@@ -310,7 +310,7 @@ func (s *Server) handleUpdateStation(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	writeJSON(w, http.StatusOK, updateResponse{RestartRequired: true})
+	writeJSON(w, http.StatusOK, updateResponse{RestartRequired: false})
 }
 
 func (s *Server) handleUpdateServer(w http.ResponseWriter, r *http.Request) {
@@ -354,7 +354,7 @@ func (s *Server) handleUpdateTransports(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 
-	writeJSON(w, http.StatusOK, updateResponse{RestartRequired: true})
+	writeJSON(w, http.StatusOK, updateResponse{RestartRequired: false})
 }
 
 func (s *Server) handleUpdateBeacon(w http.ResponseWriter, r *http.Request) {
@@ -455,7 +455,9 @@ func (s *Server) handleUpdateWeather(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Update live weather config so /weather/config reflects changes immediately
+	s.weatherMu.Lock()
 	s.weatherCfg = cfg.Weather
+	s.weatherMu.Unlock()
 
 	writeJSON(w, http.StatusOK, updateResponse{RestartRequired: false})
 }

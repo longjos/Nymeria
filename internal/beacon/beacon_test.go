@@ -288,6 +288,57 @@ func TestDoubleStart(t *testing.T) {
 	m.Start(ctx)
 }
 
+// ── UpdateStationInfo ────────────────────────────────────────────────
+
+func TestUpdateStationInfo(t *testing.T) {
+	var mu sync.Mutex
+	var sent []aprs.APRSFrame
+
+	sendFn := func(f aprs.APRSFrame) error {
+		mu.Lock()
+		defer mu.Unlock()
+		sent = append(sent, f)
+		return nil
+	}
+
+	m := New(Config{
+		Enabled:  true,
+		Interval: 10 * time.Minute,
+		Comment:  "test",
+	}, StationInfo{
+		Callsign:    "N0CALL",
+		SSID:        5,
+		Lat:         35.0,
+		Lon:         -84.0,
+		SymbolTable: "/",
+		SymbolCode:  "-",
+	}, sendFn)
+
+	// Update station info
+	m.UpdateStationInfo(StationInfo{
+		Callsign:    "W1AW",
+		SSID:        9,
+		Lat:         41.714775,
+		Lon:         -72.727260,
+		SymbolTable: "/",
+		SymbolCode:  "r",
+	})
+
+	// Beacon should use new callsign
+	if err := m.BeaconNow(); err != nil {
+		t.Fatalf("BeaconNow: %v", err)
+	}
+
+	mu.Lock()
+	defer mu.Unlock()
+	if len(sent) != 1 {
+		t.Fatalf("sent %d frames, want 1", len(sent))
+	}
+	if sent[0].Source.Call != "W1AW" || sent[0].Source.SSID != 9 {
+		t.Errorf("source = %v, want W1AW-9", sent[0].Source)
+	}
+}
+
 // ── Smart beaconing rate calculation ────────────────────────────────
 
 func TestSmartRate(t *testing.T) {

@@ -14,6 +14,7 @@ type mockTransport struct {
 	sent   []aprs.APRSFrame
 	status TransportStatus
 	typ    string
+	closed bool
 }
 
 func newMockTransport(typ string) *mockTransport {
@@ -25,11 +26,17 @@ func newMockTransport(typ string) *mockTransport {
 }
 
 func (m *mockTransport) Connect(_ context.Context) error { return nil }
-func (m *mockTransport) Close() error                    { close(m.frames); return nil }
-func (m *mockTransport) Send(f aprs.APRSFrame) error     { m.sent = append(m.sent, f); return nil }
-func (m *mockTransport) Receive() <-chan aprs.APRSFrame   { return m.frames }
-func (m *mockTransport) Status() TransportStatus          { return m.status }
-func (m *mockTransport) Type() string                     { return m.typ }
+func (m *mockTransport) Close() error {
+	if !m.closed {
+		m.closed = true
+		close(m.frames)
+	}
+	return nil
+}
+func (m *mockTransport) Send(f aprs.APRSFrame) error   { m.sent = append(m.sent, f); return nil }
+func (m *mockTransport) Receive() <-chan aprs.APRSFrame { return m.frames }
+func (m *mockTransport) Status() TransportStatus        { return m.status }
+func (m *mockTransport) Type() string                   { return m.typ }
 
 func TestManagerTaggedFrames(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
@@ -240,6 +247,151 @@ func TestManagerSendViaUnknown(t *testing.T) {
 	err := mgr.SendVia("nonexistent", frame)
 	if err == nil {
 		t.Error("expected error for unknown transport, got nil")
+	}
+}
+
+func TestManagerRemove(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	mgr := NewManager()
+	rf := newMockTransport("kisstcp")
+	is := newMockTransport("aprsis")
+
+	mgr.Add("rf-0", rf)
+	mgr.Add("is-0", is)
+	mgr.ConnectAll(ctx)
+
+	// Verify both transports are registered
+	statuses := mgr.Statuses()
+	if len(statuses) != 2 {
+		t.Fatalf("got %d statuses, want 2", len(statuses))
+	}
+
+	// Remove one transport
+	err := mgr.Remove("rf-0")
+	if err != nil {
+		t.Fatalf("Remove: %v", err)
+	}
+
+	// Verify only one transport remains
+	statuses = mgr.Statuses()
+	if len(statuses) != 1 {
+		t.Fatalf("got %d statuses after remove, want 1", len(statuses))
+	}
+	if statuses[0].ID != "is-0" {
+		t.Errorf("remaining transport ID = %q, want is-0", statuses[0].ID)
+	}
+
+	// Remove nonexistent transport
+	err = mgr.Remove("nonexistent")
+	if err == nil {
+		t.Error("expected error removing nonexistent transport")
+	}
+}
+
+func TestManagerRemoveStopsForwarding(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	mgr := NewManager()
+	rf := newMockTransport("kisstcp")
+	is := newMockTransport("aprsis")
+
+	mgr.Add("rf-0", rf)
+	mgr.Add("is-0", is)
+	mgr.ConnectAll(ctx)
+
+	frame := aprs.APRSFrame{
+		Source:      aprs.Address{Call: "N0CALL"},
+		Destination: aprs.Address{Call: "APRS"},
+		Payload:     "!4903.50N/07201.75W-",
+	}
+
+	// Verify rf-0 can forward frames
+	rf.frames <- frame
+	select {
+	case tf := <-mgr.TaggedFrames():
+		if tf.Source != "rf-0" {
+			t.Errorf("Source = %q, want rf-0", tf.Source)
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("timeout waiting for frame before remove")
+	}
+
+	// Remove rf-0
+	mgr.Remove("rf-0")
+
+	// Wait for goroutine to exit
+	time.Sleep(50 * time.Millisecond)
+
+	// is-0 should still work
+	frame2 := aprs.APRSFrame{
+		Source:      aprs.Address{Call: "W3ADO"},
+		Destination: aprs.Address{Call: "APRS"},
+		Payload:     ">alive",
+	}
+	is.frames <- frame2
+	select {
+	case tf := <-mgr.TaggedFrames():
+		if tf.Source != "is-0" {
+			t.Errorf("Source = %q, want is-0", tf.Source)
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("timeout waiting for frame from remaining transport")
+	}
+}
+
+func TestManagerConnectOne(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	mgr := NewManager()
+
+	// Start with one transport
+	is := newMockTransport("aprsis")
+	mgr.Add("is-0", is)
+	mgr.ConnectAll(ctx)
+
+	// Add a second transport at runtime
+	rf := newMockTransport("kisstcp")
+	mgr.Add("rf-0", rf)
+	err := mgr.ConnectOne(ctx, "rf-0")
+	if err != nil {
+		t.Fatalf("ConnectOne: %v", err)
+	}
+
+	// Verify both transports work
+	frame := aprs.APRSFrame{
+		Source:      aprs.Address{Call: "N0CALL"},
+		Destination: aprs.Address{Call: "APRS"},
+		Payload:     "!4903.50N/07201.75W-",
+	}
+
+	rf.frames <- frame
+	select {
+	case tf := <-mgr.TaggedFrames():
+		if tf.Source != "rf-0" {
+			t.Errorf("Source = %q, want rf-0", tf.Source)
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("timeout waiting for frame from new transport")
+	}
+
+	// Verify statuses show both
+	statuses := mgr.Statuses()
+	if len(statuses) != 2 {
+		t.Fatalf("got %d statuses, want 2", len(statuses))
+	}
+}
+
+func TestManagerConnectOneUnknown(t *testing.T) {
+	ctx := context.Background()
+	mgr := NewManager()
+
+	err := mgr.ConnectOne(ctx, "nonexistent")
+	if err == nil {
+		t.Error("expected error for unknown transport")
 	}
 }
 

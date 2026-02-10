@@ -103,6 +103,10 @@
 			};
 			await api.setup(data);
 			saveSuccess = true;
+			// Config is hot-reloaded — dismiss wizard after a brief pause
+			setTimeout(() => {
+				needsSetup.set(false);
+			}, 1500);
 		} catch (err) {
 			saveError = err instanceof Error ? err.message : 'Setup failed';
 		} finally {
@@ -381,9 +385,8 @@
 							<circle cx="12" cy="12" r="10"/>
 							<path d="M8 12l3 3 5-6"/>
 						</svg>
-						<h2>Config Saved</h2>
-						<p>Restart Nymeria to apply the new configuration and connect to APRS-IS.</p>
-						<p class="restart-hint">Run: <code>nymeria --listen :9090</code></p>
+						<h2>You're On the Air</h2>
+						<p>Configuration applied. Connecting now...</p>
 					</div>
 				{:else}
 					<h2>Review &amp; Save</h2>
@@ -714,17 +717,6 @@
 		color: var(--color-text-muted);
 		line-height: 1.5;
 		max-width: 320px;
-	}
-
-	.restart-hint {
-		margin-top: var(--space-xs);
-	}
-
-	.restart-hint code {
-		background: var(--color-surface);
-		padding: 2px 8px;
-		border-radius: var(--radius-sm, 4px);
-		font-size: 0.85rem;
 	}
 
 	.error {

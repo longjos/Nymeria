@@ -58,6 +58,7 @@ type MemoryEngine struct {
 	pending  map[string]*pendingMsg // keyed by msgno
 	seen     map[string]time.Time   // dedup: keyed by "from:msgno"
 	claims   map[string]*claimInfo  // keyed by remote callsign
+	emitMu   sync.Mutex             // guards events channel close/send
 	events   chan Event
 
 	msgCounter atomic.Int64
@@ -83,9 +84,14 @@ func NewMemoryEngine(callsign string, sendFn SendFunc, cfg RetryConfig) *MemoryE
 func (e *MemoryEngine) Send(to, body string) (*Message, error) {
 	msgNo := e.nextMsgNo()
 
+	// Snapshot callsign under lock
+	e.mu.Lock()
+	callsign := e.callsign
+	e.mu.Unlock()
+
 	msg := Message{
 		ID:        uuid.NewString(),
-		From:      e.callsign,
+		From:      callsign,
 		To:        to,
 		Body:      body,
 		MsgNo:     msgNo,
@@ -95,7 +101,7 @@ func (e *MemoryEngine) Send(to, body string) (*Message, error) {
 	}
 
 	// Build and send the APRS frame
-	frame := e.buildMessageFrame(to, body, msgNo)
+	frame := e.buildMessageFrame(callsign, to, body, msgNo)
 	if err := e.sendFn(frame); err != nil {
 		msg.State = StateFailed
 		e.storeMessage(to, msg)
@@ -104,9 +110,10 @@ func (e *MemoryEngine) Send(to, body string) (*Message, error) {
 
 	e.storeMessage(to, msg)
 
-	// Start retry timer
+	// Start retry timer — use a separate copy so retries don't race with the caller's *Message.
 	e.mu.Lock()
-	pm := &pendingMsg{msg: &msg, retries: 0}
+	pendingCopy := msg
+	pm := &pendingMsg{msg: &pendingCopy, retries: 0}
 	e.pending[msgNo] = pm
 	pm.timer = time.AfterFunc(e.retryCfg.InitialInterval, func() {
 		e.retryMessage(msgNo)
@@ -153,7 +160,10 @@ func (e *MemoryEngine) HandlePacket(pkt *aprs.Packet) {
 
 	// Send ack if message has a number (always ack, even dupes)
 	if msgData.MessageNo != "" {
-		ackFrame := e.buildAckFrame(from, msgData.MessageNo)
+		e.mu.Lock()
+		cs := e.callsign
+		e.mu.Unlock()
+		ackFrame := e.buildAckFrame(cs, from, msgData.MessageNo)
 		e.sendFn(ackFrame)
 	}
 
@@ -377,17 +387,26 @@ func (e *MemoryEngine) Close() {
 	e.pending = make(map[string]*pendingMsg)
 	e.mu.Unlock()
 
+	e.emitMu.Lock()
 	close(e.events)
+	e.emitMu.Unlock()
 }
 
 // --- internal ---
+
+// UpdateCallsign updates the station callsign used for outbound messages.
+func (e *MemoryEngine) UpdateCallsign(callsign string) {
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	e.callsign = callsign
+}
 
 func (e *MemoryEngine) nextMsgNo() string {
 	n := e.msgCounter.Add(1)
 	return fmt.Sprintf("%d", n)
 }
 
-func (e *MemoryEngine) buildMessageFrame(to, body, msgNo string) aprs.APRSFrame {
+func (e *MemoryEngine) buildMessageFrame(callsign, to, body, msgNo string) aprs.APRSFrame {
 	// Pad addressee to 9 characters
 	padded := to
 	for len(padded) < 9 {
@@ -397,14 +416,14 @@ func (e *MemoryEngine) buildMessageFrame(to, body, msgNo string) aprs.APRSFrame 
 	payload := fmt.Sprintf(":%s:%s{%s", padded, body, msgNo)
 
 	return aprs.APRSFrame{
-		Source:      aprs.Address{Call: e.callsign},
+		Source:      aprs.Address{Call: callsign},
 		Destination: aprs.Address{Call: "APRS"},
 		Path:        []aprs.Address{{Call: "TCPIP*"}},
 		Payload:     payload,
 	}
 }
 
-func (e *MemoryEngine) buildAckFrame(to, msgNo string) aprs.APRSFrame {
+func (e *MemoryEngine) buildAckFrame(callsign, to, msgNo string) aprs.APRSFrame {
 	padded := to
 	for len(padded) < 9 {
 		padded += " "
@@ -413,7 +432,7 @@ func (e *MemoryEngine) buildAckFrame(to, msgNo string) aprs.APRSFrame {
 	payload := fmt.Sprintf(":%s:ack%s", padded, msgNo)
 
 	return aprs.APRSFrame{
-		Source:      aprs.Address{Call: e.callsign},
+		Source:      aprs.Address{Call: callsign},
 		Destination: aprs.Address{Call: "APRS"},
 		Path:        []aprs.Address{{Call: "TCPIP*"}},
 		Payload:     payload,
@@ -453,7 +472,7 @@ func (e *MemoryEngine) retryMessage(msgNo string) {
 	}
 
 	// Resend
-	frame := e.buildMessageFrame(pm.msg.To, pm.msg.Body, msgNo)
+	frame := e.buildMessageFrame(e.callsign, pm.msg.To, pm.msg.Body, msgNo)
 
 	// Calculate next backoff
 	interval := e.retryCfg.InitialInterval
@@ -537,6 +556,8 @@ func (e *MemoryEngine) updateMessageStateLocked(pm *pendingMsg, msgNo string, st
 }
 
 func (e *MemoryEngine) emit(evt Event) {
+	e.emitMu.Lock()
+	defer e.emitMu.Unlock()
 	select {
 	case <-e.closed:
 		return
