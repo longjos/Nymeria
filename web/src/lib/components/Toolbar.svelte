@@ -20,6 +20,7 @@
 		onNetControlOpen,
 		onWeatherOpen,
 		onDFOpen,
+		onPacketsOpen,
 		onSettingsOpen,
 		onCommandPalette
 	}: {
@@ -32,6 +33,7 @@
 		onNetControlOpen?: () => void;
 		onWeatherOpen?: () => void;
 		onDFOpen?: () => void;
+		onPacketsOpen?: () => void;
 		onSettingsOpen?: () => void;
 		onCommandPalette?: () => void;
 	} = $props();
@@ -79,6 +81,13 @@
 			<circle cx="8" cy="8" r="6" stroke="currentColor" stroke-width="1.3"/>
 			<circle cx="8" cy="8" r="2" stroke="currentColor" stroke-width="1.3"/>
 			<path d="M8 2v3M8 11v3M2 8h3M11 8h3" stroke="currentColor" stroke-width="1.3" stroke-linecap="round"/>
+		</svg>
+	</button>
+	<button class="fab" onclick={onPacketsOpen} title="Packet Inspector">
+		<svg width="18" height="18" viewBox="0 0 16 16" fill="none">
+			<rect x="1" y="3" width="14" height="11" rx="1" stroke="currentColor" stroke-width="1.3"/>
+			<path d="M3 6h2M3 8.5h4M3 11h3" stroke="currentColor" stroke-width="1.2" stroke-linecap="round"/>
+			<path d="M1 5.5h14" stroke="currentColor" stroke-width="1.3"/>
 		</svg>
 	</button>
 	<button class="fab" onclick={onTransportsOpen} title="Transports">

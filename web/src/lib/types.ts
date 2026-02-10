@@ -493,3 +493,25 @@ export interface StoreSettings {
 export interface SettingsUpdateResponse {
 	restartRequired: boolean;
 }
+
+// --- Packet Inspector ---
+
+export type APRSPacketType = 'position' | 'message' | 'object' | 'item' | 'weather' | 'status' | 'telemetry' | 'micE' | 'query' | 'thirdParty' | 'unknown';
+
+export interface APRSAddress {
+	call: string;
+	ssid?: number;
+	hBit?: boolean;
+}
+
+export interface RawPacket {
+	type: 'packet';
+	raw: string;
+	timestamp: string;
+	source: string;
+	packetType: APRSPacketType;
+	from: APRSAddress;
+	to: APRSAddress;
+	path: APRSAddress[];
+	packet: Record<string, unknown>;
+}

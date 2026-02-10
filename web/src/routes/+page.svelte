@@ -18,6 +18,7 @@
 	import WeatherPanel from '$lib/components/WeatherPanel.svelte';
 	import TelemetryPanel from '$lib/components/TelemetryPanel.svelte';
 	import DFPanel from '$lib/components/DFPanel.svelte';
+	import PacketInspector from '$lib/components/PacketInspector.svelte';
 	import SettingsPanel from '$lib/components/SettingsPanel.svelte';
 	import ConnectionStatus from '$lib/components/ConnectionStatus.svelte';
 	import SearchOverlay from '$lib/components/SearchOverlay.svelte';
@@ -38,10 +39,11 @@
 	import { initBulletinStore } from '$lib/stores/bulletins';
 	import { initWeatherStore, weatherStations, selectedWeatherStation } from '$lib/stores/weather';
 	import { dfStations } from '$lib/stores/df';
+	import { initPacketStore } from '$lib/stores/packets';
 	import { isLoggedIn, needsSetup, initSession } from '$lib/stores/session';
 	import {
 		selectedStation, panelMode, detailTab, searchOpen, sheetState,
-		selectStation, closePanel, openStationList, openMessages, openConversation, openTransports, openActivity, openAnnotations, openNetControl, openBulletins, openICS309, openWeather, openTelemetry, openDF, openSettings,
+		selectStation, closePanel, openStationList, openMessages, openConversation, openTransports, openActivity, openAnnotations, openNetControl, openBulletins, openICS309, openWeather, openTelemetry, openDF, openPackets, openSettings,
 		togglePanel, commandPaletteOpen, toggleCommandPalette
 	} from '$lib/stores/ui';
 	import type { SheetState, DetailTab, PanelMode } from '$lib/stores/ui';
@@ -79,6 +81,7 @@
 			initTacticalStore();
 			initBulletinStore();
 			initWeatherStore();
+			initPacketStore();
 		}
 	});
 
@@ -329,6 +332,7 @@
 		onNetControlOpen={openNetControl}
 		onWeatherOpen={openWeather}
 		onDFOpen={openDF}
+		onPacketsOpen={openPackets}
 		onSettingsOpen={openSettings}
 		onCommandPalette={toggleCommandPalette}
 	/>
@@ -393,6 +397,8 @@
 				<TelemetryPanel onFlyTo={handleFlyTo} />
 			{:else if $panelMode === 'df'}
 				<DFPanel onFlyTo={handleFlyTo} onFlyToTarget={handleFlyTo} />
+			{:else if $panelMode === 'packets'}
+				<PacketInspector />
 			{:else if $panelMode === 'ics309'}
 				<ICS309Panel />
 			{:else if $panelMode === 'settings'}
@@ -467,6 +473,8 @@
 				<TelemetryPanel onFlyTo={handleFlyTo} />
 			{:else if $panelMode === 'df'}
 				<DFPanel onFlyTo={handleFlyTo} onFlyToTarget={handleFlyTo} />
+			{:else if $panelMode === 'packets'}
+				<PacketInspector />
 			{:else if $panelMode === 'ics309'}
 				<ICS309Panel />
 			{:else if $panelMode === 'settings'}

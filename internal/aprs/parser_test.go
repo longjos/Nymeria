@@ -10,6 +10,31 @@ func approxEqual(a, b, tolerance float64) bool {
 	return math.Abs(a-b) < tolerance
 }
 
+func TestPacketTypeString(t *testing.T) {
+	tests := []struct {
+		pt   PacketType
+		want string
+	}{
+		{PacketTypeUnknown, "unknown"},
+		{PacketTypePosition, "position"},
+		{PacketTypeMessage, "message"},
+		{PacketTypeObject, "object"},
+		{PacketTypeItem, "item"},
+		{PacketTypeWeather, "weather"},
+		{PacketTypeStatus, "status"},
+		{PacketTypeTelemetry, "telemetry"},
+		{PacketTypeMicE, "micE"},
+		{PacketTypeQuery, "query"},
+		{PacketTypeThirdParty, "thirdParty"},
+		{PacketType(99), "unknown"},
+	}
+	for _, tt := range tests {
+		if got := tt.pt.String(); got != tt.want {
+			t.Errorf("PacketType(%d).String() = %q, want %q", tt.pt, got, tt.want)
+		}
+	}
+}
+
 func TestParseFrame(t *testing.T) {
 	tests := []struct {
 		name    string
