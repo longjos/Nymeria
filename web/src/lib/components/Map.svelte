@@ -531,7 +531,7 @@
 
 			const tempStr = temp != null ? `${Math.round(convertTemp(temp, units))}°` : '—';
 			const windArrow = windDir != null
-				? `<span style="display:inline-block;transform:rotate(${windDir}deg);font-size:10px;">↓</span>`
+				? `<span style="display:inline-block;transform:rotate(${windDir}deg);font-size:10px;">↑</span>`
 				: '';
 			const windStr = windSpeed != null ? `${Math.round(convertWindSpeed(windSpeed, units))}` : '';
 
