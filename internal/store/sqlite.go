@@ -14,7 +14,7 @@ import (
 	_ "modernc.org/sqlite"
 )
 
-const currentSchemaVersion = 11
+const currentSchemaVersion = 12
 
 // SQLiteStore implements Store using modernc.org/sqlite.
 type SQLiteStore struct {
@@ -40,9 +40,18 @@ func (s *SQLiteStore) Init() error {
 	}
 	s.db = db
 
+	// SQLite only supports one writer at a time. Limiting to a single
+	// connection serializes all access and eliminates SQLITE_BUSY errors.
+	db.SetMaxOpenConns(1)
+
 	// Enable WAL mode for better concurrency.
 	if _, err := db.Exec("PRAGMA journal_mode=WAL"); err != nil {
 		return fmt.Errorf("enable WAL mode: %w", err)
+	}
+
+	// Wait up to 5 seconds if the database is busy instead of failing immediately.
+	if _, err := db.Exec("PRAGMA busy_timeout=5000"); err != nil {
+		return fmt.Errorf("set busy timeout: %w", err)
 	}
 
 	if err := s.migrate(); err != nil {
@@ -127,6 +136,12 @@ func (s *SQLiteStore) migrate() error {
 
 	if version < 11 {
 		if err := s.migrateV11(); err != nil {
+			return err
+		}
+	}
+
+	if version < 12 {
+		if err := s.migrateV12(); err != nil {
 			return err
 		}
 	}
@@ -1786,6 +1801,147 @@ func (s *SQLiteStore) migrateV11() error {
 	}
 
 	return nil
+}
+
+func (s *SQLiteStore) migrateV12() error {
+	ddl := `
+CREATE TABLE IF NOT EXISTS weather_readings (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    callsign TEXT NOT NULL,
+    timestamp DATETIME NOT NULL,
+    temperature REAL,
+    wind_dir REAL,
+    wind_speed REAL,
+    wind_gust REAL,
+    humidity INTEGER,
+    pressure REAL,
+    rain_1h REAL,
+    rain_24h REAL,
+    rain_today REAL,
+    luminosity INTEGER
+);
+CREATE INDEX IF NOT EXISTS idx_weather_callsign_time ON weather_readings(callsign, timestamp);
+`
+	if _, err := s.db.Exec(ddl); err != nil {
+		return fmt.Errorf("migrate v12 create weather_readings: %w", err)
+	}
+
+	if _, err := s.db.Exec("DELETE FROM schema_version"); err != nil {
+		return fmt.Errorf("clear schema_version: %w", err)
+	}
+	if _, err := s.db.Exec("INSERT INTO schema_version (version) VALUES (?)", 12); err != nil {
+		return fmt.Errorf("set schema_version: %w", err)
+	}
+
+	return nil
+}
+
+func (s *SQLiteStore) SaveWeatherReading(r WeatherReading) error {
+	_, err := s.db.Exec(`INSERT INTO weather_readings
+		(callsign, timestamp, temperature, wind_dir, wind_speed, wind_gust, humidity, pressure, rain_1h, rain_24h, rain_today, luminosity)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		r.Callsign, r.Timestamp.UTC(),
+		r.Temperature, r.WindDir, r.WindSpeed, r.WindGust,
+		r.Humidity, r.Pressure,
+		r.Rain1h, r.Rain24h, r.RainToday, r.Luminosity,
+	)
+	return err
+}
+
+func (s *SQLiteStore) LoadWeatherReadings(filter WeatherFilter) ([]WeatherReading, error) {
+	query := "SELECT id, callsign, timestamp, temperature, wind_dir, wind_speed, wind_gust, humidity, pressure, rain_1h, rain_24h, rain_today, luminosity FROM weather_readings WHERE 1=1"
+	var args []any
+
+	if filter.Callsign != "" {
+		query += " AND callsign = ?"
+		args = append(args, filter.Callsign)
+	}
+	if filter.Since != nil {
+		query += " AND timestamp >= ?"
+		args = append(args, filter.Since.UTC())
+	}
+	if filter.Until != nil {
+		query += " AND timestamp <= ?"
+		args = append(args, filter.Until.UTC())
+	}
+	query += " ORDER BY timestamp DESC"
+	if filter.Limit > 0 {
+		query += fmt.Sprintf(" LIMIT %d", filter.Limit)
+	}
+
+	rows, err := s.db.Query(query, args...)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var readings []WeatherReading
+	for rows.Next() {
+		var r WeatherReading
+		var ts string
+		if err := rows.Scan(&r.ID, &r.Callsign, &ts,
+			&r.Temperature, &r.WindDir, &r.WindSpeed, &r.WindGust,
+			&r.Humidity, &r.Pressure,
+			&r.Rain1h, &r.Rain24h, &r.RainToday, &r.Luminosity,
+		); err != nil {
+			return nil, err
+		}
+		r.Timestamp, _ = time.Parse("2006-01-02 15:04:05-07:00", ts)
+		if r.Timestamp.IsZero() {
+			r.Timestamp, _ = time.Parse("2006-01-02T15:04:05Z", ts)
+		}
+		if r.Timestamp.IsZero() {
+			r.Timestamp, _ = time.Parse(time.RFC3339, ts)
+		}
+		readings = append(readings, r)
+	}
+	return readings, rows.Err()
+}
+
+func (s *SQLiteStore) LoadWeatherStations() ([]WeatherReading, error) {
+	query := `SELECT w.id, w.callsign, w.timestamp, w.temperature, w.wind_dir, w.wind_speed, w.wind_gust,
+		w.humidity, w.pressure, w.rain_1h, w.rain_24h, w.rain_today, w.luminosity
+		FROM weather_readings w
+		INNER JOIN (
+			SELECT callsign, MAX(timestamp) as max_ts FROM weather_readings GROUP BY callsign
+		) latest ON w.callsign = latest.callsign AND w.timestamp = latest.max_ts
+		ORDER BY w.callsign`
+
+	rows, err := s.db.Query(query)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var readings []WeatherReading
+	for rows.Next() {
+		var r WeatherReading
+		var ts string
+		if err := rows.Scan(&r.ID, &r.Callsign, &ts,
+			&r.Temperature, &r.WindDir, &r.WindSpeed, &r.WindGust,
+			&r.Humidity, &r.Pressure,
+			&r.Rain1h, &r.Rain24h, &r.RainToday, &r.Luminosity,
+		); err != nil {
+			return nil, err
+		}
+		r.Timestamp, _ = time.Parse("2006-01-02 15:04:05-07:00", ts)
+		if r.Timestamp.IsZero() {
+			r.Timestamp, _ = time.Parse("2006-01-02T15:04:05Z", ts)
+		}
+		if r.Timestamp.IsZero() {
+			r.Timestamp, _ = time.Parse(time.RFC3339, ts)
+		}
+		readings = append(readings, r)
+	}
+	return readings, rows.Err()
+}
+
+func (s *SQLiteStore) PurgeWeatherReadings(olderThan time.Time) (int64, error) {
+	result, err := s.db.Exec("DELETE FROM weather_readings WHERE timestamp < ?", olderThan.UTC())
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected()
 }
 
 // Compile-time check that SQLiteStore implements Store.

@@ -62,6 +62,8 @@
 - Server uses chi middleware (Logger, Recoverer)
 - SPA fallback: unmatched routes serve `index.html`
 - Config defaults in `internal/config/config.go` DefaultConfig()
+- All Go structs that serialize to JSON for the frontend MUST have `json:"camelCase"` tags — Go defaults to PascalCase which silently mismatches TypeScript interfaces
+- SQLite: `db.SetMaxOpenConns(1)` and `PRAGMA busy_timeout=5000` are set in `sqlite.go` Init() — do not remove these or SQLITE_BUSY errors will occur under load
 
 ## GitHub
 - Repo: longjos/Nymeria
@@ -73,3 +75,5 @@
 - pnpm 10.x `approve-builds` warning for esbuild is benign, doesn't block builds
 - `web/build/` must exist before Go compiles (go:embed directive)
 - Wiki submodule in `wiki/` has the full project spec
+- SQLite schema version: after bumping `currentSchemaVersion` in `sqlite.go`, update ALL assertions in `sqlite_test.go` that check the version number
+- Weather data flows through existing station events — WebSocket broadcasts include it automatically, no separate weather WebSocket messages needed

@@ -2,7 +2,11 @@ import type {
 	Station, Message, Conversation, Bulletin, HealthResponse, TransportStatus,
 	SessionUser, PublicUser, ConfigResponse, Annotation, ActivityResponse,
 	Net, NetCheckIn, NetMission, NetNote, NetEvent, NetSummary, TacticalAlias,
-	AnnotationTemplate, Operation, ICS309Report, TileCacheStatus
+	AnnotationTemplate, Operation, ICS309Report, TileCacheStatus,
+	WeatherReading, WeatherConfig,
+	SettingsResponse, SettingsUpdateResponse,
+	StationSettings, ServerSettings, TransportSettings, BeaconSettings,
+	SessionSettings, LoggingSettings, WeatherSettings, TileCacheSettings
 } from './types';
 
 const BASE = '/api';
@@ -207,10 +211,29 @@ export const api = {
 		return `${BASE}/ics309/export${qs}`;
 	},
 
+	// Weather
+	weatherStations: () => get<WeatherReading[]>('/weather/stations'),
+	weatherReadings: (callsign: string, params?: Record<string, string>) => {
+		const qs = params ? '?' + new URLSearchParams(params).toString() : '';
+		return get<WeatherReading[]>(`/weather/${encodeURIComponent(callsign)}${qs}`);
+	},
+	weatherConfig: () => get<WeatherConfig>('/weather/config'),
+
 	// Tile Cache
 	tileCacheStatus: () => get<TileCacheStatus>('/tiles/cache'),
 	preloadTiles: (south: number, west: number, north: number, east: number, zoomMin: number, zoomMax: number) =>
 		post<{ status: string; tileCount: number }>('/tiles/cache', { south, west, north, east, zoomMin, zoomMax }),
 	estimateTiles: (south: number, west: number, north: number, east: number, zoomMin: number, zoomMax: number) =>
-		post<{ tileCount: number }>('/tiles/estimate', { south, west, north, east, zoomMin, zoomMax })
+		post<{ tileCount: number }>('/tiles/estimate', { south, west, north, east, zoomMin, zoomMax }),
+
+	// Settings (admin only)
+	getSettings: () => get<SettingsResponse>('/settings'),
+	updateStation: (data: StationSettings) => put<SettingsUpdateResponse>('/settings/station', data),
+	updateServer: (data: ServerSettings) => put<SettingsUpdateResponse>('/settings/server', data),
+	updateTransports: (data: TransportSettings[]) => put<SettingsUpdateResponse>('/settings/transports', data),
+	updateBeacon: (data: BeaconSettings) => put<SettingsUpdateResponse>('/settings/beacon', data),
+	updateSession: (data: SessionSettings) => put<SettingsUpdateResponse>('/settings/session', data),
+	updateLogging: (data: LoggingSettings) => put<SettingsUpdateResponse>('/settings/logging', data),
+	updateWeather: (data: WeatherSettings) => put<SettingsUpdateResponse>('/settings/weather', data),
+	updateTileCache: (data: TileCacheSettings) => put<SettingsUpdateResponse>('/settings/tilecache', data)
 };

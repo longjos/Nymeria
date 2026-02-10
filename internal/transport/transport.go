@@ -30,14 +30,14 @@ type Transport interface {
 
 // TransportConfig holds configuration for a transport.
 type TransportConfig struct {
-	Type     string `yaml:"type"`
-	Host     string `yaml:"host,omitempty"`
-	Port     int    `yaml:"port,omitempty"`
-	Device   string `yaml:"device,omitempty"`
-	Baud     int    `yaml:"baud,omitempty"`
-	Filter   string `yaml:"filter,omitempty"`
-	Callsign string `yaml:"callsign,omitempty"`
-	Passcode string `yaml:"passcode,omitempty"`
+	Type     string `yaml:"type" json:"type"`
+	Host     string `yaml:"host,omitempty" json:"host,omitempty"`
+	Port     int    `yaml:"port,omitempty" json:"port,omitempty"`
+	Device   string `yaml:"device,omitempty" json:"device,omitempty"`
+	Baud     int    `yaml:"baud,omitempty" json:"baud,omitempty"`
+	Filter   string `yaml:"filter,omitempty" json:"filter,omitempty"`
+	Callsign string `yaml:"callsign,omitempty" json:"callsign,omitempty"`
+	Passcode string `yaml:"passcode,omitempty" json:"passcode,omitempty"`
 }
 
 // TransportStatus represents the current state of a transport.

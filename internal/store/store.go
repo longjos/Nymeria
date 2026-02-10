@@ -168,6 +168,31 @@ type AnnotationFilter struct {
 	IncludeExpired bool
 }
 
+// WeatherReading represents a single weather observation stored in the database.
+type WeatherReading struct {
+	ID          int64      `json:"id"`
+	Callsign    string     `json:"callsign"`
+	Timestamp   time.Time  `json:"timestamp"`
+	Temperature *float64   `json:"temperature,omitempty"`
+	WindDir     *float64   `json:"windDir,omitempty"`
+	WindSpeed   *float64   `json:"windSpeed,omitempty"`
+	WindGust    *float64   `json:"windGust,omitempty"`
+	Humidity    *int       `json:"humidity,omitempty"`
+	Pressure    *float64   `json:"pressure,omitempty"`
+	Rain1h      *float64   `json:"rain1h,omitempty"`
+	Rain24h     *float64   `json:"rain24h,omitempty"`
+	RainToday   *float64   `json:"rainToday,omitempty"`
+	Luminosity  *int       `json:"luminosity,omitempty"`
+}
+
+// WeatherFilter controls weather reading queries.
+type WeatherFilter struct {
+	Callsign string
+	Since    *time.Time
+	Until    *time.Time
+	Limit    int
+}
+
 // Store provides persistent storage for stations, messages, and configuration.
 type Store interface {
 	// Init initializes the store (creates tables, etc).
@@ -245,4 +270,10 @@ type Store interface {
 	SaveTacticalAlias(a TacticalAlias) error
 	LoadTacticalAliases() ([]TacticalAlias, error)
 	DeleteTacticalAlias(callsign string) error
+
+	// Weather
+	SaveWeatherReading(r WeatherReading) error
+	LoadWeatherReadings(filter WeatherFilter) ([]WeatherReading, error)
+	LoadWeatherStations() ([]WeatherReading, error)
+	PurgeWeatherReadings(olderThan time.Time) (int64, error)
 }

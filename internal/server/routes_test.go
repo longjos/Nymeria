@@ -89,7 +89,7 @@ func TestHandleLogin(t *testing.T) {
 		wantCode int
 		wantRole session.Role
 	}{
-		{"operator with correct pin", `{"name":"Alice","pin":"secret"}`, 200, session.RoleOperator},
+		{"operator with correct pin (auto-admin)", `{"name":"Alice","pin":"secret"}`, 200, session.RoleAdmin},
 		{"observer with wrong pin", `{"name":"Bob","pin":"wrong"}`, 200, session.RoleObserver},
 		{"observer with no pin", `{"name":"Charlie"}`, 200, session.RoleObserver},
 		{"empty name", `{"name":""}`, 400, ""},
@@ -255,6 +255,7 @@ func TestHandleUpdateUserRole_Forbidden(t *testing.T) {
 	})
 	srv := testServer(WithSessionManager(mgr))
 
+	mgr.Create("Admin", "secret")                    // auto-promoted to Admin
 	operator, _ := mgr.Create("Operator", "secret") // Operator, not Admin
 
 	body := `{"role":"admin"}`

@@ -5,6 +5,7 @@
 	import { activeNet, activeCheckIns } from '$lib/stores/netcontrol';
 	import { connectionState } from '$lib/stores/ui';
 	import type { PanelMode } from '$lib/stores/ui';
+	import { canAdmin } from '$lib/stores/session';
 	import UserMenu from './UserMenu.svelte';
 
 	let {
@@ -253,6 +254,19 @@
 
 		<button
 			class="rail-btn"
+			class:active={panelMode === 'weather'}
+			onclick={() => onToggle?.('weather')}
+			title="Weather"
+			aria-label="Weather"
+		>
+			<svg width="18" height="18" viewBox="0 0 16 16" fill="none">
+				<circle cx="8" cy="8" r="3" stroke="currentColor" stroke-width="1.5"/>
+				<path d="M8 1v2M8 13v2M1 8h2M13 8h2M3 3l1.5 1.5M11.5 11.5L13 13M13 3l-1.5 1.5M4.5 11.5L3 13" stroke="currentColor" stroke-width="1.3" stroke-linecap="round"/>
+			</svg>
+		</button>
+
+		<button
+			class="rail-btn"
 			class:active={panelMode === 'transports'}
 			onclick={() => onToggle?.('transports')}
 			title="Transports"
@@ -278,6 +292,20 @@
 	</div>
 
 	<div class="rail-bottom">
+		{#if $canAdmin}
+			<button
+				class="rail-btn"
+				class:active={panelMode === 'settings'}
+				onclick={() => onToggle?.('settings')}
+				title="Settings"
+				aria-label="Settings"
+			>
+				<svg width="18" height="18" viewBox="0 0 16 16" fill="none">
+					<path d="M6.8 1.5h2.4l.3 1.8.8.3 1.5-1 1.7 1.7-1 1.5.3.8 1.8.3v2.4l-1.8.3-.3.8 1 1.5-1.7 1.7-1.5-1-.8.3-.3 1.8H6.8l-.3-1.8-.8-.3-1.5 1-1.7-1.7 1-1.5-.3-.8-1.8-.3V6.8l1.8-.3.3-.8-1-1.5 1.7-1.7 1.5 1 .8-.3.3-1.8z" stroke="currentColor" stroke-width="1.2" stroke-linejoin="round"/>
+					<circle cx="8" cy="8" r="2" stroke="currentColor" stroke-width="1.2"/>
+				</svg>
+			</button>
+		{/if}
 		<div class="help-container">
 			<button
 				class="rail-btn help-btn"

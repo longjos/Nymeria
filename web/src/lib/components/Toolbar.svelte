@@ -1,6 +1,7 @@
 <script lang="ts">
 	import { onMount } from 'svelte';
 	import { activeNet, activeCheckIns } from '$lib/stores/netcontrol';
+	import { canAdmin } from '$lib/stores/session';
 
 	let isMac = $state(false);
 	let helpOpen = $state(false);
@@ -17,6 +18,8 @@
 		onTransportsOpen,
 		onAnnotationsOpen,
 		onNetControlOpen,
+		onWeatherOpen,
+		onSettingsOpen,
 		onCommandPalette
 	}: {
 		unreadCount?: number;
@@ -26,6 +29,8 @@
 		onTransportsOpen?: () => void;
 		onAnnotationsOpen?: () => void;
 		onNetControlOpen?: () => void;
+		onWeatherOpen?: () => void;
+		onSettingsOpen?: () => void;
 		onCommandPalette?: () => void;
 	} = $props();
 
@@ -61,6 +66,12 @@
 			<path d="M5 5.5h6M5 8h4" stroke="currentColor" stroke-width="1.3" stroke-linecap="round"/>
 		</svg>
 	</button>
+	<button class="fab" onclick={onWeatherOpen} title="Weather">
+		<svg width="18" height="18" viewBox="0 0 16 16" fill="none">
+			<circle cx="8" cy="8" r="3" stroke="currentColor" stroke-width="1.5"/>
+			<path d="M8 1v2M8 13v2M1 8h2M13 8h2M3 3l1.5 1.5M11.5 11.5L13 13M13 3l-1.5 1.5M4.5 11.5L3 13" stroke="currentColor" stroke-width="1.3" stroke-linecap="round"/>
+		</svg>
+	</button>
 	<button class="fab" onclick={onTransportsOpen} title="Transports">
 		<svg width="18" height="18" viewBox="0 0 16 16" fill="none">
 			<path d="M8 1v4M8 11v4M1 8h4M11 8h4" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/>
@@ -80,6 +91,14 @@
 			<span class="fab-badge">{netOpCount}</span>
 		{/if}
 	</button>
+	{#if $canAdmin}
+		<button class="fab" onclick={onSettingsOpen} title="Settings">
+			<svg width="18" height="18" viewBox="0 0 16 16" fill="none">
+				<path d="M6.8 1.5h2.4l.3 1.8.8.3 1.5-1 1.7 1.7-1 1.5.3.8 1.8.3v2.4l-1.8.3-.3.8 1 1.5-1.7 1.7-1.5-1-.8.3-.3 1.8H6.8l-.3-1.8-.8-.3-1.5 1-1.7-1.7 1-1.5-.3-.8-1.8-.3V6.8l1.8-.3.3-.8-1-1.5 1.7-1.7 1.5 1 .8-.3.3-1.8z" stroke="currentColor" stroke-width="1.2" stroke-linejoin="round"/>
+				<circle cx="8" cy="8" r="2" stroke="currentColor" stroke-width="1.2"/>
+			</svg>
+		</button>
+	{/if}
 	<div class="help-container">
 		<button class="fab help-fab" onclick={() => { helpOpen = !helpOpen; }} title="Keyboard shortcuts">
 			<svg width="16" height="16" viewBox="0 0 16 16" fill="none">

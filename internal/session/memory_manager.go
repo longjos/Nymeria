@@ -74,11 +74,25 @@ func (m *MemoryManager) Create(name string, pin string) (*User, error) {
 	}
 
 	m.mu.Lock()
+	// Auto-promote: first user with operator credentials becomes admin.
+	if role == RoleOperator && !m.hasAdmin() {
+		user.Role = RoleAdmin
+	}
 	m.users[user.ID] = user
 	m.tokens[token] = user.ID
 	m.mu.Unlock()
 
 	return user, nil
+}
+
+// hasAdmin returns true if any active user has the admin role. Must be called with mu held.
+func (m *MemoryManager) hasAdmin() bool {
+	for _, u := range m.users {
+		if u.Role == RoleAdmin {
+			return true
+		}
+	}
+	return false
 }
 
 // Get returns a user by token.
@@ -161,6 +175,13 @@ func (m *MemoryManager) UpdateRole(id string, role Role) error {
 	}
 	user.Role = role
 	return nil
+}
+
+// UpdateConfig updates the session manager configuration (PIN and timeout).
+func (m *MemoryManager) UpdateConfig(cfg MemoryManagerConfig) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.cfg = cfg
 }
 
 // Sweep removes sessions that have been inactive longer than InactivityTimeout.

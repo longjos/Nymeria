@@ -10,6 +10,8 @@
 	import { getTacticalAlias, tacticalAliases } from '$lib/stores/tactical';
 	import { symbolInfo } from '$lib/symbols';
 	import { timeAgo, formatCoord, formatSpeed, formatAltitude, formatCourse, stationDisplayName } from '$lib/utils';
+	import { weatherUnits } from '$lib/stores/weather';
+	import { formatTemp as fmtTemp, formatWindSpeed as fmtWind, formatPressure as fmtPressure, formatRain as fmtRain, pressureLabel } from '$lib/units';
 	import type { Station } from '$lib/types';
 	import type { DetailTab } from '$lib/stores/ui';
 
@@ -239,19 +241,82 @@
 						{#if station.position.altitude}
 							<div class="info-row">
 								<span class="label">Altitude</span>
-								<span>{formatAltitude(station.position.altitude)}</span>
+								<span>{formatAltitude(station.position.altitude, $weatherUnits)}</span>
 							</div>
 						{/if}
 						{#if station.position.speed}
 							<div class="info-row">
 								<span class="label">Speed</span>
-								<span>{formatSpeed(station.position.speed)}</span>
+								<span>{formatSpeed(station.position.speed, $weatherUnits)}</span>
 							</div>
 						{/if}
 						{#if station.position.course}
 							<div class="info-row">
 								<span class="label">Course</span>
 								<span>{formatCourse(station.position.course)}</span>
+							</div>
+						{/if}
+					</div>
+				{/if}
+
+				{#if station.weather}
+					{@const wx = station.weather}
+					<div class="info-card wx-card">
+						<h3>Weather</h3>
+						{#if wx.temperature !== undefined}
+							<div class="info-row">
+								<span class="label">Temperature</span>
+								<span class="wx-val">{fmtTemp(wx.temperature, $weatherUnits)}</span>
+							</div>
+						{/if}
+						{#if wx.windDir !== undefined || wx.windSpeed !== undefined}
+							<div class="info-row">
+								<span class="label">Wind</span>
+								<span class="wx-val">
+									{#if wx.windDir !== undefined}
+										{@const dirs = ['N','NNE','NE','ENE','E','ESE','SE','SSE','S','SSW','SW','WSW','W','WNW','NW','NNW']}
+										{dirs[Math.round(wx.windDir / 22.5) % 16]}
+									{/if}
+									{#if wx.windSpeed !== undefined}
+										{fmtWind(wx.windSpeed, $weatherUnits)}
+									{/if}
+								</span>
+							</div>
+						{/if}
+						{#if wx.windGust !== undefined}
+							<div class="info-row">
+								<span class="label">Gust</span>
+								<span class="wx-val">{fmtWind(wx.windGust, $weatherUnits)}</span>
+							</div>
+						{/if}
+						{#if wx.humidity !== undefined}
+							<div class="info-row">
+								<span class="label">Humidity</span>
+								<span class="wx-val">{wx.humidity}%</span>
+							</div>
+						{/if}
+						{#if wx.pressure !== undefined}
+							<div class="info-row">
+								<span class="label">Pressure</span>
+								<span class="wx-val">{fmtPressure(wx.pressure, $weatherUnits)} {pressureLabel($weatherUnits)}</span>
+							</div>
+						{/if}
+						{#if wx.rain1h !== undefined}
+							<div class="info-row">
+								<span class="label">Rain (1h)</span>
+								<span class="wx-val">{fmtRain(wx.rain1h, $weatherUnits)}</span>
+							</div>
+						{/if}
+						{#if wx.rain24h !== undefined}
+							<div class="info-row">
+								<span class="label">Rain (24h)</span>
+								<span class="wx-val">{fmtRain(wx.rain24h, $weatherUnits)}</span>
+							</div>
+						{/if}
+						{#if wx.luminosity !== undefined}
+							<div class="info-row">
+								<span class="label">Luminosity</span>
+								<span class="wx-val">{wx.luminosity} W/m²</span>
 							</div>
 						{/if}
 					</div>
@@ -412,6 +477,11 @@
 		border-radius: var(--radius-md);
 		padding: 0.75rem;
 		margin-bottom: 0.75rem;
+	}
+
+	.info-card.wx-card .wx-val {
+		font-family: monospace;
+		font-weight: 600;
 	}
 
 	.info-card h3 {

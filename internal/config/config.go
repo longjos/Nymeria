@@ -13,65 +13,79 @@ import (
 
 // BeaconConfig holds beaconing settings.
 type BeaconConfig struct {
-	Enabled  bool          `yaml:"enabled"`
-	Interval time.Duration `yaml:"interval"`
-	Comment  string        `yaml:"comment"`
+	Enabled  bool          `yaml:"enabled" json:"enabled"`
+	Interval time.Duration `yaml:"interval" json:"interval"`
+	Comment  string        `yaml:"comment" json:"comment"`
 }
 
 // SessionConfig holds multi-user session settings.
 type SessionConfig struct {
-	PIN               string        `yaml:"pin"`
-	InactivityTimeout time.Duration `yaml:"inactivity_timeout"`
+	PIN               string        `yaml:"pin" json:"pin,omitempty"`
+	InactivityTimeout time.Duration `yaml:"inactivity_timeout" json:"inactivityTimeout"`
 }
 
 // TileCacheConfig holds offline map tile cache settings.
 type TileCacheConfig struct {
-	Enabled bool   `yaml:"enabled"`
-	DataDir string `yaml:"data_dir"`
-	TileURL string `yaml:"tile_url"`
-	MaxZoom int    `yaml:"max_zoom"`
+	Enabled bool   `yaml:"enabled" json:"enabled"`
+	DataDir string `yaml:"data_dir" json:"dataDir"`
+	TileURL string `yaml:"tile_url" json:"tileUrl"`
+	MaxZoom int    `yaml:"max_zoom" json:"maxZoom"`
+}
+
+// WeatherAlertThreshold defines min/max alert thresholds for a weather metric.
+type WeatherAlertThreshold struct {
+	Min *float64 `yaml:"min" json:"min,omitempty"`
+	Max *float64 `yaml:"max" json:"max,omitempty"`
+}
+
+// WeatherConfig holds weather dashboard settings.
+type WeatherConfig struct {
+	RetentionDays int                               `yaml:"retention_days" json:"retentionDays"`
+	Alerts        map[string]WeatherAlertThreshold   `yaml:"alerts" json:"alerts"`
+	Units         string                             `yaml:"units" json:"units"`
 }
 
 // Config holds the application configuration.
 type Config struct {
-	Server     ServerConfig               `yaml:"server"`
-	Station    StationConfig              `yaml:"station"`
-	Transports []transport.TransportConfig `yaml:"transports"`
-	Store      StoreConfig                `yaml:"store"`
-	Logging    LoggingConfig              `yaml:"logging"`
-	Beacon     BeaconConfig               `yaml:"beacon"`
-	Session    SessionConfig              `yaml:"session"`
-	TileCache  TileCacheConfig            `yaml:"tile_cache"`
+	Server     ServerConfig               `yaml:"server" json:"server"`
+	Station    StationConfig              `yaml:"station" json:"station"`
+	Transports []transport.TransportConfig `yaml:"transports" json:"transports"`
+	Store      StoreConfig                `yaml:"store" json:"store"`
+	Logging    LoggingConfig              `yaml:"logging" json:"logging"`
+	Beacon     BeaconConfig               `yaml:"beacon" json:"beacon"`
+	Session    SessionConfig              `yaml:"session" json:"session"`
+	TileCache  TileCacheConfig            `yaml:"tile_cache" json:"tileCache"`
+	Weather    WeatherConfig              `yaml:"weather" json:"weather"`
 }
 
 // ServerConfig holds HTTP server settings.
 type ServerConfig struct {
-	Listen string `yaml:"listen"`
+	Listen string `yaml:"listen" json:"listen"`
 }
 
 // StationConfig holds the operator's station identity and tracker tuning.
 type StationConfig struct {
-	Callsign        string            `yaml:"callsign"`
-	SSID            int               `yaml:"ssid"`
-	Lat             float64           `yaml:"lat"`
-	Lon             float64           `yaml:"lon"`
-	SymbolTable     string            `yaml:"symbol_table"`
-	SymbolCode      string            `yaml:"symbol_code"`
-	Comment         string            `yaml:"comment"`
-	TrackMaxPoints  int               `yaml:"track_max_points"`
-	StaleTimeout    time.Duration     `yaml:"stale_timeout"`
-	DedupWindow     time.Duration     `yaml:"dedup_window"`
-	TacticalAliases map[string]string `yaml:"tactical_aliases"`
+	Callsign        string            `yaml:"callsign" json:"callsign"`
+	SSID            int               `yaml:"ssid" json:"ssid"`
+	Lat             float64           `yaml:"lat" json:"lat"`
+	Lon             float64           `yaml:"lon" json:"lon"`
+	SymbolTable     string            `yaml:"symbol_table" json:"symbolTable"`
+	SymbolCode      string            `yaml:"symbol_code" json:"symbolCode"`
+	Comment         string            `yaml:"comment" json:"comment"`
+	TrackMaxPoints  int               `yaml:"track_max_points" json:"trackMaxPoints"`
+	StaleTimeout    time.Duration     `yaml:"stale_timeout" json:"staleTimeout"`
+	DedupWindow     time.Duration     `yaml:"dedup_window" json:"dedupWindow"`
+	TacticalAliases map[string]string `yaml:"tactical_aliases" json:"tacticalAliases,omitempty"`
 }
 
 // StoreConfig holds storage settings.
 type StoreConfig struct {
-	Path string `yaml:"path"`
+	Path string `yaml:"path" json:"path"`
 }
 
 // LoggingConfig holds logging settings.
 type LoggingConfig struct {
-	Level string `yaml:"level"` // debug, info, warn, error
+	Level string `yaml:"level" json:"level"` // debug, info, warn, error
 }
 
 // DefaultConfig returns a config with sensible defaults.
@@ -102,6 +116,10 @@ func DefaultConfig() Config {
 		TileCache: TileCacheConfig{
 			Enabled: true,
 			MaxZoom: 16,
+		},
+		Weather: WeatherConfig{
+			RetentionDays: 7,
+			Units:         "metric",
 		},
 	}
 }
