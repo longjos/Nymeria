@@ -444,13 +444,14 @@
 	async function handleAddNote() {
 		if (!$activeNet || !noteContent.trim()) return;
 		try {
-			await api.addNetNote($activeNet.id, {
+			const note = await api.addNetNote($activeNet.id, {
 				checkInId: noteCheckInId ?? undefined,
 				missionId: noteMissionId ?? undefined,
 				content: noteContent.trim(),
 				category: noteCategory,
 				severity: noteSeverity,
 			});
+			notes.update((list) => [...list, note]);
 			closeNoteComposer();
 		} catch (e) {
 			console.error('Add note failed:', e);
