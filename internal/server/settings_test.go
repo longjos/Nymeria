@@ -141,8 +141,8 @@ func TestUpdateStation(t *testing.T) {
 
 	var resp updateResponse
 	json.Unmarshal(w.Body.Bytes(), &resp)
-	if !resp.RestartRequired {
-		t.Error("station update should require restart")
+	if resp.RestartRequired {
+		t.Error("station update should not require restart (hot-reloaded)")
 	}
 
 	// Verify in-memory

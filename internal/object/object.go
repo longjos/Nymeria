@@ -383,7 +383,9 @@ func (m *Manager) retransmitLoop(ctx context.Context) {
 
 func (m *Manager) retransmitAll() {
 	m.mu.Lock()
-	// Copy live objects for retransmission
+	// Snapshot identity and live objects/items for retransmission
+	callsign := m.callsign
+	ssid := m.ssid
 	var liveObjects []Object
 	for _, obj := range m.objects {
 		if obj.Live {
@@ -399,20 +401,29 @@ func (m *Manager) retransmitAll() {
 	m.mu.Unlock()
 
 	for _, obj := range liveObjects {
-		if err := m.transmitObject(obj); err != nil {
+		if err := m.send(buildFrame(callsign, ssid, FormatObjectPayload(obj))); err != nil {
 			log.Printf("[object] retransmit object %q: %v", obj.Name, err)
 		}
 	}
 	for _, item := range liveItems {
-		if err := m.transmitItem(item); err != nil {
+		if err := m.send(buildFrame(callsign, ssid, FormatItemPayload(item))); err != nil {
 			log.Printf("[object] retransmit item %q: %v", item.Name, err)
 		}
 	}
 }
 
-func (m *Manager) buildFrame(payload string) aprs.APRSFrame {
+// UpdateStationInfo updates the station identity for object/item frames.
+func (m *Manager) UpdateStationInfo(callsign string, ssid int) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.callsign = callsign
+	m.ssid = ssid
+}
+
+// buildFrame creates an APRS frame with the given source identity and payload.
+func buildFrame(callsign string, ssid int, payload string) aprs.APRSFrame {
 	return aprs.APRSFrame{
-		Source:      aprs.Address{Call: m.callsign, SSID: m.ssid},
+		Source:      aprs.Address{Call: callsign, SSID: ssid},
 		Destination: aprs.Address{Call: "APNMRA"},
 		Path: []aprs.Address{
 			{Call: "WIDE1", SSID: 1},
@@ -422,12 +433,22 @@ func (m *Manager) buildFrame(payload string) aprs.APRSFrame {
 	}
 }
 
+// transmitObject sends an object frame using the current station identity.
 func (m *Manager) transmitObject(obj Object) error {
-	return m.send(m.buildFrame(FormatObjectPayload(obj)))
+	m.mu.Lock()
+	callsign := m.callsign
+	ssid := m.ssid
+	m.mu.Unlock()
+	return m.send(buildFrame(callsign, ssid, FormatObjectPayload(obj)))
 }
 
+// transmitItem sends an item frame using the current station identity.
 func (m *Manager) transmitItem(item Item) error {
-	return m.send(m.buildFrame(FormatItemPayload(item)))
+	m.mu.Lock()
+	callsign := m.callsign
+	ssid := m.ssid
+	m.mu.Unlock()
+	return m.send(buildFrame(callsign, ssid, FormatItemPayload(item)))
 }
 
 func (m *Manager) emitEvent(eventType string, data any) {

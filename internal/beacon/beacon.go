@@ -136,6 +136,13 @@ func (m *Manager) UpdateConfig(cfg Config) {
 	m.cfg = cfg
 }
 
+// UpdateStationInfo updates the station identity for beacon frames.
+func (m *Manager) UpdateStationInfo(info StationInfo) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.station = info
+}
+
 // loop runs the periodic beacon timer.
 func (m *Manager) loop(ctx context.Context) {
 	defer func() {
@@ -165,9 +172,15 @@ func (m *Manager) loop(ctx context.Context) {
 }
 
 // buildFrame creates an APRS position report frame for this station.
+// Snapshots config and station info under mutex to avoid races.
 func (m *Manager) buildFrame() aprs.APRSFrame {
-	symTable := m.station.SymbolTable
-	symCode := m.station.SymbolCode
+	m.mu.Lock()
+	station := m.station
+	comment := m.cfg.Comment
+	m.mu.Unlock()
+
+	symTable := station.SymbolTable
+	symCode := station.SymbolCode
 	if symTable == "" {
 		symTable = "/"
 	}
@@ -175,10 +188,10 @@ func (m *Manager) buildFrame() aprs.APRSFrame {
 		symCode = "-"
 	}
 
-	payload := "!" + FormatLat(m.station.Lat) + symTable + FormatLon(m.station.Lon) + symCode + m.cfg.Comment
+	payload := "!" + FormatLat(station.Lat) + symTable + FormatLon(station.Lon) + symCode + comment
 
 	return aprs.APRSFrame{
-		Source:      aprs.Address{Call: m.station.Callsign, SSID: m.station.SSID},
+		Source:      aprs.Address{Call: station.Callsign, SSID: station.SSID},
 		Destination: aprs.Address{Call: "APNMRA"},
 		Path: []aprs.Address{
 			{Call: "WIDE1", SSID: 1},

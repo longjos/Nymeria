@@ -68,6 +68,13 @@ func NewMemoryTracker(cfg config.StationConfig) *MemoryTracker {
 	}
 }
 
+// UpdateConfig updates the tracker configuration at runtime.
+func (t *MemoryTracker) UpdateConfig(cfg config.StationConfig) {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	t.cfg = cfg
+}
+
 // Events returns the event channel.
 func (t *MemoryTracker) Events() <-chan Event {
 	return t.events

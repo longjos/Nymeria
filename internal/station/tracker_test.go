@@ -533,3 +533,81 @@ func TestSearchCaseInsensitive(t *testing.T) {
 		t.Error("case-insensitive search should find station regardless of case")
 	}
 }
+
+func TestUpdateConfig(t *testing.T) {
+	cfg := testConfig()
+	cfg.TrackMaxPoints = 3
+	tr := NewMemoryTracker(cfg)
+
+	// Add a station with 3 track points (at the limit)
+	tr.HandlePacket(positionPacket("N0CALL", 0, 35.0, -84.0, "a"), "RF")
+	tr.HandlePacket(positionPacket("N0CALL", 0, 35.1, -84.0, "b"), "RF")
+	tr.HandlePacket(positionPacket("N0CALL", 0, 35.2, -84.0, "c"), "RF")
+
+	s, ok := tr.Get("N0CALL")
+	if !ok {
+		t.Fatal("station not found")
+	}
+	if len(s.Track) != 3 {
+		t.Errorf("track len = %d, want 3", len(s.Track))
+	}
+
+	// Update config to allow more track points
+	newCfg := cfg
+	newCfg.TrackMaxPoints = 10
+	tr.UpdateConfig(newCfg)
+
+	// Add more track points — should now keep more
+	tr.HandlePacket(positionPacket("N0CALL", 0, 35.3, -84.0, "d"), "RF")
+	tr.HandlePacket(positionPacket("N0CALL", 0, 35.4, -84.0, "e"), "RF")
+
+	s, _ = tr.Get("N0CALL")
+	if len(s.Track) != 5 {
+		t.Errorf("track len after config update = %d, want 5", len(s.Track))
+	}
+
+	// Update config to reduce — existing points remain, new additions capped
+	newCfg.TrackMaxPoints = 2
+	tr.UpdateConfig(newCfg)
+
+	tr.HandlePacket(positionPacket("N0CALL", 0, 35.5, -84.0, "f"), "RF")
+	s, _ = tr.Get("N0CALL")
+	if len(s.Track) != 2 {
+		t.Errorf("track len after reduce = %d, want 2", len(s.Track))
+	}
+}
+
+func TestUpdateConfigDedupWindow(t *testing.T) {
+	cfg := testConfig()
+	cfg.DedupWindow = 5 * time.Second
+	tr := NewMemoryTracker(cfg)
+
+	// Send a packet
+	tr.HandlePacket(positionPacket("N0CALL", 0, 35.0, -84.0, "test"), "RF")
+	s, ok := tr.Get("N0CALL")
+	if !ok {
+		t.Fatal("station not found")
+	}
+	if len(s.Track) != 1 {
+		t.Errorf("track len = %d, want 1", len(s.Track))
+	}
+
+	// Same packet should be deduped
+	tr.HandlePacket(positionPacket("N0CALL", 0, 35.0, -84.0, "test"), "RF")
+	s, _ = tr.Get("N0CALL")
+	if len(s.Track) != 1 {
+		t.Errorf("track len after dedup = %d, want 1", len(s.Track))
+	}
+
+	// Update dedup window to 0 (disabled)
+	newCfg := cfg
+	newCfg.DedupWindow = 0
+	tr.UpdateConfig(newCfg)
+
+	// Same packet should now be accepted
+	tr.HandlePacket(positionPacket("N0CALL", 0, 35.0, -84.0, "test"), "RF")
+	s, _ = tr.Get("N0CALL")
+	if len(s.Track) != 2 {
+		t.Errorf("track len after disabling dedup = %d, want 2", len(s.Track))
+	}
+}

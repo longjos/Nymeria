@@ -3,6 +3,7 @@ package object
 import (
 	"context"
 	"strings"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -582,9 +583,9 @@ func TestManagerHandlePacketItem(t *testing.T) {
 }
 
 func TestManagerRetransmit(t *testing.T) {
-	sentCount := 0
+	var sentCount atomic.Int64
 	sendFunc := func(frame aprs.APRSFrame) error {
-		sentCount++
+		sentCount.Add(1)
 		return nil
 	}
 
@@ -614,8 +615,9 @@ func TestManagerRetransmit(t *testing.T) {
 	mgr.Close()
 
 	// Should have initial send + at least 2 retransmissions
-	if sentCount < 3 {
-		t.Errorf("expected at least 3 transmissions, got %d", sentCount)
+	count := sentCount.Load()
+	if count < 3 {
+		t.Errorf("expected at least 3 transmissions, got %d", count)
 	}
 }
 
@@ -764,6 +766,66 @@ func TestFormatTimestamp(t *testing.T) {
 	want := "151430z"
 	if got != want {
 		t.Errorf("FormatTimestamp() = %q, want %q", got, want)
+	}
+}
+
+func TestManagerUpdateStationInfo(t *testing.T) {
+	sent := make(chan aprs.APRSFrame, 10)
+	sendFunc := func(frame aprs.APRSFrame) error {
+		sent <- frame
+		return nil
+	}
+
+	mgr := NewManager("N0CALL", 0, sendFunc, ManagerConfig{
+		RetransmitInterval: 10 * time.Minute,
+	})
+	defer mgr.Close()
+
+	// Create object with original callsign
+	_, err := mgr.CreateObject(Object{
+		Name:    "TEST",
+		Lat:     35.0,
+		Lon:     -84.0,
+		Symbol:  aprs.Symbol{Table: '/', Code: '-'},
+		Comment: "test",
+		Live:    true,
+	})
+	if err != nil {
+		t.Fatalf("CreateObject: %v", err)
+	}
+
+	select {
+	case frame := <-sent:
+		if frame.Source.Call != "N0CALL" || frame.Source.SSID != 0 {
+			t.Errorf("source = %v, want N0CALL-0", frame.Source)
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("timeout")
+	}
+
+	// Update station info
+	mgr.UpdateStationInfo("W1AW", 9)
+
+	// Create another object — should use new callsign
+	_, err = mgr.CreateObject(Object{
+		Name:    "TEST2",
+		Lat:     35.0,
+		Lon:     -84.0,
+		Symbol:  aprs.Symbol{Table: '/', Code: '-'},
+		Comment: "test2",
+		Live:    true,
+	})
+	if err != nil {
+		t.Fatalf("CreateObject: %v", err)
+	}
+
+	select {
+	case frame := <-sent:
+		if frame.Source.Call != "W1AW" || frame.Source.SSID != 9 {
+			t.Errorf("source after update = %v, want W1AW-9", frame.Source)
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("timeout")
 	}
 }
 

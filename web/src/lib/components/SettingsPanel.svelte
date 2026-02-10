@@ -248,7 +248,7 @@
 			<div class="section" class:open={openSections.station}>
 				<button class="section-header" onclick={() => toggle('station')}>
 					<span class="section-title">Station</span>
-					<span class="section-badge restart">Restart</span>
+					<span class="section-badge live">Live</span>
 					<svg class="chevron" width="14" height="14" viewBox="0 0 16 16" fill="none">
 						<path d="M4 6l4 4 4-4" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/>
 					</svg>
@@ -314,7 +314,7 @@
 			<div class="section" class:open={openSections.transports}>
 				<button class="section-header" onclick={() => toggle('transports')}>
 					<span class="section-title">Transports</span>
-					<span class="section-badge restart">Restart</span>
+					<span class="section-badge live">Live</span>
 					<svg class="chevron" width="14" height="14" viewBox="0 0 16 16" fill="none">
 						<path d="M4 6l4 4 4-4" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/>
 					</svg>
