@@ -1314,7 +1314,10 @@ func (s *Server) handleGetWeatherReadings(w http.ResponseWriter, r *http.Request
 }
 
 func (s *Server) handleGetWeatherConfig(w http.ResponseWriter, _ *http.Request) {
-	writeJSON(w, http.StatusOK, s.weatherCfg)
+	s.weatherMu.RLock()
+	cfg := s.weatherCfg
+	s.weatherMu.RUnlock()
+	writeJSON(w, http.StatusOK, cfg)
 }
 
 // --- Telemetry handlers ---

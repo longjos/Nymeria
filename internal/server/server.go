@@ -6,6 +6,7 @@ import (
 	"log"
 	"net/http"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/go-chi/chi/v5"
@@ -45,6 +46,7 @@ type Server struct {
 	tileCache  *tilecache.Cache
 	configMgr  *config.Manager
 	stationCfg config.StationConfig
+	weatherMu  sync.RWMutex
 	weatherCfg config.WeatherConfig
 }
 
@@ -505,7 +507,9 @@ func (s *Server) bridgeTileCacheEvents() {
 
 // weatherPurgeLoop periodically deletes old weather readings based on RetentionDays config.
 func (s *Server) weatherPurgeLoop() {
+	s.weatherMu.RLock()
 	days := s.weatherCfg.RetentionDays
+	s.weatherMu.RUnlock()
 	if days <= 0 {
 		days = 7
 	}
@@ -528,7 +532,9 @@ func (s *Server) weatherPurgeLoop() {
 
 // telemetryPurgeLoop periodically deletes old telemetry readings (reuses weather retention config).
 func (s *Server) telemetryPurgeLoop() {
+	s.weatherMu.RLock()
 	days := s.weatherCfg.RetentionDays
+	s.weatherMu.RUnlock()
 	if days <= 0 {
 		days = 7
 	}
@@ -547,6 +553,37 @@ func (s *Server) telemetryPurgeLoop() {
 			log.Printf("[server] purged %d old telemetry readings", n)
 		}
 	}
+}
+
+// BroadcastRawPacket sends a parsed packet to all WebSocket clients for the protocol inspector.
+func (s *Server) BroadcastRawPacket(pkt *aprs.Packet, source string) {
+	msg := struct {
+		Type       string         `json:"type"`
+		Raw        string         `json:"raw"`
+		Timestamp  time.Time      `json:"timestamp"`
+		Source     string         `json:"source"`
+		PacketType string         `json:"packetType"`
+		From       aprs.Address   `json:"from"`
+		To         aprs.Address   `json:"to"`
+		Path       []aprs.Address `json:"path"`
+		Packet     *aprs.Packet   `json:"packet"`
+	}{
+		Type:       "packet",
+		Raw:        pkt.Frame.String(),
+		Timestamp:  time.Now().UTC(),
+		Source:     source,
+		PacketType: pkt.Type.String(),
+		From:       pkt.Frame.Source,
+		To:         pkt.Frame.Destination,
+		Path:       pkt.Frame.Path,
+		Packet:     pkt,
+	}
+	data, err := json.Marshal(msg)
+	if err != nil {
+		log.Printf("[server] marshal raw packet: %v", err)
+		return
+	}
+	s.hub.Broadcast(data)
 }
 
 // HandleTacticalPacket detects APRS TACTICAL messages and upserts aliases.

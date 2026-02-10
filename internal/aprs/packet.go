@@ -4,21 +4,21 @@ import "time"
 
 // MessageData holds parsed APRS message data.
 type MessageData struct {
-	Addressee    string
-	Text         string
-	MessageNo    string // message number for ack/rej
-	IsAck        bool
-	IsRej        bool
-	AckMsgNo     string // the message number being acked/rejected
-	IsAutoAnswer bool   // true if message starts with "AA:" prefix
+	Addressee    string `json:"addressee"`
+	Text         string `json:"text,omitempty"`
+	MessageNo    string `json:"messageNo,omitempty"`    // message number for ack/rej
+	IsAck        bool   `json:"isAck,omitempty"`
+	IsRej        bool   `json:"isRej,omitempty"`
+	AckMsgNo     string `json:"ackMsgNo,omitempty"`     // the message number being acked/rejected
+	IsAutoAnswer bool   `json:"isAutoAnswer,omitempty"` // true if message starts with "AA:" prefix
 }
 
 // ObjectData holds parsed APRS object data.
 type ObjectData struct {
-	Name      string
-	Live      bool // true = live object, false = killed
-	Timestamp time.Time
-	Position  PositionData
+	Name      string       `json:"name"`
+	Live      bool         `json:"live"`                // true = live object, false = killed
+	Timestamp time.Time    `json:"timestamp,omitempty"`
+	Position  PositionData `json:"position"`
 }
 
 // WeatherData holds parsed APRS weather data.
@@ -40,16 +40,16 @@ type WeatherData struct {
 
 // StatusData holds parsed APRS status data.
 type StatusData struct {
-	Text       string
-	Timestamp  time.Time
-	Maidenhead string
+	Text       string    `json:"text"`
+	Timestamp  time.Time `json:"timestamp,omitempty"`
+	Maidenhead string    `json:"maidenhead,omitempty"`
 }
 
 // ItemData holds parsed APRS item data.
 type ItemData struct {
-	Name     string
-	Live     bool // true = live item, false = killed
-	Position PositionData
+	Name     string       `json:"name"`
+	Live     bool         `json:"live"` // true = live item, false = killed
+	Position PositionData `json:"position"`
 }
 
 // TelemetryData holds parsed APRS telemetry data.
@@ -116,7 +116,7 @@ type DFData struct {
 
 // MicEData holds parsed Mic-E position data.
 type MicEData struct {
-	Position   PositionData
-	MicEMsg    string // Mic-E message type (e.g., "Off Duty", "En Route")
-	RadioModel string
+	Position   PositionData `json:"position"`
+	MicEMsg    string       `json:"micEMsg,omitempty"`    // Mic-E message type (e.g., "Off Duty", "En Route")
+	RadioModel string       `json:"radioModel,omitempty"`
 }

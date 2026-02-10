@@ -34,10 +34,10 @@ func itoa(n int) string {
 
 // APRSFrame represents a raw APRS frame with source, destination, path, and payload.
 type APRSFrame struct {
-	Source      Address
-	Destination Address
-	Path        []Address
-	Payload     string
+	Source      Address   `json:"source"`
+	Destination Address   `json:"destination"`
+	Path        []Address `json:"path,omitempty"`
+	Payload     string    `json:"payload"`
 }
 
 // String returns the frame in TNC2 format: SOURCE>DESTINATION,PATH:payload
