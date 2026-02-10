@@ -60,6 +60,14 @@ type TelemetryData struct {
 	Comment string
 }
 
+// DFData holds parsed APRS direction finding report data.
+type DFData struct {
+	Bearing float64 `json:"bearing"` // degrees 0-360
+	Number  int     `json:"number"`  // 0-9 hits indicator
+	Range   float64 `json:"range"`   // miles (decoded from 2^R)
+	Quality int     `json:"quality"` // 0-9 bearing accuracy
+}
+
 // MicEData holds parsed Mic-E position data.
 type MicEData struct {
 	Position   PositionData

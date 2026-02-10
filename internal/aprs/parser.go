@@ -29,6 +29,7 @@ type Packet struct {
 	Item       *ItemData
 	Telemetry  *TelemetryData
 	MicE       *MicEData
+	DF         *DFData         // direction finding report data
 	Query      string         // query type for PacketTypeQuery (e.g., "APRS", "WX")
 	ThirdParty *Packet        // inner packet for PacketTypeThirdParty
 	Frequency  *FrequencyData // APRS 1.2: parsed frequency from comment

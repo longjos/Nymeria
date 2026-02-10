@@ -267,6 +267,20 @@
 
 		<button
 			class="rail-btn"
+			class:active={panelMode === 'df'}
+			onclick={() => onToggle?.('df')}
+			title="Direction Finding"
+			aria-label="Direction Finding"
+		>
+			<svg width="18" height="18" viewBox="0 0 16 16" fill="none">
+				<circle cx="8" cy="8" r="6" stroke="currentColor" stroke-width="1.3"/>
+				<circle cx="8" cy="8" r="2" stroke="currentColor" stroke-width="1.3"/>
+				<path d="M8 2v3M8 11v3M2 8h3M11 8h3" stroke="currentColor" stroke-width="1.3" stroke-linecap="round"/>
+			</svg>
+		</button>
+
+		<button
+			class="rail-btn"
 			class:active={panelMode === 'transports'}
 			onclick={() => onToggle?.('transports')}
 			title="Transports"

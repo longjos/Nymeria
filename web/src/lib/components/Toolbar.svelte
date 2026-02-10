@@ -19,6 +19,7 @@
 		onAnnotationsOpen,
 		onNetControlOpen,
 		onWeatherOpen,
+		onDFOpen,
 		onSettingsOpen,
 		onCommandPalette
 	}: {
@@ -30,6 +31,7 @@
 		onAnnotationsOpen?: () => void;
 		onNetControlOpen?: () => void;
 		onWeatherOpen?: () => void;
+		onDFOpen?: () => void;
 		onSettingsOpen?: () => void;
 		onCommandPalette?: () => void;
 	} = $props();
@@ -70,6 +72,13 @@
 		<svg width="18" height="18" viewBox="0 0 16 16" fill="none">
 			<circle cx="8" cy="8" r="3" stroke="currentColor" stroke-width="1.5"/>
 			<path d="M8 1v2M8 13v2M1 8h2M13 8h2M3 3l1.5 1.5M11.5 11.5L13 13M13 3l-1.5 1.5M4.5 11.5L3 13" stroke="currentColor" stroke-width="1.3" stroke-linecap="round"/>
+		</svg>
+	</button>
+	<button class="fab" onclick={onDFOpen} title="Direction Finding">
+		<svg width="18" height="18" viewBox="0 0 16 16" fill="none">
+			<circle cx="8" cy="8" r="6" stroke="currentColor" stroke-width="1.3"/>
+			<circle cx="8" cy="8" r="2" stroke="currentColor" stroke-width="1.3"/>
+			<path d="M8 2v3M8 11v3M2 8h3M11 8h3" stroke="currentColor" stroke-width="1.3" stroke-linecap="round"/>
 		</svg>
 	</button>
 	<button class="fab" onclick={onTransportsOpen} title="Transports">
