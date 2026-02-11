@@ -4,6 +4,7 @@
 	import { needsSetup } from '$lib/stores/session';
 	import type { SetupData } from '$lib/types';
 	import L from 'leaflet';
+	import FilterBuilder from './FilterBuilder.svelte';
 
 	let step = $state(0);
 	const TOTAL_STEPS = 5;
@@ -24,7 +25,15 @@
 	let aprisEnabled = $state(true);
 	let aprisHost = $state('rotate.aprs2.net');
 	let aprisPort = $state(14580);
-	let aprisFilter = $derived(`r/${lat.toFixed(2)}/${lon.toFixed(2)}/200`);
+	let aprisFilter = $state('');
+	let filterCustomized = $state(false);
+
+	// Auto-compute default filter from location unless user has customized it
+	$effect(() => {
+		if (!filterCustomized) {
+			aprisFilter = `r/${lat.toFixed(2)}/${lon.toFixed(2)}/200`;
+		}
+	});
 
 	// Step 4: Review + submit
 	let saving = $state(false);
@@ -359,11 +368,11 @@
 							<input type="number" bind:value={aprisPort} min="1" max="65535" />
 						</label>
 
-						<label class="field">
+						<div class="field">
 							<span>Filter</span>
-							<input type="text" value={aprisFilter} readonly />
-							<small class="field-hint">Auto-computed from your location</small>
-						</label>
+							<FilterBuilder value={aprisFilter} oninput={(v) => { aprisFilter = v; filterCustomized = true; }} />
+							<small class="field-hint">{filterCustomized ? 'Customized' : 'Auto-computed from your location'}</small>
+						</div>
 
 						<div class="passcode-display">
 							<span class="passcode-label">Passcode</span>

@@ -473,6 +473,61 @@ export interface TransportSettings {
 	passcode?: string;
 }
 
+// --- APRS-IS Filter Builder ---
+
+export type FilterType =
+	| 'range'        // r/lat/lon/dist
+	| 'area'         // a/latN/lonW/latS/lonE
+	| 'type'         // t/types or t/types/call/dist
+	| 'prefix'       // p/prefix1/prefix2...
+	| 'budlist'      // b/call1/call2...
+	| 'object'       // o/obj1/obj2...
+	| 'strictObject' // os/obj1/obj2...
+	| 'symbol'       // s/pri/alt/over
+	| 'digipeater'   // d/call1/call2...
+	| 'entry'        // e/call1/call2...
+	| 'group'        // g/call1/call2...
+	| 'unproto'      // u/unproto1/unproto2...
+	| 'qConstruct'   // q/con/I
+	| 'myRange'      // m/dist
+	| 'friendRange'; // f/call/dist
+
+export interface FilterRule {
+	type: FilterType;
+	exclude: boolean;
+
+	// Range (r/lat/lon/dist) and shared geo fields
+	lat?: number;
+	lon?: number;
+	dist?: number;
+
+	// Area (a/latN/lonW/latS/lonE)
+	latN?: number;
+	lonW?: number;
+	latS?: number;
+	lonE?: number;
+
+	// Type (t/types or t/types/call/dist)
+	types?: string;
+	callForType?: string;
+	distForType?: number;
+
+	// List-based (prefix, budlist, object, strictObject, digipeater, entry, group, unproto)
+	items?: string[];
+
+	// Symbol (s/pri/alt/over)
+	primaryTable?: string;
+	altTable?: string;
+	overlay?: string;
+
+	// Q-Construct (q/con/I)
+	qCodes?: string;
+	iFlag?: boolean;
+
+	// Friend Range (f/call/dist)
+	friendCall?: string;
+}
+
 export interface TileCacheSettings {
 	enabled: boolean;
 	dataDir: string;
