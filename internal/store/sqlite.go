@@ -14,7 +14,7 @@ import (
 	_ "modernc.org/sqlite"
 )
 
-const currentSchemaVersion = 13
+const currentSchemaVersion = 14
 
 // SQLiteStore implements Store using modernc.org/sqlite.
 type SQLiteStore struct {
@@ -148,6 +148,12 @@ func (s *SQLiteStore) migrate() error {
 
 	if version < 13 {
 		if err := s.migrateV13(); err != nil {
+			return err
+		}
+	}
+
+	if version < 14 {
+		if err := s.migrateV14(); err != nil {
 			return err
 		}
 	}
@@ -1123,14 +1129,19 @@ func (s *SQLiteStore) SaveNetCheckIn(ci NetCheckIn) error {
 		missionIDsJSON = string(b)
 	}
 
+	category := ci.Category
+	if category == "" {
+		category = "general"
+	}
+
 	_, err := s.db.Exec(`
 		INSERT OR REPLACE INTO net_check_ins
 			(id, net_id, callsign, tactical_call, operator_name, status, traffic,
-			 source, location, lat, lon, assignment,
+			 source, category, location, lat, lon, assignment,
 			 mission_ids, tracked_stations, checked_in_at, checked_out_at, last_heard, missed_roll_calls)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
 		ci.ID, ci.NetID, ci.Callsign, ci.TacticalCall, ci.OperatorName,
-		ci.Status, ci.Traffic, source, ci.Location,
+		ci.Status, ci.Traffic, source, category, ci.Location,
 		lat, lon, ci.Assignment,
 		missionIDsJSON, trackedJSON, ci.CheckedInAt.UTC(), checkedOutAt, ci.LastHeard.UTC(), ci.MissedRollCalls,
 	)
@@ -1143,7 +1154,7 @@ func (s *SQLiteStore) SaveNetCheckIn(ci NetCheckIn) error {
 func (s *SQLiteStore) LoadNetCheckIns(netID string) ([]NetCheckIn, error) {
 	rows, err := s.db.Query(`
 		SELECT id, net_id, callsign, tactical_call, operator_name, status, traffic,
-		       source, location, lat, lon, assignment,
+		       source, category, location, lat, lon, assignment,
 		       mission_ids, tracked_stations, checked_in_at, checked_out_at, last_heard, missed_roll_calls
 		FROM net_check_ins WHERE net_id = ? ORDER BY checked_in_at ASC`, netID)
 	if err != nil {
@@ -1161,7 +1172,7 @@ func (s *SQLiteStore) LoadNetCheckIns(netID string) ([]NetCheckIn, error) {
 
 		if err := rows.Scan(
 			&ci.ID, &ci.NetID, &ci.Callsign, &ci.TacticalCall, &ci.OperatorName,
-			&ci.Status, &ci.Traffic, &ci.Source, &ci.Location,
+			&ci.Status, &ci.Traffic, &ci.Source, &ci.Category, &ci.Location,
 			&lat, &lon, &ci.Assignment,
 			&missionIDsJSON, &trackedJSON, &checkedInAt, &checkedOutAt, &lastHeard, &ci.MissedRollCalls,
 		); err != nil {
@@ -2070,6 +2081,27 @@ func (s *SQLiteStore) PurgeTelemetryReadings(olderThan time.Time) (int64, error)
 		return 0, err
 	}
 	return result.RowsAffected()
+}
+
+func (s *SQLiteStore) migrateV14() error {
+	for _, stmt := range []string{
+		"ALTER TABLE net_check_ins ADD COLUMN category TEXT NOT NULL DEFAULT 'general'",
+	} {
+		if _, err := s.db.Exec(stmt); err != nil {
+			if !isDuplicateColumnError(err) {
+				return fmt.Errorf("migrate v14: %w", err)
+			}
+		}
+	}
+
+	if _, err := s.db.Exec("DELETE FROM schema_version"); err != nil {
+		return fmt.Errorf("clear schema_version: %w", err)
+	}
+	if _, err := s.db.Exec("INSERT INTO schema_version (version) VALUES (?)", 14); err != nil {
+		return fmt.Errorf("set schema_version: %w", err)
+	}
+
+	return nil
 }
 
 // Compile-time check that SQLiteStore implements Store.

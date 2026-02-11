@@ -244,7 +244,7 @@ func (m *Manager) SetOpsView(netID string, lat, lon, zoom float64) error {
 }
 
 // CheckIn registers an operator in the net.
-func (m *Manager) CheckIn(netID, callsign, traffic string) (*store.NetCheckIn, error) {
+func (m *Manager) CheckIn(netID, callsign, traffic, category string) (*store.NetCheckIn, error) {
 	m.mu.RLock()
 	_, ok := m.nets[netID]
 	m.mu.RUnlock()
@@ -262,6 +262,13 @@ func (m *Manager) CheckIn(netID, callsign, traffic string) (*store.NetCheckIn, e
 		traffic = TrafficNone
 	}
 
+	if category == "" {
+		category = CatGeneral
+	}
+	if !ValidCategories[category] {
+		return nil, fmt.Errorf("invalid category %q", category)
+	}
+
 	now := time.Now().UTC()
 	ci := store.NetCheckIn{
 		ID:          uuid.New().String(),
@@ -269,6 +276,7 @@ func (m *Manager) CheckIn(netID, callsign, traffic string) (*store.NetCheckIn, e
 		Callsign:    callsign,
 		Status:      OpAvailable,
 		Traffic:     traffic,
+		Category:    category,
 		Source:      "voice",
 		CheckedInAt: now,
 		LastHeard:   now,
@@ -309,7 +317,11 @@ func (m *Manager) CheckIn(netID, callsign, traffic string) (*store.NetCheckIn, e
 	if traffic != TrafficNone {
 		trafficStr = fmt.Sprintf(" with %s traffic", traffic)
 	}
-	m.logEvent(netID, "checkin", callsign, fmt.Sprintf("%s checked in%s", callsign, trafficStr))
+	catStr := ""
+	if category != CatGeneral {
+		catStr = fmt.Sprintf(" [%s]", category)
+	}
+	m.logEvent(netID, "checkin", callsign, fmt.Sprintf("%s checked in%s%s", callsign, trafficStr, catStr))
 	m.emit(Event{Type: EventCheckInCreated, Data: ci})
 
 	return &ci, nil
@@ -966,7 +978,7 @@ func ExportRosterCSV(w io.Writer, checkIns []store.NetCheckIn) error {
 
 	header := []string{
 		"callsign", "tacticalCall", "operatorName", "status", "traffic",
-		"source", "location", "assignment", "trackedDevices", "checkedInAt", "checkedOutAt",
+		"category", "source", "location", "assignment", "trackedDevices", "checkedInAt", "checkedOutAt",
 		"lastHeard", "missedRollCalls",
 	}
 	if err := cw.Write(header); err != nil {
@@ -982,12 +994,17 @@ func ExportRosterCSV(w io.Writer, checkIns []store.NetCheckIn) error {
 		for _, ts := range ci.TrackedStations {
 			deviceNames = append(deviceNames, ts.Callsign)
 		}
+		category := ci.Category
+		if category == "" {
+			category = CatGeneral
+		}
 		row := []string{
 			ci.Callsign,
 			ci.TacticalCall,
 			ci.OperatorName,
 			ci.Status,
 			ci.Traffic,
+			category,
 			ci.Source,
 			ci.Location,
 			ci.Assignment,

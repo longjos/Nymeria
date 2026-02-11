@@ -62,6 +62,7 @@ type NetCheckIn struct {
 	Status          string           `json:"status"`
 	Traffic         string           `json:"traffic"`
 	Source          string           `json:"source"`
+	Category        string           `json:"category"`
 	Location        string           `json:"location"`
 	Lat             *float64         `json:"lat,omitempty"`
 	Lon             *float64         `json:"lon,omitempty"`
