@@ -8,6 +8,7 @@
 		activeNet, checkIns, missions, timeline, notes,
 		sortedCheckIns, activeCheckIns,
 		notesByCheckIn, notesByMission, pinnedNotes,
+		netMetrics,
 		initNetControlStore, loadNetData, clearNetControl,
 		opsView,
 		hoveredMissionId, highlightedCheckIns,
@@ -30,6 +31,10 @@
 
 	type Tab = 'roster' | 'missions' | 'timeline';
 	let currentTab = $state<Tab>('roster');
+
+	// Metrics bar filter — clicking a metric filters the roster
+	type MetricsFilter = null | 'available' | 'assigned' | 'missing' | 'stale';
+	let metricsFilter = $state<MetricsFilter>(null);
 
 	// Create net form
 	let showCreateForm = $state(false);
@@ -499,6 +504,32 @@
 	let activeMissionCount = $derived($missions.filter((m) => m.status !== 'complete').length);
 	let completeMissionCount = $derived($missions.filter((m) => m.status === 'complete').length);
 
+	// Roster filtered by metrics bar click
+	const STALE_MS = 20 * 60 * 1000;
+	let displayedCheckIns = $derived.by(() => {
+		const list = $sortedCheckIns;
+		if (!metricsFilter) return list;
+		const now = Date.now();
+		return list.filter((ci) => {
+			switch (metricsFilter) {
+				case 'available': return ci.status === 'available';
+				case 'assigned': return ci.status === 'assigned' || ci.status === 'enroute' || ci.status === 'onscene';
+				case 'missing': return ci.status === 'missing' || ci.traffic === 'emergency';
+				case 'stale': return ci.status !== 'released' && ci.status !== 'missing' && (now - new Date(ci.lastHeard).getTime()) > STALE_MS;
+				default: return true;
+			}
+		});
+	});
+
+	function handleMetricClick(filter: MetricsFilter) {
+		if (metricsFilter === filter) {
+			metricsFilter = null; // toggle off
+		} else {
+			metricsFilter = filter;
+			currentTab = 'roster'; // switch to roster when filtering
+		}
+	}
+
 	function missionElapsed(m: NetMission): string {
 		const start = new Date(m.createdAt).getTime();
 		const end = m.completedAt ? new Date(m.completedAt).getTime() : Date.now();
@@ -796,15 +827,93 @@
 			</div>
 		</div>
 
+		<!-- Metrics bar -->
+		{#if $activeCheckIns.length > 0 || $missions.length > 0}
+			<div class="metrics-bar" role="toolbar" aria-label="Net status metrics">
+				<button
+					class="metric"
+					class:active={metricsFilter === null && currentTab === 'roster'}
+					onclick={() => { metricsFilter = null; currentTab = 'roster'; }}
+					title="Total checked-in operators"
+				>
+					<span class="metric-value">{$netMetrics.totalIn}</span>
+					<span class="metric-label">In</span>
+				</button>
+				<button
+					class="metric metric-available"
+					class:active={metricsFilter === 'available'}
+					onclick={() => handleMetricClick('available')}
+					title="Available for tasking"
+				>
+					<span class="metric-value">{$netMetrics.available}</span>
+					<span class="metric-label">Avail</span>
+				</button>
+				<button
+					class="metric metric-assigned"
+					class:active={metricsFilter === 'assigned'}
+					onclick={() => handleMetricClick('assigned')}
+					title="Assigned / en route / on scene"
+				>
+					<span class="metric-value">{$netMetrics.assigned}</span>
+					<span class="metric-label">Tasked</span>
+				</button>
+				<button
+					class="metric metric-missing"
+					class:active={metricsFilter === 'missing'}
+					class:alert={$netMetrics.missing > 0}
+					onclick={() => handleMetricClick('missing')}
+					title="Missing or emergency traffic"
+				>
+					<span class="metric-value">{$netMetrics.missing}</span>
+					<span class="metric-label">Alert</span>
+				</button>
+				{#if $netMetrics.stale > 0}
+					<button
+						class="metric metric-stale"
+						class:active={metricsFilter === 'stale'}
+						onclick={() => handleMetricClick('stale')}
+						title="Not heard from in 20+ minutes"
+					>
+						<span class="metric-value">{$netMetrics.stale}</span>
+						<span class="metric-label">Stale</span>
+					</button>
+				{/if}
+				<span class="metric-divider"></span>
+				<button
+					class="metric metric-missions"
+					onclick={() => { metricsFilter = null; currentTab = 'missions'; missionFilter = 'active'; }}
+					title="Active missions"
+				>
+					<span class="metric-value">{$netMetrics.missionsActive}</span>
+					<span class="metric-label">Active</span>
+				</button>
+				<button
+					class="metric metric-done"
+					onclick={() => { metricsFilter = null; currentTab = 'missions'; missionFilter = 'complete'; }}
+					title="Completed missions"
+				>
+					<span class="metric-value">{$netMetrics.missionsDone}</span>
+					<span class="metric-label">Done</span>
+				</button>
+				{#if metricsFilter}
+					<button
+						class="metric-clear"
+						onclick={() => (metricsFilter = null)}
+						title="Clear filter"
+					>&times;</button>
+				{/if}
+			</div>
+		{/if}
+
 		<!-- Tabs -->
 		<div class="tabs">
-			<button class="tab" class:active={currentTab === 'roster'} onclick={() => (currentTab = 'roster')}>
+			<button class="tab" class:active={currentTab === 'roster'} onclick={() => { currentTab = 'roster'; metricsFilter = null; }}>
 				Roster <span class="tab-count">{$activeCheckIns.length}</span>
 			</button>
-			<button class="tab" class:active={currentTab === 'missions'} onclick={() => (currentTab = 'missions')}>
+			<button class="tab" class:active={currentTab === 'missions'} onclick={() => { currentTab = 'missions'; metricsFilter = null; }}>
 				Missions {#if activeMissionCount > 0}<span class="tab-count">{activeMissionCount}</span>{/if}
 			</button>
-			<button class="tab" class:active={currentTab === 'timeline'} onclick={() => (currentTab = 'timeline')}>
+			<button class="tab" class:active={currentTab === 'timeline'} onclick={() => { currentTab = 'timeline'; metricsFilter = null; }}>
 				Timeline
 			</button>
 		</div>
@@ -815,7 +924,7 @@
 				<!-- Roster header with export -->
 				{#if $activeNet && $sortedCheckIns.length > 0}
 					<div class="roster-header">
-						<span class="roster-count">{$activeCheckIns.length} active</span>
+						<span class="roster-count">{#if metricsFilter}{displayedCheckIns.length} of {$activeCheckIns.length}{:else}{$activeCheckIns.length} active{/if}</span>
 						<a href={api.rosterExportUrl($activeNet.id)} class="export-link" download>CSV</a>
 					</div>
 				{/if}
@@ -866,7 +975,7 @@
 
 				<!-- Roster -->
 				<div class="roster">
-					{#each $sortedCheckIns as ci (ci.id)}
+					{#each displayedCheckIns as ci (ci.id)}
 						<div class="operator-card" class:released={ci.status === 'released'} class:highlighted={highlightedCheckInId === ci.id} class:mission-highlighted={$highlightedCheckIns.has(ci.id)}>
 							<div class="op-status-bar" style="background: {statusColors[ci.status]}"></div>
 							<div class="op-main">
@@ -920,7 +1029,10 @@
 									</div>
 								{/if}
 								{#if ci.missedRollCalls > 0}
-									<div class="missed-badge">Missed {ci.missedRollCalls} roll call{ci.missedRollCalls > 1 ? 's' : ''}</div>
+									<div class="missed-badge">
+										<span>Missed {ci.missedRollCalls} roll call{ci.missedRollCalls > 1 ? 's' : ''}</span>
+										<button class="rollcall-respond-btn" onclick={() => handleRollCallResponse(ci)} title="Mark as responded">Responded</button>
+									</div>
 								{/if}
 								<!-- Inline note preview -->
 								{#if ($notesByCheckIn.get(ci.id)?.length ?? 0) > 0}
@@ -1080,6 +1192,8 @@
 					{/each}
 					{#if $sortedCheckIns.length === 0}
 						<p class="empty">No operators checked in. Use the input above to add.</p>
+					{:else if displayedCheckIns.length === 0 && metricsFilter}
+						<p class="empty">No operators match filter. <button class="link-btn" onclick={() => (metricsFilter = null)}>Clear filter</button></p>
 					{/if}
 				</div>
 
@@ -1612,6 +1726,115 @@
 		overflow-x: hidden;
 	}
 
+	/* Metrics bar */
+	.metrics-bar {
+		display: flex;
+		align-items: center;
+		gap: 2px;
+		padding: 6px var(--space-md);
+		border-bottom: 1px solid var(--color-primary);
+		background: rgba(15, 52, 96, 0.3);
+		flex-shrink: 0;
+		flex-wrap: wrap;
+	}
+
+	.metric {
+		display: flex;
+		flex-direction: column;
+		align-items: center;
+		padding: 4px 10px;
+		background: none;
+		border: 1px solid transparent;
+		border-radius: var(--radius-sm);
+		color: var(--color-text-muted);
+		cursor: pointer;
+		transition: all var(--duration-fast);
+		min-width: 44px;
+		line-height: 1;
+	}
+
+	.metric:hover {
+		background: rgba(255, 255, 255, 0.05);
+		border-color: var(--color-primary);
+		color: var(--color-text);
+	}
+
+	.metric.active {
+		background: rgba(233, 69, 96, 0.1);
+		border-color: var(--color-accent);
+		color: var(--color-text);
+	}
+
+	.metric-value {
+		font-family: monospace;
+		font-size: 1.1rem;
+		font-weight: 700;
+		line-height: 1.2;
+	}
+
+	.metric-label {
+		font-size: 0.6rem;
+		text-transform: uppercase;
+		letter-spacing: 0.05em;
+		opacity: 0.7;
+	}
+
+	.metric-available .metric-value { color: #22c55e; }
+	.metric-assigned .metric-value { color: #3b82f6; }
+	.metric-missing .metric-value { color: #6b7280; }
+	.metric-missing.alert .metric-value { color: #ef4444; }
+	.metric-missing.alert {
+		animation: pulse-alert 2s ease-in-out infinite;
+	}
+	.metric-stale .metric-value { color: #f59e0b; }
+	.metric-missions .metric-value { color: #8b5cf6; }
+	.metric-done .metric-value { color: #6b7280; }
+
+	.metric-divider {
+		width: 1px;
+		height: 28px;
+		background: var(--color-primary);
+		margin: 0 4px;
+		flex-shrink: 0;
+	}
+
+	.metric-clear {
+		display: flex;
+		align-items: center;
+		justify-content: center;
+		width: 22px;
+		height: 22px;
+		background: none;
+		border: 1px solid rgba(239, 68, 68, 0.4);
+		border-radius: var(--radius-sm);
+		color: #ef4444;
+		cursor: pointer;
+		font-size: 0.9rem;
+		line-height: 1;
+		margin-left: auto;
+		transition: all var(--duration-fast);
+	}
+
+	.metric-clear:hover {
+		background: rgba(239, 68, 68, 0.15);
+		border-color: #ef4444;
+	}
+
+	@keyframes pulse-alert {
+		0%, 100% { background: transparent; }
+		50% { background: rgba(239, 68, 68, 0.1); }
+	}
+
+	.link-btn {
+		background: none;
+		border: none;
+		color: var(--color-accent);
+		cursor: pointer;
+		font-size: inherit;
+		text-decoration: underline;
+		padding: 0;
+	}
+
 	/* Quick Add */
 	.quick-add {
 		position: relative;
@@ -1955,10 +2178,30 @@
 	}
 
 	.missed-badge {
+		display: flex;
+		align-items: center;
+		gap: 8px;
 		font-size: 0.75rem;
 		color: #ef4444;
 		font-weight: 600;
 		margin-top: 3px;
+	}
+
+	.rollcall-respond-btn {
+		font-size: 0.65rem;
+		padding: 2px 8px;
+		background: rgba(34, 197, 94, 0.15);
+		border: 1px solid rgba(34, 197, 94, 0.4);
+		border-radius: var(--radius-sm);
+		color: #22c55e;
+		cursor: pointer;
+		font-weight: 600;
+		transition: all var(--duration-fast);
+	}
+
+	.rollcall-respond-btn:hover {
+		background: rgba(34, 197, 94, 0.25);
+		border-color: #22c55e;
 	}
 
 	.device-badge {

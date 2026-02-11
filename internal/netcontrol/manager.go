@@ -336,6 +336,15 @@ func (m *Manager) UpdateCheckIn(ci store.NetCheckIn) (*store.NetCheckIn, error) 
 				ci.NetID = existing.NetID
 			}
 
+			// For voice-only operators, any NCS interaction refreshes LastHeard
+			// (they have no APRS to auto-update it). For APRS operators, preserve
+			// the APRS-driven timestamp.
+			if existing.Source == "voice" {
+				ci.LastHeard = time.Now().UTC()
+			} else if ci.LastHeard.IsZero() {
+				ci.LastHeard = existing.LastHeard
+			}
+
 			cis[i] = ci
 			found = true
 			break
@@ -575,6 +584,24 @@ func (m *Manager) AddNote(note store.NetNote) (*store.NetNote, error) {
 		return nil, fmt.Errorf("persist note: %w", err)
 	}
 
+	// Refresh LastHeard for voice operators when a note targets them.
+	if note.CheckInID != "" {
+		m.mu.Lock()
+		cis := m.checkIns[note.NetID]
+		for i, ci := range cis {
+			if ci.ID == note.CheckInID && ci.Source == "voice" {
+				cis[i].LastHeard = time.Now().UTC()
+				m.store.SaveNetCheckIn(cis[i])
+				m.checkIns[note.NetID] = cis
+				// Emit after releasing lock.
+				m.mu.Unlock()
+				m.emit(Event{Type: EventCheckInUpdated, Data: cis[i]})
+				goto noteEmit
+			}
+		}
+		m.mu.Unlock()
+	}
+noteEmit:
 	categoryTag := strings.ToUpper(note.Category)
 	m.logEvent(note.NetID, "note", "", fmt.Sprintf("[%s] Note by %s: %s", categoryTag, note.AuthorName, truncate(note.Content, 80)))
 	m.emit(Event{Type: EventTimelineEntry, Data: note})
@@ -594,6 +621,7 @@ func (m *Manager) InitiateRollCall(netID string) error {
 	// Increment missed roll calls for all active check-ins.
 	m.mu.Lock()
 	cis := m.checkIns[netID]
+	var updated []store.NetCheckIn
 	for i := range cis {
 		if cis[i].Status == OpReleased {
 			continue
@@ -603,14 +631,17 @@ func (m *Manager) InitiateRollCall(netID string) error {
 		// Auto-mark missing after threshold.
 		if cis[i].MissedRollCalls >= MissedRollCallThreshold && cis[i].Status != OpMissing {
 			cis[i].Status = OpMissing
-			m.store.SaveNetCheckIn(cis[i])
-			// Emit update for the auto-marked operator (outside lock would deadlock, so just save).
-		} else {
-			m.store.SaveNetCheckIn(cis[i])
 		}
+		m.store.SaveNetCheckIn(cis[i])
+		updated = append(updated, cis[i])
 	}
 	m.checkIns[netID] = cis
 	m.mu.Unlock()
+
+	// Emit updates outside the lock so WebSocket listeners see the changes.
+	for _, ci := range updated {
+		m.emit(Event{Type: EventCheckInUpdated, Data: ci})
+	}
 
 	m.logEvent(netID, "rollcall", n.NCSCallsign, "Roll call initiated")
 
