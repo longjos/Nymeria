@@ -1,0 +1,1676 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Nymeria — Modern APRS Client</title>
+  <meta name="description" content="Nymeria is a modern, web-based APRS client built for individuals and teams. Real-time maps, multi-user collaboration, RF integration, and emergency communications — all in a single binary.">
+  <meta name="keywords" content="APRS, amateur radio, ham radio, APRS client, packet radio, emergency communications, ARES, RACES, net control, Direwolf, KISS TNC">
+  <meta property="og:title" content="Nymeria — Modern APRS Client">
+  <meta property="og:description" content="A modern, web-based APRS client built for individuals and teams. Real-time maps, multi-user sessions, RF integration, and emergency communications tools.">
+  <meta property="og:type" content="website">
+  <meta property="og:url" content="https://longjos.github.io/Nymeria/">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
+  <style>
+    /* ============================================
+       CSS Custom Properties
+       ============================================ */
+    :root {
+      --bg-deep: #0d0d1a;
+      --bg-primary: #1a1a2e;
+      --bg-card: #16213e;
+      --bg-card-hover: #1a2744;
+      --bg-surface: #0f3460;
+      --accent: #e94560;
+      --accent-glow: rgba(233, 69, 96, 0.25);
+      --accent-soft: rgba(233, 69, 96, 0.12);
+      --text-primary: #f0f0f0;
+      --text-secondary: #a0aec0;
+      --text-muted: #718096;
+      --success: #4ade80;
+      --warning: #f59e0b;
+      --info: #60a5fa;
+      --border: rgba(255, 255, 255, 0.06);
+      --border-accent: rgba(233, 69, 96, 0.3);
+      --radius-sm: 8px;
+      --radius-md: 12px;
+      --radius-lg: 20px;
+      --radius-xl: 28px;
+      --shadow-sm: 0 2px 8px rgba(0,0,0,0.3);
+      --shadow-md: 0 4px 24px rgba(0,0,0,0.4);
+      --shadow-lg: 0 8px 48px rgba(0,0,0,0.5);
+      --shadow-glow: 0 0 40px var(--accent-glow);
+      --font-sans: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+      --font-mono: 'JetBrains Mono', 'Fira Code', monospace;
+      --max-width: 1200px;
+      --nav-height: 72px;
+    }
+
+    /* ============================================
+       Reset & Base
+       ============================================ */
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+    html {
+      scroll-behavior: smooth;
+      -webkit-text-size-adjust: 100%;
+    }
+
+    body {
+      font-family: var(--font-sans);
+      background: var(--bg-deep);
+      color: var(--text-primary);
+      line-height: 1.7;
+      -webkit-font-smoothing: antialiased;
+      -moz-osx-font-smoothing: grayscale;
+      overflow-x: hidden;
+    }
+
+    a { color: var(--accent); text-decoration: none; transition: opacity 0.2s; }
+    a:hover { opacity: 0.85; }
+    img { max-width: 100%; height: auto; }
+
+    ::selection {
+      background: var(--accent);
+      color: white;
+    }
+
+    /* ============================================
+       Navigation
+       ============================================ */
+    .nav {
+      position: fixed;
+      top: 0;
+      left: 0;
+      right: 0;
+      height: var(--nav-height);
+      background: rgba(13, 13, 26, 0.85);
+      backdrop-filter: blur(20px);
+      -webkit-backdrop-filter: blur(20px);
+      border-bottom: 1px solid var(--border);
+      z-index: 1000;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+    }
+
+    .nav-inner {
+      max-width: var(--max-width);
+      width: 100%;
+      padding: 0 24px;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+    }
+
+    .nav-brand {
+      display: flex;
+      align-items: center;
+      gap: 12px;
+      font-weight: 800;
+      font-size: 1.25rem;
+      color: var(--text-primary);
+      letter-spacing: -0.02em;
+    }
+
+    .nav-brand svg {
+      width: 36px;
+      height: 36px;
+    }
+
+    .nav-links {
+      display: flex;
+      align-items: center;
+      gap: 32px;
+      list-style: none;
+    }
+
+    .nav-links a {
+      color: var(--text-secondary);
+      font-size: 0.9rem;
+      font-weight: 500;
+      transition: color 0.2s;
+    }
+
+    .nav-links a:hover { color: var(--text-primary); opacity: 1; }
+
+    .nav-cta {
+      background: var(--accent);
+      color: white !important;
+      padding: 8px 20px;
+      border-radius: var(--radius-sm);
+      font-weight: 600;
+      font-size: 0.875rem;
+      transition: transform 0.2s, box-shadow 0.2s;
+    }
+
+    .nav-cta:hover {
+      transform: translateY(-1px);
+      box-shadow: var(--shadow-glow);
+      opacity: 1;
+    }
+
+    .nav-mobile-toggle {
+      display: none;
+      background: none;
+      border: none;
+      color: var(--text-primary);
+      cursor: pointer;
+      padding: 8px;
+    }
+
+    /* ============================================
+       Hero Section
+       ============================================ */
+    .hero {
+      min-height: 100vh;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      text-align: center;
+      padding: calc(var(--nav-height) + 40px) 24px 80px;
+      position: relative;
+      overflow: hidden;
+    }
+
+    .hero::before {
+      content: '';
+      position: absolute;
+      top: -30%;
+      left: 50%;
+      transform: translateX(-50%);
+      width: 800px;
+      height: 800px;
+      background: radial-gradient(circle, var(--accent-glow) 0%, transparent 70%);
+      pointer-events: none;
+      animation: pulse-glow 6s ease-in-out infinite;
+    }
+
+    @keyframes pulse-glow {
+      0%, 100% { opacity: 0.4; transform: translateX(-50%) scale(1); }
+      50% { opacity: 0.7; transform: translateX(-50%) scale(1.1); }
+    }
+
+    /* Grid pattern background */
+    .hero::after {
+      content: '';
+      position: absolute;
+      inset: 0;
+      background-image:
+        linear-gradient(rgba(255,255,255,0.02) 1px, transparent 1px),
+        linear-gradient(90deg, rgba(255,255,255,0.02) 1px, transparent 1px);
+      background-size: 60px 60px;
+      pointer-events: none;
+    }
+
+    .hero-content {
+      position: relative;
+      z-index: 1;
+      max-width: 800px;
+    }
+
+    .hero-badge {
+      display: inline-flex;
+      align-items: center;
+      gap: 8px;
+      background: var(--accent-soft);
+      border: 1px solid var(--border-accent);
+      color: var(--accent);
+      padding: 6px 16px;
+      border-radius: 100px;
+      font-size: 0.8rem;
+      font-weight: 600;
+      letter-spacing: 0.04em;
+      text-transform: uppercase;
+      margin-bottom: 28px;
+    }
+
+    .hero-badge .dot {
+      width: 6px;
+      height: 6px;
+      background: var(--accent);
+      border-radius: 50%;
+      animation: blink 2s ease-in-out infinite;
+    }
+
+    @keyframes blink {
+      0%, 100% { opacity: 1; }
+      50% { opacity: 0.3; }
+    }
+
+    .hero h1 {
+      font-size: clamp(2.5rem, 6vw, 4.5rem);
+      font-weight: 800;
+      line-height: 1.1;
+      letter-spacing: -0.03em;
+      margin-bottom: 24px;
+    }
+
+    .hero h1 .gradient {
+      background: linear-gradient(135deg, var(--accent) 0%, #ff8a80 50%, var(--warning) 100%);
+      -webkit-background-clip: text;
+      -webkit-text-fill-color: transparent;
+      background-clip: text;
+    }
+
+    .hero-subtitle {
+      font-size: clamp(1.05rem, 2vw, 1.25rem);
+      color: var(--text-secondary);
+      max-width: 600px;
+      margin: 0 auto 40px;
+      line-height: 1.8;
+    }
+
+    .hero-actions {
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      gap: 16px;
+      flex-wrap: wrap;
+    }
+
+    .btn {
+      display: inline-flex;
+      align-items: center;
+      gap: 8px;
+      padding: 14px 28px;
+      border-radius: var(--radius-sm);
+      font-weight: 600;
+      font-size: 0.95rem;
+      transition: all 0.2s;
+      border: none;
+      cursor: pointer;
+    }
+
+    .btn-primary {
+      background: var(--accent);
+      color: white;
+      box-shadow: 0 4px 20px var(--accent-glow);
+    }
+
+    .btn-primary:hover {
+      transform: translateY(-2px);
+      box-shadow: 0 6px 30px var(--accent-glow);
+      color: white;
+      opacity: 1;
+    }
+
+    .btn-secondary {
+      background: var(--bg-card);
+      color: var(--text-primary);
+      border: 1px solid var(--border);
+    }
+
+    .btn-secondary:hover {
+      background: var(--bg-card-hover);
+      border-color: rgba(255,255,255,0.12);
+      color: var(--text-primary);
+      transform: translateY(-2px);
+      opacity: 1;
+    }
+
+    .btn svg {
+      width: 18px;
+      height: 18px;
+    }
+
+    .hero-stats {
+      display: flex;
+      justify-content: center;
+      gap: 48px;
+      margin-top: 64px;
+      padding-top: 40px;
+      border-top: 1px solid var(--border);
+    }
+
+    .hero-stat {
+      text-align: center;
+    }
+
+    .hero-stat-value {
+      display: block;
+      font-size: 1.75rem;
+      font-weight: 800;
+      letter-spacing: -0.02em;
+      color: var(--text-primary);
+    }
+
+    .hero-stat-label {
+      font-size: 0.8rem;
+      color: var(--text-muted);
+      text-transform: uppercase;
+      letter-spacing: 0.06em;
+      font-weight: 500;
+    }
+
+    /* ============================================
+       Section Layout
+       ============================================ */
+    .section {
+      padding: 100px 24px;
+      max-width: var(--max-width);
+      margin: 0 auto;
+    }
+
+    .section-header {
+      text-align: center;
+      margin-bottom: 64px;
+    }
+
+    .section-label {
+      display: inline-block;
+      font-size: 0.75rem;
+      font-weight: 700;
+      letter-spacing: 0.12em;
+      text-transform: uppercase;
+      color: var(--accent);
+      margin-bottom: 16px;
+    }
+
+    .section-title {
+      font-size: clamp(1.75rem, 4vw, 2.75rem);
+      font-weight: 800;
+      letter-spacing: -0.02em;
+      line-height: 1.2;
+      margin-bottom: 16px;
+    }
+
+    .section-desc {
+      font-size: 1.1rem;
+      color: var(--text-secondary);
+      max-width: 600px;
+      margin: 0 auto;
+      line-height: 1.8;
+    }
+
+    /* ============================================
+       Value Props (Why Nymeria)
+       ============================================ */
+    .values {
+      background: var(--bg-primary);
+      border-top: 1px solid var(--border);
+      border-bottom: 1px solid var(--border);
+    }
+
+    .values .section {
+      padding-top: 80px;
+      padding-bottom: 80px;
+    }
+
+    .value-grid {
+      display: grid;
+      grid-template-columns: repeat(4, 1fr);
+      gap: 24px;
+    }
+
+    .value-card {
+      background: var(--bg-card);
+      border: 1px solid var(--border);
+      border-radius: var(--radius-md);
+      padding: 32px 24px;
+      text-align: center;
+      transition: transform 0.25s, border-color 0.25s, box-shadow 0.25s;
+    }
+
+    .value-card:hover {
+      transform: translateY(-4px);
+      border-color: var(--border-accent);
+      box-shadow: var(--shadow-md);
+    }
+
+    .value-icon {
+      width: 56px;
+      height: 56px;
+      margin: 0 auto 20px;
+      background: var(--accent-soft);
+      border-radius: var(--radius-sm);
+      display: flex;
+      align-items: center;
+      justify-content: center;
+    }
+
+    .value-icon svg {
+      width: 28px;
+      height: 28px;
+      color: var(--accent);
+    }
+
+    .value-card h3 {
+      font-size: 1.05rem;
+      font-weight: 700;
+      margin-bottom: 8px;
+      letter-spacing: -0.01em;
+    }
+
+    .value-card p {
+      font-size: 0.875rem;
+      color: var(--text-secondary);
+      line-height: 1.7;
+    }
+
+    /* ============================================
+       Feature Showcase
+       ============================================ */
+    .feature-row {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 64px;
+      align-items: center;
+      margin-bottom: 100px;
+    }
+
+    .feature-row:last-child { margin-bottom: 0; }
+    .feature-row.reverse { direction: rtl; }
+    .feature-row.reverse > * { direction: ltr; }
+
+    .feature-text { max-width: 480px; }
+
+    .feature-text .section-label { text-align: left; }
+
+    .feature-text h3 {
+      font-size: 1.75rem;
+      font-weight: 800;
+      letter-spacing: -0.02em;
+      margin-bottom: 16px;
+      line-height: 1.25;
+    }
+
+    .feature-text p {
+      color: var(--text-secondary);
+      margin-bottom: 24px;
+      line-height: 1.8;
+    }
+
+    .feature-list {
+      list-style: none;
+      display: flex;
+      flex-direction: column;
+      gap: 12px;
+    }
+
+    .feature-list li {
+      display: flex;
+      align-items: flex-start;
+      gap: 12px;
+      font-size: 0.925rem;
+      color: var(--text-secondary);
+    }
+
+    .feature-list li svg {
+      width: 20px;
+      height: 20px;
+      color: var(--success);
+      flex-shrink: 0;
+      margin-top: 2px;
+    }
+
+    .feature-visual {
+      background: var(--bg-card);
+      border: 1px solid var(--border);
+      border-radius: var(--radius-lg);
+      padding: 32px;
+      min-height: 360px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      position: relative;
+      overflow: hidden;
+    }
+
+    .feature-visual::before {
+      content: '';
+      position: absolute;
+      inset: 0;
+      background: linear-gradient(135deg, var(--accent-soft) 0%, transparent 50%);
+      pointer-events: none;
+    }
+
+    /* Map mockup */
+    .map-mockup {
+      width: 100%;
+      position: relative;
+      z-index: 1;
+    }
+
+    .map-mockup .window-bar {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      padding: 10px 14px;
+      background: var(--bg-deep);
+      border-radius: var(--radius-sm) var(--radius-sm) 0 0;
+      border: 1px solid var(--border);
+      border-bottom: none;
+    }
+
+    .window-dot {
+      width: 10px;
+      height: 10px;
+      border-radius: 50%;
+      background: var(--text-muted);
+    }
+
+    .window-dot:nth-child(1) { background: #ff5f57; }
+    .window-dot:nth-child(2) { background: #febc2e; }
+    .window-dot:nth-child(3) { background: #28c840; }
+
+    .map-surface {
+      background: #0a1628;
+      border: 1px solid var(--border);
+      border-radius: 0 0 var(--radius-sm) var(--radius-sm);
+      padding: 20px;
+      min-height: 240px;
+      position: relative;
+      overflow: hidden;
+    }
+
+    /* Grid lines on map */
+    .map-surface::before {
+      content: '';
+      position: absolute;
+      inset: 0;
+      background-image:
+        linear-gradient(rgba(96,165,250,0.06) 1px, transparent 1px),
+        linear-gradient(90deg, rgba(96,165,250,0.06) 1px, transparent 1px);
+      background-size: 40px 40px;
+    }
+
+    .map-station {
+      position: absolute;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      gap: 4px;
+      animation: station-fade-in 0.6s ease-out forwards;
+      opacity: 0;
+    }
+
+    @keyframes station-fade-in {
+      to { opacity: 1; }
+    }
+
+    .map-station-dot {
+      width: 14px;
+      height: 14px;
+      border-radius: 50%;
+      border: 2px solid;
+      position: relative;
+    }
+
+    .map-station-dot::after {
+      content: '';
+      position: absolute;
+      inset: -6px;
+      border-radius: 50%;
+      border: 1px solid;
+      opacity: 0.3;
+      animation: ping 2s ease-out infinite;
+    }
+
+    @keyframes ping {
+      0% { transform: scale(0.8); opacity: 0.4; }
+      100% { transform: scale(2); opacity: 0; }
+    }
+
+    .map-station-label {
+      font-family: var(--font-mono);
+      font-size: 0.65rem;
+      color: var(--text-muted);
+      background: rgba(10, 22, 40, 0.8);
+      padding: 1px 6px;
+      border-radius: 3px;
+      white-space: nowrap;
+    }
+
+    .map-station:nth-child(1) { top: 25%; left: 20%; animation-delay: 0.1s; }
+    .map-station:nth-child(1) .map-station-dot { background: var(--accent); border-color: var(--accent); }
+    .map-station:nth-child(1) .map-station-dot::after { border-color: var(--accent); }
+
+    .map-station:nth-child(2) { top: 45%; left: 55%; animation-delay: 0.3s; }
+    .map-station:nth-child(2) .map-station-dot { background: var(--info); border-color: var(--info); }
+    .map-station:nth-child(2) .map-station-dot::after { border-color: var(--info); }
+
+    .map-station:nth-child(3) { top: 65%; left: 35%; animation-delay: 0.5s; }
+    .map-station:nth-child(3) .map-station-dot { background: var(--success); border-color: var(--success); }
+    .map-station:nth-child(3) .map-station-dot::after { border-color: var(--success); }
+
+    .map-station:nth-child(4) { top: 30%; left: 72%; animation-delay: 0.7s; }
+    .map-station:nth-child(4) .map-station-dot { background: var(--warning); border-color: var(--warning); }
+    .map-station:nth-child(4) .map-station-dot::after { border-color: var(--warning); }
+
+    .map-track-line {
+      position: absolute;
+      top: 50%;
+      left: 25%;
+      width: 35%;
+      height: 1px;
+      background: linear-gradient(90deg, var(--info), transparent);
+      opacity: 0.4;
+      transform: rotate(-15deg);
+    }
+
+    /* Terminal mockup */
+    .terminal-mockup {
+      width: 100%;
+      position: relative;
+      z-index: 1;
+    }
+
+    .terminal-body {
+      background: var(--bg-deep);
+      border: 1px solid var(--border);
+      border-radius: 0 0 var(--radius-sm) var(--radius-sm);
+      padding: 20px;
+      font-family: var(--font-mono);
+      font-size: 0.8rem;
+      line-height: 1.8;
+      min-height: 240px;
+    }
+
+    .terminal-line { margin-bottom: 4px; }
+    .terminal-prompt { color: var(--success); }
+    .terminal-cmd { color: var(--text-primary); }
+    .terminal-output { color: var(--text-muted); }
+    .terminal-accent { color: var(--accent); }
+    .terminal-info { color: var(--info); }
+    .terminal-warn { color: var(--warning); }
+
+    /* Dashboard mockup */
+    .dashboard-mockup {
+      width: 100%;
+      position: relative;
+      z-index: 1;
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 12px;
+    }
+
+    .dash-card {
+      background: var(--bg-deep);
+      border: 1px solid var(--border);
+      border-radius: var(--radius-sm);
+      padding: 16px;
+    }
+
+    .dash-card-label {
+      font-size: 0.7rem;
+      color: var(--text-muted);
+      text-transform: uppercase;
+      letter-spacing: 0.08em;
+      font-weight: 600;
+      margin-bottom: 8px;
+    }
+
+    .dash-card-value {
+      font-size: 1.5rem;
+      font-weight: 800;
+      letter-spacing: -0.02em;
+    }
+
+    .dash-card-sub {
+      font-size: 0.75rem;
+      color: var(--text-muted);
+      margin-top: 4px;
+    }
+
+    .dash-wide {
+      grid-column: span 2;
+    }
+
+    .dash-bar-chart {
+      display: flex;
+      align-items: flex-end;
+      gap: 4px;
+      height: 48px;
+      margin-top: 8px;
+    }
+
+    .dash-bar {
+      flex: 1;
+      background: var(--accent);
+      border-radius: 2px 2px 0 0;
+      opacity: 0.7;
+      min-height: 4px;
+    }
+
+    .role-grid {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 8px;
+      width: 100%;
+      position: relative;
+      z-index: 1;
+    }
+
+    .role-card {
+      background: var(--bg-deep);
+      border: 1px solid var(--border);
+      border-radius: var(--radius-sm);
+      padding: 16px;
+    }
+
+    .role-card-name {
+      font-weight: 700;
+      font-size: 0.85rem;
+      margin-bottom: 6px;
+      display: flex;
+      align-items: center;
+      gap: 8px;
+    }
+
+    .role-dot {
+      width: 8px;
+      height: 8px;
+      border-radius: 50%;
+    }
+
+    .role-card-desc {
+      font-size: 0.75rem;
+      color: var(--text-muted);
+      line-height: 1.6;
+    }
+
+    /* ============================================
+       Feature Cards Grid
+       ============================================ */
+    .features-grid {
+      display: grid;
+      grid-template-columns: repeat(3, 1fr);
+      gap: 20px;
+    }
+
+    .feature-card {
+      background: var(--bg-card);
+      border: 1px solid var(--border);
+      border-radius: var(--radius-md);
+      padding: 28px 24px;
+      transition: transform 0.25s, border-color 0.25s;
+    }
+
+    .feature-card:hover {
+      transform: translateY(-3px);
+      border-color: rgba(255,255,255,0.1);
+    }
+
+    .feature-card-icon {
+      width: 40px;
+      height: 40px;
+      background: var(--accent-soft);
+      border-radius: var(--radius-sm);
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      margin-bottom: 16px;
+    }
+
+    .feature-card-icon svg {
+      width: 20px;
+      height: 20px;
+      color: var(--accent);
+    }
+
+    .feature-card h4 {
+      font-size: 0.95rem;
+      font-weight: 700;
+      margin-bottom: 8px;
+      letter-spacing: -0.01em;
+    }
+
+    .feature-card p {
+      font-size: 0.85rem;
+      color: var(--text-secondary);
+      line-height: 1.7;
+    }
+
+    /* ============================================
+       Community Section
+       ============================================ */
+    .community {
+      background: var(--bg-primary);
+      border-top: 1px solid var(--border);
+      border-bottom: 1px solid var(--border);
+    }
+
+    .community-inner {
+      text-align: center;
+      max-width: 720px;
+      margin: 0 auto;
+    }
+
+    .community-inner p {
+      color: var(--text-secondary);
+      font-size: 1.05rem;
+      line-height: 1.9;
+      margin-bottom: 20px;
+    }
+
+    .community-logos {
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      gap: 40px;
+      margin-top: 40px;
+      flex-wrap: wrap;
+    }
+
+    .community-logo {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      color: var(--text-muted);
+      font-size: 0.85rem;
+      font-weight: 500;
+    }
+
+    .community-logo svg {
+      width: 24px;
+      height: 24px;
+      opacity: 0.5;
+    }
+
+    /* ============================================
+       Getting Started
+       ============================================ */
+    .steps {
+      display: grid;
+      grid-template-columns: repeat(3, 1fr);
+      gap: 24px;
+      margin-top: 48px;
+    }
+
+    .step {
+      position: relative;
+      background: var(--bg-card);
+      border: 1px solid var(--border);
+      border-radius: var(--radius-md);
+      padding: 32px 24px;
+    }
+
+    .step-number {
+      position: absolute;
+      top: -14px;
+      left: 24px;
+      width: 28px;
+      height: 28px;
+      background: var(--accent);
+      border-radius: 50%;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      font-weight: 800;
+      font-size: 0.8rem;
+      color: white;
+    }
+
+    .step h4 {
+      font-size: 1rem;
+      font-weight: 700;
+      margin-bottom: 10px;
+      margin-top: 4px;
+    }
+
+    .step p {
+      font-size: 0.875rem;
+      color: var(--text-secondary);
+      line-height: 1.7;
+    }
+
+    .step code {
+      display: block;
+      margin-top: 14px;
+      padding: 10px 14px;
+      background: var(--bg-deep);
+      border: 1px solid var(--border);
+      border-radius: var(--radius-sm);
+      font-family: var(--font-mono);
+      font-size: 0.8rem;
+      color: var(--success);
+      word-break: break-all;
+    }
+
+    /* ============================================
+       CTA Section
+       ============================================ */
+    .cta-section {
+      text-align: center;
+      padding: 120px 24px;
+      position: relative;
+    }
+
+    .cta-section::before {
+      content: '';
+      position: absolute;
+      bottom: 0;
+      left: 50%;
+      transform: translateX(-50%);
+      width: 600px;
+      height: 400px;
+      background: radial-gradient(ellipse, var(--accent-glow) 0%, transparent 70%);
+      pointer-events: none;
+    }
+
+    .cta-section h2 {
+      font-size: clamp(1.75rem, 4vw, 2.5rem);
+      font-weight: 800;
+      margin-bottom: 16px;
+      position: relative;
+      letter-spacing: -0.02em;
+    }
+
+    .cta-section p {
+      color: var(--text-secondary);
+      font-size: 1.05rem;
+      margin-bottom: 32px;
+      position: relative;
+      max-width: 500px;
+      margin-left: auto;
+      margin-right: auto;
+      margin-bottom: 32px;
+    }
+
+    .cta-section .hero-actions {
+      position: relative;
+    }
+
+    /* ============================================
+       Footer
+       ============================================ */
+    .footer {
+      border-top: 1px solid var(--border);
+      padding: 48px 24px;
+    }
+
+    .footer-inner {
+      max-width: var(--max-width);
+      margin: 0 auto;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+    }
+
+    .footer-left {
+      display: flex;
+      align-items: center;
+      gap: 24px;
+    }
+
+    .footer-brand {
+      font-weight: 700;
+      color: var(--text-primary);
+      font-size: 0.95rem;
+    }
+
+    .footer-copy {
+      font-size: 0.8rem;
+      color: var(--text-muted);
+    }
+
+    .footer-links {
+      display: flex;
+      gap: 24px;
+    }
+
+    .footer-links a {
+      color: var(--text-muted);
+      font-size: 0.85rem;
+      font-weight: 500;
+    }
+
+    .footer-links a:hover { color: var(--text-secondary); }
+
+    /* ============================================
+       Responsive
+       ============================================ */
+    @media (max-width: 1024px) {
+      .value-grid { grid-template-columns: repeat(2, 1fr); }
+      .feature-row { grid-template-columns: 1fr; gap: 40px; }
+      .feature-row.reverse { direction: ltr; }
+      .features-grid { grid-template-columns: repeat(2, 1fr); }
+    }
+
+    @media (max-width: 768px) {
+      .nav-links { display: none; }
+      .nav-links.open {
+        display: flex;
+        flex-direction: column;
+        position: absolute;
+        top: var(--nav-height);
+        left: 0;
+        right: 0;
+        background: rgba(13, 13, 26, 0.95);
+        backdrop-filter: blur(20px);
+        padding: 24px;
+        gap: 20px;
+        border-bottom: 1px solid var(--border);
+      }
+      .nav-mobile-toggle { display: block; }
+
+      .hero-stats {
+        gap: 24px;
+        flex-wrap: wrap;
+      }
+
+      .value-grid { grid-template-columns: 1fr; }
+      .features-grid { grid-template-columns: 1fr; }
+      .steps { grid-template-columns: 1fr; }
+      .dashboard-mockup { grid-template-columns: 1fr; }
+      .dash-wide { grid-column: span 1; }
+      .role-grid { grid-template-columns: 1fr; }
+
+      .section { padding: 64px 20px; }
+
+      .footer-inner {
+        flex-direction: column;
+        gap: 20px;
+        text-align: center;
+      }
+
+      .footer-left { flex-direction: column; gap: 8px; }
+    }
+
+    @media (max-width: 480px) {
+      .hero-actions { flex-direction: column; width: 100%; }
+      .btn { width: 100%; justify-content: center; }
+    }
+
+    /* ============================================
+       Accessibility
+       ============================================ */
+    @media (prefers-reduced-motion: reduce) {
+      *, *::before, *::after {
+        animation-duration: 0.01ms !important;
+        transition-duration: 0.01ms !important;
+      }
+      html { scroll-behavior: auto; }
+    }
+
+    :focus-visible {
+      outline: 2px solid var(--accent);
+      outline-offset: 2px;
+    }
+  </style>
+</head>
+<body>
+
+  <!-- ========================================
+       Navigation
+       ======================================== -->
+  <nav class="nav" role="navigation" aria-label="Main navigation">
+    <div class="nav-inner">
+      <a href="#" class="nav-brand" aria-label="Nymeria home">
+        <svg viewBox="0 0 36 36" fill="none" xmlns="http://www.w3.org/2000/svg" aria-hidden="true">
+          <rect width="36" height="36" rx="8" fill="#e94560"/>
+          <path d="M10 26V10l8 10 8-10v16" stroke="white" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"/>
+        </svg>
+        Nymeria
+      </a>
+
+      <button class="nav-mobile-toggle" aria-label="Toggle menu" onclick="document.querySelector('.nav-links').classList.toggle('open')">
+        <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+          <path d="M3 12h18M3 6h18M3 18h18"/>
+        </svg>
+      </button>
+
+      <ul class="nav-links">
+        <li><a href="#features">Features</a></li>
+        <li><a href="#emcomm">Emergency Comms</a></li>
+        <li><a href="#deploy">Deployment</a></li>
+        <li><a href="#get-started">Get Started</a></li>
+        <li><a href="https://github.com/longjos/Nymeria" class="nav-cta">GitHub</a></li>
+      </ul>
+    </div>
+  </nav>
+
+  <!-- ========================================
+       Hero
+       ======================================== -->
+  <section class="hero">
+    <div class="hero-content">
+      <div class="hero-badge">
+        <span class="dot"></span>
+        Open Source
+      </div>
+      <h1>
+        APRS for the<br>
+        <span class="gradient">modern era</span>
+      </h1>
+      <p class="hero-subtitle">
+        A beautiful, web-based APRS client designed for individuals and teams.
+        Real-time maps, multi-user collaboration, RF integration, and emergency
+        communications tools &mdash; all in a single binary.
+      </p>
+      <div class="hero-actions">
+        <a href="https://github.com/longjos/Nymeria" class="btn btn-primary">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M9 19c-5 1.5-5-2.5-7-3m14 6v-3.87a3.37 3.37 0 00-.94-2.61c3.14-.35 6.44-1.54 6.44-7A5.44 5.44 0 0020 4.77 5.07 5.07 0 0019.91 1S18.73.65 16 2.48a13.38 13.38 0 00-7 0C6.27.65 5.09 1 5.09 1A5.07 5.07 0 005 4.77a5.44 5.44 0 00-1.5 3.78c0 5.42 3.3 6.61 6.44 7A3.37 3.37 0 009 18.13V22"/></svg>
+          View on GitHub
+        </a>
+        <a href="#get-started" class="btn btn-secondary">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><polygon points="10 8 16 12 10 16 10 8"/></svg>
+          Get Started
+        </a>
+      </div>
+      <div class="hero-stats">
+        <div class="hero-stat">
+          <span class="hero-stat-value">3</span>
+          <span class="hero-stat-label">Transport Types</span>
+        </div>
+        <div class="hero-stat">
+          <span class="hero-stat-value">4</span>
+          <span class="hero-stat-label">User Roles</span>
+        </div>
+        <div class="hero-stat">
+          <span class="hero-stat-value">1</span>
+          <span class="hero-stat-label">Binary to Deploy</span>
+        </div>
+        <div class="hero-stat">
+          <span class="hero-stat-value">0</span>
+          <span class="hero-stat-label">Dependencies at Runtime</span>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- ========================================
+       Value Props
+       ======================================== -->
+  <section class="values" id="features">
+    <div class="section">
+      <div class="section-header">
+        <span class="section-label">Why Nymeria</span>
+        <h2 class="section-title">Built different, on purpose</h2>
+        <p class="section-desc">
+          The APRS community has built incredible tools over decades. Nymeria brings
+          that same spirit into a modern, web-native package.
+        </p>
+      </div>
+
+      <div class="value-grid">
+        <div class="value-card">
+          <div class="value-icon">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="2" y="3" width="20" height="14" rx="2"/><path d="M8 21h8M12 17v4"/></svg>
+          </div>
+          <h3>Web-Native UI</h3>
+          <p>A responsive, real-time interface that runs in any browser. Desktop panel layout, mobile bottom sheet &mdash; one codebase, every screen size.</p>
+        </div>
+
+        <div class="value-card">
+          <div class="value-icon">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M17 21v-2a4 4 0 00-4-4H5a4 4 0 00-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M23 21v-2a4 4 0 00-3-3.87M16 3.13a4 4 0 010 7.75"/></svg>
+          </div>
+          <h3>Multi-User Sessions</h3>
+          <p>Multiple operators share one station with role-based access. Message claiming, activity logs, and real-time sync keep everyone coordinated.</p>
+        </div>
+
+        <div class="value-card">
+          <div class="value-icon">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M13 2L3 14h9l-1 8 10-12h-9l1-8z"/></svg>
+          </div>
+          <h3>Single Binary</h3>
+          <p>Download one file, run it. No Java, no package managers, no runtime dependencies. Go + embedded SvelteKit &mdash; it just works.</p>
+        </div>
+
+        <div class="value-card">
+          <div class="value-icon">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="2"/><path d="M16.24 7.76a6 6 0 010 8.49m-8.48-.01a6 6 0 010-8.49m11.31-2.82a10 10 0 010 14.14m-14.14 0a10 10 0 010-14.14"/></svg>
+          </div>
+          <h3>Full RF Integration</h3>
+          <p>APRS-IS, Direwolf KISS TCP, and hardware serial TNCs. Run dual transports simultaneously with automatic cross-transport deduplication.</p>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- ========================================
+       Feature: Live Map
+       ======================================== -->
+  <section class="section">
+    <div class="feature-row">
+      <div class="feature-text">
+        <span class="section-label">Real-Time Tracking</span>
+        <h3>A live map that actually feels alive</h3>
+        <p>
+          Stations appear in real time with proper APRS symbols, track history, and
+          smooth animations. Search by callsign, click to inspect, and fly across the
+          map with a single tap.
+        </p>
+        <ul class="feature-list">
+          <li>
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="20 6 9 17 4 12"/></svg>
+            188+ APRS symbols with SVG rendering and overlays
+          </li>
+          <li>
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="20 6 9 17 4 12"/></svg>
+            Full Mic-E, compressed, and uncompressed position decoding
+          </li>
+          <li>
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="20 6 9 17 4 12"/></svg>
+            Station detail panels with tabs: info, messages, track
+          </li>
+          <li>
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="20 6 9 17 4 12"/></svg>
+            Offline map tile caching for field deployments
+          </li>
+        </ul>
+      </div>
+      <div class="feature-visual">
+        <div class="map-mockup">
+          <div class="window-bar">
+            <div class="window-dot"></div>
+            <div class="window-dot"></div>
+            <div class="window-dot"></div>
+          </div>
+          <div class="map-surface">
+            <div class="map-track-line"></div>
+            <div class="map-station">
+              <div class="map-station-dot"></div>
+              <span class="map-station-label">W4ABC-9</span>
+            </div>
+            <div class="map-station">
+              <div class="map-station-dot"></div>
+              <span class="map-station-label">KD5RXT-7</span>
+            </div>
+            <div class="map-station">
+              <div class="map-station-dot"></div>
+              <span class="map-station-label">N0CALL-5</span>
+            </div>
+            <div class="map-station">
+              <div class="map-station-dot"></div>
+              <span class="map-station-label">KE5ABC</span>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- Feature: Multi-User -->
+    <div class="feature-row reverse">
+      <div class="feature-text">
+        <span class="section-label">Collaboration</span>
+        <h3>One station, many operators</h3>
+        <p>
+          Nymeria is the first APRS client built from the ground up for shared
+          operation. Four role tiers control who can observe, annotate, transmit, or
+          configure &mdash; so your whole team can work from a single station.
+        </p>
+        <ul class="feature-list">
+          <li>
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="20 6 9 17 4 12"/></svg>
+            Simple PIN-based auth &mdash; no accounts to manage
+          </li>
+          <li>
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="20 6 9 17 4 12"/></svg>
+            Message claiming prevents duplicate replies
+          </li>
+          <li>
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="20 6 9 17 4 12"/></svg>
+            Complete activity audit trail with CSV export
+          </li>
+          <li>
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="20 6 9 17 4 12"/></svg>
+            Every browser sees the same picture, in real time
+          </li>
+        </ul>
+      </div>
+      <div class="feature-visual">
+        <div class="role-grid">
+          <div class="role-card">
+            <div class="role-card-name"><div class="role-dot" style="background:var(--text-muted)"></div> Observer</div>
+            <div class="role-card-desc">View the map, stations, and messages. Perfect for situational awareness without transmit access.</div>
+          </div>
+          <div class="role-card">
+            <div class="role-card-name"><div class="role-dot" style="background:var(--info)"></div> Plotter</div>
+            <div class="role-card-desc">Create and manage map annotations, tactical aliases, and APRS objects for the team.</div>
+          </div>
+          <div class="role-card">
+            <div class="role-card-name"><div class="role-dot" style="background:var(--success)"></div> Operator</div>
+            <div class="role-card-desc">Full messaging, beaconing, and object control. Claim conversations and respond to traffic.</div>
+          </div>
+          <div class="role-card">
+            <div class="role-card-name"><div class="role-dot" style="background:var(--accent)"></div> Admin</div>
+            <div class="role-card-desc">Station configuration, transport management, and user promotion. Full system control.</div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- Feature: Deployment -->
+    <div class="feature-row" id="deploy">
+      <div class="feature-text">
+        <span class="section-label">Deployment</span>
+        <h3>From download to on-air in minutes</h3>
+        <p>
+          Nymeria compiles the entire application &mdash; backend, frontend, and all
+          assets &mdash; into a single executable. No Java runtime. No npm. No docker
+          required (but supported). Just copy the binary and go.
+        </p>
+        <ul class="feature-list">
+          <li>
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="20 6 9 17 4 12"/></svg>
+            Runs on Linux, macOS, Windows, and Raspberry Pi
+          </li>
+          <li>
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="20 6 9 17 4 12"/></svg>
+            Docker Compose with Direwolf for turnkey RF stations
+          </li>
+          <li>
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="20 6 9 17 4 12"/></svg>
+            SQLite storage &mdash; zero-config, single-file database
+          </li>
+          <li>
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="20 6 9 17 4 12"/></svg>
+            Guided setup wizard on first launch
+          </li>
+        </ul>
+      </div>
+      <div class="feature-visual">
+        <div class="terminal-mockup">
+          <div class="window-bar">
+            <div class="window-dot"></div>
+            <div class="window-dot"></div>
+            <div class="window-dot"></div>
+          </div>
+          <div class="terminal-body">
+            <div class="terminal-line"><span class="terminal-prompt">$ </span><span class="terminal-cmd">./nymeria --listen :9090</span></div>
+            <div class="terminal-line"><span class="terminal-output">&nbsp;</span></div>
+            <div class="terminal-line"><span class="terminal-accent">  _  _                      _</span></div>
+            <div class="terminal-line"><span class="terminal-accent"> | \| |_  _ _ __  ___ _ _(_) __ _</span></div>
+            <div class="terminal-line"><span class="terminal-accent"> | .` | || | '  \/ -_) '_| |/ _` |</span></div>
+            <div class="terminal-line"><span class="terminal-accent"> |_|\_|\_, |_|_|_\___|_| |_|\__,_|</span></div>
+            <div class="terminal-line"><span class="terminal-accent">       |__/</span></div>
+            <div class="terminal-line"><span class="terminal-output">&nbsp;</span></div>
+            <div class="terminal-line"><span class="terminal-info">INFO</span> <span class="terminal-output">Station: W4ABC-9</span></div>
+            <div class="terminal-line"><span class="terminal-info">INFO</span> <span class="terminal-output">APRS-IS connected to rotate.aprs2.net</span></div>
+            <div class="terminal-line"><span class="terminal-info">INFO</span> <span class="terminal-output">KISS TCP connected to localhost:8001</span></div>
+            <div class="terminal-line"><span class="terminal-warn">READY</span> <span class="terminal-output">Listening on :9090</span></div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- ========================================
+       Emergency Communications
+       ======================================== -->
+  <section class="community" id="emcomm">
+    <div class="section">
+      <div class="section-header">
+        <span class="section-label">Emergency Communications</span>
+        <h2 class="section-title">Ready when it matters most</h2>
+        <p class="section-desc">
+          Purpose-built tools for ARES, RACES, and community emergency response.
+          Nymeria helps your team maintain situational awareness and coordinate
+          operations when the pressure is on.
+        </p>
+      </div>
+
+      <div class="features-grid">
+        <div class="feature-card">
+          <div class="feature-card-icon">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M14 2H6a2 2 0 00-2 2v16a2 2 0 002 2h12a2 2 0 002-2V8z"/><polyline points="14 2 14 8 20 8"/><path d="M16 13H8M16 17H8M10 9H8"/></svg>
+          </div>
+          <h4>Net Control Dashboard</h4>
+          <p>Full net lifecycle management with operator roster, check-ins, status tracking, roll calls, and NCS transfers. Smart sorting surfaces who needs attention.</p>
+        </div>
+
+        <div class="feature-card">
+          <div class="feature-card-icon">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15a2 2 0 01-2 2H7l-4 4V5a2 2 0 012-2h14a2 2 0 012 2z"/></svg>
+          </div>
+          <h4>ICS-309 Communications Log</h4>
+          <p>Automatically generate ICS-309 forms from APRS message traffic. Filter by time range or net session. Print to PDF or export as CSV.</p>
+        </div>
+
+        <div class="feature-card">
+          <div class="feature-card-icon">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polygon points="12 2 15.09 8.26 22 9.27 17 14.14 18.18 21.02 12 17.77 5.82 21.02 7 14.14 2 9.27 8.91 8.26 12 2"/></svg>
+          </div>
+          <h4>Mission Management</h4>
+          <p>Create missions with priority levels, assign operators, track status. Bidirectional linking between missions and map annotations keeps the picture clear.</p>
+        </div>
+
+        <div class="feature-card">
+          <div class="feature-card-icon">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 10c0 7-9 13-9 13s-9-6-9-13a9 9 0 0118 0z"/><circle cx="12" cy="10" r="3"/></svg>
+          </div>
+          <h4>Map Annotations</h4>
+          <p>Points, lines, and areas with 8 categories, priority levels, and 15 built-in templates for events, SAR, and disaster response. Promote to RF objects with one click.</p>
+        </div>
+
+        <div class="feature-card">
+          <div class="feature-card-icon">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M20 21v-2a4 4 0 00-4-4H8a4 4 0 00-4 4v2"/><circle cx="12" cy="7" r="4"/></svg>
+          </div>
+          <h4>Tactical Callsign Aliases</h4>
+          <p>Map APRS callsigns to friendly identifiers like "SHELTER-1" or "SAG-NORTH". Pre-configure in YAML, assign in the UI, or detect from APRS TACTICAL messages.</p>
+        </div>
+
+        <div class="feature-card">
+          <div class="feature-card-icon">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><path d="M12 6v6l4 2"/></svg>
+          </div>
+          <h4>Timeline &amp; Activity Log</h4>
+          <p>Every action timestamped and attributed. Filter by event type, operator, or time range. Full audit trail with CSV export for after-action reports.</p>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- ========================================
+       More Features Grid
+       ======================================== -->
+  <section class="section">
+    <div class="section-header">
+      <span class="section-label">And so much more</span>
+      <h2 class="section-title">Every feature you'd expect, and a few you wouldn't</h2>
+    </div>
+
+    <div class="features-grid">
+      <div class="feature-card">
+        <div class="feature-card-icon">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M14 14.76V3.5a2.5 2.5 0 00-5 0v11.26a4.5 4.5 0 105 0z"/></svg>
+        </div>
+        <h4>Weather Dashboard</h4>
+        <p>Dedicated weather station panel with temperature, wind, rain, pressure, humidity, and more. Historical charts and configurable alert thresholds.</p>
+      </div>
+
+      <div class="feature-card">
+        <div class="feature-card-icon">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="22 12 18 12 15 21 9 3 6 12 2 12"/></svg>
+        </div>
+        <h4>Telemetry Graphing</h4>
+        <p>Automatic PARM/UNIT/EQNS metadata parsing with multi-series time charts. Human-readable channel labels and coefficient-based value conversion.</p>
+      </div>
+
+      <div class="feature-card">
+        <div class="feature-card-icon">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15a2 2 0 01-2 2H7l-4 4V5a2 2 0 012-2h14a2 2 0 012 2z"/></svg>
+        </div>
+        <h4>APRS Messaging</h4>
+        <p>Full send/receive with auto-acknowledgment, retry with exponential backoff, conversation threading, and a built-in 67-character counter.</p>
+      </div>
+
+      <div class="feature-card">
+        <div class="feature-card-icon">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><line x1="2" y1="12" x2="22" y2="12"/><path d="M12 2a15.3 15.3 0 014 10 15.3 15.3 0 01-4 10 15.3 15.3 0 01-4-10 15.3 15.3 0 014-10z"/></svg>
+        </div>
+        <h4>Direction Finding</h4>
+        <p>Parse DF packets, visualize bearing lines on the map, compute multi-station triangulation with confidence spread, and fly to the estimated target.</p>
+      </div>
+
+      <div class="feature-card">
+        <div class="feature-card-icon">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="4" y="4" width="16" height="16" rx="2"/><path d="M9 9h6v6H9z"/><path d="M9 1v3M15 1v3M9 20v3M15 20v3M20 9h3M20 14h3M1 9h3M1 14h3"/></svg>
+        </div>
+        <h4>Packet Inspector</h4>
+        <p>Raw protocol view with real-time packet stream, type/source filtering, pause/resume, and expandable detail for each packet's full TNC2 payload.</p>
+      </div>
+
+      <div class="feature-card">
+        <div class="feature-card-icon">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polygon points="22 3 2 3 10 12.46 10 19 14 21 14 12.46 22 3"/></svg>
+        </div>
+        <h4>Visual Filter Builder</h4>
+        <p>Build APRS-IS server-side filters with a visual editor. Range, prefix, symbol, and area rules with a mini-map preview. Toggle between visual and raw modes.</p>
+      </div>
+
+      <div class="feature-card">
+        <div class="feature-card-icon">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/></svg>
+        </div>
+        <h4>Objects &amp; Items</h4>
+        <p>Create, retransmit, and kill APRS objects and items. Promote map annotations to RF-transmitted objects with proper APRS symbol mapping.</p>
+      </div>
+
+      <div class="feature-card">
+        <div class="feature-card-icon">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M2 3h6a4 4 0 014 4v14a3 3 0 00-3-3H2z"/><path d="M22 3h-6a4 4 0 00-4 4v14a3 3 0 013-3h7z"/></svg>
+        </div>
+        <h4>Bulletin Board</h4>
+        <p>Create and view APRS bulletins (BLN0-BLN9) with automatic number sequencing, deduplication, and real-time display.</p>
+      </div>
+
+      <div class="feature-card">
+        <div class="feature-card-icon">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M4 15s1-1 4-1 5 2 8 2 4-1 4-1V3s-1 1-4 1-5-2-8-2-4 1-4 1z"/><line x1="4" y1="22" x2="4" y2="15"/></svg>
+        </div>
+        <h4>Position Beaconing</h4>
+        <p>Fixed-interval and manual beacon trigger. Configurable comment, automatic suppression when no transports are connected, and smart beaconing framework.</p>
+      </div>
+    </div>
+  </section>
+
+  <!-- ========================================
+       Community Love
+       ======================================== -->
+  <section class="community">
+    <div class="section">
+      <div class="community-inner">
+        <span class="section-label">Community</span>
+        <h2 class="section-title">Standing on the shoulders of giants</h2>
+        <p>
+          APRS has been connecting amateur radio operators for over 30 years,
+          thanks to the vision of Bob Bruninga, WB4APR (SK), and the incredible
+          community of developers and operators who have built and maintained the
+          ecosystem.
+        </p>
+        <p>
+          Tools like YAAC, Xastir, APRSISCE/32, APRSdroid, PinPoint APRS, Direwolf,
+          and many others have made APRS accessible to thousands of hams worldwide.
+          Nymeria is proud to be part of this tradition &mdash; we're just adding
+          a new option to the toolbox with a focus on modern web technology and
+          multi-user collaboration.
+        </p>
+        <p style="color: var(--text-muted); font-size: 0.9rem; margin-top: 8px;">
+          73 to all the developers and operators keeping APRS alive.
+        </p>
+
+        <div class="community-logos">
+          <div class="community-logo">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M4.5 16.5c-1.5 1.26-2 5-2 5s3.74-.5 5-2c.71-.84.7-2.13-.09-2.91a2.18 2.18 0 00-2.91-.09z"/><path d="M12 15l-3-3a22 22 0 012-3.95A12.88 12.88 0 0122 2c0 2.72-.78 7.5-6 11a22.35 22.35 0 01-4 2z"/><path d="M9 12H4s.55-3.03 2-4c1.62-1.08 5 0 5 0M12 15v5s3.03-.55 4-2c1.08-1.62 0-5 0-5"/></svg>
+            Go + SvelteKit
+          </div>
+          <div class="community-logo">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><circle cx="12" cy="12" r="10"/><path d="M2 12h20M12 2a15.3 15.3 0 014 10 15.3 15.3 0 01-4 10 15.3 15.3 0 01-4-10 15.3 15.3 0 014-10z"/></svg>
+            Open Source
+          </div>
+          <div class="community-logo">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M17 21v-2a4 4 0 00-4-4H5a4 4 0 00-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M23 21v-2a4 4 0 00-3-3.87M16 3.13a4 4 0 010 7.75"/></svg>
+            Built for Teams
+          </div>
+          <div class="community-logo">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/></svg>
+            EmComm Ready
+          </div>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- ========================================
+       Getting Started
+       ======================================== -->
+  <section class="section" id="get-started">
+    <div class="section-header">
+      <span class="section-label">Get Started</span>
+      <h2 class="section-title">Up and running in three steps</h2>
+      <p class="section-desc">
+        Nymeria is designed to get out of your way. Minimal configuration,
+        sensible defaults, and a setup wizard that guides you through the rest.
+      </p>
+    </div>
+
+    <div class="steps">
+      <div class="step">
+        <div class="step-number">1</div>
+        <h4>Download or Build</h4>
+        <p>
+          Grab a release binary for your platform, or build from source with Go 1.24+
+          and Node.js.
+        </p>
+        <code>git clone https://github.com/longjos/Nymeria<br>cd Nymeria && make build</code>
+      </div>
+
+      <div class="step">
+        <div class="step-number">2</div>
+        <h4>Configure Your Station</h4>
+        <p>
+          Create a minimal YAML config with your callsign. The setup wizard handles the
+          rest &mdash; position, transports, and filters.
+        </p>
+        <code>callsign: "W4ABC"<br>ssid: 9</code>
+      </div>
+
+      <div class="step">
+        <div class="step-number">3</div>
+        <h4>Launch</h4>
+        <p>
+          Start the binary and open your browser. Nymeria serves itself &mdash; no
+          separate web server needed.
+        </p>
+        <code>./nymeria --listen :9090</code>
+      </div>
+    </div>
+  </section>
+
+  <!-- ========================================
+       Final CTA
+       ======================================== -->
+  <section class="cta-section">
+    <h2>Ready to try something new?</h2>
+    <p>
+      Nymeria is free, open source, and built with care by hams for hams.
+      Join us on GitHub.
+    </p>
+    <div class="hero-actions">
+      <a href="https://github.com/longjos/Nymeria" class="btn btn-primary">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M9 19c-5 1.5-5-2.5-7-3m14 6v-3.87a3.37 3.37 0 00-.94-2.61c3.14-.35 6.44-1.54 6.44-7A5.44 5.44 0 0020 4.77 5.07 5.07 0 0019.91 1S18.73.65 16 2.48a13.38 13.38 0 00-7 0C6.27.65 5.09 1 5.09 1A5.07 5.07 0 005 4.77a5.44 5.44 0 00-1.5 3.78c0 5.42 3.3 6.61 6.44 7A3.37 3.37 0 009 18.13V22"/></svg>
+        View on GitHub
+      </a>
+      <a href="https://github.com/longjos/Nymeria/wiki" class="btn btn-secondary">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M2 3h6a4 4 0 014 4v14a3 3 0 00-3-3H2z"/><path d="M22 3h-6a4 4 0 00-4 4v14a3 3 0 013-3h7z"/></svg>
+        Read the Wiki
+      </a>
+    </div>
+  </section>
+
+  <!-- ========================================
+       Footer
+       ======================================== -->
+  <footer class="footer">
+    <div class="footer-inner">
+      <div class="footer-left">
+        <span class="footer-brand">Nymeria</span>
+        <span class="footer-copy">Open source APRS client &bull; Built with Go + SvelteKit</span>
+      </div>
+      <div class="footer-links">
+        <a href="https://github.com/longjos/Nymeria">GitHub</a>
+        <a href="https://github.com/longjos/Nymeria/wiki">Wiki</a>
+        <a href="https://github.com/longjos/Nymeria/issues">Issues</a>
+      </div>
+    </div>
+  </footer>
+
+</body>
+</html>
