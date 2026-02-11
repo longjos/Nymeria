@@ -3,7 +3,7 @@
 	import type { APRSPacketType, RawPacket } from '$lib/types';
 	import PacketDetail from './PacketDetail.svelte';
 
-	let expandedId = $state<number | null>(null);
+	let expandedId = $state<string | null>(null);
 	let listEl = $state<HTMLDivElement>();
 	let userScrolledUp = $state(false);
 
@@ -36,8 +36,12 @@
 		return raw;
 	}
 
-	function toggleExpand(idx: number) {
-		expandedId = expandedId === idx ? null : idx;
+	function pktKey(pkt: RawPacket): string {
+		return pkt.timestamp + pkt.raw;
+	}
+
+	function toggleExpand(key: string) {
+		expandedId = expandedId === key ? null : key;
 	}
 
 	function handleScroll() {
@@ -137,11 +141,12 @@
 				{/if}
 			</div>
 		{:else}
-			{#each $filteredPackets as pkt, idx (pkt.timestamp + pkt.raw + idx)}
-				<div class="packet-row" class:expanded={expandedId === idx}>
+			{#each $filteredPackets as pkt (pkt.timestamp + pkt.raw)}
+				{@const key = pktKey(pkt)}
+				<div class="packet-row" class:expanded={expandedId === key}>
 					<!-- svelte-ignore a11y_click_events_have_key_events -->
 					<!-- svelte-ignore a11y_no_static_element_interactions -->
-					<div class="packet-summary" onclick={() => toggleExpand(idx)}>
+					<div class="packet-summary" onclick={() => toggleExpand(key)}>
 						<span class="pkt-time">{formatTime(pkt.timestamp)}</span>
 						<span class="pkt-type {typeColor(pkt.packetType)}">{pkt.packetType}</span>
 						<span class="pkt-source">{pkt.source}</span>
@@ -150,7 +155,7 @@
 						<span class="pkt-to">{formatAddress(pkt.to)}</span>
 						<span class="pkt-raw">{truncateRaw(pkt.raw)}</span>
 					</div>
-					{#if expandedId === idx}
+					{#if expandedId === key}
 						<PacketDetail packet={pkt} />
 					{/if}
 				</div>
