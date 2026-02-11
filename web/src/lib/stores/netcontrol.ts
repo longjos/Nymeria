@@ -119,6 +119,58 @@ export const pinnedNotes = derived(notes, ($notes) =>
 		.sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime())
 );
 
+// Situation metrics — computed counts for the metrics summary bar.
+export interface NetMetrics {
+	totalIn: number;
+	available: number;
+	assigned: number;      // assigned + enroute + onscene
+	missing: number;
+	stale: number;         // last heard >20m, not released, not already missing
+	missionsActive: number;
+	missionsDone: number;
+}
+
+const STALE_THRESHOLD_MS = 20 * 60 * 1000; // 20 minutes
+
+export const netMetrics = derived([checkIns, missions], ([$cis, $ms]): NetMetrics => {
+	const active = $cis.filter(ci => ci.status !== 'released');
+	const now = Date.now();
+	let available = 0;
+	let assigned = 0;
+	let missing = 0;
+	let stale = 0;
+
+	for (const ci of active) {
+		switch (ci.status) {
+			case 'available': available++; break;
+			case 'assigned':
+			case 'enroute':
+			case 'onscene': assigned++; break;
+			case 'missing': missing++; break;
+		}
+		if (ci.traffic === 'emergency') {
+			// Emergency traffic operators count toward missing for attention purposes
+			// but only if not already counted
+			if (ci.status !== 'missing') missing++;
+		}
+		// Stale: >20m since last heard, not released, not already flagged missing
+		if (ci.status !== 'missing' && ci.status !== 'released') {
+			const elapsed = now - new Date(ci.lastHeard).getTime();
+			if (elapsed > STALE_THRESHOLD_MS) stale++;
+		}
+	}
+
+	return {
+		totalIn: active.length,
+		available,
+		assigned,
+		missing,
+		stale,
+		missionsActive: $ms.filter(m => m.status !== 'complete').length,
+		missionsDone: $ms.filter(m => m.status === 'complete').length,
+	};
+});
+
 let initialized = false;
 
 export function initNetControlStore(): void {
