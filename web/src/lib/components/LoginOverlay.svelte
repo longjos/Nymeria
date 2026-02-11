@@ -29,11 +29,7 @@
 <div class="login-overlay">
 	<div class="login-card">
 		<div class="logo-area">
-			<svg viewBox="0 0 24 24" width="32" height="32" fill="none" stroke="currentColor" stroke-width="1.5">
-				<circle cx="12" cy="12" r="10"/>
-				<path d="M12 2a15 15 0 0 1 4 10 15 15 0 0 1-4 10 15 15 0 0 1-4-10A15 15 0 0 1 12 2z"/>
-				<path d="M2 12h20"/>
-			</svg>
+			<img src="/nymeria-logo.png" alt="Nymeria" width="40" height="40" />
 			<h1>Nymeria</h1>
 		</div>
 

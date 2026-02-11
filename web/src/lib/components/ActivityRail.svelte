@@ -115,6 +115,11 @@
 
 <nav class="activity-rail desktop-only" aria-label="Navigation rail">
 	<div class="rail-top">
+		<!-- Logo -->
+		<div class="rail-logo">
+			<img src="/nymeria-logo.png" alt="Nymeria" width="28" height="28" />
+		</div>
+
 		<!-- Search -->
 		<div class="search-container">
 			<button
@@ -416,6 +421,19 @@
 		align-items: center;
 		gap: 2px;
 		flex: 1;
+	}
+
+	.rail-logo {
+		display: flex;
+		align-items: center;
+		justify-content: center;
+		padding: var(--space-sm) 0;
+		margin-bottom: var(--space-xs);
+	}
+
+	.rail-logo img {
+		object-fit: contain;
+		opacity: 0.9;
 	}
 
 	.rail-bottom {
