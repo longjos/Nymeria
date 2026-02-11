@@ -258,11 +258,7 @@
 		{#if step === 0}
 			<div class="step welcome-step">
 				<div class="logo-area">
-					<svg viewBox="0 0 24 24" width="48" height="48" fill="none" stroke="currentColor" stroke-width="1.5">
-						<circle cx="12" cy="12" r="10"/>
-						<path d="M12 2a15 15 0 0 1 4 10 15 15 0 0 1-4 10 15 15 0 0 1-4-10A15 15 0 0 1 12 2z"/>
-						<path d="M2 12h20"/>
-					</svg>
+					<img src="/nymeria-logo.png" alt="Nymeria" width="56" height="56" />
 					<h1>Nymeria</h1>
 				</div>
 				<p class="welcome-text">Welcome to Nymeria, your APRS client. Let's get you on the air in about 60 seconds.</p>

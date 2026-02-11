@@ -115,9 +115,18 @@
       letter-spacing: -0.02em;
     }
 
-    .nav-brand svg {
+    .nav-brand img {
       width: 36px;
       height: 36px;
+      object-fit: contain;
+    }
+
+    .hero-logo {
+      width: 180px;
+      height: 180px;
+      object-fit: contain;
+      margin-bottom: 24px;
+      filter: drop-shadow(0 0 40px var(--accent-glow));
     }
 
     .nav-links {
@@ -1047,6 +1056,11 @@
       }
       .nav-mobile-toggle { display: block; }
 
+      .hero-logo {
+        width: 130px;
+        height: 130px;
+      }
+
       .hero-stats {
         gap: 24px;
         flex-wrap: wrap;
@@ -1100,10 +1114,7 @@
   <nav class="nav" role="navigation" aria-label="Main navigation">
     <div class="nav-inner">
       <a href="#" class="nav-brand" aria-label="Nymeria home">
-        <svg viewBox="0 0 36 36" fill="none" xmlns="http://www.w3.org/2000/svg" aria-hidden="true">
-          <rect width="36" height="36" rx="8" fill="#e94560"/>
-          <path d="M10 26V10l8 10 8-10v16" stroke="white" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"/>
-        </svg>
+        <img src="nymeria-logo.png" alt="Nymeria logo" width="36" height="36">
         Nymeria
       </a>
 
