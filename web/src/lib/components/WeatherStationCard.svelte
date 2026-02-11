@@ -29,6 +29,14 @@
 		return `${Math.floor(hrs / 24)}d ago`;
 	});
 
+	let staleColor = $derived.by(() => {
+		const ageMin = (Date.now() - new Date(station.lastHeard).getTime()) / 60000;
+		if (ageMin < 10) return '#4ade80';
+		if (ageMin < 30) return '#a3e635';
+		if (ageMin < 60) return '#fbbf24';
+		return '#6b7280';
+	});
+
 	let hasAlert = $derived.by(() => {
 		if (!wx || !alerts) return false;
 		return isAlertTriggered('temperature', wx.temperature, alerts) ||
@@ -45,7 +53,7 @@
 <button class="wx-card" class:alert={hasAlert} onclick={() => onClick?.(key)}>
 	<div class="wx-card-header">
 		<span class="wx-callsign">{key}</span>
-		<span class="wx-ago">{ago}</span>
+		<span class="wx-ago"><span class="wx-stale-indicator" style="background:{staleColor}"></span>{ago}</span>
 	</div>
 	<div class="wx-card-body">
 		<div class="wx-hero">
@@ -124,8 +132,19 @@
 	}
 
 	.wx-ago {
+		display: inline-flex;
+		align-items: center;
+		gap: 4px;
 		font-size: 0.7rem;
 		color: var(--color-text-muted);
+	}
+
+	.wx-stale-indicator {
+		display: inline-block;
+		width: 6px;
+		height: 6px;
+		border-radius: 50%;
+		flex-shrink: 0;
 	}
 
 	.wx-card-body {
