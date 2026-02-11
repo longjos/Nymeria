@@ -1,5 +1,5 @@
 import { writable, derived } from 'svelte/store';
-import type { Net, NetCheckIn, NetMission, NetEvent, NetNote } from '$lib/types';
+import type { Net, NetCheckIn, NetMission, NetEvent, NetNote, StationCategory } from '$lib/types';
 import { api } from '$lib/api';
 import { wsClient } from './stations';
 import { annotationList } from './annotations';
@@ -79,6 +79,17 @@ export const assignmentLines = derived([checkIns, missions], ([$cis, $ms]) => {
 		}
 	}
 	return lines;
+});
+
+// Category counts for active operators.
+export const categoryCounts = derived(checkIns, ($cis) => {
+	const active = $cis.filter(ci => ci.status !== 'released');
+	const counts = new Map<StationCategory, number>();
+	for (const ci of active) {
+		const cat = (ci.category || 'general') as StationCategory;
+		counts.set(cat, (counts.get(cat) || 0) + 1);
+	}
+	return counts;
 });
 
 // Notes grouped by checkInId — latest first.

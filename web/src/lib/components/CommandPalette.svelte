@@ -6,9 +6,10 @@
 	import {
 		paletteQuery, paletteFilter, paletteResults, recentCallsigns, emptyStateData,
 		recordInteraction, noteCategoryMeta, severityMeta, statusColors, missionPriorityColors,
+		trafficMeta, stationCategoryMeta,
 		type PaletteResult, type PaletteFilter
 	} from '$lib/stores/commandpalette';
-	import type { NoteCategory, NoteSeverity, NetMission, NetNote } from '$lib/types';
+	import type { NoteCategory, NoteSeverity, TrafficType, StationCategory, NetMission, NetNote } from '$lib/types';
 
 	let {
 		onFlyTo,
@@ -35,6 +36,8 @@
 	// Quick action dropdowns
 	let showStatusDropdown = $state(false);
 	let showMissionDropdown = $state(false);
+	let showTrafficDropdown = $state(false);
+	let showCategoryDropdown = $state(false);
 
 	// Refs
 	let searchInputRef = $state<HTMLInputElement>();
@@ -87,6 +90,8 @@
 		noteSaved = false;
 		showStatusDropdown = false;
 		showMissionDropdown = false;
+		showTrafficDropdown = false;
+		showCategoryDropdown = false;
 		// Focus textarea after DOM updates
 		requestAnimationFrame(() => {
 			textareaRef?.focus();
@@ -98,6 +103,8 @@
 		selected = null;
 		showStatusDropdown = false;
 		showMissionDropdown = false;
+		showTrafficDropdown = false;
+		showCategoryDropdown = false;
 		requestAnimationFrame(() => {
 			searchInputRef?.focus();
 		});
@@ -174,12 +181,32 @@
 			e.preventDefault();
 			showStatusDropdown = !showStatusDropdown;
 			showMissionDropdown = false;
+			showTrafficDropdown = false;
+			showCategoryDropdown = false;
 			return;
 		}
 		if (e.key === 'm' || e.key === 'M') {
 			e.preventDefault();
 			showMissionDropdown = !showMissionDropdown;
 			showStatusDropdown = false;
+			showTrafficDropdown = false;
+			showCategoryDropdown = false;
+			return;
+		}
+		if (e.key === 't' || e.key === 'T') {
+			e.preventDefault();
+			showTrafficDropdown = !showTrafficDropdown;
+			showStatusDropdown = false;
+			showMissionDropdown = false;
+			showCategoryDropdown = false;
+			return;
+		}
+		if (e.key === 'c' || e.key === 'C') {
+			e.preventDefault();
+			showCategoryDropdown = !showCategoryDropdown;
+			showStatusDropdown = false;
+			showMissionDropdown = false;
+			showTrafficDropdown = false;
 			return;
 		}
 	}
@@ -250,6 +277,24 @@
 		} catch { /* ignore */ }
 	}
 
+	async function updateTraffic(traffic: string) {
+		if (!net || !selected?.checkIn) return;
+		try {
+			await api.updateCheckIn(net.id, selected.checkIn.id, { traffic: traffic as any });
+			selected = { ...selected, traffic };
+			showTrafficDropdown = false;
+		} catch { /* ignore */ }
+	}
+
+	async function updateCategory(category: string) {
+		if (!net || !selected?.checkIn) return;
+		try {
+			await api.updateCheckIn(net.id, selected.checkIn.id, { category: category as any });
+			selected = { ...selected };
+			showCategoryDropdown = false;
+		} catch { /* ignore */ }
+	}
+
 	function handleRecentClick(callsign: string) {
 		paletteQuery.set(callsign);
 	}
@@ -259,6 +304,8 @@
 	}
 
 	const statuses = ['available', 'assigned', 'enroute', 'onscene', 'brb', 'missing', 'released'] as const;
+	const trafficTypes = ['none', 'routine', 'priority', 'welfare', 'emergency'] as const;
+	const categories = ['general', 'command', 'medical', 'sag', 'marshal', 'fixed', 'mobile', 'tactical'] as const;
 </script>
 
 <!-- svelte-ignore a11y_no_static_element_interactions -->
@@ -309,6 +356,12 @@
 							{/if}
 							{#if result.status && result.type === 'checkin'}
 								<span class="cp-result-badge" style="background: {statusColors[result.status] ?? '#555'}">{result.status}</span>
+							{/if}
+							{#if result.checkIn?.category && result.checkIn.category !== 'general'}
+								{@const rCat = stationCategoryMeta[result.checkIn.category]}
+								{#if rCat}
+									<span class="cp-result-badge" style="background: {rCat.color}">{rCat.short}</span>
+								{/if}
 							{/if}
 							<span class="cp-result-time">{timeAgo(result.lastHeard)}</span>
 						</button>
@@ -387,6 +440,15 @@
 					{/if}
 					{#if selected.status && selected.type === 'checkin'}
 						<span class="cp-context-badge" style="background: {statusColors[selected.status] ?? '#555'}">{selected.status}</span>
+					{/if}
+					{#if selected.traffic && selected.traffic !== 'none' && selected.type === 'checkin'}
+						<span class="cp-context-badge" style="background: {trafficMeta[selected.traffic]?.color ?? '#555'}">{selected.traffic}</span>
+					{/if}
+					{#if selected.checkIn?.category && selected.checkIn.category !== 'general'}
+						{@const catM = stationCategoryMeta[selected.checkIn.category]}
+						{#if catM}
+							<span class="cp-context-badge" style="background: {catM.color}">{catM.short}</span>
+						{/if}
 					{/if}
 					<span class="cp-context-time">{timeAgo(selected.lastHeard)}</span>
 					<kbd class="cp-kbd cp-kbd-right">ESC</kbd>
@@ -499,10 +561,16 @@
 				<!-- Quick actions bar -->
 				<div class="cp-actions-bar">
 					<div class="cp-action-group">
-						<button class="cp-action-btn" onclick={() => { showStatusDropdown = !showStatusDropdown; showMissionDropdown = false; }} disabled={!selected.checkIn}>
+						<button class="cp-action-btn" onclick={() => { showStatusDropdown = !showStatusDropdown; showMissionDropdown = false; showTrafficDropdown = false; showCategoryDropdown = false; }} disabled={!selected.checkIn}>
 							<kbd class="cp-kbd cp-kbd-sm">S</kbd> Status
 						</button>
-						<button class="cp-action-btn" onclick={() => { showMissionDropdown = !showMissionDropdown; showStatusDropdown = false; }} disabled={!selected.checkIn}>
+						<button class="cp-action-btn" onclick={() => { showTrafficDropdown = !showTrafficDropdown; showStatusDropdown = false; showMissionDropdown = false; showCategoryDropdown = false; }} disabled={!selected.checkIn}>
+							<kbd class="cp-kbd cp-kbd-sm">T</kbd> Traffic
+						</button>
+						<button class="cp-action-btn" onclick={() => { showCategoryDropdown = !showCategoryDropdown; showStatusDropdown = false; showMissionDropdown = false; showTrafficDropdown = false; }} disabled={!selected.checkIn}>
+							<kbd class="cp-kbd cp-kbd-sm">C</kbd> Category
+						</button>
+						<button class="cp-action-btn" onclick={() => { showMissionDropdown = !showMissionDropdown; showStatusDropdown = false; showTrafficDropdown = false; showCategoryDropdown = false; }} disabled={!selected.checkIn}>
 							<kbd class="cp-kbd cp-kbd-sm">M</kbd> Mission
 						</button>
 						<button class="cp-action-btn" onclick={flyToSelected} disabled={selected.lat == null}>
@@ -545,6 +613,45 @@
 							{#if allMissions.filter(m => m.status !== 'complete').length === 0}
 								<div class="cp-dropdown-empty">No active missions</div>
 							{/if}
+						</div>
+					{/if}
+
+					<!-- Traffic dropdown -->
+					{#if showTrafficDropdown}
+						<div class="cp-dropdown">
+							{#each trafficTypes as t}
+								<button
+									class="cp-dropdown-item"
+									class:active={selected.traffic === t || (!selected.traffic && t === 'none')}
+									onclick={() => updateTraffic(t)}
+								>
+									<span class="cp-status-dot" style="background: {trafficMeta[t]?.color ?? '#555'}"></span>
+									{trafficMeta[t]?.label ?? t}
+									{#if selected.traffic === t || (!selected.traffic && t === 'none')}
+										<span class="cp-assigned-check">&#10003;</span>
+									{/if}
+								</button>
+							{/each}
+						</div>
+					{/if}
+
+					<!-- Category dropdown -->
+					{#if showCategoryDropdown}
+						<div class="cp-dropdown">
+							{#each categories as cat}
+								{@const catM = stationCategoryMeta[cat]}
+								<button
+									class="cp-dropdown-item"
+									class:active={(selected.checkIn?.category || 'general') === cat}
+									onclick={() => updateCategory(cat)}
+								>
+									<span class="cp-status-dot" style="background: {catM?.color ?? '#555'}"></span>
+									{catM?.label ?? cat}
+									{#if (selected.checkIn?.category || 'general') === cat}
+										<span class="cp-assigned-check">&#10003;</span>
+									{/if}
+								</button>
+							{/each}
 						</div>
 					{/if}
 				</div>

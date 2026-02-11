@@ -494,8 +494,8 @@ func TestV2SchemaVersion(t *testing.T) {
 	if err != nil {
 		t.Fatalf("query schema_version: %v", err)
 	}
-	if version != 13 {
-		t.Errorf("expected schema version 13, got %d", version)
+	if version != 14 {
+		t.Errorf("expected schema version 14, got %d", version)
 	}
 }
 
@@ -994,8 +994,8 @@ func TestV3SchemaVersion(t *testing.T) {
 	if err != nil {
 		t.Fatalf("query schema_version: %v", err)
 	}
-	if version != 13 {
-		t.Errorf("expected schema version 13, got %d", version)
+	if version != 14 {
+		t.Errorf("expected schema version 14, got %d", version)
 	}
 }
 
@@ -1616,8 +1616,8 @@ func TestV5MigrationAddsTrackedStationsColumn(t *testing.T) {
 
 	var version int
 	s.db.QueryRow("SELECT version FROM schema_version LIMIT 1").Scan(&version)
-	if version != 13 {
-		t.Errorf("expected schema version 13, got %d", version)
+	if version != 14 {
+		t.Errorf("expected schema version 14, got %d", version)
 	}
 }
 
@@ -1723,8 +1723,8 @@ func TestV6MigrationCreatesTacticalAliasesTable(t *testing.T) {
 
 	var version int
 	s.db.QueryRow("SELECT version FROM schema_version LIMIT 1").Scan(&version)
-	if version != 13 {
-		t.Errorf("expected schema version 13, got %d", version)
+	if version != 14 {
+		t.Errorf("expected schema version 14, got %d", version)
 	}
 }
 
@@ -1891,8 +1891,8 @@ func TestV7MigrationAddsAnnotationColumns(t *testing.T) {
 
 	var version int
 	s.db.QueryRow("SELECT version FROM schema_version LIMIT 1").Scan(&version)
-	if version != 13 {
-		t.Errorf("expected schema version 13, got %d", version)
+	if version != 14 {
+		t.Errorf("expected schema version 14, got %d", version)
 	}
 }
 
@@ -2194,8 +2194,8 @@ func TestMigrateV8CreatesOperationsTable(t *testing.T) {
 
 	var version int
 	s.db.QueryRow("SELECT version FROM schema_version LIMIT 1").Scan(&version)
-	if version != 13 {
-		t.Errorf("expected schema version 13, got %d", version)
+	if version != 14 {
+		t.Errorf("expected schema version 14, got %d", version)
 	}
 
 	// Verify operations table exists by doing a query.
@@ -2214,8 +2214,8 @@ func TestMigrateV11AddsOpsViewColumns(t *testing.T) {
 
 	var version int
 	s.db.QueryRow("SELECT version FROM schema_version LIMIT 1").Scan(&version)
-	if version != 13 {
-		t.Errorf("expected schema version 13, got %d", version)
+	if version != 14 {
+		t.Errorf("expected schema version 14, got %d", version)
 	}
 
 	// Verify ops_view columns exist.
@@ -2604,8 +2604,8 @@ func TestMigrateV13CreatesTelemetryReadingsTable(t *testing.T) {
 
 	var version int
 	s.db.QueryRow("SELECT version FROM schema_version LIMIT 1").Scan(&version)
-	if version != 13 {
-		t.Errorf("expected schema version 13, got %d", version)
+	if version != 14 {
+		t.Errorf("expected schema version 14, got %d", version)
 	}
 }
 

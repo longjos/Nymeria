@@ -253,6 +253,7 @@ export interface TransportStatus {
 export type NetStatus = 'draft' | 'open' | 'closed' | 'archived';
 export type OperatorStatus = 'available' | 'assigned' | 'enroute' | 'onscene' | 'brb' | 'missing' | 'released';
 export type TrafficType = 'none' | 'routine' | 'priority' | 'welfare' | 'emergency';
+export type StationCategory = 'general' | 'command' | 'medical' | 'sag' | 'marshal' | 'fixed' | 'mobile' | 'tactical';
 export type MissionStatus = 'open' | 'active' | 'complete';
 
 export interface Net {
@@ -286,6 +287,7 @@ export interface NetCheckIn {
 	status: OperatorStatus;
 	traffic: TrafficType;
 	source: 'aprs' | 'voice';
+	category: StationCategory;
 	location: string;
 	lat?: number;
 	lon?: number;

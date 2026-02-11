@@ -28,6 +28,25 @@ const (
 	TrafficEmergency = "emergency"
 )
 
+// Station categories / resource types.
+const (
+	CatGeneral  = "general"
+	CatCommand  = "command"
+	CatMedical  = "medical"
+	CatSAG      = "sag"
+	CatMarshal  = "marshal"
+	CatFixed    = "fixed"
+	CatMobile   = "mobile"
+	CatTactical = "tactical"
+)
+
+// ValidCategories is the set of allowed station categories.
+var ValidCategories = map[string]bool{
+	CatGeneral: true, CatCommand: true, CatMedical: true,
+	CatSAG: true, CatMarshal: true, CatFixed: true,
+	CatMobile: true, CatTactical: true,
+}
+
 // MissedRollCallThreshold is the number of missed roll calls before auto-marking missing.
 const MissedRollCallThreshold = 2
 

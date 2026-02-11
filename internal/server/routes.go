@@ -1831,13 +1831,14 @@ func (s *Server) handleCheckIn(w http.ResponseWriter, r *http.Request) {
 	var req struct {
 		Callsign string `json:"callsign"`
 		Traffic  string `json:"traffic"`
+		Category string `json:"category"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid request body"})
 		return
 	}
 
-	ci, err := s.netMgr.CheckIn(id, req.Callsign, req.Traffic)
+	ci, err := s.netMgr.CheckIn(id, req.Callsign, req.Traffic, req.Category)
 	if err != nil {
 		writeJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
 		return

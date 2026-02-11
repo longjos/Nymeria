@@ -3,12 +3,12 @@
 	import { api } from '$lib/api';
 	import { timeAgo } from '$lib/utils';
 	import { openICS309 } from '$lib/stores/ui';
-	import type { Net, NetCheckIn, NetMission, NetEvent, NetNote, OperatorStatus, TrafficType, Annotation, NoteCategory, NoteSeverity } from '$lib/types';
+	import type { Net, NetCheckIn, NetMission, NetEvent, NetNote, OperatorStatus, TrafficType, Annotation, NoteCategory, NoteSeverity, StationCategory } from '$lib/types';
 	import {
 		activeNet, checkIns, missions, timeline, notes,
 		sortedCheckIns, activeCheckIns,
 		notesByCheckIn, notesByMission, pinnedNotes,
-		netMetrics,
+		netMetrics, categoryCounts,
 		initNetControlStore, loadNetData, clearNetControl,
 		opsView,
 		hoveredMissionId, highlightedCheckIns,
@@ -35,6 +35,21 @@
 	// Metrics bar filter — clicking a metric filters the roster
 	type MetricsFilter = null | 'available' | 'assigned' | 'missing' | 'stale';
 	let metricsFilter = $state<MetricsFilter>(null);
+
+	// Category filter — clicking a category chip filters the roster (AND with metricsFilter)
+	let categoryFilter = $state<StationCategory | null>(null);
+
+	// Station category metadata (colors + short labels)
+	const stationCategoryMeta: Record<StationCategory, { label: string; short: string; color: string }> = {
+		general:  { label: 'General',  short: 'GEN', color: '#6b7280' },
+		command:  { label: 'Command',  short: 'CMD', color: '#eab308' },
+		medical:  { label: 'Medical',  short: 'MED', color: '#ef4444' },
+		sag:      { label: 'SAG',      short: 'SAG', color: '#f97316' },
+		marshal:  { label: 'Marshal',  short: 'MAR', color: '#3b82f6' },
+		fixed:    { label: 'Fixed',    short: 'FIX', color: '#14b8a6' },
+		mobile:   { label: 'Mobile',   short: 'MOB', color: '#8b5cf6' },
+		tactical: { label: 'Tactical', short: 'TAC', color: '#6366f1' },
+	};
 
 	// Create net form
 	let showCreateForm = $state(false);
@@ -230,17 +245,26 @@
 		}
 	}
 
+	const trafficShortcuts: Record<string, string> = { R: 'routine', P: 'priority', W: 'welfare', E: 'emergency' };
+	const categoryNames = new Set(Object.keys(stationCategoryMeta));
+
 	async function handleQuickAdd() {
 		if (!$activeNet || !quickAddInput.trim()) return;
 
 		const parts = quickAddInput.trim().split(/\s+/);
 		const callsign = parts[0].toUpperCase();
 		let traffic = '';
+		let category = '';
 
-		if (parts.length > 1) {
-			const shortcut = parts[1].toUpperCase();
-			const map: Record<string, string> = { R: 'routine', P: 'priority', W: 'welfare', E: 'emergency' };
-			traffic = map[shortcut] || '';
+		// Parse remaining tokens: check traffic shortcuts first, then category names
+		for (let i = 1; i < parts.length; i++) {
+			const token = parts[i].toUpperCase();
+			const lower = parts[i].toLowerCase();
+			if (!traffic && trafficShortcuts[token]) {
+				traffic = trafficShortcuts[token];
+			} else if (!category && categoryNames.has(lower)) {
+				category = lower;
+			}
 		}
 
 		// Dedup: highlight existing operator instead of creating duplicate
@@ -255,7 +279,7 @@
 		}
 
 		try {
-			await api.checkIn($activeNet.id, callsign, traffic);
+			await api.checkIn($activeNet.id, callsign, traffic, category);
 			quickAddInput = '';
 			searchResults = [];
 		} catch (e) {
@@ -293,6 +317,24 @@
 			await api.updateCheckIn($activeNet.id, ci.id, { status: newStatus });
 		} catch (e) {
 			console.error('Status update failed:', e);
+		}
+	}
+
+	async function handleTrafficChange(ci: NetCheckIn, newTraffic: TrafficType) {
+		if (!$activeNet) return;
+		try {
+			await api.updateCheckIn($activeNet.id, ci.id, { traffic: newTraffic });
+		} catch (e) {
+			console.error('Traffic update failed:', e);
+		}
+	}
+
+	async function handleCategoryChange(ci: NetCheckIn, newCategory: StationCategory) {
+		if (!$activeNet) return;
+		try {
+			await api.updateCheckIn($activeNet.id, ci.id, { category: newCategory });
+		} catch (e) {
+			console.error('Category update failed:', e);
 		}
 	}
 
@@ -504,10 +546,16 @@
 	let activeMissionCount = $derived($missions.filter((m) => m.status !== 'complete').length);
 	let completeMissionCount = $derived($missions.filter((m) => m.status === 'complete').length);
 
-	// Roster filtered by metrics bar click
+	// Roster filtered by metrics bar click + category filter (AND logic)
 	const STALE_MS = 20 * 60 * 1000;
 	let displayedCheckIns = $derived.by(() => {
-		const list = $sortedCheckIns;
+		let list = $sortedCheckIns;
+
+		// Apply category filter first
+		if (categoryFilter) {
+			list = list.filter((ci) => (ci.category || 'general') === categoryFilter);
+		}
+
 		if (!metricsFilter) return list;
 		const now = Date.now();
 		return list.filter((ci) => {
@@ -924,8 +972,28 @@
 				<!-- Roster header with export -->
 				{#if $activeNet && $sortedCheckIns.length > 0}
 					<div class="roster-header">
-						<span class="roster-count">{#if metricsFilter}{displayedCheckIns.length} of {$activeCheckIns.length}{:else}{$activeCheckIns.length} active{/if}</span>
+						<span class="roster-count">{#if metricsFilter || categoryFilter}{displayedCheckIns.length} of {$activeCheckIns.length}{:else}{$activeCheckIns.length} active{/if}</span>
 						<a href={api.rosterExportUrl($activeNet.id)} class="export-link" download>CSV</a>
+					</div>
+				{/if}
+				<!-- Category filter chips -->
+				{#if $categoryCounts.size > 1 || ($categoryCounts.size === 1 && !$categoryCounts.has('general'))}
+					<div class="category-chips">
+						<button class="cat-chip" class:active={categoryFilter === null}
+							onclick={() => { categoryFilter = null; }}>
+							All
+						</button>
+						{#each [...$categoryCounts.entries()].sort((a, b) => a[0].localeCompare(b[0])) as [cat, count]}
+							{@const meta = stationCategoryMeta[cat]}
+							<button class="cat-chip" class:active={categoryFilter === cat}
+								style="--cat-chip-color: {meta.color}"
+								onclick={() => { categoryFilter = categoryFilter === cat ? null : cat; currentTab = 'roster'; }}>
+								{meta.short} <span class="cat-chip-count">{count}</span>
+							</button>
+						{/each}
+						{#if categoryFilter}
+							<button class="cat-chip-clear" onclick={() => (categoryFilter = null)} title="Clear category filter">&times;</button>
+						{/if}
 					</div>
 				{/if}
 				<!-- Quick Add Bar -->
@@ -937,10 +1005,18 @@
 							bind:value={quickAddInput}
 							oninput={handleQuickAddInput}
 							onkeydown={(e) => { if (e.key === 'Enter') handleQuickAdd(); }}
-							placeholder="Callsign + R/P/W/E"
+							placeholder="KD7BBC R medical"
 							class="quick-add-input"
+							title="Format: CALLSIGN [traffic] [category]&#10;Traffic: R=Routine P=Priority W=Welfare E=Emergency&#10;Category: medical, sag, command, marshal, fixed, mobile, tactical"
 						/>
 						<button class="quick-add-btn" onclick={handleQuickAdd} disabled={!quickAddInput.trim()}>+</button>
+					</div>
+					<div class="quick-add-hint">
+						<span class="hint-key">R</span>outine
+						<span class="hint-key">P</span>riority
+						<span class="hint-key">W</span>elfare
+						<span class="hint-key">E</span>mergency
+						+ category
 					</div>
 					{#if searchResults.length > 0}
 						<div class="search-dropdown">
@@ -986,6 +1062,12 @@
 									{/if}
 									{#if ci.source === 'voice'}
 										<span class="source-badge vox">VOX</span>
+									{/if}
+									{#if ci.category && ci.category !== 'general'}
+										{@const catMeta = stationCategoryMeta[ci.category as StationCategory]}
+										{#if catMeta}
+											<span class="source-badge cat-badge" style="background: {catMeta.color}">{catMeta.short}</span>
+										{/if}
 									{/if}
 									{#if ci.trackedStations?.length > 0}
 										<button class="device-badge" onclick={() => toggleDeviceList(ci.id)}>{ci.trackedStations.length} dev</button>
@@ -1049,9 +1131,9 @@
 									</button>
 								{/if}
 							</div>
-							<div class="op-actions">
+							<div class="op-action-bar">
 								<select
-									class="status-select"
+									class="bar-select"
 									value={ci.status}
 									onchange={(e) => handleStatusChange(ci, (e.target as HTMLSelectElement).value as OperatorStatus)}
 								>
@@ -1062,26 +1144,45 @@
 									<option value="brb">BRB</option>
 									<option value="missing">Missing</option>
 								</select>
-								<div class="op-btn-row">
-									<button class="op-btn-labeled" title="Assign Mission" onclick={() => { assigningCheckInId = assigningCheckInId === ci.id ? null : ci.id; }}>Assign</button>
-									<button class="op-btn-labeled" title="Note" onclick={() => { if (noteCheckInId === ci.id) { closeNoteComposer(); } else { openNoteComposer({ checkInId: ci.id }); } }}>Note</button>
-									<div class="overflow-wrap">
-										<button class="op-btn-labeled overflow-trigger" onclick={() => { overflowOpenId = overflowOpenId === ci.id ? null : ci.id; }} title="More actions">
-											<svg width="14" height="14" viewBox="0 0 16 16" fill="none"><circle cx="4" cy="8" r="1.5" fill="currentColor"/><circle cx="8" cy="8" r="1.5" fill="currentColor"/><circle cx="12" cy="8" r="1.5" fill="currentColor"/></svg>
-										</button>
-										{#if overflowOpenId === ci.id}
-											<div class="overflow-menu">
-												{#if ci.lat != null && ci.lon != null}
-													<button class="overflow-item" onclick={() => { onFlyTo?.(ci.lat!, ci.lon!); overflowOpenId = null; }}>Fly to</button>
-												{/if}
-												<button class="overflow-item" class:active={expandedDeviceId === ci.id} onclick={() => { toggleDeviceList(ci.id); overflowOpenId = null; }}>Tracked devices</button>
-												{#if ci.missedRollCalls > 0}
-													<button class="overflow-item" onclick={() => { handleRollCallResponse(ci); overflowOpenId = null; }}>Roll call response</button>
-												{/if}
-												<button class="overflow-item overflow-danger" onclick={() => { handleCheckOut(ci); overflowOpenId = null; }}>Check out</button>
-											</div>
-										{/if}
-									</div>
+								<select
+									class="bar-select"
+									value={ci.traffic || 'none'}
+									onchange={(e) => handleTrafficChange(ci, (e.target as HTMLSelectElement).value as TrafficType)}
+								>
+									<option value="none">Traffic</option>
+									<option value="routine">Routine</option>
+									<option value="priority">Priority</option>
+									<option value="welfare">Welfare</option>
+									<option value="emergency">Emergency</option>
+								</select>
+								<select
+									class="bar-select"
+									value={ci.category || 'general'}
+									onchange={(e) => handleCategoryChange(ci, (e.target as HTMLSelectElement).value as StationCategory)}
+								>
+									{#each Object.entries(stationCategoryMeta) as [key, meta]}
+										<option value={key}>{meta.label}</option>
+									{/each}
+								</select>
+								<span class="bar-spacer"></span>
+								<button class="bar-btn" title="Assign Mission" onclick={() => { assigningCheckInId = assigningCheckInId === ci.id ? null : ci.id; }}>Assign</button>
+								<button class="bar-btn" title="Note" onclick={() => { if (noteCheckInId === ci.id) { closeNoteComposer(); } else { openNoteComposer({ checkInId: ci.id }); } }}>Note</button>
+								<div class="overflow-wrap">
+									<button class="bar-btn overflow-trigger" onclick={() => { overflowOpenId = overflowOpenId === ci.id ? null : ci.id; }} title="More actions">
+										<svg width="14" height="14" viewBox="0 0 16 16" fill="none"><circle cx="4" cy="8" r="1.5" fill="currentColor"/><circle cx="8" cy="8" r="1.5" fill="currentColor"/><circle cx="12" cy="8" r="1.5" fill="currentColor"/></svg>
+									</button>
+									{#if overflowOpenId === ci.id}
+										<div class="overflow-menu">
+											{#if ci.lat != null && ci.lon != null}
+												<button class="overflow-item" onclick={() => { onFlyTo?.(ci.lat!, ci.lon!); overflowOpenId = null; }}>Fly to</button>
+											{/if}
+											<button class="overflow-item" class:active={expandedDeviceId === ci.id} onclick={() => { toggleDeviceList(ci.id); overflowOpenId = null; }}>Tracked devices</button>
+											{#if ci.missedRollCalls > 0}
+												<button class="overflow-item" onclick={() => { handleRollCallResponse(ci); overflowOpenId = null; }}>Roll call response</button>
+											{/if}
+											<button class="overflow-item overflow-danger" onclick={() => { handleCheckOut(ci); overflowOpenId = null; }}>Check out</button>
+										</div>
+									{/if}
 								</div>
 							</div>
 
@@ -1192,8 +1293,8 @@
 					{/each}
 					{#if $sortedCheckIns.length === 0}
 						<p class="empty">No operators checked in. Use the input above to add.</p>
-					{:else if displayedCheckIns.length === 0 && metricsFilter}
-						<p class="empty">No operators match filter. <button class="link-btn" onclick={() => (metricsFilter = null)}>Clear filter</button></p>
+					{:else if displayedCheckIns.length === 0 && (metricsFilter || categoryFilter)}
+						<p class="empty">No operators match filter. <button class="link-btn" onclick={() => { metricsFilter = null; categoryFilter = null; }}>Clear filters</button></p>
 					{/if}
 				</div>
 
@@ -1459,21 +1560,20 @@
 									</div>
 								{/if}
 
-								<div class="mission-footer">
-									<span class="mission-status-badge mission-status-{m.status}">{m.status}</span>
-									<div class="mission-actions">
-										{#if m.status !== 'complete'}
-											<button class="op-btn-labeled" title="Link annotation" onclick={() => { linkingAnnotationMissionId = linkingAnnotationMissionId === m.id ? null : m.id; }}>+ Ann</button>
-											<button class="op-btn-labeled" title="Assign operator" onclick={() => { assigningMissionId = assigningMissionId === m.id ? null : m.id; }}>+ Assign</button>
-											<button class="op-btn-labeled" title="Add note" onclick={() => { if (noteMissionId === m.id) { closeNoteComposer(); } else { openNoteComposer({ missionId: m.id }); } }}>+ Note</button>
-										{/if}
-										{#if m.status === 'open'}
-											<button class="op-btn-labeled" onclick={() => handleMissionStatusChange(m, 'active')}>Start</button>
-										{:else if m.status === 'active'}
-											<button class="op-btn-labeled" onclick={() => handleMissionStatusChange(m, 'complete')}>Complete</button>
-										{/if}
-									</div>
-								</div>
+							</div>
+							<div class="mission-action-bar">
+								<span class="mission-status-badge mission-status-{m.status}">{m.status}</span>
+								<span class="bar-spacer"></span>
+								{#if m.status !== 'complete'}
+									<button class="bar-btn" title="Link annotation" onclick={() => { linkingAnnotationMissionId = linkingAnnotationMissionId === m.id ? null : m.id; }}>+ Ann</button>
+									<button class="bar-btn" title="Assign operator" onclick={() => { assigningMissionId = assigningMissionId === m.id ? null : m.id; }}>+ Assign</button>
+									<button class="bar-btn" title="Add note" onclick={() => { if (noteMissionId === m.id) { closeNoteComposer(); } else { openNoteComposer({ missionId: m.id }); } }}>+ Note</button>
+								{/if}
+								{#if m.status === 'open'}
+									<button class="bar-btn" onclick={() => handleMissionStatusChange(m, 'active')}>Start</button>
+								{:else if m.status === 'active'}
+									<button class="bar-btn" onclick={() => handleMissionStatusChange(m, 'complete')}>Complete</button>
+								{/if}
 							</div>
 						</div>
 					{/each}
@@ -1869,6 +1969,19 @@
 		color: var(--color-text-muted);
 	}
 
+	.quick-add-hint {
+		font-size: 0.6rem;
+		color: var(--color-text-muted);
+		padding: 2px var(--space-sm) 0;
+		opacity: 0.7;
+		letter-spacing: 0.01em;
+	}
+
+	.hint-key {
+		font-weight: 700;
+		color: var(--color-accent);
+	}
+
 	.quick-add-btn {
 		width: 44px;
 		height: 44px;
@@ -1994,7 +2107,7 @@
 
 	.op-main {
 		flex: 1;
-		padding: 12px var(--space-sm) 12px var(--space-sm);
+		padding: 8px var(--space-sm) 4px var(--space-sm);
 		min-width: 0;
 	}
 
@@ -2435,55 +2548,54 @@
 		cursor: default;
 	}
 
-	.op-actions {
+	.op-action-bar {
+		flex-basis: 100%;
 		display: flex;
-		flex-direction: column;
-		align-items: flex-end;
-		gap: var(--space-sm);
-		padding: 12px var(--space-sm);
-		flex-shrink: 0;
+		align-items: center;
+		gap: 6px;
+		padding: 0 var(--space-sm) 8px calc(4px + var(--space-sm));
+		min-width: 0;
 	}
 
-	.status-select {
+	.bar-select {
 		background: var(--color-bg);
 		border: 1px solid var(--color-primary);
 		border-radius: var(--radius-sm);
 		color: var(--color-text);
-		font-size: 0.8rem;
-		padding: 8px 12px;
+		font-size: 0.72rem;
+		padding: 4px 6px;
 		cursor: pointer;
-		min-height: 36px;
+		min-height: 32px;
 	}
 
-	.op-btn-row {
-		display: flex;
-		gap: 6px;
-		flex-wrap: wrap;
-	}
-
-	.op-btn-labeled {
+	.bar-btn {
 		background: none;
 		border: 1px solid var(--color-primary);
 		border-radius: var(--radius-sm);
 		color: var(--color-text-muted);
-		font-size: 0.75rem;
-		padding: 6px 10px;
+		font-size: 0.72rem;
+		padding: 4px 8px;
 		cursor: pointer;
-		transition: all var(--duration-fast);
-		min-height: 36px;
+		min-height: 32px;
 		display: flex;
 		align-items: center;
 		justify-content: center;
+		transition: all var(--duration-fast);
+		white-space: nowrap;
 	}
 
-	.op-btn-labeled:hover {
+	.bar-btn:hover {
 		border-color: var(--color-accent);
 		color: var(--color-text);
 	}
 
-	.op-btn-labeled.active {
+	.bar-btn.active {
 		border-color: var(--color-accent);
 		color: var(--color-accent);
+	}
+
+	.bar-spacer {
+		flex: 1;
 	}
 
 	/* Overflow menu */
@@ -2684,7 +2796,7 @@
 
 	.mission-body {
 		flex: 1;
-		padding: 12px var(--space-md);
+		padding: 8px var(--space-sm) 4px var(--space-sm);
 		min-width: 0;
 	}
 
@@ -2757,8 +2869,8 @@
 	.mission-operators {
 		display: flex;
 		flex-wrap: wrap;
-		gap: 6px;
-		margin-top: var(--space-sm);
+		gap: 4px;
+		margin-top: 4px;
 	}
 
 	.mission-op-chip {
@@ -2768,9 +2880,9 @@
 		background: var(--color-bg);
 		border: 1px solid var(--color-primary);
 		border-radius: var(--radius-sm);
-		padding: 6px 10px;
-		font-size: 0.75rem;
-		min-height: 36px;
+		padding: 4px 8px;
+		font-size: 0.72rem;
+		min-height: 28px;
 	}
 
 	.mission-op-dot {
@@ -2795,12 +2907,12 @@
 		background: none;
 		border: none;
 		color: var(--color-text-muted);
-		font-size: 0.85rem;
-		padding: 4px 8px;
+		font-size: 0.8rem;
+		padding: 2px 6px;
 		cursor: pointer;
 		line-height: 1;
-		min-width: 32px;
-		min-height: 32px;
+		min-width: 28px;
+		min-height: 28px;
 		display: flex;
 		align-items: center;
 		justify-content: center;
@@ -2835,20 +2947,11 @@
 		letter-spacing: 0.04em;
 	}
 
-	.mission-footer {
+	.mission-action-bar {
 		display: flex;
 		align-items: center;
-		gap: var(--space-sm);
-		margin-top: var(--space-sm);
-		flex-wrap: wrap;
-	}
-
-	.mission-actions {
-		display: flex;
 		gap: 6px;
-		margin-left: auto;
-		flex-wrap: wrap;
-		justify-content: flex-end;
+		padding: 4px var(--space-sm) 8px var(--space-sm);
 	}
 
 	.mission-status-badge {
@@ -3376,4 +3479,75 @@
 		opacity: 1;
 		color: var(--color-text);
 	}
+
+	/* --- Category filter chips --- */
+	.category-chips {
+		display: flex;
+		align-items: center;
+		gap: 4px;
+		padding: 4px var(--space-md);
+		border-bottom: 1px solid var(--color-primary);
+		background: rgba(15, 52, 96, 0.15);
+		flex-wrap: wrap;
+		flex-shrink: 0;
+	}
+
+	.cat-chip {
+		display: inline-flex;
+		align-items: center;
+		gap: 4px;
+		padding: 2px 8px;
+		border: 1px solid transparent;
+		border-radius: var(--radius-sm);
+		background: rgba(255, 255, 255, 0.05);
+		color: var(--color-text-muted);
+		font-size: 0.7rem;
+		font-weight: 600;
+		letter-spacing: 0.03em;
+		cursor: pointer;
+		transition: all var(--duration-fast);
+	}
+
+	.cat-chip:hover {
+		background: rgba(255, 255, 255, 0.1);
+		color: var(--color-text);
+	}
+
+	.cat-chip.active {
+		background: color-mix(in srgb, var(--cat-chip-color, var(--color-accent)) 20%, transparent);
+		border-color: var(--cat-chip-color, var(--color-accent));
+		color: var(--color-text);
+	}
+
+	.cat-chip-count {
+		font-size: 0.6rem;
+		opacity: 0.7;
+	}
+
+	.cat-chip-clear {
+		display: inline-flex;
+		align-items: center;
+		justify-content: center;
+		width: 18px;
+		height: 18px;
+		padding: 0;
+		border: none;
+		border-radius: 50%;
+		background: rgba(255, 255, 255, 0.1);
+		color: var(--color-text-muted);
+		font-size: 0.75rem;
+		cursor: pointer;
+		transition: all var(--duration-fast);
+	}
+
+	.cat-chip-clear:hover {
+		background: var(--color-accent);
+		color: var(--color-text);
+	}
+
+	/* Category badge on operator card */
+	.cat-badge {
+		color: #fff;
+	}
+
 </style>

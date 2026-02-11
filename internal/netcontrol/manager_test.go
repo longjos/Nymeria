@@ -139,7 +139,7 @@ func TestCheckInBasic(t *testing.T) {
 	n, _ := mgr.CreateNet(store.Net{Name: "Test Net"})
 	mgr.OpenNet(n.ID)
 
-	ci, err := mgr.CheckIn(n.ID, "KD7BBC", "routine")
+	ci, err := mgr.CheckIn(n.ID, "KD7BBC", "routine", "")
 	if err != nil {
 		t.Fatalf("CheckIn failed: %v", err)
 	}
@@ -165,7 +165,7 @@ func TestCheckInCallsignNormalization(t *testing.T) {
 	n, _ := mgr.CreateNet(store.Net{Name: "Test Net"})
 	mgr.OpenNet(n.ID)
 
-	ci, _ := mgr.CheckIn(n.ID, "  kd7bbc  ", "")
+	ci, _ := mgr.CheckIn(n.ID, "  kd7bbc  ", "", "")
 	if ci.Callsign != "KD7BBC" {
 		t.Errorf("callsign should be uppercased and trimmed: got %q", ci.Callsign)
 	}
@@ -180,12 +180,12 @@ func TestCheckInValidation(t *testing.T) {
 	n, _ := mgr.CreateNet(store.Net{Name: "Test Net"})
 	mgr.OpenNet(n.ID)
 
-	_, err := mgr.CheckIn(n.ID, "", "")
+	_, err := mgr.CheckIn(n.ID, "", "", "")
 	if err == nil {
 		t.Error("expected error for empty callsign")
 	}
 
-	_, err = mgr.CheckIn("nonexistent", "KD7BBC", "")
+	_, err = mgr.CheckIn("nonexistent", "KD7BBC", "", "")
 	if err == nil {
 		t.Error("expected error for nonexistent net")
 	}
@@ -209,7 +209,7 @@ func TestCheckInAutoPopulateFromTracker(t *testing.T) {
 	n, _ := mgr.CreateNet(store.Net{Name: "Test Net"})
 	mgr.OpenNet(n.ID)
 
-	ci, _ := mgr.CheckIn(n.ID, "KD7BBC", "")
+	ci, _ := mgr.CheckIn(n.ID, "KD7BBC", "", "")
 	if ci.Lat == nil || *ci.Lat != 34.0522 {
 		t.Errorf("lat should be auto-populated from tracker: got %v", ci.Lat)
 	}
@@ -224,7 +224,7 @@ func TestUpdateCheckIn(t *testing.T) {
 	n, _ := mgr.CreateNet(store.Net{Name: "Test Net"})
 	mgr.OpenNet(n.ID)
 
-	ci, _ := mgr.CheckIn(n.ID, "KD7BBC", "")
+	ci, _ := mgr.CheckIn(n.ID, "KD7BBC", "", "")
 
 	// Update status.
 	ci.Status = OpAssigned
@@ -247,7 +247,7 @@ func TestCheckOut(t *testing.T) {
 	n, _ := mgr.CreateNet(store.Net{Name: "Test Net"})
 	mgr.OpenNet(n.ID)
 
-	ci, _ := mgr.CheckIn(n.ID, "KD7BBC", "")
+	ci, _ := mgr.CheckIn(n.ID, "KD7BBC", "", "")
 
 	if err := mgr.CheckOut(n.ID, ci.ID); err != nil {
 		t.Fatalf("CheckOut failed: %v", err)
@@ -365,8 +365,8 @@ func TestRollCall(t *testing.T) {
 	n, _ := mgr.CreateNet(store.Net{Name: "Test Net"})
 	mgr.OpenNet(n.ID)
 
-	ci1, _ := mgr.CheckIn(n.ID, "KD7BBC", "")
-	ci2, _ := mgr.CheckIn(n.ID, "W1AW", "")
+	ci1, _ := mgr.CheckIn(n.ID, "KD7BBC", "", "")
+	ci2, _ := mgr.CheckIn(n.ID, "W1AW", "", "")
 
 	// Initiate roll call — should increment missed count for all active.
 	if err := mgr.InitiateRollCall(n.ID); err != nil {
@@ -455,7 +455,7 @@ func TestTimelineEvents(t *testing.T) {
 	// Drain events channel.
 	drainEvents(mgr)
 
-	mgr.CheckIn(n.ID, "KD7BBC", "routine")
+	mgr.CheckIn(n.ID, "KD7BBC", "routine", "")
 	drainEvents(mgr)
 
 	events, err := mgr.GetEvents(n.ID)
@@ -498,7 +498,7 @@ func TestLoadPersistence(t *testing.T) {
 	mgr1 := NewManager(s, tracker)
 	n, _ := mgr1.CreateNet(store.Net{Name: "Persist Test"})
 	mgr1.OpenNet(n.ID)
-	mgr1.CheckIn(n.ID, "KD7BBC", "routine")
+	mgr1.CheckIn(n.ID, "KD7BBC", "routine", "")
 	mgr1.CreateMission(store.NetMission{NetID: n.ID, Title: "Test Mission"})
 
 	// Create new manager and load from store.
@@ -534,7 +534,7 @@ func TestAutoMarkMissingAfterTwoRollCalls(t *testing.T) {
 	n, _ := mgr.CreateNet(store.Net{Name: "Test Net"})
 	mgr.OpenNet(n.ID)
 
-	ci, _ := mgr.CheckIn(n.ID, "KD7BBC", "")
+	ci, _ := mgr.CheckIn(n.ID, "KD7BBC", "", "")
 	drainEvents(mgr)
 
 	// Two roll calls without response.
@@ -561,7 +561,7 @@ func TestAutoMarkMissingSkipsReleased(t *testing.T) {
 	n, _ := mgr.CreateNet(store.Net{Name: "Test Net"})
 	mgr.OpenNet(n.ID)
 
-	ci, _ := mgr.CheckIn(n.ID, "KD7BBC", "")
+	ci, _ := mgr.CheckIn(n.ID, "KD7BBC", "", "")
 	mgr.CheckOut(n.ID, ci.ID)
 	drainEvents(mgr)
 
@@ -599,7 +599,7 @@ func TestCheckInSourceAprs(t *testing.T) {
 	n, _ := mgr.CreateNet(store.Net{Name: "Test Net"})
 	mgr.OpenNet(n.ID)
 
-	ci, _ := mgr.CheckIn(n.ID, "KD7BBC", "")
+	ci, _ := mgr.CheckIn(n.ID, "KD7BBC", "", "")
 	if ci.Source != "aprs" {
 		t.Errorf("source: got %q, want %q", ci.Source, "aprs")
 	}
@@ -612,7 +612,7 @@ func TestCheckInSourceVoice(t *testing.T) {
 	mgr.OpenNet(n.ID)
 
 	// Unknown station — no tracker entry.
-	ci, _ := mgr.CheckIn(n.ID, "UNKNOWN", "")
+	ci, _ := mgr.CheckIn(n.ID, "UNKNOWN", "", "")
 	if ci.Source != "voice" {
 		t.Errorf("source: got %q, want %q", ci.Source, "voice")
 	}
@@ -624,7 +624,7 @@ func TestAssignMission(t *testing.T) {
 	n, _ := mgr.CreateNet(store.Net{Name: "Test Net"})
 	mgr.OpenNet(n.ID)
 
-	ci, _ := mgr.CheckIn(n.ID, "KD7BBC", "")
+	ci, _ := mgr.CheckIn(n.ID, "KD7BBC", "", "")
 	m, _ := mgr.CreateMission(store.NetMission{NetID: n.ID, Title: "Deploy"})
 	drainEvents(mgr)
 
@@ -646,7 +646,7 @@ func TestAssignMultipleMissions(t *testing.T) {
 	n, _ := mgr.CreateNet(store.Net{Name: "Test Net"})
 	mgr.OpenNet(n.ID)
 
-	ci, _ := mgr.CheckIn(n.ID, "KD7BBC", "")
+	ci, _ := mgr.CheckIn(n.ID, "KD7BBC", "", "")
 	m1, _ := mgr.CreateMission(store.NetMission{NetID: n.ID, Title: "Mission A"})
 	m2, _ := mgr.CreateMission(store.NetMission{NetID: n.ID, Title: "Mission B"})
 	drainEvents(mgr)
@@ -670,7 +670,7 @@ func TestAssignMissionRejectDuplicate(t *testing.T) {
 	n, _ := mgr.CreateNet(store.Net{Name: "Test Net"})
 	mgr.OpenNet(n.ID)
 
-	ci, _ := mgr.CheckIn(n.ID, "KD7BBC", "")
+	ci, _ := mgr.CheckIn(n.ID, "KD7BBC", "", "")
 	m, _ := mgr.CreateMission(store.NetMission{NetID: n.ID, Title: "Deploy"})
 	drainEvents(mgr)
 
@@ -687,7 +687,7 @@ func TestUnassignSpecificMission(t *testing.T) {
 	n, _ := mgr.CreateNet(store.Net{Name: "Test Net"})
 	mgr.OpenNet(n.ID)
 
-	ci, _ := mgr.CheckIn(n.ID, "KD7BBC", "")
+	ci, _ := mgr.CheckIn(n.ID, "KD7BBC", "", "")
 	m1, _ := mgr.CreateMission(store.NetMission{NetID: n.ID, Title: "Mission A"})
 	m2, _ := mgr.CreateMission(store.NetMission{NetID: n.ID, Title: "Mission B"})
 	mgr.AssignMission(n.ID, ci.ID, m1.ID)
@@ -713,7 +713,7 @@ func TestUnassignLastMissionRestoresAvailable(t *testing.T) {
 	n, _ := mgr.CreateNet(store.Net{Name: "Test Net"})
 	mgr.OpenNet(n.ID)
 
-	ci, _ := mgr.CheckIn(n.ID, "KD7BBC", "")
+	ci, _ := mgr.CheckIn(n.ID, "KD7BBC", "", "")
 	m, _ := mgr.CreateMission(store.NetMission{NetID: n.ID, Title: "Deploy"})
 	mgr.AssignMission(n.ID, ci.ID, m.ID)
 	drainEvents(mgr)
@@ -736,7 +736,7 @@ func TestUnassignAllMissions(t *testing.T) {
 	n, _ := mgr.CreateNet(store.Net{Name: "Test Net"})
 	mgr.OpenNet(n.ID)
 
-	ci, _ := mgr.CheckIn(n.ID, "KD7BBC", "")
+	ci, _ := mgr.CheckIn(n.ID, "KD7BBC", "", "")
 	m1, _ := mgr.CreateMission(store.NetMission{NetID: n.ID, Title: "Mission A"})
 	m2, _ := mgr.CreateMission(store.NetMission{NetID: n.ID, Title: "Mission B"})
 	mgr.AssignMission(n.ID, ci.ID, m1.ID)
@@ -812,7 +812,7 @@ func TestDiscoverDevicesSSID(t *testing.T) {
 	n, _ := mgr.CreateNet(store.Net{Name: "Test Net"})
 	mgr.OpenNet(n.ID)
 
-	ci, err := mgr.CheckIn(n.ID, "KG4YFA", "")
+	ci, err := mgr.CheckIn(n.ID, "KG4YFA", "", "")
 	if err != nil {
 		t.Fatalf("CheckIn failed: %v", err)
 	}
@@ -833,7 +833,7 @@ func TestDiscoverDevicesNone(t *testing.T) {
 	n, _ := mgr.CreateNet(store.Net{Name: "Test Net"})
 	mgr.OpenNet(n.ID)
 
-	ci, err := mgr.CheckIn(n.ID, "UNKNOWN", "")
+	ci, err := mgr.CheckIn(n.ID, "UNKNOWN", "", "")
 	if err != nil {
 		t.Fatalf("CheckIn failed: %v", err)
 	}
@@ -849,7 +849,7 @@ func TestAddTrackedStationManual(t *testing.T) {
 	n, _ := mgr.CreateNet(store.Net{Name: "Test Net"})
 	mgr.OpenNet(n.ID)
 
-	ci, _ := mgr.CheckIn(n.ID, "KD7BBC", "")
+	ci, _ := mgr.CheckIn(n.ID, "KD7BBC", "", "")
 	drainEvents(mgr)
 
 	updated, err := mgr.AddTrackedStation(n.ID, ci.ID, "A2SV-4")
@@ -875,7 +875,7 @@ func TestAddTrackedStationDuplicate(t *testing.T) {
 	n, _ := mgr.CreateNet(store.Net{Name: "Test Net"})
 	mgr.OpenNet(n.ID)
 
-	ci, _ := mgr.CheckIn(n.ID, "KD7BBC", "")
+	ci, _ := mgr.CheckIn(n.ID, "KD7BBC", "", "")
 	drainEvents(mgr)
 
 	mgr.AddTrackedStation(n.ID, ci.ID, "A2SV-4")
@@ -891,7 +891,7 @@ func TestRemoveTrackedStation(t *testing.T) {
 	n, _ := mgr.CreateNet(store.Net{Name: "Test Net"})
 	mgr.OpenNet(n.ID)
 
-	ci, _ := mgr.CheckIn(n.ID, "KD7BBC", "")
+	ci, _ := mgr.CheckIn(n.ID, "KD7BBC", "", "")
 	drainEvents(mgr)
 
 	mgr.AddTrackedStation(n.ID, ci.ID, "A2SV-4")
@@ -930,7 +930,7 @@ func TestOnStationUpdatePosition(t *testing.T) {
 	n, _ := mgr.CreateNet(store.Net{Name: "Test Net"})
 	mgr.OpenNet(n.ID)
 
-	ci, _ := mgr.CheckIn(n.ID, "KG4YFA", "")
+	ci, _ := mgr.CheckIn(n.ID, "KG4YFA", "", "")
 	drainEvents(mgr)
 
 	// Update the tracked station in the tracker.
@@ -979,7 +979,7 @@ func TestOnStationUpdateBestPosition(t *testing.T) {
 	n, _ := mgr.CreateNet(store.Net{Name: "Test Net"})
 	mgr.OpenNet(n.ID)
 
-	ci, _ := mgr.CheckIn(n.ID, "KG4YFA", "")
+	ci, _ := mgr.CheckIn(n.ID, "KG4YFA", "", "")
 	drainEvents(mgr)
 
 	// The best position should be from the most recently heard device.
@@ -993,7 +993,7 @@ func TestOnStationUpdateIgnoresUntracked(t *testing.T) {
 
 	n, _ := mgr.CreateNet(store.Net{Name: "Test Net"})
 	mgr.OpenNet(n.ID)
-	mgr.CheckIn(n.ID, "KD7BBC", "")
+	mgr.CheckIn(n.ID, "KD7BBC", "", "")
 	drainEvents(mgr)
 
 	// Call with an untracked station — should be a no-op (no panic).
@@ -1011,7 +1011,7 @@ func TestOnStationUpdateIgnoresReleased(t *testing.T) {
 	n, _ := mgr.CreateNet(store.Net{Name: "Test Net"})
 	mgr.OpenNet(n.ID)
 
-	ci, _ := mgr.CheckIn(n.ID, "KG4YFA", "")
+	ci, _ := mgr.CheckIn(n.ID, "KG4YFA", "", "")
 	drainEvents(mgr)
 
 	mgr.CheckOut(n.ID, ci.ID)
@@ -1047,7 +1047,7 @@ func TestCheckOutCleansIndex(t *testing.T) {
 	n, _ := mgr.CreateNet(store.Net{Name: "Test Net"})
 	mgr.OpenNet(n.ID)
 
-	ci, _ := mgr.CheckIn(n.ID, "KG4YFA", "")
+	ci, _ := mgr.CheckIn(n.ID, "KG4YFA", "", "")
 	drainEvents(mgr)
 
 	// Verify index has entries.
@@ -1094,7 +1094,7 @@ func TestTrackedStationsRoundtrip(t *testing.T) {
 	mgr1 := NewManager(s, tracker)
 	n, _ := mgr1.CreateNet(store.Net{Name: "Roundtrip"})
 	mgr1.OpenNet(n.ID)
-	ci, _ := mgr1.CheckIn(n.ID, "KG4YFA", "")
+	ci, _ := mgr1.CheckIn(n.ID, "KG4YFA", "", "")
 	mgr1.AddTrackedStation(n.ID, ci.ID, "A2SV-4")
 
 	// Create new manager and load.
@@ -1128,8 +1128,8 @@ func TestCompleteMissionAutoUnassigns(t *testing.T) {
 	n, _ := mgr.CreateNet(store.Net{Name: "Test Net"})
 	mgr.OpenNet(n.ID)
 
-	ci1, _ := mgr.CheckIn(n.ID, "KD7BBC", "")
-	ci2, _ := mgr.CheckIn(n.ID, "W1AW", "")
+	ci1, _ := mgr.CheckIn(n.ID, "KD7BBC", "", "")
+	ci2, _ := mgr.CheckIn(n.ID, "W1AW", "", "")
 	m, _ := mgr.CreateMission(store.NetMission{NetID: n.ID, Title: "Deploy"})
 	mgr.AssignMission(n.ID, ci1.ID, m.ID)
 	mgr.AssignMission(n.ID, ci2.ID, m.ID)
@@ -1163,7 +1163,7 @@ func TestCompleteMissionKeepsOtherMissions(t *testing.T) {
 	n, _ := mgr.CreateNet(store.Net{Name: "Test Net"})
 	mgr.OpenNet(n.ID)
 
-	ci, _ := mgr.CheckIn(n.ID, "KD7BBC", "")
+	ci, _ := mgr.CheckIn(n.ID, "KD7BBC", "", "")
 	m1, _ := mgr.CreateMission(store.NetMission{NetID: n.ID, Title: "Mission A"})
 	m2, _ := mgr.CreateMission(store.NetMission{NetID: n.ID, Title: "Mission B"})
 	mgr.AssignMission(n.ID, ci.ID, m1.ID)
@@ -1195,8 +1195,8 @@ func TestCompleteMissionLogsEvents(t *testing.T) {
 	n, _ := mgr.CreateNet(store.Net{Name: "Test Net"})
 	mgr.OpenNet(n.ID)
 
-	ci1, _ := mgr.CheckIn(n.ID, "KD7BBC", "")
-	ci2, _ := mgr.CheckIn(n.ID, "W1AW", "")
+	ci1, _ := mgr.CheckIn(n.ID, "KD7BBC", "", "")
+	ci2, _ := mgr.CheckIn(n.ID, "W1AW", "", "")
 	m, _ := mgr.CreateMission(store.NetMission{NetID: n.ID, Title: "Deploy"})
 	mgr.AssignMission(n.ID, ci1.ID, m.ID)
 	mgr.AssignMission(n.ID, ci2.ID, m.ID)
@@ -1246,7 +1246,7 @@ func TestCompleteMissionSkipsReleased(t *testing.T) {
 	n, _ := mgr.CreateNet(store.Net{Name: "Test Net"})
 	mgr.OpenNet(n.ID)
 
-	ci, _ := mgr.CheckIn(n.ID, "KD7BBC", "")
+	ci, _ := mgr.CheckIn(n.ID, "KD7BBC", "", "")
 	m, _ := mgr.CreateMission(store.NetMission{NetID: n.ID, Title: "Deploy"})
 	mgr.AssignMission(n.ID, ci.ID, m.ID)
 	drainEvents(mgr)
@@ -1544,4 +1544,122 @@ func drainEvents(mgr *Manager) {
 			return
 		}
 	}
+}
+
+// --- Station Category Tests ---
+
+func TestCheckInWithCategory(t *testing.T) {
+	mgr := newTestManager(t)
+
+	n, _ := mgr.CreateNet(store.Net{Name: "Test Net"})
+	mgr.OpenNet(n.ID)
+
+	ci, err := mgr.CheckIn(n.ID, "KD7BBC", "routine", "medical")
+	if err != nil {
+		t.Fatalf("CheckIn with category failed: %v", err)
+	}
+	if ci.Category != CatMedical {
+		t.Errorf("category: got %q, want %q", ci.Category, CatMedical)
+	}
+}
+
+func TestCheckInCategoryDefault(t *testing.T) {
+	mgr := newTestManager(t)
+
+	n, _ := mgr.CreateNet(store.Net{Name: "Test Net"})
+	mgr.OpenNet(n.ID)
+
+	ci, err := mgr.CheckIn(n.ID, "KD7BBC", "", "")
+	if err != nil {
+		t.Fatalf("CheckIn failed: %v", err)
+	}
+	if ci.Category != CatGeneral {
+		t.Errorf("category should default to %q, got %q", CatGeneral, ci.Category)
+	}
+}
+
+func TestCheckInCategoryInvalid(t *testing.T) {
+	mgr := newTestManager(t)
+
+	n, _ := mgr.CreateNet(store.Net{Name: "Test Net"})
+	mgr.OpenNet(n.ID)
+
+	_, err := mgr.CheckIn(n.ID, "KD7BBC", "", "bogus")
+	if err == nil {
+		t.Error("expected error for invalid category")
+	}
+}
+
+func TestExportRosterCSVCategory(t *testing.T) {
+	checkIns := []store.NetCheckIn{
+		{
+			Callsign:    "KD7BBC",
+			Status:      "available",
+			Traffic:     "routine",
+			Category:    "medical",
+			Source:      "aprs",
+			CheckedInAt: time.Date(2024, 1, 1, 12, 0, 0, 0, time.UTC),
+			LastHeard:   time.Date(2024, 1, 1, 12, 30, 0, 0, time.UTC),
+		},
+		{
+			Callsign:    "W1AW",
+			Status:      "available",
+			Traffic:     "none",
+			Category:    "",
+			Source:      "voice",
+			CheckedInAt: time.Date(2024, 1, 1, 12, 0, 0, 0, time.UTC),
+			LastHeard:   time.Date(2024, 1, 1, 12, 30, 0, 0, time.UTC),
+		},
+	}
+
+	var buf bytes.Buffer
+	if err := ExportRosterCSV(&buf, checkIns); err != nil {
+		t.Fatalf("ExportRosterCSV failed: %v", err)
+	}
+
+	csv := buf.String()
+	if !strings.Contains(csv, ",category,") {
+		t.Error("CSV header missing category column")
+	}
+	if !strings.Contains(csv, "medical") {
+		t.Error("CSV missing medical category value")
+	}
+	if !strings.Contains(csv, "general") {
+		t.Error("CSV should default empty category to general")
+	}
+}
+
+func TestCheckInCategoryPersistence(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "test.db")
+	s := store.NewSQLiteStore(path)
+	if err := s.Init(); err != nil {
+		t.Fatalf("Init failed: %v", err)
+	}
+
+	tracker := station.NewMemoryTracker(config.StationConfig{
+		StaleTimeout:   time.Hour,
+		TrackMaxPoints: 10,
+		DedupWindow:    30 * time.Second,
+	})
+
+	mgr1 := NewManager(s, tracker)
+	n, _ := mgr1.CreateNet(store.Net{Name: "Category Persist"})
+	mgr1.OpenNet(n.ID)
+	mgr1.CheckIn(n.ID, "KD7BBC", "", "sag")
+
+	// Load in new manager.
+	mgr2 := NewManager(s, tracker)
+	if err := mgr2.Load(); err != nil {
+		t.Fatalf("Load failed: %v", err)
+	}
+
+	cis := mgr2.GetCheckIns(n.ID)
+	if len(cis) != 1 {
+		t.Fatalf("expected 1 check-in, got %d", len(cis))
+	}
+	if cis[0].Category != CatSAG {
+		t.Errorf("category after reload: got %q, want %q", cis[0].Category, CatSAG)
+	}
+
+	s.Close()
 }
