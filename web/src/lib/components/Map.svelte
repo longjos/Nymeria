@@ -538,15 +538,31 @@
 			const windDir = s.weather.windDir;
 			const windSpeed = s.weather.windSpeed;
 
+			// Staleness color: green → yellow-green → amber → grey
+			const ageMs = Date.now() - new Date(s.lastHeard).getTime();
+			const ageMin = ageMs / 60000;
+			let staleColor: string;
+			let staleOpacity: number;
+			if (ageMin < 10) {
+				staleColor = '#4ade80'; staleOpacity = 1;
+			} else if (ageMin < 30) {
+				staleColor = '#a3e635'; staleOpacity = 0.9;
+			} else if (ageMin < 60) {
+				staleColor = '#fbbf24'; staleOpacity = 0.75;
+			} else {
+				staleColor = '#6b7280'; staleOpacity = 0.5;
+			}
+
 			const tempStr = temp != null ? `${Math.round(convertTemp(temp, units))}°` : '—';
 			const windArrow = windDir != null
 				? `<span style="display:inline-block;transform:rotate(${windDir}deg);font-size:10px;">↑</span>`
 				: '';
 			const windStr = windSpeed != null ? `${Math.round(convertWindSpeed(windSpeed, units))}` : '';
 
-			const html = `<div class="wx-marker-pill">
+			const html = `<div class="wx-marker-pill" style="border-color:${staleColor};opacity:${staleOpacity}">
 				<span class="wx-temp">${tempStr}</span>
 				${windArrow || windStr ? `<span class="wx-wind">${windArrow}${windStr}</span>` : ''}
+				<span class="wx-stale-dot" style="background:${staleColor}"></span>
 			</div>`;
 
 			const icon = L.divIcon({
@@ -1264,6 +1280,13 @@
 	:global(.wx-marker-pill .wx-wind) {
 		color: #94a3b8;
 		font-size: 10px;
+	}
+
+	:global(.wx-marker-pill .wx-stale-dot) {
+		width: 5px;
+		height: 5px;
+		border-radius: 50%;
+		flex-shrink: 0;
 	}
 
 	/* DF overlay */
