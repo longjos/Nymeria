@@ -3,6 +3,7 @@
 	import { api } from '$lib/api';
 	import { closePanel } from '$lib/stores/ui';
 	import { weatherConfig } from '$lib/stores/weather';
+	import FilterBuilder from './FilterBuilder.svelte';
 	import type {
 		SettingsResponse, StationSettings, ServerSettings, BeaconSettings,
 		SessionSettings, LoggingSettings, TransportSettings, TileCacheSettings,
@@ -344,7 +345,7 @@
 									</div>
 									<div class="field-row">
 										<label>Filter</label>
-										<input type="text" bind:value={t.filter} placeholder="r/42/-71/100" />
+										<FilterBuilder value={t.filter ?? ''} oninput={(v) => { t.filter = v; }} />
 									</div>
 									<div class="field-group">
 										<div class="field-row half">
