@@ -14,7 +14,7 @@ import (
 	_ "modernc.org/sqlite"
 )
 
-const currentSchemaVersion = 17
+const currentSchemaVersion = 18
 
 // SQLiteStore implements Store using modernc.org/sqlite.
 type SQLiteStore struct {
@@ -172,6 +172,12 @@ func (s *SQLiteStore) migrate() error {
 
 	if version < 17 {
 		if err := s.migrateV17(); err != nil {
+			return err
+		}
+	}
+
+	if version < 18 {
+		if err := s.migrateV18(); err != nil {
 			return err
 		}
 	}
@@ -418,9 +424,9 @@ func (s *SQLiteStore) LoadMessages() ([]message.Message, error) {
 
 func (s *SQLiteStore) SaveTrackPoint(callsign string, tp station.TrackPoint) error {
 	_, err := s.db.Exec(`
-		INSERT INTO tracks (callsign, ssid, lat, lon, time)
-		VALUES (?, 0, ?, ?, ?)`,
-		callsign, tp.Lat, tp.Lon, tp.Time.UTC(),
+		INSERT INTO tracks (callsign, ssid, lat, lon, time, speed, course)
+		VALUES (?, 0, ?, ?, ?, ?, ?)`,
+		callsign, tp.Lat, tp.Lon, tp.Time.UTC(), tp.Speed, tp.Course,
 	)
 	if err != nil {
 		return fmt.Errorf("save track point: %w", err)
@@ -432,8 +438,8 @@ func (s *SQLiteStore) LoadTrackPoints(callsign string, limit int) ([]station.Tra
 	// Select the most recent N track points, then return them in ascending
 	// time order so the caller gets a chronological slice.
 	rows, err := s.db.Query(`
-		SELECT lat, lon, time FROM (
-			SELECT lat, lon, time
+		SELECT lat, lon, time, speed, course FROM (
+			SELECT lat, lon, time, speed, course
 			FROM tracks
 			WHERE callsign = ?
 			ORDER BY time DESC
@@ -452,7 +458,7 @@ func (s *SQLiteStore) LoadTrackPoints(callsign string, limit int) ([]station.Tra
 		var tp station.TrackPoint
 		var ts string
 
-		if err := rows.Scan(&tp.Lat, &tp.Lon, &ts); err != nil {
+		if err := rows.Scan(&tp.Lat, &tp.Lon, &ts, &tp.Speed, &tp.Course); err != nil {
 			return nil, fmt.Errorf("scan track point: %w", err)
 		}
 
@@ -2264,6 +2270,28 @@ func (s *SQLiteStore) migrateV17() error {
 		return fmt.Errorf("clear schema_version: %w", err)
 	}
 	if _, err := s.db.Exec("INSERT INTO schema_version (version) VALUES (?)", 17); err != nil {
+		return fmt.Errorf("set schema_version: %w", err)
+	}
+
+	return nil
+}
+
+func (s *SQLiteStore) migrateV18() error {
+	for _, stmt := range []string{
+		"ALTER TABLE tracks ADD COLUMN speed REAL NOT NULL DEFAULT 0",
+		"ALTER TABLE tracks ADD COLUMN course REAL NOT NULL DEFAULT 0",
+	} {
+		if _, err := s.db.Exec(stmt); err != nil {
+			if !isDuplicateColumnError(err) {
+				return fmt.Errorf("migrate v18: %w", err)
+			}
+		}
+	}
+
+	if _, err := s.db.Exec("DELETE FROM schema_version"); err != nil {
+		return fmt.Errorf("clear schema_version: %w", err)
+	}
+	if _, err := s.db.Exec("INSERT INTO schema_version (version) VALUES (?)", 18); err != nil {
 		return fmt.Errorf("set schema_version: %w", err)
 	}
 

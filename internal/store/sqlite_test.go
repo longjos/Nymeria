@@ -448,6 +448,65 @@ func TestLoadTrackPointsIsolation(t *testing.T) {
 	}
 }
 
+func TestSaveAndLoadTrackPointSpeedCourse(t *testing.T) {
+	s, _ := newTestStore(t)
+	defer s.Close()
+
+	base := time.Now().Truncate(time.Second).UTC()
+
+	tp := station.TrackPoint{
+		Lat:    34.0522,
+		Lon:    -118.2437,
+		Time:   base,
+		Speed:  88.5,
+		Course: 270.0,
+	}
+
+	if err := s.SaveTrackPoint("N0CALL", tp); err != nil {
+		t.Fatalf("SaveTrackPoint failed: %v", err)
+	}
+
+	loaded, err := s.LoadTrackPoints("N0CALL", 10)
+	if err != nil {
+		t.Fatalf("LoadTrackPoints failed: %v", err)
+	}
+	if len(loaded) != 1 {
+		t.Fatalf("expected 1 track point, got %d", len(loaded))
+	}
+
+	got := loaded[0]
+	if got.Speed != 88.5 {
+		t.Errorf("speed: got %f, want 88.5", got.Speed)
+	}
+	if got.Course != 270.0 {
+		t.Errorf("course: got %f, want 270.0", got.Course)
+	}
+
+	// Verify zero values round-trip correctly
+	tp2 := station.TrackPoint{
+		Lat:  35.0,
+		Lon:  -117.0,
+		Time: base.Add(time.Minute),
+	}
+	if err := s.SaveTrackPoint("N0CALL", tp2); err != nil {
+		t.Fatalf("SaveTrackPoint(zero) failed: %v", err)
+	}
+
+	loaded, err = s.LoadTrackPoints("N0CALL", 10)
+	if err != nil {
+		t.Fatalf("LoadTrackPoints(2) failed: %v", err)
+	}
+	if len(loaded) != 2 {
+		t.Fatalf("expected 2 track points, got %d", len(loaded))
+	}
+	if loaded[1].Speed != 0 {
+		t.Errorf("zero speed: got %f, want 0", loaded[1].Speed)
+	}
+	if loaded[1].Course != 0 {
+		t.Errorf("zero course: got %f, want 0", loaded[1].Course)
+	}
+}
+
 // --- V2 Migration Tests ---
 
 func TestV2MigrationCreatesActivityLogTable(t *testing.T) {
@@ -494,8 +553,8 @@ func TestV2SchemaVersion(t *testing.T) {
 	if err != nil {
 		t.Fatalf("query schema_version: %v", err)
 	}
-	if version != 17 {
-		t.Errorf("expected schema version 17, got %d", version)
+	if version != 18 {
+		t.Errorf("expected schema version 18, got %d", version)
 	}
 }
 
@@ -994,8 +1053,8 @@ func TestV3SchemaVersion(t *testing.T) {
 	if err != nil {
 		t.Fatalf("query schema_version: %v", err)
 	}
-	if version != 17 {
-		t.Errorf("expected schema version 17, got %d", version)
+	if version != 18 {
+		t.Errorf("expected schema version 18, got %d", version)
 	}
 }
 
@@ -1616,8 +1675,8 @@ func TestV5MigrationAddsTrackedStationsColumn(t *testing.T) {
 
 	var version int
 	s.db.QueryRow("SELECT version FROM schema_version LIMIT 1").Scan(&version)
-	if version != 17 {
-		t.Errorf("expected schema version 17, got %d", version)
+	if version != 18 {
+		t.Errorf("expected schema version 18, got %d", version)
 	}
 }
 
@@ -1723,8 +1782,8 @@ func TestV6MigrationCreatesTacticalAliasesTable(t *testing.T) {
 
 	var version int
 	s.db.QueryRow("SELECT version FROM schema_version LIMIT 1").Scan(&version)
-	if version != 17 {
-		t.Errorf("expected schema version 17, got %d", version)
+	if version != 18 {
+		t.Errorf("expected schema version 18, got %d", version)
 	}
 }
 
@@ -1891,8 +1950,8 @@ func TestV7MigrationAddsAnnotationColumns(t *testing.T) {
 
 	var version int
 	s.db.QueryRow("SELECT version FROM schema_version LIMIT 1").Scan(&version)
-	if version != 17 {
-		t.Errorf("expected schema version 17, got %d", version)
+	if version != 18 {
+		t.Errorf("expected schema version 18, got %d", version)
 	}
 }
 
@@ -2194,8 +2253,8 @@ func TestMigrateV8CreatesOperationsTable(t *testing.T) {
 
 	var version int
 	s.db.QueryRow("SELECT version FROM schema_version LIMIT 1").Scan(&version)
-	if version != 17 {
-		t.Errorf("expected schema version 17, got %d", version)
+	if version != 18 {
+		t.Errorf("expected schema version 18, got %d", version)
 	}
 
 	// Verify operations table exists by doing a query.
@@ -2214,8 +2273,8 @@ func TestMigrateV11AddsOpsViewColumns(t *testing.T) {
 
 	var version int
 	s.db.QueryRow("SELECT version FROM schema_version LIMIT 1").Scan(&version)
-	if version != 17 {
-		t.Errorf("expected schema version 17, got %d", version)
+	if version != 18 {
+		t.Errorf("expected schema version 18, got %d", version)
 	}
 
 	// Verify ops_view columns exist.
@@ -2604,8 +2663,8 @@ func TestMigrateV13CreatesTelemetryReadingsTable(t *testing.T) {
 
 	var version int
 	s.db.QueryRow("SELECT version FROM schema_version LIMIT 1").Scan(&version)
-	if version != 17 {
-		t.Errorf("expected schema version 17, got %d", version)
+	if version != 18 {
+		t.Errorf("expected schema version 18, got %d", version)
 	}
 }
 
@@ -2848,8 +2907,8 @@ func TestMigrateV16(t *testing.T) {
 	if err != nil {
 		t.Fatalf("query schema_version: %v", err)
 	}
-	if version != 17 {
-		t.Errorf("expected schema version 17, got %d", version)
+	if version != 18 {
+		t.Errorf("expected schema version 18, got %d", version)
 	}
 }
 

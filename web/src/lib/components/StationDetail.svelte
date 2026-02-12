@@ -371,6 +371,14 @@
 						{#each station.track.slice().reverse().slice(0, 50) as tp}
 							<div class="track-row">
 								<span class="coords">{formatCoord(tp.lat, tp.lon)}</span>
+								{#if tp.speed && tp.speed > 1}
+									<span class="track-speed">{formatSpeed(tp.speed, $weatherUnits)}</span>
+								{/if}
+								{#if tp.course && tp.course > 0}
+									<span class="track-course" title={formatCourse(tp.course)}>
+										<span class="course-arrow" style="display:inline-block;transform:rotate({tp.course}deg)">&#x2191;</span>
+									</span>
+								{/if}
 								<span class="time">{timeAgo(tp.time)}</span>
 							</div>
 						{/each}
@@ -546,6 +554,21 @@
 
 	.track-row .time {
 		color: var(--color-text-muted);
+	}
+
+	.track-speed {
+		color: var(--color-accent, #4dabf7);
+		font-size: 0.75rem;
+		white-space: nowrap;
+	}
+
+	.track-course {
+		font-size: 0.75rem;
+	}
+
+	.course-arrow {
+		color: var(--color-accent, #4dabf7);
+		line-height: 1;
 	}
 
 	.unknown-icon {

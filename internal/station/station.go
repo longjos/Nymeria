@@ -17,9 +17,11 @@ type Position struct {
 
 // TrackPoint is a timestamped position for track history.
 type TrackPoint struct {
-	Lat  float64   `json:"lat"`
-	Lon  float64   `json:"lon"`
-	Time time.Time `json:"time"`
+	Lat    float64   `json:"lat"`
+	Lon    float64   `json:"lon"`
+	Time   time.Time `json:"time"`
+	Speed  float64   `json:"speed,omitempty"`
+	Course float64   `json:"course,omitempty"`
 }
 
 // Station represents a tracked APRS station.

@@ -109,6 +109,8 @@ export interface TrackPoint {
 	lat: number;
 	lon: number;
 	time: string;
+	speed?: number;
+	course?: number;
 }
 
 export interface APRSSymbol {
