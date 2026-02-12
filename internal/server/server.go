@@ -412,6 +412,24 @@ func (s *Server) bridgeNetControlEvents() {
 		}
 		s.hub.Broadcast(data)
 
+		// Close net-scoped annotations when net is closed.
+		if evt.Type == "net_updated" && s.annMgr != nil {
+			if nData, ok := evt.Data.(store.Net); ok && nData.Status == "closed" {
+				s.annMgr.CloseNetAnnotations(nData.ID)
+			} else {
+				raw, err := json.Marshal(evt.Data)
+				if err == nil {
+					var n struct {
+						ID     string `json:"id"`
+						Status string `json:"status"`
+					}
+					if json.Unmarshal(raw, &n) == nil && n.Status == "closed" && n.ID != "" {
+						s.annMgr.CloseNetAnnotations(n.ID)
+					}
+				}
+			}
+		}
+
 		// Sync mission status change → annotation status.
 		if evt.Type == "mission_updated" && s.annMgr != nil {
 			if mData, ok := evt.Data.(map[string]any); ok {

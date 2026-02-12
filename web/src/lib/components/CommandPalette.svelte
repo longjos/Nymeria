@@ -1,7 +1,8 @@
 <script lang="ts">
 	import { api } from '$lib/api';
 	import { timeAgo, formatCoord } from '$lib/utils';
-	import { activeNet, checkIns, missions, notesByCheckIn } from '$lib/stores/netcontrol';
+	import { activeNet, checkIns, missions, notesByCheckIn, netAnnotations } from '$lib/stores/netcontrol';
+	import { categoryMeta } from '$lib/annotationMeta';
 	import { currentUser } from '$lib/stores/session';
 	import {
 		paletteQuery, paletteFilter, paletteResults, recentCallsigns, emptyStateData,
@@ -38,6 +39,7 @@
 	let showMissionDropdown = $state(false);
 	let showTrafficDropdown = $state(false);
 	let showCategoryDropdown = $state(false);
+	let showLocationDropdown = $state(false);
 
 	// Refs
 	let searchInputRef = $state<HTMLInputElement>();
@@ -49,6 +51,7 @@
 	let net = $derived($activeNet);
 	let allMissions = $derived($missions);
 	let allCheckIns = $derived($checkIns);
+	let allNetAnnotations = $derived($netAnnotations);
 
 	// Notes for selected operator (reactive — updates when notes store changes)
 	let noteMap = $derived($notesByCheckIn);
@@ -92,6 +95,7 @@
 		showMissionDropdown = false;
 		showTrafficDropdown = false;
 		showCategoryDropdown = false;
+		showLocationDropdown = false;
 		// Focus textarea after DOM updates
 		requestAnimationFrame(() => {
 			textareaRef?.focus();
@@ -105,6 +109,7 @@
 		showMissionDropdown = false;
 		showTrafficDropdown = false;
 		showCategoryDropdown = false;
+		showLocationDropdown = false;
 		requestAnimationFrame(() => {
 			searchInputRef?.focus();
 		});
@@ -183,6 +188,7 @@
 			showMissionDropdown = false;
 			showTrafficDropdown = false;
 			showCategoryDropdown = false;
+			showLocationDropdown = false;
 			return;
 		}
 		if (e.key === 'm' || e.key === 'M') {
@@ -191,6 +197,7 @@
 			showStatusDropdown = false;
 			showTrafficDropdown = false;
 			showCategoryDropdown = false;
+			showLocationDropdown = false;
 			return;
 		}
 		if (e.key === 't' || e.key === 'T') {
@@ -199,6 +206,7 @@
 			showStatusDropdown = false;
 			showMissionDropdown = false;
 			showCategoryDropdown = false;
+			showLocationDropdown = false;
 			return;
 		}
 		if (e.key === 'c' || e.key === 'C') {
@@ -207,6 +215,16 @@
 			showStatusDropdown = false;
 			showMissionDropdown = false;
 			showTrafficDropdown = false;
+			showLocationDropdown = false;
+			return;
+		}
+		if (e.key === 'l' || e.key === 'L') {
+			e.preventDefault();
+			showLocationDropdown = !showLocationDropdown;
+			showStatusDropdown = false;
+			showMissionDropdown = false;
+			showTrafficDropdown = false;
+			showCategoryDropdown = false;
 			return;
 		}
 	}
@@ -292,6 +310,24 @@
 			await api.updateCheckIn(net.id, selected.checkIn.id, { category: category as any });
 			selected = { ...selected };
 			showCategoryDropdown = false;
+		} catch { /* ignore */ }
+	}
+
+	async function setLocationFromAnnotation(ann: import('$lib/types').Annotation) {
+		if (!net || !selected?.checkIn) return;
+		try {
+			let lat = 0, lon = 0;
+			const geo = typeof ann.geometry === 'string' ? JSON.parse(ann.geometry) : ann.geometry;
+			if (geo?.type === 'Point' && geo.coordinates) {
+				lon = geo.coordinates[0];
+				lat = geo.coordinates[1];
+			}
+			await api.updateCheckIn(net.id, selected.checkIn.id, {
+				lat, lon,
+				location: ann.label,
+			} as any);
+			selected = { ...selected, lat, lon };
+			showLocationDropdown = false;
 		} catch { /* ignore */ }
 	}
 
@@ -561,18 +597,23 @@
 				<!-- Quick actions bar -->
 				<div class="cp-actions-bar">
 					<div class="cp-action-group">
-						<button class="cp-action-btn" onclick={() => { showStatusDropdown = !showStatusDropdown; showMissionDropdown = false; showTrafficDropdown = false; showCategoryDropdown = false; }} disabled={!selected.checkIn}>
+						<button class="cp-action-btn" onclick={() => { showStatusDropdown = !showStatusDropdown; showMissionDropdown = false; showTrafficDropdown = false; showCategoryDropdown = false; showLocationDropdown = false; }} disabled={!selected.checkIn}>
 							<kbd class="cp-kbd cp-kbd-sm">S</kbd> Status
 						</button>
-						<button class="cp-action-btn" onclick={() => { showTrafficDropdown = !showTrafficDropdown; showStatusDropdown = false; showMissionDropdown = false; showCategoryDropdown = false; }} disabled={!selected.checkIn}>
+						<button class="cp-action-btn" onclick={() => { showTrafficDropdown = !showTrafficDropdown; showStatusDropdown = false; showMissionDropdown = false; showCategoryDropdown = false; showLocationDropdown = false; }} disabled={!selected.checkIn}>
 							<kbd class="cp-kbd cp-kbd-sm">T</kbd> Traffic
 						</button>
-						<button class="cp-action-btn" onclick={() => { showCategoryDropdown = !showCategoryDropdown; showStatusDropdown = false; showMissionDropdown = false; showTrafficDropdown = false; }} disabled={!selected.checkIn}>
+						<button class="cp-action-btn" onclick={() => { showCategoryDropdown = !showCategoryDropdown; showStatusDropdown = false; showMissionDropdown = false; showTrafficDropdown = false; showLocationDropdown = false; }} disabled={!selected.checkIn}>
 							<kbd class="cp-kbd cp-kbd-sm">C</kbd> Category
 						</button>
-						<button class="cp-action-btn" onclick={() => { showMissionDropdown = !showMissionDropdown; showStatusDropdown = false; showTrafficDropdown = false; showCategoryDropdown = false; }} disabled={!selected.checkIn}>
+						<button class="cp-action-btn" onclick={() => { showMissionDropdown = !showMissionDropdown; showStatusDropdown = false; showTrafficDropdown = false; showCategoryDropdown = false; showLocationDropdown = false; }} disabled={!selected.checkIn}>
 							<kbd class="cp-kbd cp-kbd-sm">M</kbd> Mission
 						</button>
+						{#if allNetAnnotations.length > 0}
+							<button class="cp-action-btn" onclick={() => { showLocationDropdown = !showLocationDropdown; showStatusDropdown = false; showMissionDropdown = false; showTrafficDropdown = false; showCategoryDropdown = false; }} disabled={!selected.checkIn}>
+								<kbd class="cp-kbd cp-kbd-sm">L</kbd> Location
+							</button>
+						{/if}
 						<button class="cp-action-btn" onclick={flyToSelected} disabled={selected.lat == null}>
 							<kbd class="cp-kbd cp-kbd-sm">F</kbd> Fly To
 						</button>
@@ -652,6 +693,37 @@
 									{/if}
 								</button>
 							{/each}
+						</div>
+					{/if}
+
+					<!-- Location annotation dropdown -->
+					{#if showLocationDropdown}
+						<div class="cp-dropdown">
+							{#each allNetAnnotations.filter(a => {
+								try {
+									const geo = typeof a.geometry === 'string' ? JSON.parse(a.geometry) : a.geometry;
+									return geo?.type === 'Point' && geo.coordinates && (geo.coordinates[0] || geo.coordinates[1]);
+								} catch { return false; }
+							}) as loc}
+								<button
+									class="cp-dropdown-item"
+									onclick={() => setLocationFromAnnotation(loc)}
+								>
+									<span class="cp-status-dot" style="background: {categoryMeta[loc.category]?.defaultColor || '#6b7280'}"></span>
+									{loc.label}
+									{#if loc.shortName}
+										<span class="cp-result-name">{loc.shortName}</span>
+									{/if}
+								</button>
+							{/each}
+							{#if allNetAnnotations.filter(a => {
+								try {
+									const geo = typeof a.geometry === 'string' ? JSON.parse(a.geometry) : a.geometry;
+									return geo?.type === 'Point' && geo.coordinates && (geo.coordinates[0] || geo.coordinates[1]);
+								} catch { return false; }
+							}).length === 0}
+								<div class="cp-dropdown-empty">No locations with positions</div>
+							{/if}
 						</div>
 					{/if}
 				</div>

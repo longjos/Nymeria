@@ -147,6 +147,9 @@ type Annotation struct {
 	ReportedAt    *time.Time `json:"reportedAt,omitempty"`
 	ResolvedAt    *time.Time `json:"resolvedAt,omitempty"`
 	ExpiresAt     *time.Time `json:"expiresAt,omitempty"`
+	NetID         string     `json:"netId,omitempty"`
+	ShortName     string     `json:"shortName,omitempty"`
+	SortOrder     int        `json:"sortOrder"`
 }
 
 // Operation represents a named grouping of annotations for a specific event or mission.
@@ -167,6 +170,7 @@ type AnnotationFilter struct {
 	Priority       string
 	OperationID    string
 	IncludeExpired bool
+	NetID          string
 }
 
 // WeatherReading represents a single weather observation stored in the database.

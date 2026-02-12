@@ -196,7 +196,7 @@ export interface SetupData {
 	aprisFilter: string;
 }
 
-export type AnnotationCategory = 'incident' | 'resource' | 'checkpoint' | 'hazard' | 'route' | 'boundary' | 'assignment' | 'general';
+export type AnnotationCategory = 'incident' | 'resource' | 'checkpoint' | 'hazard' | 'route' | 'boundary' | 'assignment' | 'general' | 'aid' | 'staging' | 'shelter' | 'parking' | 'start' | 'finish';
 export type AnnotationPriority = 'routine' | 'priority' | 'urgent' | 'emergency';
 
 export interface Annotation {
@@ -221,6 +221,9 @@ export interface Annotation {
 	resolvedAt?: string;
 	expiresAt?: string;
 	transmitting?: boolean;
+	netId?: string;
+	shortName?: string;
+	sortOrder?: number;
 }
 
 export interface ActivityEntry {

@@ -110,6 +110,7 @@ func (s *Server) routes() {
 		r.Get("/nets/{id}", s.handleGetNet)
 		r.Get("/nets/{id}/events", s.handleGetNetEvents)
 		r.Get("/nets/{id}/notes", s.handleGetNetNotes)
+		r.Get("/nets/{id}/annotations", s.handleGetNetAnnotations)
 		r.Get("/nets/{id}/roster/export", s.handleExportRosterCSV)
 
 		// Net Control — write endpoints (operator+)
@@ -133,6 +134,8 @@ func (s *Server) routes() {
 			r.Delete("/nets/{id}/checkin/{ciId}/assign", s.handleUnassignMission)
 			r.Post("/nets/{id}/checkin/{ciId}/devices", s.handleAddTrackedStation)
 			r.Delete("/nets/{id}/checkin/{ciId}/devices/{callsign}", s.handleRemoveTrackedStation)
+			r.Post("/nets/{id}/annotations/import", s.handleImportNetAnnotations)
+			r.Post("/nets/{id}/annotations/copy/{sourceNetId}", s.handleCopyNetAnnotations)
 		})
 
 		// Tile cache — preload/estimate (operator+)
@@ -1702,10 +1705,18 @@ func (s *Server) handleGetNet(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	var netAnns []store.Annotation
+	if s.annMgr != nil {
+		netAnns = s.annMgr.AllForNet(id)
+	}
+	if netAnns == nil {
+		netAnns = []store.Annotation{}
+	}
 	writeJSON(w, http.StatusOK, map[string]any{
-		"net":      n,
-		"checkIns": s.netMgr.GetCheckIns(id),
-		"missions": s.netMgr.GetMissions(id),
+		"net":         n,
+		"checkIns":    s.netMgr.GetCheckIns(id),
+		"missions":    s.netMgr.GetMissions(id),
+		"annotations": netAnns,
 	})
 }
 
@@ -2181,6 +2192,84 @@ func (s *Server) handleRemoveTrackedStation(w http.ResponseWriter, r *http.Reque
 	}
 
 	writeJSON(w, http.StatusOK, ci)
+}
+
+func (s *Server) handleGetNetAnnotations(w http.ResponseWriter, r *http.Request) {
+	if s.annMgr == nil {
+		writeJSON(w, http.StatusOK, []any{})
+		return
+	}
+
+	id := chi.URLParam(r, "id")
+	anns := s.annMgr.AllForNet(id)
+	if anns == nil {
+		anns = []store.Annotation{}
+	}
+	writeJSON(w, http.StatusOK, anns)
+}
+
+func (s *Server) handleImportNetAnnotations(w http.ResponseWriter, r *http.Request) {
+	if s.annMgr == nil {
+		writeJSON(w, http.StatusServiceUnavailable, map[string]string{"error": "annotation manager not available"})
+		return
+	}
+
+	id := chi.URLParam(r, "id")
+
+	if err := r.ParseMultipartForm(10 << 20); err != nil {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid multipart form"})
+		return
+	}
+
+	file, header, err := r.FormFile("file")
+	if err != nil {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "file is required"})
+		return
+	}
+	defer file.Close()
+
+	filename := strings.ToLower(header.Filename)
+	var items []annotation.ImportItem
+
+	if strings.HasSuffix(filename, ".gpx") {
+		items, err = annotation.ParseGPXWaypoints(file)
+	} else if strings.HasSuffix(filename, ".kml") {
+		items, err = annotation.ParseKMLPlacemarks(file)
+	} else {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "unsupported file type, use .gpx or .kml"})
+		return
+	}
+
+	if err != nil {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
+		return
+	}
+
+	imported, err := s.annMgr.ImportAnnotations(id, items)
+	if err != nil {
+		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
+		return
+	}
+
+	writeJSON(w, http.StatusCreated, imported)
+}
+
+func (s *Server) handleCopyNetAnnotations(w http.ResponseWriter, r *http.Request) {
+	if s.annMgr == nil {
+		writeJSON(w, http.StatusServiceUnavailable, map[string]string{"error": "annotation manager not available"})
+		return
+	}
+
+	id := chi.URLParam(r, "id")
+	sourceNetId := chi.URLParam(r, "sourceNetId")
+
+	copied, err := s.annMgr.CopyAnnotationsFromNet(sourceNetId, id)
+	if err != nil {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
+		return
+	}
+
+	writeJSON(w, http.StatusCreated, copied)
 }
 
 func (s *Server) handleExportRosterCSV(w http.ResponseWriter, r *http.Request) {

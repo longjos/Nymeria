@@ -1,6 +1,7 @@
 <script lang="ts">
 	import { onMount, onDestroy } from 'svelte';
 	import type { Station, Annotation, NetCheckIn, NetMission } from '$lib/types';
+	import { categoryMeta } from '$lib/annotationMeta';
 	import { symbolInfo } from '$lib/symbols';
 	import { createStationIcon } from '$lib/aprs-icons';
 	import { stationDisplayName } from '$lib/utils';
@@ -44,6 +45,11 @@
 		placingOperator = null,
 		onOperatorPlaced,
 		onPlaceCancelled,
+		netLocationAnnotations = [],
+		showNetLocationAnnotations = false,
+		placingAnnotation = null,
+		onAnnotationPlaced,
+		onAnnotationPlaceCancelled,
 	}: {
 		stations?: Station[];
 		annotations?: Annotation[];
@@ -75,6 +81,11 @@
 		placingOperator?: { id: string; callsign: string } | null;
 		onOperatorPlaced?: (id: string, lat: number, lon: number) => void;
 		onPlaceCancelled?: () => void;
+		netLocationAnnotations?: Annotation[];
+		showNetLocationAnnotations?: boolean;
+		placingAnnotation?: { id: string | null; name: string } | null;
+		onAnnotationPlaced?: (lat: number, lon: number) => void;
+		onAnnotationPlaceCancelled?: () => void;
 	} = $props();
 
 	let mapEl: HTMLDivElement;
@@ -116,6 +127,10 @@
 	let dfRangeCircles: Map<string, L.Circle> = new Map();
 	let dfTargetMarker: L.Marker | null = null;
 	let dfTargetCircle: L.Circle | null = null;
+
+	// Net location annotation layers
+	let netLocMarkers: Map<string, L.Marker> = new Map();
+	let netLocRouteLine: L.Polyline | null = null;
 
 	const netStatusColors: Record<string, string> = {
 		available: '#22c55e',
@@ -204,7 +219,7 @@
 			map.on('dblclick', handleDrawDblClick);
 			map.doubleClickZoom.disable();
 		} else {
-			if (!placingOperator) {
+			if (!placingOperator && !placingAnnotation) {
 				mapEl.style.cursor = '';
 				map.doubleClickZoom.enable();
 			}
@@ -222,11 +237,27 @@
 			map.on('click', handlePlaceClick);
 			map.doubleClickZoom.disable();
 		} else {
-			if (!drawingMode) {
+			if (!drawingMode && !placingAnnotation) {
 				mapEl.style.cursor = '';
 				map.doubleClickZoom.enable();
 			}
 			map.off('click', handlePlaceClick);
+		}
+	});
+
+	// Place mode for annotations (click-to-set position)
+	$effect(() => {
+		if (!map) return;
+		if (placingAnnotation) {
+			mapEl.style.cursor = 'crosshair';
+			map.on('click', handleAnnotationPlaceClick);
+			map.doubleClickZoom.disable();
+		} else {
+			if (!drawingMode && !placingOperator) {
+				mapEl.style.cursor = '';
+				map.doubleClickZoom.enable();
+			}
+			map.off('click', handleAnnotationPlaceClick);
 		}
 	});
 
@@ -762,6 +793,72 @@
 		}
 	});
 
+	// Net location annotation markers + route line
+	$effect(() => {
+		if (!map) return;
+		const show = showNetLocationAnnotations;
+		const anns = netLocationAnnotations;
+
+		// Clear existing
+		for (const [, m] of netLocMarkers) m.remove();
+		netLocMarkers.clear();
+		netLocRouteLine?.remove();
+		netLocRouteLine = null;
+
+		if (!show || !anns.length) return;
+
+		const sorted = [...anns].sort((a, b) => (a.sortOrder ?? 0) - (b.sortOrder ?? 0));
+		const routePoints: L.LatLngExpression[] = [];
+
+		for (const a of sorted) {
+			let lat: number, lon: number;
+			try {
+				const geo = typeof a.geometry === 'string' ? JSON.parse(a.geometry) : a.geometry;
+				if (geo?.type !== 'Point' || !geo.coordinates) continue;
+				lon = geo.coordinates[0];
+				lat = geo.coordinates[1];
+			} catch { continue; }
+			if (!lat && !lon) continue;
+
+			const color = categoryMeta[a.category]?.defaultColor || '#6b7280';
+			const label = a.shortName || a.label.slice(0, 6);
+
+			const html = `<div class="loc-preset-marker" style="--loc-color: ${color}">
+				<span class="loc-preset-label">${label}</span>
+				<div class="loc-preset-pin"></div>
+			</div>`;
+
+			const icon = L.divIcon({
+				className: 'loc-preset-icon',
+				html,
+				iconSize: [60, 32],
+				iconAnchor: [30, 32],
+			});
+
+			const marker = L.marker([lat, lon], { icon, interactive: true }).addTo(map);
+			marker.bindTooltip(a.label + (a.description ? `\n${a.description}` : ''), {
+				permanent: false,
+				direction: 'top',
+				className: 'annotation-tooltip',
+			});
+			marker.on('click', () => {
+				onAnnotationClick?.(a.id);
+			});
+			netLocMarkers.set(a.id, marker);
+			routePoints.push([lat, lon]);
+		}
+
+		// Draw route line connecting markers in sort order
+		if (routePoints.length >= 2) {
+			netLocRouteLine = L.polyline(routePoints, {
+				color: '#94a3b8',
+				weight: 2,
+				opacity: 0.5,
+				dashArray: '8 6',
+			}).addTo(map);
+		}
+	});
+
 	function dfBearingIntersection(
 		lat1: number, lon1: number, brg1: number,
 		lat2: number, lon2: number, brg2: number
@@ -910,6 +1007,10 @@
 	// Escape key cancels drawing or placing
 	function handleKeyDown(e: KeyboardEvent) {
 		if (e.key === 'Escape') {
+			if (placingAnnotation) {
+				onAnnotationPlaceCancelled?.();
+				return;
+			}
 			if (placingOperator) {
 				onPlaceCancelled?.();
 				return;
@@ -924,6 +1025,11 @@
 	function handlePlaceClick(e: L.LeafletMouseEvent) {
 		if (!placingOperator) return;
 		onOperatorPlaced?.(placingOperator.id, e.latlng.lat, e.latlng.lng);
+	}
+
+	function handleAnnotationPlaceClick(e: L.LeafletMouseEvent) {
+		if (!placingAnnotation) return;
+		onAnnotationPlaced?.(e.latlng.lat, e.latlng.lng);
 	}
 
 	function handleDrawClick(e: L.LeafletMouseEvent) {
@@ -1180,7 +1286,7 @@
 
 <svelte:window onkeydown={handleKeyDown} />
 
-<div class="map-container" class:drawing={drawingMode !== null} class:placing={placingOperator !== null} bind:this={mapEl}></div>
+<div class="map-container" class:drawing={drawingMode !== null} class:placing={placingOperator !== null || placingAnnotation !== null} bind:this={mapEl}></div>
 
 {#if drawingMode}
 	<div class="draw-hint">
@@ -1198,6 +1304,13 @@
 {#if placingOperator}
 	<div class="place-hint">
 		Click to set position for <strong>{placingOperator.callsign}</strong>
+		<kbd>Esc</kbd> cancel
+	</div>
+{/if}
+
+{#if placingAnnotation}
+	<div class="place-hint" style="border-color: #3b82f6;">
+		Click to set position for <strong>{placingAnnotation.name || 'location'}</strong>
 		<kbd>Esc</kbd> cancel
 	</div>
 {/if}
@@ -1377,5 +1490,40 @@
 		font-family: monospace;
 		font-weight: 600;
 		font-size: 11px;
+	}
+
+	/* Location preset markers */
+	:global(.loc-preset-icon) {
+		background: none !important;
+		border: none !important;
+	}
+
+	:global(.loc-preset-marker) {
+		display: flex;
+		flex-direction: column;
+		align-items: center;
+		pointer-events: auto;
+	}
+
+	:global(.loc-preset-label) {
+		display: inline-block;
+		padding: 1px 6px;
+		font-size: 10px;
+		font-weight: 700;
+		font-family: 'SF Mono', 'Fira Code', monospace;
+		letter-spacing: 0.02em;
+		background: var(--loc-color);
+		color: #fff;
+		border-radius: 3px;
+		white-space: nowrap;
+		text-shadow: 0 1px 2px rgba(0, 0, 0, 0.4);
+		box-shadow: 0 1px 4px rgba(0, 0, 0, 0.3);
+	}
+
+	:global(.loc-preset-pin) {
+		width: 2px;
+		height: 8px;
+		background: var(--loc-color);
+		opacity: 0.7;
 	}
 </style>

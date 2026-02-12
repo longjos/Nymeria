@@ -33,7 +33,8 @@
 	import {
 		initNetControlStore,
 		activeNet, operatorsWithPosition, missionsWithPosition, assignmentLines,
-		opsView, hoveredMissionId, hoveredCheckInId
+		opsView, hoveredMissionId, hoveredCheckInId,
+		netLocationAnnotations
 	} from '$lib/stores/netcontrol';
 	import { initTacticalStore } from '$lib/stores/tactical';
 	import { initBulletinStore } from '$lib/stores/bulletins';
@@ -60,6 +61,8 @@
 	let mapRef = $state<Map>();
 	let editingAnnotationId = $state<string | null>(null);
 	let placingOperator = $state<{ id: string; callsign: string } | null>(null);
+	let placingAnnotation = $state<{ id: string | null; name: string; mode: 'update' | 'form' } | null>(null);
+	let annotationMapCoords = $state<{ lat: number; lon: number } | null>(null);
 
 	let stationsWithPosition = $derived(
 		$stationList.filter((s) => s.position)
@@ -177,7 +180,8 @@
 	}
 
 	function handlePlaceOperator(ciId: string, callsign: string) {
-		drawingMode = null; // Cancel drawing if active
+		drawingMode = null;
+		placingAnnotation = null;
 		placingOperator = { id: ciId, callsign };
 	}
 
@@ -193,6 +197,37 @@
 
 	function handlePlaceCancelled() {
 		placingOperator = null;
+	}
+
+	function handlePlaceAnnotation(id: string | null, name: string, mode: 'update' | 'form') {
+		drawingMode = null;
+		placingOperator = null;
+		placingAnnotation = { id, name, mode };
+	}
+
+	async function handleAnnotationPlaced(lat: number, lon: number) {
+		const placing = placingAnnotation;
+		placingAnnotation = null;
+
+		if (placing?.mode === 'update' && placing.id) {
+			try {
+				const geometry = JSON.stringify({ type: 'Point', coordinates: [lon, lat] });
+				await api.updateAnnotation(placing.id, { geometry });
+			} catch (e) {
+				console.error('Failed to set annotation position:', e);
+			}
+		} else {
+			// Send coordinates to the form
+			annotationMapCoords = { lat, lon };
+		}
+	}
+
+	function handleAnnotationPlaceCancelled() {
+		placingAnnotation = null;
+	}
+
+	function handleMapCoordsConsumed() {
+		annotationMapCoords = null;
 	}
 
 	function handleFlyToAnnotation(ann: Annotation) {
@@ -213,7 +248,8 @@
 	}
 
 	function handleStartDraw(mode: 'point' | 'line' | 'area') {
-		placingOperator = null; // Cancel placing if active
+		placingOperator = null;
+		placingAnnotation = null;
 		drawingMode = mode;
 	}
 
@@ -320,6 +356,11 @@
 			{placingOperator}
 			onOperatorPlaced={handleOperatorPlaced}
 			onPlaceCancelled={handlePlaceCancelled}
+			netLocationAnnotations={$netLocationAnnotations}
+			showNetLocationAnnotations={$activeNet != null}
+			placingAnnotation={placingAnnotation}
+			onAnnotationPlaced={handleAnnotationPlaced}
+			onAnnotationPlaceCancelled={handleAnnotationPlaceCancelled}
 		/>
 	</div>
 
@@ -415,6 +456,9 @@
 					onSetOpsView={handleSetOpsView}
 					onGoToOpsView={handleGoToOpsView}
 					onPlaceOperator={handlePlaceOperator}
+					onPlaceAnnotation={handlePlaceAnnotation}
+					{annotationMapCoords}
+					onMapCoordsConsumed={handleMapCoordsConsumed}
 				/>
 			{:else if $panelMode === 'weather'}
 				<WeatherPanel onFlyTo={handleFlyTo} />
@@ -492,6 +536,9 @@
 					onSetOpsView={handleSetOpsView}
 					onGoToOpsView={handleGoToOpsView}
 					onPlaceOperator={handlePlaceOperator}
+					onPlaceAnnotation={handlePlaceAnnotation}
+					{annotationMapCoords}
+					onMapCoordsConsumed={handleMapCoordsConsumed}
 				/>
 			{:else if $panelMode === 'weather'}
 				<WeatherPanel onFlyTo={handleFlyTo} />

@@ -494,8 +494,8 @@ func TestV2SchemaVersion(t *testing.T) {
 	if err != nil {
 		t.Fatalf("query schema_version: %v", err)
 	}
-	if version != 14 {
-		t.Errorf("expected schema version 14, got %d", version)
+	if version != 16 {
+		t.Errorf("expected schema version 16, got %d", version)
 	}
 }
 
@@ -994,8 +994,8 @@ func TestV3SchemaVersion(t *testing.T) {
 	if err != nil {
 		t.Fatalf("query schema_version: %v", err)
 	}
-	if version != 14 {
-		t.Errorf("expected schema version 14, got %d", version)
+	if version != 16 {
+		t.Errorf("expected schema version 16, got %d", version)
 	}
 }
 
@@ -1616,8 +1616,8 @@ func TestV5MigrationAddsTrackedStationsColumn(t *testing.T) {
 
 	var version int
 	s.db.QueryRow("SELECT version FROM schema_version LIMIT 1").Scan(&version)
-	if version != 14 {
-		t.Errorf("expected schema version 14, got %d", version)
+	if version != 16 {
+		t.Errorf("expected schema version 16, got %d", version)
 	}
 }
 
@@ -1723,8 +1723,8 @@ func TestV6MigrationCreatesTacticalAliasesTable(t *testing.T) {
 
 	var version int
 	s.db.QueryRow("SELECT version FROM schema_version LIMIT 1").Scan(&version)
-	if version != 14 {
-		t.Errorf("expected schema version 14, got %d", version)
+	if version != 16 {
+		t.Errorf("expected schema version 16, got %d", version)
 	}
 }
 
@@ -1891,8 +1891,8 @@ func TestV7MigrationAddsAnnotationColumns(t *testing.T) {
 
 	var version int
 	s.db.QueryRow("SELECT version FROM schema_version LIMIT 1").Scan(&version)
-	if version != 14 {
-		t.Errorf("expected schema version 14, got %d", version)
+	if version != 16 {
+		t.Errorf("expected schema version 16, got %d", version)
 	}
 }
 
@@ -2194,8 +2194,8 @@ func TestMigrateV8CreatesOperationsTable(t *testing.T) {
 
 	var version int
 	s.db.QueryRow("SELECT version FROM schema_version LIMIT 1").Scan(&version)
-	if version != 14 {
-		t.Errorf("expected schema version 14, got %d", version)
+	if version != 16 {
+		t.Errorf("expected schema version 16, got %d", version)
 	}
 
 	// Verify operations table exists by doing a query.
@@ -2214,8 +2214,8 @@ func TestMigrateV11AddsOpsViewColumns(t *testing.T) {
 
 	var version int
 	s.db.QueryRow("SELECT version FROM schema_version LIMIT 1").Scan(&version)
-	if version != 14 {
-		t.Errorf("expected schema version 14, got %d", version)
+	if version != 16 {
+		t.Errorf("expected schema version 16, got %d", version)
 	}
 
 	// Verify ops_view columns exist.
@@ -2604,8 +2604,8 @@ func TestMigrateV13CreatesTelemetryReadingsTable(t *testing.T) {
 
 	var version int
 	s.db.QueryRow("SELECT version FROM schema_version LIMIT 1").Scan(&version)
-	if version != 14 {
-		t.Errorf("expected schema version 14, got %d", version)
+	if version != 16 {
+		t.Errorf("expected schema version 16, got %d", version)
 	}
 }
 
@@ -2738,5 +2738,117 @@ func TestLoadTelemetryReadingsFiltered(t *testing.T) {
 	readings, _ = s.LoadTelemetryReadings(TelemetryFilter{Callsign: "TEL1", Limit: 1})
 	if len(readings) != 1 {
 		t.Errorf("got %d with limit=1, want 1", len(readings))
+	}
+}
+
+// --- V16 Migration: Annotation Net Scoping ---
+
+func TestAnnotationNetScoping(t *testing.T) {
+	s, _ := newTestStore(t)
+	defer s.Close()
+
+	now := time.Now().Truncate(time.Second).UTC()
+
+	// Create an annotation with NetID set.
+	ann := Annotation{
+		ID:        "ann-net-1",
+		Type:      "point",
+		Label:     "Command Post",
+		Geometry:  `{"type":"Point","coordinates":[-118.24,34.05]}`,
+		CreatedAt: now,
+		UpdatedAt: now,
+		Category:  "resource",
+		Status:    "active",
+		NetID:     "net-alpha",
+		ShortName: "CP",
+		SortOrder: 1,
+	}
+	if err := s.SaveAnnotation(ann); err != nil {
+		t.Fatalf("SaveAnnotation failed: %v", err)
+	}
+
+	// Load it back and verify NetID, ShortName, SortOrder are persisted.
+	loaded, err := s.LoadAnnotations()
+	if err != nil {
+		t.Fatalf("LoadAnnotations failed: %v", err)
+	}
+	if len(loaded) != 1 {
+		t.Fatalf("expected 1 annotation, got %d", len(loaded))
+	}
+
+	got := loaded[0]
+	if got.NetID != "net-alpha" {
+		t.Errorf("netId: got %q, want %q", got.NetID, "net-alpha")
+	}
+	if got.ShortName != "CP" {
+		t.Errorf("shortName: got %q, want %q", got.ShortName, "CP")
+	}
+	if got.SortOrder != 1 {
+		t.Errorf("sortOrder: got %d, want 1", got.SortOrder)
+	}
+
+	// Create another annotation with a different NetID.
+	ann2 := Annotation{
+		ID:        "ann-net-2",
+		Type:      "point",
+		Label:     "Staging Area",
+		Geometry:  `{"type":"Point","coordinates":[-118.30,34.10]}`,
+		CreatedAt: now,
+		UpdatedAt: now,
+		Category:  "resource",
+		Status:    "active",
+		NetID:     "net-bravo",
+		ShortName: "SA",
+		SortOrder: 2,
+	}
+	if err := s.SaveAnnotation(ann2); err != nil {
+		t.Fatalf("SaveAnnotation (ann2) failed: %v", err)
+	}
+
+	// Use LoadAnnotationsFiltered with NetID filter — should return only the matching one.
+	results, err := s.LoadAnnotationsFiltered(AnnotationFilter{NetID: "net-alpha"})
+	if err != nil {
+		t.Fatalf("LoadAnnotationsFiltered(netId=net-alpha) failed: %v", err)
+	}
+	if len(results) != 1 {
+		t.Fatalf("expected 1 annotation for net-alpha, got %d", len(results))
+	}
+	if results[0].ID != "ann-net-1" {
+		t.Errorf("expected ann-net-1, got %q", results[0].ID)
+	}
+	if results[0].NetID != "net-alpha" {
+		t.Errorf("filtered netId: got %q, want %q", results[0].NetID, "net-alpha")
+	}
+	if results[0].ShortName != "CP" {
+		t.Errorf("filtered shortName: got %q, want %q", results[0].ShortName, "CP")
+	}
+	if results[0].SortOrder != 1 {
+		t.Errorf("filtered sortOrder: got %d, want 1", results[0].SortOrder)
+	}
+
+	// Filter for net-bravo should return only the second annotation.
+	results, err = s.LoadAnnotationsFiltered(AnnotationFilter{NetID: "net-bravo"})
+	if err != nil {
+		t.Fatalf("LoadAnnotationsFiltered(netId=net-bravo) failed: %v", err)
+	}
+	if len(results) != 1 {
+		t.Fatalf("expected 1 annotation for net-bravo, got %d", len(results))
+	}
+	if results[0].ID != "ann-net-2" {
+		t.Errorf("expected ann-net-2, got %q", results[0].ID)
+	}
+}
+
+func TestMigrateV16(t *testing.T) {
+	s, _ := newTestStore(t)
+	defer s.Close()
+
+	var version int
+	err := s.db.QueryRow("SELECT version FROM schema_version LIMIT 1").Scan(&version)
+	if err != nil {
+		t.Fatalf("query schema_version: %v", err)
+	}
+	if version != 16 {
+		t.Errorf("expected schema version 16, got %d", version)
 	}
 }

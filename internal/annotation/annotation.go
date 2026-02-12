@@ -3,6 +3,7 @@ package annotation
 import (
 	"encoding/json"
 	"fmt"
+	"sort"
 	"strings"
 	"sync"
 	"time"
@@ -29,6 +30,12 @@ const (
 	CategoryBoundary   = "boundary"
 	CategoryAssignment = "assignment"
 	CategoryGeneral    = "general"
+	CategoryAid        = "aid"
+	CategoryStaging    = "staging"
+	CategoryShelter    = "shelter"
+	CategoryParking    = "parking"
+	CategoryStart      = "start"
+	CategoryFinish     = "finish"
 )
 
 // Priority constants.
@@ -57,6 +64,12 @@ var validCategories = map[string]bool{
 	CategoryBoundary:   true,
 	CategoryAssignment: true,
 	CategoryGeneral:    true,
+	CategoryAid:        true,
+	CategoryStaging:    true,
+	CategoryShelter:    true,
+	CategoryParking:    true,
+	CategoryStart:      true,
+	CategoryFinish:     true,
 }
 
 // validPriorities is the set of allowed priority values.
@@ -77,6 +90,12 @@ var categoryStatuses = map[string]map[string]bool{
 	CategoryBoundary:   {"planned": true, "active": true, "complete": true, "needs-re-search": true},
 	CategoryAssignment: {"planned": true, "assigned": true, "in-progress": true, "complete": true, "incomplete": true},
 	CategoryGeneral:    {"active": true, "resolved": true},
+	CategoryAid:        {"planned": true, "active": true, "closed": true},
+	CategoryStaging:    {"planned": true, "active": true, "closed": true},
+	CategoryShelter:    {"planned": true, "active": true, "closed": true},
+	CategoryParking:    {"planned": true, "active": true, "closed": true},
+	CategoryStart:      {"planned": true, "active": true, "closed": true},
+	CategoryFinish:     {"planned": true, "active": true, "closed": true},
 }
 
 // categoryGeometry maps each category to allowed geometry types.
@@ -89,6 +108,12 @@ var categoryGeometry = map[string]map[string]bool{
 	CategoryBoundary:   {TypeArea: true},
 	CategoryAssignment: {TypePoint: true, TypeArea: true},
 	CategoryGeneral:    {TypePoint: true, TypeLine: true, TypeArea: true},
+	CategoryAid:        {TypePoint: true},
+	CategoryStaging:    {TypePoint: true},
+	CategoryShelter:    {TypePoint: true},
+	CategoryParking:    {TypePoint: true},
+	CategoryStart:      {TypePoint: true},
+	CategoryFinish:     {TypePoint: true},
 }
 
 // terminalStatuses are statuses that auto-set ResolvedAt.
@@ -110,6 +135,12 @@ var defaultStatus = map[string]string{
 	CategoryBoundary:   "planned",
 	CategoryAssignment: "planned",
 	CategoryGeneral:    "active",
+	CategoryAid:        "planned",
+	CategoryStaging:    "planned",
+	CategoryShelter:    "planned",
+	CategoryParking:    "planned",
+	CategoryStart:      "planned",
+	CategoryFinish:     "planned",
 }
 
 // Annotation represents a local map annotation.
@@ -280,6 +311,118 @@ func (m *Manager) All() []Annotation {
 		result = append(result, a)
 	}
 	return result
+}
+
+// AllForNet returns annotations for a specific net, sorted by SortOrder.
+func (m *Manager) AllForNet(netID string) []Annotation {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+
+	var result []Annotation
+	for _, a := range m.annotations {
+		if a.NetID == netID {
+			result = append(result, a)
+		}
+	}
+	sort.Slice(result, func(i, j int) bool {
+		return result[i].SortOrder < result[j].SortOrder
+	})
+	return result
+}
+
+// CloseNetAnnotations moves all non-terminal net annotations to their terminal status.
+func (m *Manager) CloseNetAnnotations(netID string) error {
+	m.mu.RLock()
+	var toClose []Annotation
+	for _, a := range m.annotations {
+		if a.NetID == netID && !terminalStatuses[a.Status] {
+			toClose = append(toClose, a)
+		}
+	}
+	m.mu.RUnlock()
+
+	for _, a := range toClose {
+		// Determine the terminal status for this category.
+		terminal := "closed"
+		if categoryStatuses[a.Category] != nil {
+			if categoryStatuses[a.Category]["closed"] {
+				terminal = "closed"
+			} else if categoryStatuses[a.Category]["resolved"] {
+				terminal = "resolved"
+			} else if categoryStatuses[a.Category]["complete"] {
+				terminal = "complete"
+			} else if categoryStatuses[a.Category]["cleared"] {
+				terminal = "cleared"
+			}
+		}
+		m.ChangeStatus(a.ID, terminal)
+	}
+	return nil
+}
+
+// ImportItem represents a parsed GPX/KML waypoint for import.
+type ImportItem struct {
+	Name        string
+	ShortName   string
+	Description string
+	Lat         float64
+	Lon         float64
+	Category    string
+}
+
+// ImportAnnotations bulk-creates annotations from parsed GPX/KML items.
+func (m *Manager) ImportAnnotations(netID string, items []ImportItem) ([]Annotation, error) {
+	var created []Annotation
+	for i, item := range items {
+		cat := item.Category
+		if cat == "" {
+			cat = CategoryGeneral
+		}
+		geom := fmt.Sprintf(`{"type":"Point","coordinates":[%f,%f]}`, item.Lon, item.Lat)
+		ann := Annotation{
+			Type:      TypePoint,
+			Label:     item.Name,
+			ShortName: item.ShortName,
+			Description: item.Description,
+			Geometry:  geom,
+			Category:  cat,
+			NetID:     netID,
+			SortOrder: i,
+		}
+		result, err := m.Create(ann)
+		if err != nil {
+			return created, fmt.Errorf("import item %q: %w", item.Name, err)
+		}
+		created = append(created, *result)
+	}
+	return created, nil
+}
+
+// CopyAnnotationsFromNet clones annotations from one net to another with new IDs.
+func (m *Manager) CopyAnnotationsFromNet(sourceNetID, targetNetID string) ([]Annotation, error) {
+	source := m.AllForNet(sourceNetID)
+
+	var created []Annotation
+	for _, a := range source {
+		ann := Annotation{
+			Type:        a.Type,
+			Label:       a.Label,
+			ShortName:   a.ShortName,
+			Description: a.Description,
+			Geometry:    a.Geometry,
+			Style:       a.Style,
+			Category:    a.Category,
+			Priority:    a.Priority,
+			NetID:       targetNetID,
+			SortOrder:   a.SortOrder,
+		}
+		result, err := m.Create(ann)
+		if err != nil {
+			return created, fmt.Errorf("copy annotation %q: %w", a.Label, err)
+		}
+		created = append(created, *result)
+	}
+	return created, nil
 }
 
 // AllFiltered returns annotations matching the given filter from the in-memory cache.

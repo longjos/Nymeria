@@ -88,6 +88,18 @@ async function del<T>(path: string): Promise<T> {
 	return res.json();
 }
 
+async function uploadForm<T>(path: string, form: FormData): Promise<T> {
+	const h: Record<string, string> = {};
+	if (authToken) h['Authorization'] = `Bearer ${authToken}`;
+	const res = await fetch(`${BASE}${path}`, {
+		method: 'POST',
+		headers: h,
+		body: form
+	});
+	if (!res.ok) throw new Error(`API error: ${res.status}`);
+	return res.json();
+}
+
 export const api = {
 	// Public
 	health: () => get<HealthResponse>('/health'),
@@ -166,7 +178,7 @@ export const api = {
 
 	// Net Control
 	nets: () => get<Net[]>('/nets'),
-	net: (id: string) => get<{ net: Net; checkIns: NetCheckIn[]; missions: NetMission[] }>(`/nets/${id}`),
+	net: (id: string) => get<{ net: Net; checkIns: NetCheckIn[]; missions: NetMission[]; annotations: Annotation[] }>(`/nets/${id}`),
 	createNet: (data: Partial<Net>) => post<Net>('/nets', data),
 	openNet: (id: string) => post<Net>(`/nets/${id}/open`, {}),
 	closeNet: (id: string) => post<{ net: Net; summary: NetSummary }>(`/nets/${id}/close`, {}),
@@ -194,6 +206,15 @@ export const api = {
 	setOpsView: (netId: string, lat: number, lon: number, zoom: number) =>
 		post<Net>(`/nets/${netId}/opsview`, { lat, lon, zoom }),
 	rosterExportUrl: (netId: string) => `${BASE}/nets/${netId}/roster/export`,
+
+	// Net-scoped annotations
+	netAnnotations: (netId: string) => get<Annotation[]>(`/nets/${netId}/annotations`),
+	importNetAnnotations: async (netId: string, file: File) => {
+		const form = new FormData();
+		form.append('file', file);
+		return uploadForm<Annotation[]>(`/nets/${netId}/annotations/import`, form);
+	},
+	copyNetAnnotations: (netId: string, sourceNetId: string) => post<Annotation[]>(`/nets/${netId}/annotations/copy/${sourceNetId}`, {}),
 
 	// Tactical Aliases
 	tacticalAliases: () => get<TacticalAlias[]>('/tactical'),
