@@ -48,6 +48,9 @@
 		onPlaceCancelled,
 		netLocationAnnotations = [],
 		showNetLocationAnnotations = false,
+		showTracks = true,
+		trackDurationMs = Infinity,
+		showDRCones = true,
 		placingAnnotation = null,
 		onAnnotationPlaced,
 		onAnnotationPlaceCancelled,
@@ -84,6 +87,9 @@
 		onPlaceCancelled?: () => void;
 		netLocationAnnotations?: Annotation[];
 		showNetLocationAnnotations?: boolean;
+		showTracks?: boolean;
+		trackDurationMs?: number;
+		showDRCones?: boolean;
 		placingAnnotation?: { id: string | null; name: string } | null;
 		onAnnotationPlaced?: (lat: number, lon: number) => void;
 		onAnnotationPlaceCancelled?: () => void;
@@ -191,6 +197,10 @@
 	});
 
 	$effect(() => {
+		// Touch reactive props so toggling triggers re-render
+		const _tracks = showTracks;
+		const _trackDur = trackDurationMs;
+		const _dr = showDRCones;
 		if (map) {
 			updateMarkers();
 			updateDRCones();
@@ -1302,28 +1312,48 @@
 			}
 
 			// Update track line
-			if (st.track && st.track.length > 1) {
-				const latlngs: L.LatLngExpression[] = st.track.map((tp) => [tp.lat, tp.lon]);
-				let line = trackLines.get(key);
-				if (line) {
-					line.setLatLngs(latlngs);
-				} else {
-					line = L.polyline(latlngs, {
-						color: info.color,
-						weight: 2,
-						opacity: 0.6,
-						dashArray: '4 4',
-					}).addTo(map);
-					trackLines.set(key, line);
+			if (showTracks && st.track && st.track.length > 1) {
+				let trackPoints = st.track;
+				if (trackDurationMs !== Infinity) {
+					const cutoff = Date.now() - trackDurationMs;
+					trackPoints = trackPoints.filter((tp) => new Date(tp.time).getTime() >= cutoff);
 				}
-				// Keep highlight in sync with track data
-				const hl = trackHighlights.get(key);
-				if (hl) hl.setLatLngs(latlngs);
 
-				// Persistent highlight for selected station
-				if (key === selectedCallsign && !trackHighlights.has(key)) {
-					highlightTrack(key, info.color);
+				if (trackPoints.length > 1) {
+					const latlngs: L.LatLngExpression[] = trackPoints.map((tp) => [tp.lat, tp.lon]);
+					let line = trackLines.get(key);
+					if (line) {
+						line.setLatLngs(latlngs);
+					} else {
+						line = L.polyline(latlngs, {
+							color: info.color,
+							weight: 2,
+							opacity: 0.6,
+							dashArray: '4 4',
+						}).addTo(map);
+						trackLines.set(key, line);
+					}
+					// Keep highlight in sync with track data
+					const hl = trackHighlights.get(key);
+					if (hl) hl.setLatLngs(latlngs);
+
+					// Persistent highlight for selected station
+					if (key === selectedCallsign && !trackHighlights.has(key)) {
+						highlightTrack(key, info.color);
+					}
+				} else {
+					// Too few points after filter — remove track
+					const line = trackLines.get(key);
+					if (line) { line.remove(); trackLines.delete(key); }
+					const hl = trackHighlights.get(key);
+					if (hl) { hl.remove(); trackHighlights.delete(key); }
 				}
+			} else if (!showTracks) {
+				// Tracks disabled — remove any existing track for this station
+				const line = trackLines.get(key);
+				if (line) { line.remove(); trackLines.delete(key); }
+				const hl = trackHighlights.get(key);
+				if (hl) { hl.remove(); trackHighlights.delete(key); }
 			}
 		}
 
@@ -1350,6 +1380,15 @@
 
 	function updateDRCones() {
 		if (!map) return;
+
+		if (!showDRCones) {
+			for (const [, layer] of drCones) layer.remove();
+			drCones.clear();
+			for (const [, layer] of drCenterLines) layer.remove();
+			drCenterLines.clear();
+			return;
+		}
+
 		const now = Date.now();
 		const activeKeys = new Set<string>();
 
