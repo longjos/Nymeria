@@ -42,6 +42,9 @@
 	import { dfStations } from '$lib/stores/df';
 	import { initPacketStore } from '$lib/stores/packets';
 	import { isLoggedIn, needsSetup, initSession } from '$lib/stores/session';
+	import { mapSettings, AGE_FILTER_MS, TRACK_DURATION_MS } from '$lib/stores/mapSettings';
+	import { activeCheckIns } from '$lib/stores/netcontrol';
+	import MapPalette from '$lib/components/MapPalette.svelte';
 	import {
 		selectedStation, panelMode, detailTab, searchOpen, sheetState,
 		selectStation, closePanel, openStationList, openMessages, openConversation, openTransports, openActivity, openAnnotations, openNetControl, openBulletins, openICS309, openWeather, openTelemetry, openDF, openPackets, openSettings,
@@ -64,9 +67,29 @@
 	let placingAnnotation = $state<{ id: string | null; name: string; mode: 'update' | 'form' } | null>(null);
 	let annotationMapCoords = $state<{ lat: number; lon: number } | null>(null);
 
-	let stationsWithPosition = $derived(
+	let netCallsigns = $derived(
+		new Set($activeCheckIns.map((ci) => ci.callsign))
+	);
+
+	let allStationsWithPosition = $derived(
 		$stationList.filter((s) => s.position)
 	);
+
+	let stationsWithPosition = $derived.by(() => {
+		const cutoffMs = AGE_FILTER_MS[$mapSettings.stationAgeFilter];
+		if (cutoffMs === Infinity) return allStationsWithPosition;
+		const now = Date.now();
+		const sel = $selectedStation;
+		return allStationsWithPosition.filter((s) => {
+			const key = s.ssid > 0 ? `${s.callsign}-${s.ssid}` : s.callsign;
+			// Always show selected station
+			if (key === sel) return true;
+			// Always show net-checked-in stations
+			if (netCallsigns.has(s.callsign)) return true;
+			const age = now - new Date(s.lastHeard).getTime();
+			return age <= cutoffMs;
+		});
+	});
 
 	let totalUnread = $derived(
 		$conversationList.reduce((sum, c) => sum + c.unreadCount, 0)
@@ -99,6 +122,16 @@
 			const handler = (e: MediaQueryListEvent) => { isDesktop = e.matches; };
 			mq.addEventListener('change', handler);
 			return () => mq.removeEventListener('change', handler);
+		}
+	});
+
+	// Auto-enable overlay when its panel opens (convenience)
+	$effect(() => {
+		if ($panelMode === 'weather' && !$mapSettings.showWeatherOverlay) {
+			mapSettings.update((s) => ({ ...s, showWeatherOverlay: true }));
+		}
+		if ($panelMode === 'df' && !$mapSettings.showDFOverlay) {
+			mapSettings.update((s) => ({ ...s, showDFOverlay: true }));
 		}
 	});
 
@@ -350,9 +383,12 @@
 			highlightedMissionId={$hoveredMissionId}
 			highlightedCheckInId={$hoveredCheckInId}
 			weatherOverlay={$weatherStations}
-			showWeatherOverlay={$panelMode === 'weather'}
+			showWeatherOverlay={$mapSettings.showWeatherOverlay}
 			dfOverlay={$dfStations}
-			showDFOverlay={$panelMode === 'df'}
+			showDFOverlay={$mapSettings.showDFOverlay}
+			showTracks={$mapSettings.showTracks}
+			trackDurationMs={TRACK_DURATION_MS[$mapSettings.trackDuration]}
+			showDRCones={$mapSettings.showDRCones}
 			{placingOperator}
 			onOperatorPlaced={handleOperatorPlaced}
 			onPlaceCancelled={handlePlaceCancelled}
@@ -363,6 +399,12 @@
 			onAnnotationPlaceCancelled={handleAnnotationPlaceCancelled}
 		/>
 	</div>
+
+	<!-- Map layers palette (bottom-left) -->
+	<MapPalette
+		filteredCount={stationsWithPosition.length}
+		totalCount={allStationsWithPosition.length}
+	/>
 
 	<!-- Floating Ops View restore button -->
 	{#if $opsView && $activeNet}
