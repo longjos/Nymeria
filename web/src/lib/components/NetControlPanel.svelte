@@ -9,6 +9,7 @@
 		sortedCheckIns, activeCheckIns,
 		notesByCheckIn, notesByMission, pinnedNotes, pinnedCheckIns,
 		netMetrics, categoryCounts,
+		attentionItems,
 		initNetControlStore, loadNetData, clearNetControl,
 		opsView,
 		hoveredMissionId, highlightedCheckIns,
@@ -18,6 +19,7 @@
 	import { annotationList } from '$lib/stores/annotations';
 	import { categoryMeta, isTerminalStatus } from '$lib/annotationMeta';
 	import LocationManager from './LocationManager.svelte';
+	import SituationBoard from './SituationBoard.svelte';
 
 	let {
 		onFlyTo,
@@ -39,8 +41,8 @@
 		onMapCoordsConsumed?: () => void;
 	} = $props();
 
-	type Tab = 'roster' | 'missions' | 'locations' | 'timeline';
-	let currentTab = $state<Tab>('roster');
+	type Tab = 'situation' | 'roster' | 'missions' | 'locations' | 'timeline';
+	let currentTab = $state<Tab>('situation');
 
 	// Metrics bar filter — clicking a metric filters the roster
 	type MetricsFilter = null | 'available' | 'assigned' | 'missing' | 'stale';
@@ -1062,6 +1064,9 @@
 
 		<!-- Tabs -->
 		<div class="tabs">
+			<button class="tab" class:active={currentTab === 'situation'} onclick={() => { currentTab = 'situation'; metricsFilter = null; }}>
+				SitBoard {#if $attentionItems.length > 0}<span class="tab-count tab-count-alert">{$attentionItems.length}</span>{/if}
+			</button>
 			<button class="tab" class:active={currentTab === 'roster'} onclick={() => { currentTab = 'roster'; metricsFilter = null; }}>
 				Roster <span class="tab-count">{$activeCheckIns.length}</span>
 			</button>
@@ -1078,7 +1083,17 @@
 
 		<!-- Tab content -->
 		<div class="tab-content">
-			{#if currentTab === 'roster'}
+			{#if currentTab === 'situation'}
+				<SituationBoard
+					onNavigateTab={(tab, filter) => {
+						currentTab = tab;
+						if (filter === 'missing') metricsFilter = 'missing';
+						else if (filter === 'stale') metricsFilter = 'stale';
+						else metricsFilter = null;
+					}}
+					onFlyTo={(lat, lon) => onFlyTo?.(lat, lon)}
+				/>
+			{:else if currentTab === 'roster'}
 				<!-- Roster header with export -->
 				{#if $activeNet && $sortedCheckIns.length > 0}
 					<div class="roster-header">
@@ -2010,6 +2025,12 @@
 		padding: 2px 6px;
 		border-radius: 8px;
 		margin-left: 4px;
+	}
+
+	.tab-count-alert {
+		background: #ef4444;
+		color: #fff;
+		animation: pulse-alert 2s ease-in-out infinite;
 	}
 
 	.tab-content {

@@ -170,6 +170,63 @@ export const pinnedNotes = derived(notes, ($notes) =>
 		.sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime())
 );
 
+// --- Situation Board derived stores ---
+
+export type AttentionReason = 'missing' | 'emergency' | 'stale' | 'rollcall';
+
+export interface AttentionItem {
+	checkIn: NetCheckIn;
+	reason: AttentionReason;
+	detail: string; // human-readable explanation
+	action: string; // primary action label
+}
+
+export const attentionItems = derived(checkIns, ($cis): AttentionItem[] => {
+	const now = Date.now();
+	const items: AttentionItem[] = [];
+	for (const ci of $cis) {
+		if (ci.status === 'released') continue;
+		if (ci.status === 'missing') {
+			const mins = Math.floor((now - new Date(ci.lastHeard).getTime()) / 60000);
+			items.push({ checkIn: ci, reason: 'missing', detail: `Last heard ${mins}m ago`, action: 'Locate' });
+			continue; // don't double-count
+		}
+		if (ci.traffic === 'emergency') {
+			items.push({ checkIn: ci, reason: 'emergency', detail: 'Emergency traffic', action: 'Respond' });
+			continue;
+		}
+		const elapsed = now - new Date(ci.lastHeard).getTime();
+		if (elapsed > STALE_THRESHOLD_MS) {
+			const mins = Math.floor(elapsed / 60000);
+			items.push({ checkIn: ci, reason: 'stale', detail: `Stale position (${mins}m)`, action: 'Check' });
+			continue;
+		}
+		if (ci.missedRollCalls >= 2) {
+			items.push({ checkIn: ci, reason: 'rollcall', detail: `${ci.missedRollCalls} missed roll calls`, action: 'Call' });
+		}
+	}
+	// Sort: missing first, then emergency, stale, rollcall
+	const reasonOrder: Record<AttentionReason, number> = { missing: 0, emergency: 1, stale: 2, rollcall: 3 };
+	items.sort((a, b) => reasonOrder[a.reason] - reasonOrder[b.reason]);
+	return items;
+});
+
+export const activeMissions = derived(missions, ($ms) =>
+	$ms.filter(m => m.status !== 'complete')
+		.sort((a, b) => {
+			const prio: Record<string, number> = { emergency: 0, priority: 1, welfare: 2, routine: 3 };
+			return (prio[a.priority] ?? 3) - (prio[b.priority] ?? 3);
+		})
+);
+
+export const recentSignificantEvents = derived(timeline, ($tl) => {
+	const noise = new Set(['position_update']);
+	return [...$tl]
+		.filter(e => !noise.has(e.type))
+		.sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime())
+		.slice(0, 10);
+});
+
 // Situation metrics — computed counts for the metrics summary bar.
 export interface NetMetrics {
 	totalIn: number;
