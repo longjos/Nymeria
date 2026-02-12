@@ -12,6 +12,12 @@ var categoryToSymbol = map[string]aprs.Symbol{
 	CategoryBoundary:   {Table: '/', Code: '-'}, // House (generic)
 	CategoryAssignment: {Table: '/', Code: 'A'}, // Aid Station
 	CategoryGeneral:    {Table: '/', Code: '-'}, // House (generic)
+	CategoryAid:        {Table: '/', Code: '+'}, // Red Cross
+	CategoryStaging:    {Table: '/', Code: 'S'}, // Shelter
+	CategoryShelter:    {Table: '/', Code: 'S'}, // Shelter
+	CategoryParking:    {Table: '/', Code: 'P'}, // Parking
+	CategoryStart:      {Table: '/', Code: '#'}, // Number sign
+	CategoryFinish:     {Table: '/', Code: '#'}, // Number sign
 }
 
 // symbolToCategory maps APRS symbols back to annotation categories.

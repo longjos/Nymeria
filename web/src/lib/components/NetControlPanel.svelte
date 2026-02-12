@@ -12,10 +12,12 @@
 		initNetControlStore, loadNetData, clearNetControl,
 		opsView,
 		hoveredMissionId, highlightedCheckIns,
-		hoveredCheckInId
+		hoveredCheckInId,
+		netAnnotations, annotationsByName
 	} from '$lib/stores/netcontrol';
 	import { annotationList } from '$lib/stores/annotations';
 	import { categoryMeta, isTerminalStatus } from '$lib/annotationMeta';
+	import LocationManager from './LocationManager.svelte';
 
 	let {
 		onFlyTo,
@@ -23,15 +25,21 @@
 		onSetOpsView,
 		onGoToOpsView,
 		onPlaceOperator,
+		onPlaceAnnotation,
+		annotationMapCoords = null,
+		onMapCoordsConsumed,
 	}: {
 		onFlyTo?: (lat: number, lon: number) => void;
 		onFlyToBounds?: (coords: Array<{ lat: number; lon: number }>) => void;
 		onSetOpsView?: () => void;
 		onGoToOpsView?: () => void;
 		onPlaceOperator?: (ciId: string, callsign: string) => void;
+		onPlaceAnnotation?: (id: string | null, name: string, mode: 'update' | 'form') => void;
+		annotationMapCoords?: { lat: number; lon: number } | null;
+		onMapCoordsConsumed?: () => void;
 	} = $props();
 
-	type Tab = 'roster' | 'missions' | 'timeline';
+	type Tab = 'roster' | 'missions' | 'locations' | 'timeline';
 	let currentTab = $state<Tab>('roster');
 
 	// Metrics bar filter — clicking a metric filters the roster
@@ -76,6 +84,10 @@
 	let newMissionLocation = $state('');
 	let newMissionLat = $state('');
 	let newMissionLon = $state('');
+
+	// Mission location autocomplete
+	let missionLocSuggestions = $state<import('$lib/types').Annotation[]>([]);
+	let showMissionLocDropdown = $state(false);
 
 	// Mission brief in create form
 	let newNetMissionBrief = $state('');
@@ -414,6 +426,34 @@
 		} catch (e) {
 			console.error('Create mission failed:', e);
 		}
+	}
+
+	function handleMissionLocationInput() {
+		const q = newMissionLocation.trim().toLowerCase();
+		if (!q) {
+			missionLocSuggestions = [];
+			showMissionLocDropdown = false;
+			return;
+		}
+		missionLocSuggestions = $netAnnotations.filter(a =>
+			a.label.toLowerCase().includes(q) ||
+			(a.shortName && a.shortName.toLowerCase().includes(q))
+		);
+		showMissionLocDropdown = missionLocSuggestions.length > 0;
+	}
+
+	function selectMissionAnnotation(a: import('$lib/types').Annotation) {
+		newMissionLocation = a.label;
+		// Extract lat/lon from GeoJSON Point geometry.
+		try {
+			const geo = typeof a.geometry === 'string' ? JSON.parse(a.geometry) : a.geometry;
+			if (geo?.type === 'Point' && geo.coordinates) {
+				newMissionLon = String(geo.coordinates[0]);
+				newMissionLat = String(geo.coordinates[1]);
+			}
+		} catch { /* ignore parse errors */ }
+		showMissionLocDropdown = false;
+		missionLocSuggestions = [];
 	}
 
 	async function handleMissionStatusChange(m: NetMission, status: string) {
@@ -963,6 +1003,9 @@
 			<button class="tab" class:active={currentTab === 'missions'} onclick={() => { currentTab = 'missions'; metricsFilter = null; }}>
 				Missions {#if activeMissionCount > 0}<span class="tab-count">{activeMissionCount}</span>{/if}
 			</button>
+			<button class="tab" class:active={currentTab === 'locations'} onclick={() => { currentTab = 'locations'; metricsFilter = null; }}>
+				Locations {#if $netAnnotations.length > 0}<span class="tab-count">{$netAnnotations.length}</span>{/if}
+			</button>
 			<button class="tab" class:active={currentTab === 'timeline'} onclick={() => { currentTab = 'timeline'; metricsFilter = null; }}>
 				Timeline
 			</button>
@@ -1349,7 +1392,21 @@
 								{/each}
 							</select>
 						</div>
-						<input type="text" bind:value={newMissionLocation} placeholder="Location (e.g., Main & 5th St)" />
+						<div class="mission-loc-wrap">
+							<input type="text" bind:value={newMissionLocation} placeholder="Location (e.g., Main & 5th St)" oninput={handleMissionLocationInput} onfocus={handleMissionLocationInput} onblur={() => { setTimeout(() => { showMissionLocDropdown = false; }, 150); }} />
+							{#if showMissionLocDropdown && missionLocSuggestions.length > 0}
+								<div class="mission-loc-dropdown">
+									{#each missionLocSuggestions.slice(0, 6) as sug}
+										<button class="mission-loc-item" onmousedown={() => selectMissionAnnotation(sug)}>
+											<span class="mission-loc-name">{sug.label}</span>
+											{#if sug.shortName}
+												<span class="mission-loc-short">{sug.shortName}</span>
+											{/if}
+										</button>
+									{/each}
+								</div>
+							{/if}
+						</div>
 						<div class="form-row">
 							<input type="text" bind:value={newMissionLat} placeholder="Lat" inputmode="decimal" />
 							<input type="text" bind:value={newMissionLon} placeholder="Lon" inputmode="decimal" />
@@ -1603,6 +1660,19 @@
 						{/if}
 					{/if}
 				</div>
+
+			{:else if currentTab === 'locations'}
+				{#if $activeNet}
+					<LocationManager
+						net={$activeNet}
+						onFlyTo={(lat, lon) => onFlyTo?.(lat, lon)}
+						onPlaceOnMap={onPlaceAnnotation}
+						mapClickedCoords={annotationMapCoords}
+						{onMapCoordsConsumed}
+					/>
+				{:else}
+					<p class="empty">Open a net to manage locations.</p>
+				{/if}
 
 			{:else if currentTab === 'timeline'}
 				<!-- Net-wide note composer -->
@@ -2737,6 +2807,58 @@
 	.op-btn.active {
 		border-color: var(--color-accent);
 		color: var(--color-accent);
+	}
+
+	/* Mission location autocomplete */
+	.mission-loc-wrap {
+		position: relative;
+	}
+
+	.mission-loc-dropdown {
+		position: absolute;
+		top: 100%;
+		left: 0;
+		right: 0;
+		background: var(--color-bg);
+		border: 1px solid var(--color-primary);
+		border-radius: var(--radius-sm);
+		box-shadow: var(--shadow-md);
+		z-index: 10;
+		max-height: 180px;
+		overflow-y: auto;
+		margin-top: 2px;
+	}
+
+	.mission-loc-item {
+		display: flex;
+		align-items: center;
+		gap: var(--space-sm);
+		width: 100%;
+		padding: 6px 10px;
+		background: none;
+		border: none;
+		color: var(--color-text);
+		font-size: 0.8rem;
+		cursor: pointer;
+		text-align: left;
+		transition: background var(--duration-fast);
+	}
+
+	.mission-loc-item:hover {
+		background: rgba(255, 255, 255, 0.06);
+	}
+
+	.mission-loc-name {
+		flex: 1;
+	}
+
+	.mission-loc-short {
+		font-family: 'SF Mono', 'Fira Code', monospace;
+		font-size: 0.7rem;
+		color: var(--color-text-muted);
+		padding: 1px 5px;
+		background: rgba(255, 255, 255, 0.06);
+		border-radius: 3px;
 	}
 
 	/* Missions */

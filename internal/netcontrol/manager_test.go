@@ -1663,3 +1663,4 @@ func TestCheckInCategoryPersistence(t *testing.T) {
 
 	s.Close()
 }
+

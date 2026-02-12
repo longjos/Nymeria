@@ -67,6 +67,42 @@ export const categoryMeta: Record<AnnotationCategory, CategoryMeta> = {
 		allowedGeometry: ['point', 'line', 'area'],
 		defaultColor: '#e63946',
 	},
+	aid: {
+		label: 'Aid Station',
+		icon: 'M8 2a6 6 0 100 12A6 6 0 008 2zm-3 5h6M5 9h6',
+		allowedGeometry: ['point'],
+		defaultColor: '#ef4444',
+	},
+	staging: {
+		label: 'Staging',
+		icon: 'M3 3h10v10H3zM6 3v10M10 3v10',
+		allowedGeometry: ['point'],
+		defaultColor: '#f59e0b',
+	},
+	shelter: {
+		label: 'Shelter',
+		icon: 'M2 9l6-6 6 6M4 8v6h8V8',
+		allowedGeometry: ['point'],
+		defaultColor: '#8b5cf6',
+	},
+	parking: {
+		label: 'Parking',
+		icon: 'M3 2h10v12H3zM6 5h2a2 2 0 010 4H6V5z',
+		allowedGeometry: ['point'],
+		defaultColor: '#6b7280',
+	},
+	start: {
+		label: 'Start',
+		icon: 'M4 2v12M4 2l8 6-8 6',
+		allowedGeometry: ['point'],
+		defaultColor: '#22c55e',
+	},
+	finish: {
+		label: 'Finish',
+		icon: 'M4 2h8v4H4V2zM4 6h4v4H4V6zM8 6h4v4H8V6zM4 10h8v4H4v-4z',
+		allowedGeometry: ['point'],
+		defaultColor: '#e63946',
+	},
 };
 
 export const statusMeta: Record<AnnotationCategory, StatusMeta[]> = {
@@ -118,6 +154,36 @@ export const statusMeta: Record<AnnotationCategory, StatusMeta[]> = {
 		{ label: 'Active', color: '#2a9d8f' },
 		{ label: 'Resolved', color: '#6c757d' },
 	],
+	aid: [
+		{ label: 'Planned', color: '#6c757d' },
+		{ label: 'Active', color: '#22c55e' },
+		{ label: 'Closed', color: '#dc3545' },
+	],
+	staging: [
+		{ label: 'Planned', color: '#6c757d' },
+		{ label: 'Active', color: '#22c55e' },
+		{ label: 'Closed', color: '#dc3545' },
+	],
+	shelter: [
+		{ label: 'Planned', color: '#6c757d' },
+		{ label: 'Active', color: '#22c55e' },
+		{ label: 'Closed', color: '#dc3545' },
+	],
+	parking: [
+		{ label: 'Planned', color: '#6c757d' },
+		{ label: 'Active', color: '#22c55e' },
+		{ label: 'Closed', color: '#dc3545' },
+	],
+	start: [
+		{ label: 'Planned', color: '#6c757d' },
+		{ label: 'Active', color: '#22c55e' },
+		{ label: 'Closed', color: '#dc3545' },
+	],
+	finish: [
+		{ label: 'Planned', color: '#6c757d' },
+		{ label: 'Active', color: '#22c55e' },
+		{ label: 'Closed', color: '#dc3545' },
+	],
 };
 
 /** Map status label back to the API status value (lowercase, hyphenated). */
@@ -149,6 +215,7 @@ export const priorityMeta: Record<AnnotationPriority, PriorityMeta> = {
 /** All valid categories in display order. */
 export const allCategories: AnnotationCategory[] = [
 	'incident', 'resource', 'checkpoint', 'hazard', 'route', 'boundary', 'assignment', 'general',
+	'aid', 'staging', 'shelter', 'parking', 'start', 'finish',
 ];
 
 /** Whether a status is terminal (annotation considered done). */

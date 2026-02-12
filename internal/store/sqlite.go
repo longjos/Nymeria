@@ -14,7 +14,7 @@ import (
 	_ "modernc.org/sqlite"
 )
 
-const currentSchemaVersion = 14
+const currentSchemaVersion = 16
 
 // SQLiteStore implements Store using modernc.org/sqlite.
 type SQLiteStore struct {
@@ -154,6 +154,18 @@ func (s *SQLiteStore) migrate() error {
 
 	if version < 14 {
 		if err := s.migrateV14(); err != nil {
+			return err
+		}
+	}
+
+	if version < 15 {
+		if err := s.migrateV15(); err != nil {
+			return err
+		}
+	}
+
+	if version < 16 {
+		if err := s.migrateV16(); err != nil {
 			return err
 		}
 	}
@@ -656,12 +668,14 @@ func (s *SQLiteStore) SaveAnnotation(a Annotation) error {
 		INSERT OR REPLACE INTO annotations
 			(id, type, label, description, geometry, style, created_by, created_by_name,
 			 created_at, updated_at, category, status, priority, operation_id, mission_ids,
-			 resources, reported_by, reported_at, resolved_at, expires_at)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+			 resources, reported_by, reported_at, resolved_at, expires_at,
+			 net_id, short_name, sort_order)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
 		a.ID, a.Type, a.Label, a.Description, a.Geometry, a.Style,
 		a.CreatedBy, a.CreatedByName, a.CreatedAt.UTC(), a.UpdatedAt.UTC(),
 		a.Category, a.Status, a.Priority, a.OperationID, string(missionIDsJSON),
 		a.Resources, a.ReportedBy, reportedAt, resolvedAt, expiresAt,
+		a.NetID, a.ShortName, a.SortOrder,
 	)
 	if err != nil {
 		return fmt.Errorf("save annotation: %w", err)
@@ -674,7 +688,8 @@ func (s *SQLiteStore) LoadAnnotations() ([]Annotation, error) {
 		SELECT id, type, label, description, geometry, style,
 		       created_by, created_by_name, created_at, updated_at,
 		       category, status, priority, operation_id, mission_ids,
-		       resources, reported_by, reported_at, resolved_at, expires_at
+		       resources, reported_by, reported_at, resolved_at, expires_at,
+		       net_id, short_name, sort_order
 		FROM annotations
 		ORDER BY created_at ASC`)
 }
@@ -708,11 +723,15 @@ func (s *SQLiteStore) LoadAnnotationsFiltered(filter AnnotationFilter) ([]Annota
 	if !filter.IncludeExpired {
 		addFilter("(expires_at IS NULL OR expires_at > ?)", time.Now().UTC())
 	}
+	if filter.NetID != "" {
+		addFilter("net_id = ?", filter.NetID)
+	}
 
 	query := `SELECT id, type, label, description, geometry, style,
 		       created_by, created_by_name, created_at, updated_at,
 		       category, status, priority, operation_id, mission_ids,
-		       resources, reported_by, reported_at, resolved_at, expires_at
+		       resources, reported_by, reported_at, resolved_at, expires_at,
+		       net_id, short_name, sort_order
 		FROM annotations` + where + ` ORDER BY created_at ASC`
 
 	return s.loadAnnotationsQueryArgs(query, args...)
@@ -738,6 +757,7 @@ func (s *SQLiteStore) loadAnnotationsQueryArgs(query string, args ...interface{}
 		var missionIDsJSON string
 		var resources, reportedBy sql.NullString
 		var reportedAt, resolvedAt, expiresAt sql.NullString
+		var netID, shortName sql.NullString
 
 		if err := rows.Scan(
 			&a.ID, &a.Type, &a.Label, &description,
@@ -745,6 +765,7 @@ func (s *SQLiteStore) loadAnnotationsQueryArgs(query string, args ...interface{}
 			&createdAt, &updatedAt,
 			&category, &status, &priority, &operationID, &missionIDsJSON,
 			&resources, &reportedBy, &reportedAt, &resolvedAt, &expiresAt,
+			&netID, &shortName, &a.SortOrder,
 		); err != nil {
 			return nil, fmt.Errorf("scan annotation: %w", err)
 		}
@@ -810,6 +831,12 @@ func (s *SQLiteStore) loadAnnotationsQueryArgs(query string, args ...interface{}
 			if err == nil {
 				a.ExpiresAt = &t
 			}
+		}
+		if netID.Valid {
+			a.NetID = netID.String
+		}
+		if shortName.Valid {
+			a.ShortName = shortName.String
 		}
 
 		annotations = append(annotations, a)
@@ -2098,6 +2125,97 @@ func (s *SQLiteStore) migrateV14() error {
 		return fmt.Errorf("clear schema_version: %w", err)
 	}
 	if _, err := s.db.Exec("INSERT INTO schema_version (version) VALUES (?)", 14); err != nil {
+		return fmt.Errorf("set schema_version: %w", err)
+	}
+
+	return nil
+}
+
+func (s *SQLiteStore) migrateV15() error {
+	ddl := `
+CREATE TABLE IF NOT EXISTS location_presets (
+    id TEXT PRIMARY KEY,
+    net_id TEXT NOT NULL REFERENCES nets(id),
+    name TEXT NOT NULL,
+    short_name TEXT NOT NULL DEFAULT '',
+    lat REAL NOT NULL,
+    lon REAL NOT NULL,
+    category TEXT NOT NULL DEFAULT '',
+    description TEXT NOT NULL DEFAULT '',
+    sort_order INTEGER NOT NULL DEFAULT 0
+);
+CREATE INDEX IF NOT EXISTS idx_location_presets_net ON location_presets(net_id);
+`
+	if _, err := s.db.Exec(ddl); err != nil {
+		return fmt.Errorf("migrate v15 create location_presets: %w", err)
+	}
+
+	if _, err := s.db.Exec("DELETE FROM schema_version"); err != nil {
+		return fmt.Errorf("clear schema_version: %w", err)
+	}
+	if _, err := s.db.Exec("INSERT INTO schema_version (version) VALUES (?)", 15); err != nil {
+		return fmt.Errorf("set schema_version: %w", err)
+	}
+
+	return nil
+}
+
+func (s *SQLiteStore) migrateV16() error {
+	// Add net-scoping columns to annotations.
+	for _, stmt := range []string{
+		"ALTER TABLE annotations ADD COLUMN net_id TEXT NOT NULL DEFAULT ''",
+		"ALTER TABLE annotations ADD COLUMN short_name TEXT NOT NULL DEFAULT ''",
+		"ALTER TABLE annotations ADD COLUMN sort_order INTEGER NOT NULL DEFAULT 0",
+	} {
+		if _, err := s.db.Exec(stmt); err != nil {
+			if !isDuplicateColumnError(err) {
+				return fmt.Errorf("migrate v16 alter annotations: %w", err)
+			}
+		}
+	}
+
+	// Create index for net-scoped queries.
+	if _, err := s.db.Exec("CREATE INDEX IF NOT EXISTS idx_annotations_net ON annotations(net_id)"); err != nil {
+		return fmt.Errorf("migrate v16 index: %w", err)
+	}
+
+	// Migrate existing location_presets into annotations.
+	// Check if location_presets table exists before migrating.
+	var tableExists int
+	s.db.QueryRow("SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name='location_presets'").Scan(&tableExists)
+	if tableExists > 0 {
+		_, err := s.db.Exec(`
+			INSERT INTO annotations (id, type, label, description, geometry, category, status, priority, net_id, short_name, sort_order, created_at, updated_at)
+			SELECT id, 'point', name, description,
+				   '{"type":"Point","coordinates":[' || lon || ',' || lat || ']}',
+				   CASE
+					   WHEN category IN ('checkpoint','hazard','general') THEN category
+					   WHEN category = 'aid' THEN 'aid'
+					   WHEN category = 'staging' THEN 'staging'
+					   WHEN category = 'shelter' THEN 'shelter'
+					   WHEN category = 'parking' THEN 'parking'
+					   WHEN category = 'start' THEN 'start'
+					   WHEN category = 'finish' THEN 'finish'
+					   ELSE 'general'
+				   END,
+				   'active', 'routine', net_id, short_name, sort_order,
+				   datetime('now'), datetime('now')
+			FROM location_presets`)
+		if err != nil {
+			return fmt.Errorf("migrate v16 data: %w", err)
+		}
+
+		// Drop old table.
+		if _, err := s.db.Exec("DROP TABLE IF EXISTS location_presets"); err != nil {
+			return fmt.Errorf("migrate v16 drop: %w", err)
+		}
+	}
+
+	// Update schema version.
+	if _, err := s.db.Exec("DELETE FROM schema_version"); err != nil {
+		return fmt.Errorf("clear schema_version: %w", err)
+	}
+	if _, err := s.db.Exec("INSERT INTO schema_version (version) VALUES (?)", 16); err != nil {
 		return fmt.Errorf("set schema_version: %w", err)
 	}
 

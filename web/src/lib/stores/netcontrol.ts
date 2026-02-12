@@ -1,8 +1,8 @@
 import { writable, derived } from 'svelte/store';
-import type { Net, NetCheckIn, NetMission, NetEvent, NetNote, StationCategory } from '$lib/types';
+import type { Net, NetCheckIn, NetMission, NetEvent, NetNote, StationCategory, Annotation } from '$lib/types';
 import { api } from '$lib/api';
 import { wsClient } from './stations';
-import { annotationList } from './annotations';
+import { annotations, annotationList } from './annotations';
 
 export const activeNet = writable<Net | null>(null);
 export const opsView = writable<{ lat: number; lon: number; zoom: number } | null>(null);
@@ -10,6 +10,36 @@ export const checkIns = writable<NetCheckIn[]>([]);
 export const missions = writable<NetMission[]>([]);
 export const timeline = writable<NetEvent[]>([]);
 export const notes = writable<NetNote[]>([]);
+
+// Net-scoped annotation views derived from the global annotation store.
+export const activeNetId = derived(activeNet, ($net) => $net?.id ?? '');
+
+export const netAnnotations = derived(
+	[annotations, activeNetId],
+	([$anns, $netId]) => {
+		if (!$netId) return [];
+		return [...$anns.values()]
+			.filter(a => a.netId === $netId)
+			.sort((a, b) => (a.sortOrder ?? 0) - (b.sortOrder ?? 0));
+	}
+);
+
+export const netLocationAnnotations = derived(
+	netAnnotations,
+	($na) => $na.filter(a => a.type === 'point' && a.geometry)
+);
+
+export const annotationsByName = derived(
+	netAnnotations,
+	($na) => {
+		const map = new Map<string, Annotation>();
+		for (const a of $na) {
+			map.set(a.label.toLowerCase(), a);
+			if (a.shortName) map.set(a.shortName.toLowerCase(), a);
+		}
+		return map;
+	}
+);
 
 // Hover state for cross-component highlighting (mission card → map + roster)
 export const hoveredMissionId = writable<string | null>(null);
@@ -273,6 +303,15 @@ export async function loadNetData(netId: string): Promise<void> {
 		const data = await api.net(netId);
 		checkIns.set(data.checkIns || []);
 		missions.set(data.missions || []);
+
+		// Merge net-scoped annotations into the global annotation store.
+		const netAnns = data.annotations || [];
+		if (netAnns.length > 0) {
+			annotations.update((m) => {
+				for (const a of netAnns) m.set(a.id, a);
+				return new Map(m);
+			});
+		}
 
 		// Hydrate ops view from persisted net data.
 		const n = data.net;

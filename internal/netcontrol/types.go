@@ -56,9 +56,9 @@ const (
 	EventNetUpdated     = "net_updated"
 	EventCheckInCreated = "checkin_created"
 	EventCheckInUpdated = "checkin_updated"
-	EventMissionCreated = "mission_created"
-	EventMissionUpdated = "mission_updated"
-	EventTimelineEntry  = "net_timeline_entry"
+	EventMissionCreated    = "mission_created"
+	EventMissionUpdated    = "mission_updated"
+	EventTimelineEntry = "net_timeline_entry"
 )
 
 // Event represents a net control event for WebSocket broadcast.
