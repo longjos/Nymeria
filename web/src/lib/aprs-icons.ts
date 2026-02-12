@@ -5,6 +5,7 @@
  * No runtime dependency on lucide — paths are embedded directly.
  */
 import type { APRSSymbol } from './types';
+import { isMoving } from './deadReckoning';
 
 // Lucide icon inner SVG elements (24x24 viewBox, stroke-based)
 const I = {
@@ -159,10 +160,23 @@ function wrapSvg(inner: string, size: number, stroke: string, strokeWidth: numbe
 }
 
 /**
+ * Build an SVG direction arrow that orbits the station circle.
+ * The arrow is a small triangle pointing in the direction of travel.
+ */
+function directionArrow(course: number, circleSize: number, color: string): string {
+	const arrowW = 8;
+	const arrowH = 12;
+	// Place arrow center at the edge of the circle
+	const offset = circleSize / 2 + arrowH / 2 + 2;
+	return `<svg width="${arrowW}" height="${arrowH}" viewBox="0 0 8 12" style="position:absolute;left:50%;top:50%;transform:translate(-50%,-50%) rotate(${course}deg) translateY(-${offset}px);pointer-events:none;"><polygon points="4,0 8,12 4,9 0,12" fill="${color}" stroke="#fff" stroke-width="0.8" stroke-linejoin="round"/></svg>`;
+}
+
+/**
  * Generate HTML for a Leaflet divIcon marker.
  * Colored circle background with white lucide icon.
+ * Optionally includes a directional arrow for moving stations.
  */
-export function createMarkerHtml(sym: APRSSymbol, color: string, selected: boolean): string {
+export function createMarkerHtml(sym: APRSSymbol, color: string, selected: boolean, speed?: number, course?: number): string {
 	const inner = getIconInner(sym);
 	const size = selected ? 36 : 28;
 	const iconSize = selected ? 20 : 14;
@@ -173,18 +187,23 @@ export function createMarkerHtml(sym: APRSSymbol, color: string, selected: boole
 		: '0 1px 4px rgba(0,0,0,0.4)';
 	const border = selected ? '2px solid #fff' : '2px solid rgba(255,255,255,0.3)';
 
-	return `<div style="width:${size}px;height:${size}px;border-radius:50%;background:${color};border:${border};display:flex;align-items:center;justify-content:center;box-shadow:${shadow};transition:all 0.15s ease;">${svg}</div>`;
+	const arrow = isMoving(speed, course) ? directionArrow(course!, size) : '';
+	const outer = size + 20; // extra space for arrow overflow
+
+	return `<div style="position:relative;width:${outer}px;height:${outer}px;display:flex;align-items:center;justify-content:center;">${arrow}<div style="width:${size}px;height:${size}px;border-radius:50%;background:${color};border:${border};display:flex;align-items:center;justify-content:center;box-shadow:${shadow};transition:all 0.15s ease;">${svg}</div></div>`;
 }
 
 /**
  * Create Leaflet divIcon options for a station marker.
+ * Pass speed/course to show a directional arrow on moving stations.
  */
-export function createStationIcon(sym: APRSSymbol, color: string, selected: boolean): { className: string; html: string; iconSize: [number, number]; iconAnchor: [number, number] } {
-	const size = selected ? 36 : 28;
+export function createStationIcon(sym: APRSSymbol, color: string, selected: boolean, speed?: number, course?: number): { className: string; html: string; iconSize: [number, number]; iconAnchor: [number, number] } {
+	const baseSize = selected ? 36 : 28;
+	const outerSize = baseSize + 20;
 	return {
 		className: 'aprs-station-icon',
-		html: createMarkerHtml(sym, color, selected),
-		iconSize: [size, size],
-		iconAnchor: [size / 2, size / 2],
+		html: createMarkerHtml(sym, color, selected, speed, course),
+		iconSize: [outerSize, outerSize],
+		iconAnchor: [outerSize / 2, outerSize / 2],
 	};
 }

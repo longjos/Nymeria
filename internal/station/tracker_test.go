@@ -577,6 +577,54 @@ func TestUpdateConfig(t *testing.T) {
 	}
 }
 
+func TestTrackPointSpeedCourse(t *testing.T) {
+	tr := NewMemoryTracker(testConfig())
+
+	pkt := &aprs.Packet{
+		Frame: aprs.APRSFrame{
+			Source:  aprs.Address{Call: "N3LLO", SSID: 9},
+			Payload: "!3912.34N/07656.78W>065/045 mobile",
+		},
+		Type: aprs.PacketTypePosition,
+		Position: &aprs.PositionData{
+			Lat:     39.2057,
+			Lon:     -76.9463,
+			Speed:   45.0,
+			Course:  65.0,
+			Symbol:  aprs.Symbol{Table: '/', Code: '>'},
+			Comment: "mobile",
+		},
+	}
+	tr.HandlePacket(pkt, "RF")
+
+	s, ok := tr.Get("N3LLO-9")
+	if !ok {
+		t.Fatal("station N3LLO-9 not found after HandlePacket")
+	}
+	if len(s.Track) != 1 {
+		t.Fatalf("track length = %d, want 1", len(s.Track))
+	}
+	tp := s.Track[0]
+	if tp.Speed != 45.0 {
+		t.Errorf("track point speed = %f, want 45.0", tp.Speed)
+	}
+	if tp.Course != 65.0 {
+		t.Errorf("track point course = %f, want 65.0", tp.Course)
+	}
+
+	// Verify a stationary station has zero speed/course on track points
+	pkt2 := positionPacket("W1AW", 0, 41.714775, -72.727260, "home")
+	tr.HandlePacket(pkt2, "APRS-IS")
+
+	s2, _ := tr.Get("W1AW")
+	if s2.Track[0].Speed != 0 {
+		t.Errorf("stationary track speed = %f, want 0", s2.Track[0].Speed)
+	}
+	if s2.Track[0].Course != 0 {
+		t.Errorf("stationary track course = %f, want 0", s2.Track[0].Course)
+	}
+}
+
 func TestUpdateConfigDedupWindow(t *testing.T) {
 	cfg := testConfig()
 	cfg.DedupWindow = 5 * time.Second

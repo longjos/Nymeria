@@ -4,6 +4,7 @@
 	import { categoryMeta } from '$lib/annotationMeta';
 	import { symbolInfo } from '$lib/symbols';
 	import { createStationIcon } from '$lib/aprs-icons';
+	import { isMoving, computeDRCone, DR_UPDATE_INTERVAL_MS } from '$lib/deadReckoning';
 	import { stationDisplayName } from '$lib/utils';
 	import { getTacticalAlias } from '$lib/stores/tactical';
 	import { weatherUnits } from '$lib/stores/weather';
@@ -98,6 +99,10 @@
 	}
 	let markers: Map<string, L.Marker> = new Map();
 	let trackLines: Map<string, L.Polyline> = new Map();
+	let trackHighlights: Map<string, L.Polyline> = new Map();
+	let drCones: Map<string, L.Polygon> = new Map();
+	let drCenterLines: Map<string, L.Polyline> = new Map();
+	let drTimer: ReturnType<typeof setInterval> | null = null;
 	let annotationLayers: Map<string, L.Layer> = new Map();
 
 	// Drawing state
@@ -170,9 +175,15 @@
 
 		updateMarkers();
 		updateAnnotations();
+		updateDRCones();
+		drTimer = setInterval(updateDRCones, DR_UPDATE_INTERVAL_MS);
 	});
 
 	onDestroy(() => {
+		if (drTimer) clearInterval(drTimer);
+		for (const [, layer] of drCones) layer.remove();
+		for (const [, layer] of drCenterLines) layer.remove();
+		for (const [, hl] of trackHighlights) hl.remove();
 		for (const layer of highlightOverlays) layer.remove();
 		highlightOverlays = [];
 		operatorHighlight?.remove();
@@ -180,7 +191,10 @@
 	});
 
 	$effect(() => {
-		if (map) updateMarkers();
+		if (map) {
+			updateMarkers();
+			updateDRCones();
+		}
 	});
 
 	$effect(() => {
@@ -1112,6 +1126,29 @@
 		}
 	}
 
+	function highlightTrack(key: string, color: string) {
+		const baseLine = trackLines.get(key);
+		if (!baseLine || trackHighlights.has(key)) return;
+		const hl = L.polyline(baseLine.getLatLngs() as L.LatLng[], {
+			color,
+			weight: 5,
+			opacity: 0.85,
+			interactive: false,
+		}).addTo(map);
+		hl.bringToBack();
+		trackHighlights.set(key, hl);
+	}
+
+	function unhighlightTrack(key: string) {
+		// Don't remove highlight if station is currently selected
+		if (key === selectedCallsign) return;
+		const hl = trackHighlights.get(key);
+		if (hl) {
+			hl.remove();
+			trackHighlights.delete(key);
+		}
+	}
+
 	function stationKey(s: Station): string {
 		return s.ssid > 0 ? `${s.callsign}-${s.ssid}` : s.callsign;
 	}
@@ -1204,6 +1241,14 @@
 	function updateMarkers() {
 		if (!map) return;
 
+		// Clear highlights for previously selected stations
+		for (const [key, hl] of trackHighlights) {
+			if (key !== selectedCallsign) {
+				hl.remove();
+				trackHighlights.delete(key);
+			}
+		}
+
 		const currentKeys = new Set<string>();
 
 		for (const st of stations) {
@@ -1217,7 +1262,7 @@
 			const name = tacAlias ? `${tacAlias} (${baseName})` : baseName;
 			const isSelected = key === selectedCallsign;
 
-			const iconOpts = createStationIcon(st.symbol, info.color, isSelected);
+			const iconOpts = createStationIcon(st.symbol, info.color, isSelected, st.position?.speed, st.position?.course);
 			const divIcon = L.divIcon(iconOpts);
 
 			// Update or create marker
@@ -1246,6 +1291,12 @@
 				marker.on('click', () => {
 					onStationClick?.(key);
 				});
+				marker.on('mouseover', () => {
+					highlightTrack(key, info.color);
+				});
+				marker.on('mouseout', () => {
+					unhighlightTrack(key);
+				});
 
 				markers.set(key, marker);
 			}
@@ -1265,6 +1316,14 @@
 					}).addTo(map);
 					trackLines.set(key, line);
 				}
+				// Keep highlight in sync with track data
+				const hl = trackHighlights.get(key);
+				if (hl) hl.setLatLngs(latlngs);
+
+				// Persistent highlight for selected station
+				if (key === selectedCallsign && !trackHighlights.has(key)) {
+					highlightTrack(key, info.color);
+				}
 			}
 		}
 
@@ -1279,6 +1338,90 @@
 			if (!currentKeys.has(key)) {
 				line.remove();
 				trackLines.delete(key);
+			}
+		}
+		for (const [key, hl] of trackHighlights) {
+			if (!currentKeys.has(key)) {
+				hl.remove();
+				trackHighlights.delete(key);
+			}
+		}
+	}
+
+	function updateDRCones() {
+		if (!map) return;
+		const now = Date.now();
+		const activeKeys = new Set<string>();
+
+		for (const st of stations) {
+			if (!st.position) continue;
+			const key = stationKey(st);
+			const speed = st.position.speed;
+			const course = st.position.course;
+
+			if (!isMoving(speed, course)) continue;
+
+			const lastHeardMs = new Date(st.lastHeard).getTime();
+			const cone = computeDRCone(st.position.lat, st.position.lon, speed!, course!, lastHeardMs, now);
+			if (!cone) continue;
+
+			activeKeys.add(key);
+			const info = symbolInfo(st.symbol);
+			const opacity = cone.confidence * 0.3;
+			const lineOpacity = cone.confidence * 0.5;
+
+			// Build cone polygon: left edge + reverse right edge to close
+			const polyCoords = [...cone.left, ...cone.right.slice().reverse()] as [number, number][];
+
+			let coneLayer = drCones.get(key);
+			if (coneLayer) {
+				coneLayer.setLatLngs(polyCoords);
+				coneLayer.setStyle({ fillOpacity: opacity, opacity: lineOpacity });
+			} else {
+				coneLayer = L.polygon(polyCoords, {
+					color: info.color,
+					fillColor: info.color,
+					fillOpacity: opacity,
+					weight: 1,
+					opacity: lineOpacity,
+					dashArray: '4 4',
+					interactive: false,
+				}).addTo(map);
+				drCones.set(key, coneLayer);
+			}
+
+			// Center projection line
+			const centerCoords: [number, number][] = [
+				[st.position.lat, st.position.lon],
+				cone.center,
+			];
+			let centerLine = drCenterLines.get(key);
+			if (centerLine) {
+				centerLine.setLatLngs(centerCoords);
+				centerLine.setStyle({ opacity: lineOpacity });
+			} else {
+				centerLine = L.polyline(centerCoords, {
+					color: info.color,
+					weight: 2,
+					opacity: lineOpacity,
+					dashArray: '6 4',
+					interactive: false,
+				}).addTo(map);
+				drCenterLines.set(key, centerLine);
+			}
+		}
+
+		// Remove stale DR layers
+		for (const [key, layer] of drCones) {
+			if (!activeKeys.has(key)) {
+				layer.remove();
+				drCones.delete(key);
+			}
+		}
+		for (const [key, layer] of drCenterLines) {
+			if (!activeKeys.has(key)) {
+				layer.remove();
+				drCenterLines.delete(key);
 			}
 		}
 	}

@@ -142,9 +142,11 @@ func (t *MemoryTracker) HandlePacket(pkt *aprs.Packet, source string) {
 
 	// Append track point
 	s.Track = append(s.Track, TrackPoint{
-		Lat:  pos.Lat,
-		Lon:  pos.Lon,
-		Time: now,
+		Lat:    pos.Lat,
+		Lon:    pos.Lon,
+		Time:   now,
+		Speed:  pos.Speed,
+		Course: pos.Course,
 	})
 	// Cap at TrackMaxPoints (drop oldest)
 	if max := t.cfg.TrackMaxPoints; max > 0 && len(s.Track) > max {
