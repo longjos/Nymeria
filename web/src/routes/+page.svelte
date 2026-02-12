@@ -59,6 +59,7 @@
 	let annotationPanelRef = $state<AnnotationPanel>();
 	let mapRef = $state<Map>();
 	let editingAnnotationId = $state<string | null>(null);
+	let placingOperator = $state<{ id: string; callsign: string } | null>(null);
 
 	let stationsWithPosition = $derived(
 		$stationList.filter((s) => s.position)
@@ -175,6 +176,25 @@
 		}
 	}
 
+	function handlePlaceOperator(ciId: string, callsign: string) {
+		drawingMode = null; // Cancel drawing if active
+		placingOperator = { id: ciId, callsign };
+	}
+
+	async function handleOperatorPlaced(ciId: string, lat: number, lon: number) {
+		placingOperator = null;
+		if (!$activeNet) return;
+		try {
+			await api.updateCheckIn($activeNet.id, ciId, { lat, lon });
+		} catch (e) {
+			console.error('Failed to set operator position:', e);
+		}
+	}
+
+	function handlePlaceCancelled() {
+		placingOperator = null;
+	}
+
 	function handleFlyToAnnotation(ann: Annotation) {
 		try {
 			const geom = JSON.parse(ann.geometry);
@@ -193,6 +213,7 @@
 	}
 
 	function handleStartDraw(mode: 'point' | 'line' | 'area') {
+		placingOperator = null; // Cancel placing if active
 		drawingMode = mode;
 	}
 
@@ -296,6 +317,9 @@
 			showWeatherOverlay={$panelMode === 'weather'}
 			dfOverlay={$dfStations}
 			showDFOverlay={$panelMode === 'df'}
+			{placingOperator}
+			onOperatorPlaced={handleOperatorPlaced}
+			onPlaceCancelled={handlePlaceCancelled}
 		/>
 	</div>
 
@@ -390,6 +414,7 @@
 					onFlyToBounds={handleFlyToBounds}
 					onSetOpsView={handleSetOpsView}
 					onGoToOpsView={handleGoToOpsView}
+					onPlaceOperator={handlePlaceOperator}
 				/>
 			{:else if $panelMode === 'weather'}
 				<WeatherPanel onFlyTo={handleFlyTo} />
@@ -466,6 +491,7 @@
 					onFlyToBounds={handleFlyToBounds}
 					onSetOpsView={handleSetOpsView}
 					onGoToOpsView={handleGoToOpsView}
+					onPlaceOperator={handlePlaceOperator}
 				/>
 			{:else if $panelMode === 'weather'}
 				<WeatherPanel onFlyTo={handleFlyTo} />

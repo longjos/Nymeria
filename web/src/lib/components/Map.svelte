@@ -41,6 +41,9 @@
 		showWeatherOverlay = false,
 		dfOverlay = [],
 		showDFOverlay = false,
+		placingOperator = null,
+		onOperatorPlaced,
+		onPlaceCancelled,
 	}: {
 		stations?: Station[];
 		annotations?: Annotation[];
@@ -69,6 +72,9 @@
 		showWeatherOverlay?: boolean;
 		dfOverlay?: Station[];
 		showDFOverlay?: boolean;
+		placingOperator?: { id: string; callsign: string } | null;
+		onOperatorPlaced?: (id: string, lat: number, lon: number) => void;
+		onPlaceCancelled?: () => void;
 	} = $props();
 
 	let mapEl: HTMLDivElement;
@@ -198,11 +204,29 @@
 			map.on('dblclick', handleDrawDblClick);
 			map.doubleClickZoom.disable();
 		} else {
-			mapEl.style.cursor = '';
+			if (!placingOperator) {
+				mapEl.style.cursor = '';
+				map.doubleClickZoom.enable();
+			}
 			map.off('click', handleDrawClick);
 			map.off('dblclick', handleDrawDblClick);
-			map.doubleClickZoom.enable();
 			clearDrawState();
+		}
+	});
+
+	// Place mode effects (click-to-set position for net operators)
+	$effect(() => {
+		if (!map) return;
+		if (placingOperator) {
+			mapEl.style.cursor = 'crosshair';
+			map.on('click', handlePlaceClick);
+			map.doubleClickZoom.disable();
+		} else {
+			if (!drawingMode) {
+				mapEl.style.cursor = '';
+				map.doubleClickZoom.enable();
+			}
+			map.off('click', handlePlaceClick);
 		}
 	});
 
@@ -307,14 +331,17 @@
 
 			let layer: L.CircleMarker | L.Marker;
 			if (ci.source === 'voice') {
-				// Voice-only: square marker
-				const div = document.createElement('div');
-				div.style.cssText = `width:16px;height:16px;border:3px solid ${color};background:transparent;opacity:${opacity};`;
+				// Voice-only: map pin marker
+				const svg = `<svg xmlns="http://www.w3.org/2000/svg" width="24" height="36" viewBox="0 0 24 36" style="opacity:${opacity}">` +
+					`<path d="M12 0C5.4 0 0 5.4 0 12c0 9 12 24 12 24s12-15 12-24C24 5.4 18.6 0 12 0z" fill="${color}"/>` +
+					`<circle cx="12" cy="12" r="5" fill="rgba(0,0,0,0.25)"/>` +
+					`<circle cx="12" cy="12" r="4" fill="#fff"/>` +
+					`</svg>`;
 				const icon = L.divIcon({
 					className: 'net-voice-marker',
-					html: div.outerHTML,
-					iconSize: [16, 16],
-					iconAnchor: [8, 8],
+					html: svg,
+					iconSize: [24, 36],
+					iconAnchor: [12, 36],
 				});
 				layer = L.marker([ci.lat, ci.lon], { icon, interactive: true }).addTo(map);
 			} else {
@@ -880,12 +907,23 @@
 		}
 	}
 
-	// Escape key cancels drawing
+	// Escape key cancels drawing or placing
 	function handleKeyDown(e: KeyboardEvent) {
-		if (e.key === 'Escape' && drawingMode) {
-			clearDrawState();
-			onDrawComplete?.('');
+		if (e.key === 'Escape') {
+			if (placingOperator) {
+				onPlaceCancelled?.();
+				return;
+			}
+			if (drawingMode) {
+				clearDrawState();
+				onDrawComplete?.('');
+			}
 		}
+	}
+
+	function handlePlaceClick(e: L.LeafletMouseEvent) {
+		if (!placingOperator) return;
+		onOperatorPlaced?.(placingOperator.id, e.latlng.lat, e.latlng.lng);
 	}
 
 	function handleDrawClick(e: L.LeafletMouseEvent) {
@@ -1142,7 +1180,7 @@
 
 <svelte:window onkeydown={handleKeyDown} />
 
-<div class="map-container" class:drawing={drawingMode !== null} bind:this={mapEl}></div>
+<div class="map-container" class:drawing={drawingMode !== null} class:placing={placingOperator !== null} bind:this={mapEl}></div>
 
 {#if drawingMode}
 	<div class="draw-hint">
@@ -1157,14 +1195,50 @@
 	</div>
 {/if}
 
+{#if placingOperator}
+	<div class="place-hint">
+		Click to set position for <strong>{placingOperator.callsign}</strong>
+		<kbd>Esc</kbd> cancel
+	</div>
+{/if}
+
 <style>
 	.map-container {
 		width: 100%;
 		height: 100%;
 	}
 
-	.map-container.drawing {
+	.map-container.drawing,
+	.map-container.placing {
 		cursor: crosshair;
+	}
+
+	.place-hint {
+		position: absolute;
+		top: 60px;
+		left: 50%;
+		transform: translateX(-50%);
+		z-index: var(--z-toolbar, 1000);
+		background: var(--color-surface, #1a1a2e);
+		border: 1px solid #22c55e;
+		border-radius: var(--radius-md, 8px);
+		padding: 0.5rem 1rem;
+		font-size: 0.85rem;
+		color: var(--color-text, #eee);
+		pointer-events: none;
+		display: flex;
+		gap: 0.75rem;
+		align-items: center;
+		box-shadow: 0 2px 8px rgba(0,0,0,0.3);
+	}
+
+	.place-hint kbd {
+		background: rgba(255,255,255,0.1);
+		border: 1px solid rgba(255,255,255,0.2);
+		border-radius: 3px;
+		padding: 1px 6px;
+		font-size: 0.75rem;
+		color: var(--color-text-muted, #888);
 	}
 
 	.draw-hint {
