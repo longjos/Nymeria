@@ -227,6 +227,25 @@
 			showCategoryDropdown = false;
 			return;
 		}
+		if (e.key === 'p' || e.key === 'P') {
+			e.preventDefault();
+			togglePinSelected();
+			return;
+		}
+	}
+
+	async function togglePinSelected() {
+		if (!selected?.checkIn || !$activeNet) return;
+		const cs = selected.checkIn.callsign;
+		const pinned = $activeNet.pinnedStations?.includes(cs);
+		try {
+			const n = pinned
+				? await api.unpinStation($activeNet.id, cs)
+				: await api.pinStation($activeNet.id, cs);
+			activeNet.set(n);
+		} catch (e) {
+			console.error('Toggle pin failed:', e);
+		}
 	}
 
 	function flyToSelected() {
@@ -616,6 +635,9 @@
 						{/if}
 						<button class="cp-action-btn" onclick={flyToSelected} disabled={selected.lat == null}>
 							<kbd class="cp-kbd cp-kbd-sm">F</kbd> Fly To
+						</button>
+						<button class="cp-action-btn" onclick={togglePinSelected} disabled={!selected.checkIn}>
+							<kbd class="cp-kbd cp-kbd-sm">P</kbd> {$activeNet?.pinnedStations?.includes(selected.callsign) ? 'Unpin' : 'Pin'}
 						</button>
 					</div>
 

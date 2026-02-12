@@ -207,6 +207,14 @@ export const api = {
 		post<Net>(`/nets/${netId}/opsview`, { lat, lon, zoom }),
 	rosterExportUrl: (netId: string) => `${BASE}/nets/${netId}/roster/export`,
 
+	// Pinned stations
+	pinStation: (netId: string, callsign: string) =>
+		post<Net>(`/nets/${netId}/pin/${encodeURIComponent(callsign)}`, {}),
+	unpinStation: (netId: string, callsign: string) =>
+		del<Net>(`/nets/${netId}/pin/${encodeURIComponent(callsign)}`),
+	reorderPins: (netId: string, callsigns: string[]) =>
+		put<Net>(`/nets/${netId}/pins`, { callsigns }),
+
 	// Net-scoped annotations
 	netAnnotations: (netId: string) => get<Annotation[]>(`/nets/${netId}/annotations`),
 	importNetAnnotations: async (netId: string, file: File) => {
