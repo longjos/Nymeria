@@ -22,11 +22,13 @@
 		onFlyToBounds,
 		onSetOpsView,
 		onGoToOpsView,
+		onPlaceOperator,
 	}: {
 		onFlyTo?: (lat: number, lon: number) => void;
 		onFlyToBounds?: (coords: Array<{ lat: number; lon: number }>) => void;
 		onSetOpsView?: () => void;
 		onGoToOpsView?: () => void;
+		onPlaceOperator?: (ciId: string, callsign: string) => void;
 	} = $props();
 
 	type Tab = 'roster' | 'missions' | 'timeline';
@@ -1087,6 +1089,22 @@
 										{/if}
 									</div>
 								{/if}
+								<div class="op-position">
+									{#if ci.lat != null && ci.lon != null}
+										<button class="pos-flyto" onclick={() => onFlyTo?.(ci.lat!, ci.lon!)}>
+											📍 {ci.lat!.toFixed(4)}, {ci.lon!.toFixed(4)}
+										</button>
+										{#if ci.source === 'voice'}
+											<button class="pos-place-btn" title="Update position"
+												onclick={() => onPlaceOperator?.(ci.id, ci.callsign)}>⊕</button>
+										{/if}
+									{:else}
+										<button class="pos-place-btn pos-no-position"
+											onclick={() => onPlaceOperator?.(ci.id, ci.callsign)}>
+											📍 Place on map
+										</button>
+									{/if}
+								</div>
 								{#if ci.assignment}
 									<div class="op-assignment">📋 {ci.assignment}</div>
 								{/if}
@@ -2169,6 +2187,51 @@
 	}
 
 	.op-location { font-style: italic; }
+
+	.op-position {
+		display: flex;
+		align-items: center;
+		gap: 4px;
+		margin-top: 2px;
+	}
+
+	.pos-flyto {
+		background: none;
+		border: none;
+		color: var(--color-text-muted);
+		font-size: 0.72rem;
+		font-family: monospace;
+		cursor: pointer;
+		padding: 2px 4px;
+		border-radius: var(--radius-sm);
+		transition: color var(--duration-fast);
+	}
+
+	.pos-flyto:hover {
+		color: var(--color-accent);
+	}
+
+	.pos-place-btn {
+		background: none;
+		border: 1px solid var(--color-primary);
+		border-radius: var(--radius-sm);
+		color: var(--color-text-muted);
+		font-size: 0.72rem;
+		cursor: pointer;
+		padding: 2px 6px;
+		min-height: 24px;
+		transition: all var(--duration-fast);
+	}
+
+	.pos-place-btn:hover {
+		border-color: var(--color-accent);
+		color: var(--color-text);
+	}
+
+	.pos-no-position {
+		color: var(--color-accent);
+		border-color: var(--color-accent);
+	}
 
 	.op-assignment {
 		font-size: 0.8rem;
