@@ -7,7 +7,7 @@
 	import {
 		activeNet, checkIns, missions, timeline, notes,
 		sortedCheckIns, activeCheckIns,
-		notesByCheckIn, notesByMission, pinnedNotes,
+		notesByCheckIn, notesByMission, pinnedNotes, pinnedCheckIns,
 		netMetrics, categoryCounts,
 		initNetControlStore, loadNetData, clearNetControl,
 		opsView,
@@ -359,6 +359,71 @@
 		} catch (e) {
 			console.error('Check-out failed:', e);
 		}
+	}
+
+	async function handlePinStation(callsign: string) {
+		if (!$activeNet) return;
+		try {
+			const n = await api.pinStation($activeNet.id, callsign);
+			activeNet.set(n);
+		} catch (e) {
+			console.error('Pin failed:', e);
+		}
+	}
+
+	async function handleUnpinStation(callsign: string) {
+		if (!$activeNet) return;
+		try {
+			const n = await api.unpinStation($activeNet.id, callsign);
+			activeNet.set(n);
+		} catch (e) {
+			console.error('Unpin failed:', e);
+		}
+	}
+
+	let dragPinCallsign = $state<string | null>(null);
+
+	function onPinDragStart(e: DragEvent, callsign: string) {
+		dragPinCallsign = callsign;
+		if (e.dataTransfer) {
+			e.dataTransfer.effectAllowed = 'move';
+			e.dataTransfer.setData('text/plain', callsign);
+		}
+	}
+
+	function onPinDragOver(e: DragEvent) {
+		e.preventDefault();
+		if (e.dataTransfer) e.dataTransfer.dropEffect = 'move';
+	}
+
+	async function onPinDrop(e: DragEvent, targetCallsign: string) {
+		e.preventDefault();
+		if (!$activeNet || !dragPinCallsign || dragPinCallsign === targetCallsign) return;
+
+		const pins = [...($activeNet.pinnedStations || [])];
+		const fromIdx = pins.indexOf(dragPinCallsign);
+		const toIdx = pins.indexOf(targetCallsign);
+		if (fromIdx === -1 || toIdx === -1) return;
+
+		pins.splice(fromIdx, 1);
+		pins.splice(toIdx, 0, dragPinCallsign);
+
+		try {
+			const n = await api.reorderPins($activeNet.id, pins);
+			activeNet.set(n);
+		} catch (e) {
+			console.error('Reorder pins failed:', e);
+		}
+		dragPinCallsign = null;
+	}
+
+	function scrollToOperator(callsign: string) {
+		const el = document.querySelector(`[data-callsign="${callsign}"]`);
+		if (el) el.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+	}
+
+	function isPinned(callsign: string): boolean {
+		return $activeNet?.pinnedStations?.includes(callsign) ?? false;
 	}
 
 	async function handleRollCall() {
@@ -1094,10 +1159,44 @@
 					</div>
 				{/if}
 
+				<!-- Pinned stations strip -->
+				{#if $pinnedCheckIns.length > 0}
+					<div class="pin-strip">
+						{#each $pinnedCheckIns as pci (pci.callsign)}
+							{@const staleMs = Date.now() - new Date(pci.lastHeard).getTime()}
+							{@const isStale = staleMs > 20 * 60 * 1000}
+							{@const isUrgent = pci.status === 'missing' || pci.traffic === 'emergency'}
+							<!-- svelte-ignore a11y_no_static_element_interactions -->
+							<div
+								class="pin-chip"
+								role="button"
+								tabindex="0"
+								class:pin-stale={isStale && !isUrgent}
+								class:pin-urgent={isUrgent}
+								draggable="true"
+								ondragstart={(e) => onPinDragStart(e, pci.callsign)}
+								ondragover={onPinDragOver}
+								ondrop={(e) => onPinDrop(e, pci.callsign)}
+								onclick={() => scrollToOperator(pci.callsign)}
+								onkeydown={(e) => { if (e.key === 'Enter') scrollToOperator(pci.callsign); }}
+								title="{pci.callsign} — {pci.status} — click to scroll"
+							>
+								<span class="pin-dot" style="background: {statusColors[pci.status]}"></span>
+								<span class="pin-call">{pci.callsign}</span>
+								{#if pci.tacticalCall}
+									<span class="pin-tactical">{pci.tacticalCall}</span>
+								{/if}
+								<span class="pin-age {stalenessClass(pci.lastHeard)}">{stalenessLabel(pci.lastHeard)}</span>
+								<button class="pin-remove" title="Unpin" onclick={(e) => { e.stopPropagation(); handleUnpinStation(pci.callsign); }}>✕</button>
+							</div>
+						{/each}
+					</div>
+				{/if}
+
 				<!-- Roster -->
 				<div class="roster">
 					{#each displayedCheckIns as ci (ci.id)}
-						<div class="operator-card" class:released={ci.status === 'released'} class:highlighted={highlightedCheckInId === ci.id} class:mission-highlighted={$highlightedCheckIns.has(ci.id)}>
+						<div class="operator-card" data-callsign={ci.callsign} class:released={ci.status === 'released'} class:highlighted={highlightedCheckInId === ci.id} class:mission-highlighted={$highlightedCheckIns.has(ci.id)}>
 							<div class="op-status-bar" style="background: {statusColors[ci.status]}"></div>
 							<div class="op-main">
 								<div class="op-header">
@@ -1238,6 +1337,11 @@
 												<button class="overflow-item" onclick={() => { onFlyTo?.(ci.lat!, ci.lon!); overflowOpenId = null; }}>Fly to</button>
 											{/if}
 											<button class="overflow-item" class:active={expandedDeviceId === ci.id} onclick={() => { toggleDeviceList(ci.id); overflowOpenId = null; }}>Tracked devices</button>
+											{#if isPinned(ci.callsign)}
+												<button class="overflow-item" onclick={() => { handleUnpinStation(ci.callsign); overflowOpenId = null; }}>Unpin from strip</button>
+											{:else}
+												<button class="overflow-item" onclick={() => { handlePinStation(ci.callsign); overflowOpenId = null; }}>Pin to strip</button>
+											{/if}
 											{#if ci.missedRollCalls > 0}
 												<button class="overflow-item" onclick={() => { handleRollCallResponse(ci); overflowOpenId = null; }}>Roll call response</button>
 											{/if}
@@ -3663,6 +3767,99 @@
 	.pinned-remove:hover {
 		opacity: 1;
 		color: var(--color-text);
+	}
+
+	/* --- Pinned stations strip --- */
+	.pin-strip {
+		display: flex;
+		gap: 6px;
+		padding: 6px var(--space-md);
+		border-bottom: 1px solid var(--color-primary);
+		background: rgba(59, 130, 246, 0.04);
+		overflow-x: auto;
+		flex-shrink: 0;
+		scrollbar-width: thin;
+	}
+
+	.pin-chip {
+		display: flex;
+		align-items: center;
+		gap: 4px;
+		padding: 4px 8px;
+		background: rgba(255, 255, 255, 0.06);
+		border: 1px solid rgba(255, 255, 255, 0.1);
+		border-radius: var(--radius-sm);
+		cursor: pointer;
+		font-size: 0.75rem;
+		white-space: nowrap;
+		transition: background 0.15s, border-color 0.15s, opacity 0.15s;
+		flex-shrink: 0;
+		color: var(--color-text);
+	}
+
+	.pin-chip:hover {
+		background: rgba(255, 255, 255, 0.1);
+		border-color: rgba(255, 255, 255, 0.2);
+	}
+
+	.pin-chip.pin-stale {
+		border-color: #f59e0b;
+		opacity: 0.75;
+	}
+
+	.pin-chip.pin-urgent {
+		border-color: #ef4444;
+		animation: pin-pulse 1.5s ease-in-out infinite;
+	}
+
+	@keyframes pin-pulse {
+		0%, 100% { box-shadow: 0 0 0 0 rgba(239, 68, 68, 0.4); }
+		50% { box-shadow: 0 0 0 4px rgba(239, 68, 68, 0); }
+	}
+
+	.pin-dot {
+		width: 6px;
+		height: 6px;
+		border-radius: 50%;
+		flex-shrink: 0;
+	}
+
+	.pin-call {
+		font-weight: 700;
+		font-size: 0.75rem;
+		letter-spacing: 0.02em;
+	}
+
+	.pin-tactical {
+		font-size: 0.65rem;
+		color: var(--color-text-muted);
+		font-style: italic;
+	}
+
+	.pin-age {
+		font-size: 0.6rem;
+		color: var(--color-text-muted);
+	}
+
+	.pin-remove {
+		background: none;
+		border: none;
+		color: var(--color-text-muted);
+		cursor: pointer;
+		font-size: 0.65rem;
+		padding: 0 1px;
+		line-height: 1;
+		opacity: 0;
+		transition: opacity 0.15s, color 0.15s;
+	}
+
+	.pin-chip:hover .pin-remove {
+		opacity: 0.7;
+	}
+
+	.pin-remove:hover {
+		opacity: 1 !important;
+		color: #ef4444;
 	}
 
 	/* --- Category filter chips --- */

@@ -1664,3 +1664,184 @@ func TestCheckInCategoryPersistence(t *testing.T) {
 	s.Close()
 }
 
+func TestPinStation(t *testing.T) {
+	mgr := newTestManager(t)
+	n, _ := mgr.CreateNet(store.Net{Name: "Pin Test"})
+	mgr.OpenNet(n.ID)
+	mgr.CheckIn(n.ID, "KD7BBC", "", "")
+	mgr.CheckIn(n.ID, "W1AW", "", "")
+
+	updated, err := mgr.PinStation(n.ID, "KD7BBC")
+	if err != nil {
+		t.Fatalf("PinStation failed: %v", err)
+	}
+	if len(updated.PinnedStations) != 1 || updated.PinnedStations[0] != "KD7BBC" {
+		t.Errorf("expected [KD7BBC], got %v", updated.PinnedStations)
+	}
+
+	updated, err = mgr.PinStation(n.ID, "W1AW")
+	if err != nil {
+		t.Fatalf("PinStation (second) failed: %v", err)
+	}
+	if len(updated.PinnedStations) != 2 {
+		t.Errorf("expected 2 pinned, got %d", len(updated.PinnedStations))
+	}
+}
+
+func TestPinMax8(t *testing.T) {
+	mgr := newTestManager(t)
+	n, _ := mgr.CreateNet(store.Net{Name: "Max Pin Test"})
+	mgr.OpenNet(n.ID)
+
+	calls := []string{"AA1A", "BB2B", "CC3C", "DD4D", "EE5E", "FF6F", "GG7G", "HH8H", "II9I"}
+	for _, cs := range calls {
+		mgr.CheckIn(n.ID, cs, "", "")
+	}
+
+	// Pin 8 should succeed.
+	for i := 0; i < 8; i++ {
+		if _, err := mgr.PinStation(n.ID, calls[i]); err != nil {
+			t.Fatalf("PinStation(%s) failed: %v", calls[i], err)
+		}
+	}
+
+	// Pin 9th should fail.
+	_, err := mgr.PinStation(n.ID, calls[8])
+	if err == nil {
+		t.Error("expected error for 9th pin, got nil")
+	}
+}
+
+func TestPinDuplicate(t *testing.T) {
+	mgr := newTestManager(t)
+	n, _ := mgr.CreateNet(store.Net{Name: "Dup Pin Test"})
+	mgr.OpenNet(n.ID)
+	mgr.CheckIn(n.ID, "KD7BBC", "", "")
+
+	mgr.PinStation(n.ID, "KD7BBC")
+	_, err := mgr.PinStation(n.ID, "KD7BBC")
+	if err == nil {
+		t.Error("expected error for duplicate pin, got nil")
+	}
+}
+
+func TestUnpin(t *testing.T) {
+	mgr := newTestManager(t)
+	n, _ := mgr.CreateNet(store.Net{Name: "Unpin Test"})
+	mgr.OpenNet(n.ID)
+	mgr.CheckIn(n.ID, "KD7BBC", "", "")
+	mgr.CheckIn(n.ID, "W1AW", "", "")
+
+	mgr.PinStation(n.ID, "KD7BBC")
+	mgr.PinStation(n.ID, "W1AW")
+
+	updated, err := mgr.UnpinStation(n.ID, "KD7BBC")
+	if err != nil {
+		t.Fatalf("UnpinStation failed: %v", err)
+	}
+	if len(updated.PinnedStations) != 1 || updated.PinnedStations[0] != "W1AW" {
+		t.Errorf("expected [W1AW], got %v", updated.PinnedStations)
+	}
+
+	// Unpin non-existent.
+	_, err = mgr.UnpinStation(n.ID, "N0CALL")
+	if err == nil {
+		t.Error("expected error for unpinning non-pinned callsign")
+	}
+}
+
+func TestReorderPins(t *testing.T) {
+	mgr := newTestManager(t)
+	n, _ := mgr.CreateNet(store.Net{Name: "Reorder Test"})
+	mgr.OpenNet(n.ID)
+	mgr.CheckIn(n.ID, "KD7BBC", "", "")
+	mgr.CheckIn(n.ID, "W1AW", "", "")
+	mgr.CheckIn(n.ID, "N0CALL", "", "")
+
+	mgr.PinStation(n.ID, "KD7BBC")
+	mgr.PinStation(n.ID, "W1AW")
+	mgr.PinStation(n.ID, "N0CALL")
+
+	// Reorder.
+	updated, err := mgr.ReorderPins(n.ID, []string{"N0CALL", "KD7BBC", "W1AW"})
+	if err != nil {
+		t.Fatalf("ReorderPins failed: %v", err)
+	}
+	if updated.PinnedStations[0] != "N0CALL" || updated.PinnedStations[1] != "KD7BBC" || updated.PinnedStations[2] != "W1AW" {
+		t.Errorf("reorder mismatch: got %v", updated.PinnedStations)
+	}
+
+	// Wrong count.
+	_, err = mgr.ReorderPins(n.ID, []string{"N0CALL", "KD7BBC"})
+	if err == nil {
+		t.Error("expected error for count mismatch")
+	}
+
+	// Unknown callsign.
+	_, err = mgr.ReorderPins(n.ID, []string{"N0CALL", "KD7BBC", "FAKE"})
+	if err == nil {
+		t.Error("expected error for unknown callsign")
+	}
+}
+
+func TestCheckOutAutoUnpins(t *testing.T) {
+	mgr := newTestManager(t)
+	n, _ := mgr.CreateNet(store.Net{Name: "AutoUnpin Test"})
+	mgr.OpenNet(n.ID)
+
+	ci, _ := mgr.CheckIn(n.ID, "KD7BBC", "", "")
+	mgr.CheckIn(n.ID, "W1AW", "", "")
+
+	mgr.PinStation(n.ID, "KD7BBC")
+	mgr.PinStation(n.ID, "W1AW")
+
+	// Check out KD7BBC — should auto-unpin.
+	if err := mgr.CheckOut(n.ID, ci.ID); err != nil {
+		t.Fatalf("CheckOut failed: %v", err)
+	}
+
+	got, ok := mgr.GetNet(n.ID)
+	if !ok {
+		t.Fatal("net not found")
+	}
+	if len(got.PinnedStations) != 1 || got.PinnedStations[0] != "W1AW" {
+		t.Errorf("expected [W1AW] after checkout, got %v", got.PinnedStations)
+	}
+}
+
+func TestPinnedPersistence(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "test.db")
+	s := store.NewSQLiteStore(path)
+	if err := s.Init(); err != nil {
+		t.Fatalf("Init failed: %v", err)
+	}
+
+	tracker := station.NewMemoryTracker(config.StationConfig{
+		StaleTimeout:   time.Hour,
+		TrackMaxPoints: 10,
+		DedupWindow:    30 * time.Second,
+	})
+
+	mgr1 := NewManager(s, tracker)
+	n, _ := mgr1.CreateNet(store.Net{Name: "Persist Pin"})
+	mgr1.OpenNet(n.ID)
+	mgr1.CheckIn(n.ID, "KD7BBC", "", "")
+	mgr1.PinStation(n.ID, "KD7BBC")
+
+	// Load in new manager.
+	mgr2 := NewManager(s, tracker)
+	if err := mgr2.Load(); err != nil {
+		t.Fatalf("Load failed: %v", err)
+	}
+
+	got, ok := mgr2.GetNet(n.ID)
+	if !ok {
+		t.Fatal("net not found after reload")
+	}
+	if len(got.PinnedStations) != 1 || got.PinnedStations[0] != "KD7BBC" {
+		t.Errorf("expected [KD7BBC] after reload, got %v", got.PinnedStations)
+	}
+
+	s.Close()
+}
+

@@ -136,6 +136,9 @@ func (s *Server) routes() {
 			r.Delete("/nets/{id}/checkin/{ciId}/devices/{callsign}", s.handleRemoveTrackedStation)
 			r.Post("/nets/{id}/annotations/import", s.handleImportNetAnnotations)
 			r.Post("/nets/{id}/annotations/copy/{sourceNetId}", s.handleCopyNetAnnotations)
+			r.Post("/nets/{id}/pin/{callsign}", s.handlePinStation)
+			r.Delete("/nets/{id}/pin/{callsign}", s.handleUnpinStation)
+			r.Put("/nets/{id}/pins", s.handleReorderPins)
 		})
 
 		// Tile cache — preload/estimate (operator+)
@@ -1829,6 +1832,66 @@ func (s *Server) handleSetOpsView(w http.ResponseWriter, r *http.Request) {
 	}
 
 	n, _ := s.netMgr.GetNet(id)
+	writeJSON(w, http.StatusOK, n)
+}
+
+func (s *Server) handlePinStation(w http.ResponseWriter, r *http.Request) {
+	if s.netMgr == nil {
+		writeJSON(w, http.StatusServiceUnavailable, map[string]string{"error": "net control not available"})
+		return
+	}
+
+	id := chi.URLParam(r, "id")
+	callsign := chi.URLParam(r, "callsign")
+
+	n, err := s.netMgr.PinStation(id, callsign)
+	if err != nil {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
+		return
+	}
+
+	writeJSON(w, http.StatusOK, n)
+}
+
+func (s *Server) handleUnpinStation(w http.ResponseWriter, r *http.Request) {
+	if s.netMgr == nil {
+		writeJSON(w, http.StatusServiceUnavailable, map[string]string{"error": "net control not available"})
+		return
+	}
+
+	id := chi.URLParam(r, "id")
+	callsign := chi.URLParam(r, "callsign")
+
+	n, err := s.netMgr.UnpinStation(id, callsign)
+	if err != nil {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
+		return
+	}
+
+	writeJSON(w, http.StatusOK, n)
+}
+
+func (s *Server) handleReorderPins(w http.ResponseWriter, r *http.Request) {
+	if s.netMgr == nil {
+		writeJSON(w, http.StatusServiceUnavailable, map[string]string{"error": "net control not available"})
+		return
+	}
+
+	id := chi.URLParam(r, "id")
+	var req struct {
+		Callsigns []string `json:"callsigns"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid request body"})
+		return
+	}
+
+	n, err := s.netMgr.ReorderPins(id, req.Callsigns)
+	if err != nil {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
+		return
+	}
+
 	writeJSON(w, http.StatusOK, n)
 }
 

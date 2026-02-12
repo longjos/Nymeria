@@ -41,6 +41,16 @@ export const annotationsByName = derived(
 	}
 );
 
+// Pinned check-ins — ordered by the net's pinnedStations list.
+export const pinnedCheckIns = derived(
+	[activeNet, checkIns],
+	([$net, $cis]) => {
+		if (!$net?.pinnedStations?.length) return [];
+		const ciMap = new Map($cis.map(ci => [ci.callsign, ci]));
+		return $net.pinnedStations.map(cs => ciMap.get(cs)).filter(Boolean) as NetCheckIn[];
+	}
+);
+
 // Hover state for cross-component highlighting (mission card → map + roster)
 export const hoveredMissionId = writable<string | null>(null);
 

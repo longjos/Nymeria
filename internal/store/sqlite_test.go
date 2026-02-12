@@ -494,8 +494,8 @@ func TestV2SchemaVersion(t *testing.T) {
 	if err != nil {
 		t.Fatalf("query schema_version: %v", err)
 	}
-	if version != 16 {
-		t.Errorf("expected schema version 16, got %d", version)
+	if version != 17 {
+		t.Errorf("expected schema version 17, got %d", version)
 	}
 }
 
@@ -994,8 +994,8 @@ func TestV3SchemaVersion(t *testing.T) {
 	if err != nil {
 		t.Fatalf("query schema_version: %v", err)
 	}
-	if version != 16 {
-		t.Errorf("expected schema version 16, got %d", version)
+	if version != 17 {
+		t.Errorf("expected schema version 17, got %d", version)
 	}
 }
 
@@ -1616,8 +1616,8 @@ func TestV5MigrationAddsTrackedStationsColumn(t *testing.T) {
 
 	var version int
 	s.db.QueryRow("SELECT version FROM schema_version LIMIT 1").Scan(&version)
-	if version != 16 {
-		t.Errorf("expected schema version 16, got %d", version)
+	if version != 17 {
+		t.Errorf("expected schema version 17, got %d", version)
 	}
 }
 
@@ -1723,8 +1723,8 @@ func TestV6MigrationCreatesTacticalAliasesTable(t *testing.T) {
 
 	var version int
 	s.db.QueryRow("SELECT version FROM schema_version LIMIT 1").Scan(&version)
-	if version != 16 {
-		t.Errorf("expected schema version 16, got %d", version)
+	if version != 17 {
+		t.Errorf("expected schema version 17, got %d", version)
 	}
 }
 
@@ -1891,8 +1891,8 @@ func TestV7MigrationAddsAnnotationColumns(t *testing.T) {
 
 	var version int
 	s.db.QueryRow("SELECT version FROM schema_version LIMIT 1").Scan(&version)
-	if version != 16 {
-		t.Errorf("expected schema version 16, got %d", version)
+	if version != 17 {
+		t.Errorf("expected schema version 17, got %d", version)
 	}
 }
 
@@ -2194,8 +2194,8 @@ func TestMigrateV8CreatesOperationsTable(t *testing.T) {
 
 	var version int
 	s.db.QueryRow("SELECT version FROM schema_version LIMIT 1").Scan(&version)
-	if version != 16 {
-		t.Errorf("expected schema version 16, got %d", version)
+	if version != 17 {
+		t.Errorf("expected schema version 17, got %d", version)
 	}
 
 	// Verify operations table exists by doing a query.
@@ -2214,8 +2214,8 @@ func TestMigrateV11AddsOpsViewColumns(t *testing.T) {
 
 	var version int
 	s.db.QueryRow("SELECT version FROM schema_version LIMIT 1").Scan(&version)
-	if version != 16 {
-		t.Errorf("expected schema version 16, got %d", version)
+	if version != 17 {
+		t.Errorf("expected schema version 17, got %d", version)
 	}
 
 	// Verify ops_view columns exist.
@@ -2604,8 +2604,8 @@ func TestMigrateV13CreatesTelemetryReadingsTable(t *testing.T) {
 
 	var version int
 	s.db.QueryRow("SELECT version FROM schema_version LIMIT 1").Scan(&version)
-	if version != 16 {
-		t.Errorf("expected schema version 16, got %d", version)
+	if version != 17 {
+		t.Errorf("expected schema version 17, got %d", version)
 	}
 }
 
@@ -2848,7 +2848,69 @@ func TestMigrateV16(t *testing.T) {
 	if err != nil {
 		t.Fatalf("query schema_version: %v", err)
 	}
-	if version != 16 {
-		t.Errorf("expected schema version 16, got %d", version)
+	if version != 17 {
+		t.Errorf("expected schema version 17, got %d", version)
+	}
+}
+
+func TestNetPinnedStationsRoundtrip(t *testing.T) {
+	s, _ := newTestStore(t)
+	defer s.Close()
+
+	// Save net with pinned stations.
+	n := Net{
+		ID:             "net-pin-1",
+		Name:           "Pin Test Net",
+		Type:           "tactical",
+		Status:         "open",
+		PinnedStations: []string{"KD7BBC", "W1AW", "N0CALL"},
+	}
+
+	if err := s.SaveNet(n); err != nil {
+		t.Fatalf("SaveNet failed: %v", err)
+	}
+
+	// Load via LoadNet.
+	loaded, err := s.LoadNet("net-pin-1")
+	if err != nil {
+		t.Fatalf("LoadNet failed: %v", err)
+	}
+
+	if len(loaded.PinnedStations) != 3 {
+		t.Fatalf("expected 3 pinned stations, got %d", len(loaded.PinnedStations))
+	}
+	if loaded.PinnedStations[0] != "KD7BBC" || loaded.PinnedStations[1] != "W1AW" || loaded.PinnedStations[2] != "N0CALL" {
+		t.Errorf("pinned stations mismatch: got %v", loaded.PinnedStations)
+	}
+
+	// Load via LoadNets.
+	nets, err := s.LoadNets()
+	if err != nil {
+		t.Fatalf("LoadNets failed: %v", err)
+	}
+	found := false
+	for _, nn := range nets {
+		if nn.ID == "net-pin-1" {
+			found = true
+			if len(nn.PinnedStations) != 3 {
+				t.Errorf("LoadNets: expected 3 pinned, got %d", len(nn.PinnedStations))
+			}
+		}
+	}
+	if !found {
+		t.Error("net-pin-1 not found in LoadNets")
+	}
+
+	// Update to empty pinned list.
+	n.PinnedStations = []string{}
+	if err := s.SaveNet(n); err != nil {
+		t.Fatalf("SaveNet (clear) failed: %v", err)
+	}
+	loaded2, err := s.LoadNet("net-pin-1")
+	if err != nil {
+		t.Fatalf("LoadNet (clear) failed: %v", err)
+	}
+	if len(loaded2.PinnedStations) != 0 {
+		t.Errorf("expected 0 pinned stations after clear, got %d", len(loaded2.PinnedStations))
 	}
 }

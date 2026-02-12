@@ -274,6 +274,7 @@ export interface Net {
 	opsViewLat?: number;
 	opsViewLon?: number;
 	opsViewZoom?: number;
+	pinnedStations: string[];
 }
 
 export interface TrackedStation {

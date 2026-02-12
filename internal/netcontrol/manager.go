@@ -407,11 +407,31 @@ func (m *Manager) CheckOut(netID, checkInID string) error {
 				return fmt.Errorf("persist check-in: %w", err)
 			}
 
+			// Auto-unpin if the callsign is pinned.
+			n := m.nets[netID]
+			pinChanged := false
+			newPinned := make([]string, 0, len(n.PinnedStations))
+			for _, p := range n.PinnedStations {
+				if p == ci.Callsign {
+					pinChanged = true
+				} else {
+					newPinned = append(newPinned, p)
+				}
+			}
+			if pinChanged {
+				n.PinnedStations = newPinned
+				m.nets[netID] = n
+				m.store.SaveNet(n)
+			}
+
 			m.checkIns[netID] = cis
 			m.mu.Unlock()
 
 			m.logEvent(netID, "checkout", ci.Callsign, fmt.Sprintf("%s checked out", ci.Callsign))
 			m.emit(Event{Type: EventCheckInUpdated, Data: cis[i]})
+			if pinChanged {
+				m.emit(Event{Type: EventNetUpdated, Data: n})
+			}
 			return nil
 		}
 	}
@@ -1057,6 +1077,145 @@ func (m *Manager) autoPopulate(ci *store.NetCheckIn) {
 			ci.OperatorName = st.Comment
 		}
 	}
+}
+
+// PinStation adds a callsign to the net's pinned stations strip.
+func (m *Manager) PinStation(netID, callsign string) (*store.Net, error) {
+	callsign = strings.ToUpper(strings.TrimSpace(callsign))
+
+	m.mu.Lock()
+	n, ok := m.nets[netID]
+	if !ok {
+		m.mu.Unlock()
+		return nil, fmt.Errorf("net %q not found", netID)
+	}
+
+	// Validate callsign is checked in and active.
+	cis := m.checkIns[netID]
+	found := false
+	for _, ci := range cis {
+		if ci.Callsign == callsign && ci.Status != OpReleased {
+			found = true
+			break
+		}
+	}
+	if !found {
+		m.mu.Unlock()
+		return nil, fmt.Errorf("callsign %q is not checked in", callsign)
+	}
+
+	// Reject duplicates.
+	for _, p := range n.PinnedStations {
+		if p == callsign {
+			m.mu.Unlock()
+			return nil, fmt.Errorf("callsign %q is already pinned", callsign)
+		}
+	}
+
+	// Enforce max 8.
+	if len(n.PinnedStations) >= 8 {
+		m.mu.Unlock()
+		return nil, fmt.Errorf("maximum 8 pinned stations reached")
+	}
+
+	n.PinnedStations = append(n.PinnedStations, callsign)
+	m.nets[netID] = n
+	m.mu.Unlock()
+
+	if err := m.store.SaveNet(n); err != nil {
+		return nil, fmt.Errorf("persist net: %w", err)
+	}
+
+	m.logEvent(netID, "pin_station", callsign, fmt.Sprintf("Pinned %s to strip", callsign))
+	m.emit(Event{Type: EventNetUpdated, Data: n})
+
+	return &n, nil
+}
+
+// UnpinStation removes a callsign from the net's pinned stations strip.
+func (m *Manager) UnpinStation(netID, callsign string) (*store.Net, error) {
+	callsign = strings.ToUpper(strings.TrimSpace(callsign))
+
+	m.mu.Lock()
+	n, ok := m.nets[netID]
+	if !ok {
+		m.mu.Unlock()
+		return nil, fmt.Errorf("net %q not found", netID)
+	}
+
+	newPinned := make([]string, 0, len(n.PinnedStations))
+	removed := false
+	for _, p := range n.PinnedStations {
+		if p == callsign {
+			removed = true
+		} else {
+			newPinned = append(newPinned, p)
+		}
+	}
+	if !removed {
+		m.mu.Unlock()
+		return nil, fmt.Errorf("callsign %q is not pinned", callsign)
+	}
+
+	n.PinnedStations = newPinned
+	m.nets[netID] = n
+	m.mu.Unlock()
+
+	if err := m.store.SaveNet(n); err != nil {
+		return nil, fmt.Errorf("persist net: %w", err)
+	}
+
+	m.logEvent(netID, "unpin_station", callsign, fmt.Sprintf("Unpinned %s from strip", callsign))
+	m.emit(Event{Type: EventNetUpdated, Data: n})
+
+	return &n, nil
+}
+
+// ReorderPins replaces the pinned stations order with the given callsigns.
+// The new list must contain exactly the same callsigns as the current list.
+func (m *Manager) ReorderPins(netID string, callsigns []string) (*store.Net, error) {
+	m.mu.Lock()
+	n, ok := m.nets[netID]
+	if !ok {
+		m.mu.Unlock()
+		return nil, fmt.Errorf("net %q not found", netID)
+	}
+
+	// Validate same set.
+	if len(callsigns) != len(n.PinnedStations) {
+		m.mu.Unlock()
+		return nil, fmt.Errorf("callsign count mismatch: got %d, expected %d", len(callsigns), len(n.PinnedStations))
+	}
+
+	existing := make(map[string]bool, len(n.PinnedStations))
+	for _, p := range n.PinnedStations {
+		existing[p] = true
+	}
+	for _, cs := range callsigns {
+		cs = strings.ToUpper(strings.TrimSpace(cs))
+		if !existing[cs] {
+			m.mu.Unlock()
+			return nil, fmt.Errorf("callsign %q is not in current pinned set", cs)
+		}
+	}
+
+	// Normalize.
+	normalized := make([]string, len(callsigns))
+	for i, cs := range callsigns {
+		normalized[i] = strings.ToUpper(strings.TrimSpace(cs))
+	}
+
+	n.PinnedStations = normalized
+	m.nets[netID] = n
+	m.mu.Unlock()
+
+	if err := m.store.SaveNet(n); err != nil {
+		return nil, fmt.Errorf("persist net: %w", err)
+	}
+
+	m.emit(Event{Type: EventNetUpdated, Data: n})
+
+	return &n, nil
 }
 
 // logEvent creates a timeline event and persists it.

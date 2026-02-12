@@ -41,9 +41,10 @@ type Net struct {
 	ClosedAt     *time.Time `json:"closedAt,omitempty"`
 	Notes        string     `json:"notes"`
 	MissionBrief string     `json:"missionBrief"`
-	OpsViewLat   *float64   `json:"opsViewLat,omitempty"`
-	OpsViewLon   *float64   `json:"opsViewLon,omitempty"`
-	OpsViewZoom  *float64   `json:"opsViewZoom,omitempty"`
+	OpsViewLat     *float64  `json:"opsViewLat,omitempty"`
+	OpsViewLon     *float64  `json:"opsViewLon,omitempty"`
+	OpsViewZoom    *float64  `json:"opsViewZoom,omitempty"`
+	PinnedStations []string  `json:"pinnedStations"`
 }
 
 // TrackedStation represents a device linked to a checked-in operator.
