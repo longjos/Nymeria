@@ -18,6 +18,8 @@
 	} from '$lib/stores/netcontrol';
 	import { annotationList } from '$lib/stores/annotations';
 	import { categoryMeta, isTerminalStatus } from '$lib/annotationMeta';
+	import { parseCommand, getModeIndicator, getAutocompleteContext, type ParsedCommand, type AutocompleteContext } from '$lib/commandParser';
+	import { showToast } from '$lib/stores/toast';
 	import LocationManager from './LocationManager.svelte';
 	import SituationBoard from './SituationBoard.svelte';
 
@@ -71,11 +73,18 @@
 	let newNetNotes = $state('');
 	let creating = $state(false);
 
-	// Quick add
+	// Command palette (enhanced quick-add)
 	let quickAddInput = $state('');
 	let quickAddRef = $state<HTMLInputElement>();
 	let searchResults = $state<import('$lib/types').Station[]>([]);
 	let searchTimeout: ReturnType<typeof setTimeout>;
+	let cmdParsed = $state<ParsedCommand>({ type: 'unknown', raw: '' });
+	let cmdModeLabel = $state('');
+	let cmdAutocomplete = $state<AutocompleteContext | null>(null);
+	let cmdAcIndex = $state(0);
+	let cmdHistory = $state<string[]>(loadCmdHistory());
+	let cmdHistoryPos = $state(-1);
+	let cmdSavedInput = $state('');
 
 	// Mission form
 	let showMissionForm = $state(false);
@@ -261,54 +270,95 @@
 		}
 	}
 
-	const trafficShortcuts: Record<string, string> = { R: 'routine', P: 'priority', W: 'welfare', E: 'emergency' };
-	const categoryNames = new Set(Object.keys(stationCategoryMeta));
+	// --- Command palette helpers ---
 
-	async function handleQuickAdd() {
-		if (!$activeNet || !quickAddInput.trim()) return;
-
-		const parts = quickAddInput.trim().split(/\s+/);
-		const callsign = parts[0].toUpperCase();
-		let traffic = '';
-		let category = '';
-
-		// Parse remaining tokens: check traffic shortcuts first, then category names
-		for (let i = 1; i < parts.length; i++) {
-			const token = parts[i].toUpperCase();
-			const lower = parts[i].toLowerCase();
-			if (!traffic && trafficShortcuts[token]) {
-				traffic = trafficShortcuts[token];
-			} else if (!category && categoryNames.has(lower)) {
-				category = lower;
-			}
-		}
-
-		// Dedup: highlight existing operator instead of creating duplicate
-		const existing = $checkIns.find((ci) => ci.callsign.toUpperCase() === callsign && ci.status !== 'released');
-		if (existing) {
-			highlightedCheckInId = existing.id;
-			setTimeout(() => { highlightedCheckInId = null; }, 2000);
-			quickAddInput = '';
-			searchResults = [];
-			quickAddRef?.focus();
-			return;
-		}
-
+	function loadCmdHistory(): string[] {
 		try {
-			await api.checkIn($activeNet.id, callsign, traffic, category);
-			quickAddInput = '';
-			searchResults = [];
-		} catch (e) {
-			console.error('Check-in failed:', e);
+			const raw = sessionStorage.getItem('nymeria_cmd_history');
+			return raw ? JSON.parse(raw) : [];
+		} catch { return []; }
+	}
+
+	function saveCmdHistory(history: string[]) {
+		try { sessionStorage.setItem('nymeria_cmd_history', JSON.stringify(history)); } catch { /* ignore */ }
+	}
+
+	function pushCmdHistory(cmd: string) {
+		const trimmed = cmd.trim();
+		if (!trimmed) return;
+		cmdHistory = [trimmed, ...cmdHistory.filter(h => h !== trimmed)].slice(0, 20);
+		saveCmdHistory(cmdHistory);
+		cmdHistoryPos = -1;
+	}
+
+	function getCheckedInCallsigns(): string[] {
+		return $checkIns.filter(ci => ci.status !== 'released').map(ci => ci.callsign);
+	}
+
+	function getMissionTitles(): string[] {
+		return $missions.filter(m => m.status !== 'complete').map(m => m.title);
+	}
+
+	function findCheckInByCallsign(callsign: string): NetCheckIn | undefined {
+		return $checkIns.find(ci => ci.callsign.toUpperCase() === callsign.toUpperCase() && ci.status !== 'released');
+	}
+
+	function findMissionByTitle(title: string): NetMission | undefined {
+		const lower = title.toLowerCase();
+		return $missions.find(m => m.title.toLowerCase() === lower && m.status !== 'complete')
+			|| $missions.find(m => m.title.toLowerCase().includes(lower) && m.status !== 'complete');
+	}
+
+	function getAnnotationLocation(name: string): { label: string; lat: number; lon: number } | null {
+		const ann = $annotationsByName.get(name.toLowerCase());
+		if (!ann) return null;
+		try {
+			const geo = typeof ann.geometry === 'string' ? JSON.parse(ann.geometry) : ann.geometry;
+			if (geo?.type === 'Point' && geo.coordinates) {
+				return { label: ann.label, lat: geo.coordinates[1], lon: geo.coordinates[0] };
+			}
+		} catch { /* ignore */ }
+		return null;
+	}
+
+	function updateParsedCommand() {
+		const cis = getCheckedInCallsigns();
+		cmdParsed = parseCommand(quickAddInput, cis);
+		cmdModeLabel = getModeIndicator(cmdParsed);
+
+		// Autocomplete context
+		const missionTitles = getMissionTitles();
+		const ctx = getAutocompleteContext(quickAddInput, cis, missionTitles);
+
+		// Inject location annotations into location-phase suggestions
+		if (ctx?.phase === 'location') {
+			const partial = ctx.partial.toLowerCase();
+			const annNames: string[] = [];
+			for (const ann of $netAnnotations) {
+				try {
+					const geo = typeof ann.geometry === 'string' ? JSON.parse(ann.geometry) : ann.geometry;
+					if (geo?.type === 'Point' && geo.coordinates && (geo.coordinates[0] || geo.coordinates[1])) {
+						const name = ann.shortName || ann.label;
+						if (!partial || name.toLowerCase().includes(partial)) {
+							annNames.push(name);
+						}
+					}
+				} catch { /* skip */ }
+			}
+			ctx.suggestions = annNames;
 		}
 
-		quickAddRef?.focus();
+		cmdAutocomplete = ctx;
+		cmdAcIndex = 0;
 	}
 
 	function handleQuickAddInput() {
+		updateParsedCommand();
+
+		// Also do APRS station search for the first token (check-in autocomplete)
 		clearTimeout(searchTimeout);
 		const q = quickAddInput.trim().split(/\s+/)[0];
-		if (q.length < 2) {
+		if (q.length < 2 || quickAddInput.trim().includes(' ')) {
 			searchResults = [];
 			return;
 		}
@@ -324,8 +374,254 @@
 	function selectSearchResult(callsign: string) {
 		quickAddInput = callsign + ' ';
 		searchResults = [];
+		updateParsedCommand();
 		quickAddRef?.focus();
 	}
+
+	function selectAcSuggestion(suggestion: string) {
+		const parts = quickAddInput.trimEnd().split(/\s+/);
+		const ctx = cmdAutocomplete;
+		if (!ctx) return;
+
+		if (ctx.phase === 'callsign') {
+			quickAddInput = suggestion + ' ';
+		} else if (ctx.phase === 'action' || ctx.phase === 'category') {
+			// Replace the last partial token
+			if (ctx.partial) {
+				parts[parts.length - 1] = suggestion;
+			} else {
+				parts.push(suggestion);
+			}
+			quickAddInput = parts.join(' ') + ' ';
+		} else if (ctx.phase === 'mission_name' || ctx.phase === 'location') {
+			// Replace everything after the keyword
+			const keyword = ctx.phase === 'mission_name' ? 'assign' : 'loc';
+			const kwIdx = parts.findIndex(p => p.toLowerCase() === keyword);
+			if (kwIdx >= 0) {
+				quickAddInput = parts.slice(0, kwIdx + 1).join(' ') + ' ' + suggestion + ' ';
+			}
+		}
+
+		searchResults = [];
+		updateParsedCommand();
+		quickAddRef?.focus();
+	}
+
+	async function handleQuickAdd() {
+		if (!$activeNet || !quickAddInput.trim()) return;
+
+		const cis = getCheckedInCallsigns();
+		const parsed = parseCommand(quickAddInput, cis);
+
+		try {
+			switch (parsed.type) {
+				case 'checkin': {
+					// Dedup: highlight existing operator instead of creating duplicate
+					const existing = findCheckInByCallsign(parsed.callsign);
+					if (existing) {
+						highlightedCheckInId = existing.id;
+						setTimeout(() => { highlightedCheckInId = null; }, 2000);
+						pushCmdHistory(quickAddInput);
+						quickAddInput = '';
+						searchResults = [];
+						cmdAutocomplete = null;
+						cmdModeLabel = '';
+						cmdParsed = { type: 'unknown', raw: '' };
+						quickAddRef?.focus();
+						return;
+					}
+					await api.checkIn($activeNet.id, parsed.callsign, parsed.traffic, parsed.category);
+					const desc = [parsed.callsign, 'checked in', parsed.traffic, parsed.category].filter(Boolean).join(' ');
+					showToast(desc, 'success');
+					break;
+				}
+				case 'status': {
+					const ci = findCheckInByCallsign(parsed.callsign);
+					if (!ci) { showToast(`${parsed.callsign} not found in roster`, 'error'); break; }
+					await api.updateCheckIn($activeNet.id, ci.id, { status: parsed.status as OperatorStatus });
+					showToast(`${parsed.callsign} → ${parsed.status}`, 'success');
+					break;
+				}
+				case 'checkout': {
+					const ci = findCheckInByCallsign(parsed.callsign);
+					if (!ci) { showToast(`${parsed.callsign} not found in roster`, 'error'); break; }
+					await api.checkOut($activeNet.id, ci.id);
+					showToast(`${parsed.callsign} checked out`, 'success');
+					break;
+				}
+				case 'note': {
+					if (!parsed.text) { showToast('Note text required', 'error'); break; }
+					const ci = findCheckInByCallsign(parsed.callsign);
+					const payload: { checkInId?: string; content: string; category: string; severity: string } = {
+						content: parsed.text,
+						category: 'general',
+						severity: 'info',
+					};
+					if (ci) payload.checkInId = ci.id;
+					await api.addNetNote($activeNet.id, payload);
+					showToast(`Note added to ${parsed.callsign}`, 'success');
+					break;
+				}
+				case 'mission_create': {
+					await api.createMission($activeNet.id, { title: parsed.title, priority: 'routine' });
+					showToast(`Mission created: ${parsed.title}`, 'success');
+					break;
+				}
+				case 'mission_assign': {
+					const ci = findCheckInByCallsign(parsed.callsign);
+					if (!ci) { showToast(`${parsed.callsign} not found in roster`, 'error'); break; }
+					const mission = findMissionByTitle(parsed.missionTitle);
+					if (!mission) { showToast(`Mission "${parsed.missionTitle}" not found`, 'error'); break; }
+					await api.assignMission($activeNet.id, ci.id, mission.id);
+					showToast(`${parsed.callsign} assigned to ${mission.title}`, 'success');
+					break;
+				}
+				case 'location': {
+					const ci = findCheckInByCallsign(parsed.callsign);
+					if (!ci) { showToast(`${parsed.callsign} not found in roster`, 'error'); break; }
+					if (parsed.lat != null && parsed.lon != null) {
+						await api.updateCheckIn($activeNet.id, ci.id, { lat: parsed.lat, lon: parsed.lon } as any);
+						showToast(`${parsed.callsign} location set`, 'success');
+					} else if (parsed.locationName) {
+						const loc = getAnnotationLocation(parsed.locationName);
+						if (loc) {
+							await api.updateCheckIn($activeNet.id, ci.id, { location: loc.label, lat: loc.lat, lon: loc.lon } as any);
+							showToast(`${parsed.callsign} → ${loc.label}`, 'success');
+						} else {
+							await api.updateCheckIn($activeNet.id, ci.id, { location: parsed.locationName } as any);
+							showToast(`${parsed.callsign} location: ${parsed.locationName}`, 'success');
+						}
+					} else {
+						showToast('Location required: name or lat lon', 'error');
+						break;
+					}
+					break;
+				}
+				case 'unknown':
+					showToast('Unrecognized command', 'error');
+					quickAddRef?.focus();
+					return;
+			}
+			pushCmdHistory(quickAddInput);
+			quickAddInput = '';
+			searchResults = [];
+			cmdAutocomplete = null;
+			cmdModeLabel = '';
+			cmdParsed = { type: 'unknown', raw: '' };
+		} catch (e: any) {
+			showToast(e?.message || 'Command failed', 'error');
+		}
+
+		quickAddRef?.focus();
+	}
+
+	function handleCmdKeydown(e: KeyboardEvent) {
+		// Tab completion
+		if (e.key === 'Tab' && cmdAutocomplete?.suggestions.length) {
+			e.preventDefault();
+			selectAcSuggestion(cmdAutocomplete.suggestions[cmdAcIndex]);
+			return;
+		}
+
+		// Enter executes
+		if (e.key === 'Enter') {
+			// If autocomplete is showing and a suggestion is highlighted, complete it first
+			if (cmdAutocomplete?.suggestions.length && cmdAcIndex >= 0) {
+				// If user is mid-word on a callsign/action, complete; otherwise execute
+				const ctx = cmdAutocomplete;
+				if (ctx.partial && ctx.suggestions.length > 0 && ctx.phase !== 'note_text' && ctx.phase !== 'mission_title') {
+					e.preventDefault();
+					selectAcSuggestion(ctx.suggestions[cmdAcIndex]);
+					return;
+				}
+			}
+			e.preventDefault();
+			handleQuickAdd();
+			return;
+		}
+
+		// Arrow keys for autocomplete navigation
+		if (e.key === 'ArrowDown') {
+			if (cmdAutocomplete?.suggestions.length) {
+				e.preventDefault();
+				cmdAcIndex = Math.min(cmdAcIndex + 1, cmdAutocomplete.suggestions.length - 1);
+				return;
+			}
+			// Command history (down = newer)
+			if (cmdHistoryPos > 0) {
+				e.preventDefault();
+				cmdHistoryPos--;
+				quickAddInput = cmdHistory[cmdHistoryPos];
+				updateParsedCommand();
+				return;
+			} else if (cmdHistoryPos === 0) {
+				e.preventDefault();
+				cmdHistoryPos = -1;
+				quickAddInput = cmdSavedInput;
+				updateParsedCommand();
+				return;
+			}
+			return;
+		}
+
+		if (e.key === 'ArrowUp') {
+			if (cmdAutocomplete?.suggestions.length) {
+				e.preventDefault();
+				cmdAcIndex = Math.max(cmdAcIndex - 1, 0);
+				return;
+			}
+			// Command history (up = older)
+			if (cmdHistory.length > 0 && cmdHistoryPos < cmdHistory.length - 1) {
+				e.preventDefault();
+				if (cmdHistoryPos === -1) cmdSavedInput = quickAddInput;
+				cmdHistoryPos++;
+				quickAddInput = cmdHistory[cmdHistoryPos];
+				updateParsedCommand();
+				return;
+			}
+			return;
+		}
+
+		// Escape clears
+		if (e.key === 'Escape') {
+			e.preventDefault();
+			quickAddInput = '';
+			searchResults = [];
+			cmdAutocomplete = null;
+			cmdModeLabel = '';
+			cmdParsed = { type: 'unknown', raw: '' };
+			cmdHistoryPos = -1;
+			quickAddRef?.focus();
+			return;
+		}
+	}
+
+	/** Dynamic hint text based on parse state */
+	function getCmdHint(parsed: ParsedCommand, ac: AutocompleteContext | null): string {
+		if (!quickAddInput.trim()) return '';
+		if (parsed.type === 'unknown' && quickAddInput.trim().length > 0) {
+			const first = quickAddInput.trim().split(/\s+/)[0].toLowerCase();
+			if (first === 'mission') return 'Type mission title and press Enter';
+			return '';
+		}
+		if (ac?.phase === 'action') return 'status \u00b7 note \u00b7 assign \u00b7 loc \u00b7 out';
+		if (ac?.phase === 'note_text') return 'Type note text and press Enter';
+		if (ac?.phase === 'mission_title') return 'Type mission title and press Enter';
+		if (ac?.phase === 'mission_name') return 'Type or select mission name';
+		if (ac?.phase === 'location') return 'Annotation name or lat lon';
+		if (ac?.phase === 'category') return 'Station category';
+		return '';
+	}
+
+	const cmdModeColors: Record<string, string> = {
+		checkin: '#22c55e',
+		status: '#3b82f6',
+		checkout: '#6b7280',
+		note: '#f59e0b',
+		mission_create: '#8b5cf6',
+		mission_assign: '#8b5cf6',
+		location: '#06b6d4',
+	};
 
 	async function handleStatusChange(ci: NetCheckIn, newStatus: OperatorStatus) {
 		if (!$activeNet) return;
@@ -1121,29 +1417,62 @@
 						{/if}
 					</div>
 				{/if}
-				<!-- Quick Add Bar -->
+				<!-- Command Palette (Enhanced Quick Add) -->
 				<div class="quick-add">
 					<div class="quick-add-wrap">
+						{#if cmdModeLabel}
+							<span class="cmd-mode-badge" style="background: {cmdModeColors[cmdParsed.type] ?? '#6b7280'}">{cmdModeLabel}</span>
+						{/if}
 						<input
 							bind:this={quickAddRef}
 							type="text"
 							bind:value={quickAddInput}
 							oninput={handleQuickAddInput}
-							onkeydown={(e) => { if (e.key === 'Enter') handleQuickAdd(); }}
-							placeholder="KD7BBC R medical"
+							onkeydown={handleCmdKeydown}
+							placeholder="KD7BBC R medical  ·  KD7BBC assigned  ·  mission Search Grid A"
 							class="quick-add-input"
-							title="Format: CALLSIGN [traffic] [category]&#10;Traffic: R=Routine P=Priority W=Welfare E=Emergency&#10;Category: medical, sag, command, marshal, fixed, mobile, tactical"
 						/>
-						<button class="quick-add-btn" onclick={handleQuickAdd} disabled={!quickAddInput.trim()}>+</button>
+						<button class="quick-add-btn" onclick={handleQuickAdd} disabled={!quickAddInput.trim()}>
+							<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><path d="M5 12h14M12 5l7 7-7 7"/></svg>
+						</button>
 					</div>
 					<div class="quick-add-hint">
-						<span class="hint-key">R</span>outine
-						<span class="hint-key">P</span>riority
-						<span class="hint-key">W</span>elfare
-						<span class="hint-key">E</span>mergency
-						+ category
+						{#if !quickAddInput.trim()}
+							<span class="hint-key">R</span>outine
+							<span class="hint-key">P</span>riority
+							<span class="hint-key">W</span>elfare
+							<span class="hint-key">E</span>mergency
+							<span class="hint-sep">&middot;</span>
+							<span class="hint-muted">status · note · assign · loc · out · mission</span>
+						{:else}
+							{@const hint = getCmdHint(cmdParsed, cmdAutocomplete)}
+							{#if hint}
+								<span class="hint-muted">{hint}</span>
+							{/if}
+							<span class="hint-kbd">Tab</span> complete
+							<span class="hint-kbd">&uarr;&darr;</span> history
+						{/if}
 					</div>
-					{#if searchResults.length > 0}
+					{#if cmdAutocomplete?.suggestions.length && quickAddInput.trim()}
+						<div class="search-dropdown">
+							{#each cmdAutocomplete.suggestions.slice(0, 8) as suggestion, i}
+								<button
+									class="search-item"
+									class:search-item-active={i === cmdAcIndex}
+									onmousedown={() => selectAcSuggestion(suggestion)}
+									onmouseenter={() => { cmdAcIndex = i; }}
+								>
+									<span class="search-call">{suggestion}</span>
+									{#if cmdAutocomplete?.phase === 'callsign'}
+										{@const ci = findCheckInByCallsign(suggestion)}
+										{#if ci}
+											<span class="search-comment">{ci.status}{ci.tacticalCall ? ` · ${ci.tacticalCall}` : ''}</span>
+										{/if}
+									{/if}
+								</button>
+							{/each}
+						</div>
+					{:else if searchResults.length > 0}
 						<div class="search-dropdown">
 							{#each searchResults.slice(0, 5) as st}
 								{@const key = st.ssid > 0 ? `${st.callsign}-${st.ssid}` : st.callsign}
@@ -2148,7 +2477,7 @@
 		padding: 0;
 	}
 
-	/* Quick Add */
+	/* Command Palette (Quick Add) */
 	.quick-add {
 		position: relative;
 		padding: var(--space-sm) var(--space-md);
@@ -2157,7 +2486,26 @@
 
 	.quick-add-wrap {
 		display: flex;
+		align-items: center;
 		gap: var(--space-xs);
+	}
+
+	.cmd-mode-badge {
+		flex-shrink: 0;
+		padding: 3px 8px;
+		font-size: 0.6rem;
+		font-weight: 700;
+		text-transform: uppercase;
+		letter-spacing: 0.04em;
+		color: #fff;
+		border-radius: var(--radius-sm);
+		white-space: nowrap;
+		animation: cmd-badge-in 150ms ease-out;
+	}
+
+	@keyframes cmd-badge-in {
+		from { opacity: 0; transform: scale(0.9); }
+		to { opacity: 1; transform: scale(1); }
 	}
 
 	.quick-add-input {
@@ -2171,6 +2519,7 @@
 		padding: 10px 12px;
 		outline: none;
 		text-transform: uppercase;
+		min-width: 0;
 	}
 
 	.quick-add-input:focus {
@@ -2180,6 +2529,7 @@
 	.quick-add-input::placeholder {
 		text-transform: none;
 		color: var(--color-text-muted);
+		font-size: 0.8rem;
 	}
 
 	.quick-add-hint {
@@ -2188,11 +2538,36 @@
 		padding: 2px var(--space-sm) 0;
 		opacity: 0.7;
 		letter-spacing: 0.01em;
+		display: flex;
+		align-items: center;
+		gap: 4px;
+		flex-wrap: wrap;
 	}
 
 	.hint-key {
 		font-weight: 700;
 		color: var(--color-accent);
+	}
+
+	.hint-sep {
+		opacity: 0.4;
+	}
+
+	.hint-muted {
+		color: var(--color-text-muted);
+		opacity: 0.6;
+	}
+
+	.hint-kbd {
+		display: inline-flex;
+		align-items: center;
+		padding: 0 4px;
+		font-size: 0.55rem;
+		font-family: inherit;
+		color: var(--color-text-muted);
+		background: var(--color-primary);
+		border-radius: 3px;
+		margin-left: 4px;
 	}
 
 	.quick-add-btn {
@@ -2205,6 +2580,9 @@
 		font-size: 1.2rem;
 		cursor: pointer;
 		flex-shrink: 0;
+		display: flex;
+		align-items: center;
+		justify-content: center;
 	}
 
 	.quick-add-btn:disabled {
@@ -2221,7 +2599,7 @@
 		border: 1px solid var(--color-primary);
 		border-radius: 0 0 var(--radius-sm) var(--radius-sm);
 		z-index: 10;
-		max-height: 200px;
+		max-height: 280px;
 		overflow-y: auto;
 	}
 
@@ -2230,17 +2608,22 @@
 		flex-direction: column;
 		gap: 2px;
 		width: 100%;
-		padding: 10px 12px;
+		padding: 8px 12px;
 		background: none;
 		border: none;
 		border-bottom: 1px solid var(--color-primary);
 		color: var(--color-text);
 		text-align: left;
 		cursor: pointer;
-		min-height: 44px;
+		min-height: 36px;
+		transition: background 80ms;
 	}
 
-	.search-item:hover { background: var(--color-primary); }
+	.search-item:hover,
+	.search-item-active {
+		background: var(--color-primary);
+	}
+
 	.search-item:last-child { border-bottom: none; }
 
 	.search-call {
