@@ -161,10 +161,13 @@ export interface HealthResponse {
 
 export type Role = 'observer' | 'plotter' | 'operator' | 'admin';
 
+export type UserStatus = 'pending' | 'approved' | 'denied';
+
 export interface SessionUser {
 	id: string;
 	name: string;
 	role: Role;
+	status: UserStatus;
 	callsign?: string;
 	token: string;
 	connectedAt: string;
@@ -175,6 +178,7 @@ export interface PublicUser {
 	id: string;
 	name: string;
 	role: Role;
+	status: UserStatus;
 	callsign?: string;
 	connectedAt: string;
 }
@@ -182,7 +186,7 @@ export interface PublicUser {
 export interface ConfigResponse {
 	transports: number;
 	wsClients: number;
-	pinRequired: boolean;
+	authMode: string;
 	needsSetup: boolean;
 }
 
@@ -405,6 +409,49 @@ export interface ICS309Row {
 export interface ICS309Report {
 	header: ICS309Header;
 	rows: ICS309Row[];
+}
+
+// --- Checkpoint Progress ---
+
+export interface CheckpointMeta {
+	annotationId: string;
+	netId: string;
+	sequenceNumber: number;
+	expectedTime?: string;
+	openedAt?: string;
+	closedAt?: string;
+}
+
+export interface CheckpointPassage {
+	id: string;
+	checkpointId: string;
+	netId: string;
+	label: string;
+	passageTime: string;
+	direction: string;
+	reportedBy: string;
+	notes?: string;
+}
+
+export interface CheckpointWithPassages {
+	annotation: Annotation;
+	meta: CheckpointMeta;
+	passages: CheckpointPassage[];
+	passageCount: number;
+	latestPassage?: string;
+}
+
+export interface ProgressElement {
+	label: string;
+	lastCheckpointId: string;
+	lastCheckpointSeq: number;
+	lastPassageTime: string;
+}
+
+export interface CheckpointProgress {
+	netId: string;
+	checkpoints: CheckpointWithPassages[];
+	elements: ProgressElement[];
 }
 
 // --- Tile Cache ---

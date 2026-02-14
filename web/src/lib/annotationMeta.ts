@@ -124,6 +124,7 @@ export const statusMeta: Record<AnnotationCategory, StatusMeta[]> = {
 	checkpoint: [
 		{ label: 'Planned', color: '#a8dadc' },
 		{ label: 'Open', color: '#2a9d8f' },
+		{ label: 'Active', color: '#f59e0b' },
 		{ label: 'Closed', color: '#6c757d' },
 	],
 	hazard: [

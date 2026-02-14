@@ -48,13 +48,16 @@ func newTestSettingsServer(t *testing.T) (*Server, *session.MemoryManager, *conf
 }
 
 func adminToken(sessMgr *session.MemoryManager) string {
-	user, _ := sessMgr.Create("admin", "1234")
+	user, _ := sessMgr.Create("admin", session.CreateOpts{})
+	// First user auto-becomes admin; UpdateRole is harmless redundancy
 	sessMgr.UpdateRole(user.ID, session.RoleAdmin)
 	return user.Token
 }
 
 func operatorToken(sessMgr *session.MemoryManager) string {
-	user, _ := sessMgr.Create("operator", "1234")
+	user, _ := sessMgr.Create("operator", session.CreateOpts{})
+	// Subsequent users are pending — approve as operator
+	sessMgr.Approve(user.ID, session.RoleOperator)
 	return user.Token
 }
 

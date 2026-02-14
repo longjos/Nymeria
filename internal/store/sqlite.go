@@ -14,7 +14,7 @@ import (
 	_ "modernc.org/sqlite"
 )
 
-const currentSchemaVersion = 18
+const currentSchemaVersion = 19
 
 // SQLiteStore implements Store using modernc.org/sqlite.
 type SQLiteStore struct {
@@ -178,6 +178,12 @@ func (s *SQLiteStore) migrate() error {
 
 	if version < 18 {
 		if err := s.migrateV18(); err != nil {
+			return err
+		}
+	}
+
+	if version < 19 {
+		if err := s.migrateV19(); err != nil {
 			return err
 		}
 	}
@@ -2295,6 +2301,176 @@ func (s *SQLiteStore) migrateV18() error {
 		return fmt.Errorf("set schema_version: %w", err)
 	}
 
+	return nil
+}
+
+func (s *SQLiteStore) migrateV19() error {
+	ddl := `
+CREATE TABLE IF NOT EXISTS checkpoint_meta (
+    annotation_id TEXT PRIMARY KEY,
+    net_id TEXT NOT NULL,
+    sequence_number INTEGER NOT NULL DEFAULT 0,
+    expected_time DATETIME,
+    opened_at DATETIME,
+    closed_at DATETIME
+);
+CREATE INDEX IF NOT EXISTS idx_checkpoint_meta_net ON checkpoint_meta(net_id);
+
+CREATE TABLE IF NOT EXISTS checkpoint_passages (
+    id TEXT PRIMARY KEY,
+    checkpoint_id TEXT NOT NULL,
+    net_id TEXT NOT NULL,
+    label TEXT NOT NULL,
+    passage_time DATETIME NOT NULL,
+    direction TEXT NOT NULL DEFAULT 'through',
+    reported_by TEXT NOT NULL DEFAULT '',
+    notes TEXT NOT NULL DEFAULT ''
+);
+CREATE INDEX IF NOT EXISTS idx_checkpoint_passages_net ON checkpoint_passages(net_id);
+CREATE INDEX IF NOT EXISTS idx_checkpoint_passages_cp ON checkpoint_passages(checkpoint_id);
+CREATE INDEX IF NOT EXISTS idx_checkpoint_passages_time ON checkpoint_passages(passage_time);
+`
+	if _, err := s.db.Exec(ddl); err != nil {
+		return fmt.Errorf("migrate v19 create checkpoint tables: %w", err)
+	}
+
+	if _, err := s.db.Exec("DELETE FROM schema_version"); err != nil {
+		return fmt.Errorf("clear schema_version: %w", err)
+	}
+	if _, err := s.db.Exec("INSERT INTO schema_version (version) VALUES (?)", 19); err != nil {
+		return fmt.Errorf("set schema_version: %w", err)
+	}
+
+	return nil
+}
+
+// --- Checkpoint Progress CRUD ---
+
+func (s *SQLiteStore) SaveCheckpointMeta(m CheckpointMeta) error {
+	_, err := s.db.Exec(`
+		INSERT OR REPLACE INTO checkpoint_meta
+			(annotation_id, net_id, sequence_number, expected_time, opened_at, closed_at)
+		VALUES (?, ?, ?, ?, ?, ?)`,
+		m.AnnotationID, m.NetID, m.SequenceNumber,
+		nullTimePtr(m.ExpectedTime), nullTimePtr(m.OpenedAt), nullTimePtr(m.ClosedAt),
+	)
+	if err != nil {
+		return fmt.Errorf("save checkpoint meta: %w", err)
+	}
+	return nil
+}
+
+func (s *SQLiteStore) LoadCheckpointMeta(netID string) ([]CheckpointMeta, error) {
+	rows, err := s.db.Query(`
+		SELECT annotation_id, net_id, sequence_number, expected_time, opened_at, closed_at
+		FROM checkpoint_meta WHERE net_id = ? ORDER BY sequence_number ASC`, netID)
+	if err != nil {
+		return nil, fmt.Errorf("query checkpoint meta: %w", err)
+	}
+	defer rows.Close()
+
+	var metas []CheckpointMeta
+	for rows.Next() {
+		var m CheckpointMeta
+		var expectedTime, openedAt, closedAt sql.NullString
+
+		if err := rows.Scan(&m.AnnotationID, &m.NetID, &m.SequenceNumber,
+			&expectedTime, &openedAt, &closedAt); err != nil {
+			return nil, fmt.Errorf("scan checkpoint meta: %w", err)
+		}
+		if expectedTime.Valid {
+			t, err := parseTime(expectedTime.String)
+			if err == nil {
+				m.ExpectedTime = &t
+			}
+		}
+		if openedAt.Valid {
+			t, err := parseTime(openedAt.String)
+			if err == nil {
+				m.OpenedAt = &t
+			}
+		}
+		if closedAt.Valid {
+			t, err := parseTime(closedAt.String)
+			if err == nil {
+				m.ClosedAt = &t
+			}
+		}
+		metas = append(metas, m)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("iterate checkpoint meta: %w", err)
+	}
+	return metas, nil
+}
+
+func (s *SQLiteStore) DeleteCheckpointMeta(annotationID string) error {
+	_, err := s.db.Exec("DELETE FROM checkpoint_meta WHERE annotation_id = ?", annotationID)
+	if err != nil {
+		return fmt.Errorf("delete checkpoint meta: %w", err)
+	}
+	return nil
+}
+
+func (s *SQLiteStore) SaveCheckpointPassage(p CheckpointPassage) error {
+	_, err := s.db.Exec(`
+		INSERT OR REPLACE INTO checkpoint_passages
+			(id, checkpoint_id, net_id, label, passage_time, direction, reported_by, notes)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+		p.ID, p.CheckpointID, p.NetID, p.Label,
+		p.PassageTime.UTC(), p.Direction, p.ReportedBy, p.Notes,
+	)
+	if err != nil {
+		return fmt.Errorf("save checkpoint passage: %w", err)
+	}
+	return nil
+}
+
+func (s *SQLiteStore) LoadCheckpointPassages(netID string) ([]CheckpointPassage, error) {
+	return s.loadPassagesQuery(`
+		SELECT id, checkpoint_id, net_id, label, passage_time, direction, reported_by, notes
+		FROM checkpoint_passages WHERE net_id = ? ORDER BY passage_time ASC`, netID)
+}
+
+func (s *SQLiteStore) LoadCheckpointPassagesForCheckpoint(checkpointID string) ([]CheckpointPassage, error) {
+	return s.loadPassagesQuery(`
+		SELECT id, checkpoint_id, net_id, label, passage_time, direction, reported_by, notes
+		FROM checkpoint_passages WHERE checkpoint_id = ? ORDER BY passage_time ASC`, checkpointID)
+}
+
+func (s *SQLiteStore) loadPassagesQuery(query string, args ...interface{}) ([]CheckpointPassage, error) {
+	rows, err := s.db.Query(query, args...)
+	if err != nil {
+		return nil, fmt.Errorf("query checkpoint passages: %w", err)
+	}
+	defer rows.Close()
+
+	var passages []CheckpointPassage
+	for rows.Next() {
+		var p CheckpointPassage
+		var passageTime string
+
+		if err := rows.Scan(&p.ID, &p.CheckpointID, &p.NetID, &p.Label,
+			&passageTime, &p.Direction, &p.ReportedBy, &p.Notes); err != nil {
+			return nil, fmt.Errorf("scan checkpoint passage: %w", err)
+		}
+		p.PassageTime, err = parseTime(passageTime)
+		if err != nil {
+			return nil, fmt.Errorf("parse passage_time %q: %w", passageTime, err)
+		}
+		passages = append(passages, p)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("iterate checkpoint passages: %w", err)
+	}
+	return passages, nil
+}
+
+func (s *SQLiteStore) DeleteCheckpointPassages(netID string) error {
+	_, err := s.db.Exec("DELETE FROM checkpoint_passages WHERE net_id = ?", netID)
+	if err != nil {
+		return fmt.Errorf("delete checkpoint passages: %w", err)
+	}
 	return nil
 }
 

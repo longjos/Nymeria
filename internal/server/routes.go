@@ -13,6 +13,7 @@ import (
 	"github.com/narvel/nymeria/internal/activity"
 	"github.com/narvel/nymeria/internal/annotation"
 	"github.com/narvel/nymeria/internal/aprs"
+	"github.com/narvel/nymeria/internal/checkpoint"
 	"github.com/narvel/nymeria/internal/ics309"
 	"github.com/narvel/nymeria/internal/netcontrol"
 	"github.com/narvel/nymeria/internal/tilecache"
@@ -32,44 +33,47 @@ func (s *Server) routes() {
 		r.Post("/session", s.handleLogin)
 
 		// Read-only endpoints — observers and above
-		r.Get("/stations", s.handleGetStations)
-		r.Get("/stations/{callsign}", s.handleGetStation)
-		r.Get("/bulletins", s.handleGetBulletins)
-		r.Get("/messages", s.handleGetMessages)
-		r.Get("/messages/{callsign}", s.handleGetMessagesForCallsign)
-		r.Get("/transports", s.handleGetTransports)
-		r.Get("/objects", s.handleGetObjects)
-		r.Get("/items", s.handleGetItems)
-		r.Get("/annotations", s.handleGetAnnotations)
-		r.Get("/annotation-templates", s.handleGetAnnotationTemplates)
-		r.Get("/operations", s.handleGetOperations)
-		r.Get("/operations/{id}", s.handleGetOperation)
-		r.Get("/activity", s.handleGetActivity)
-		r.Get("/activity/export", s.handleExportActivityCSV)
+		r.Group(func(r chi.Router) {
+			r.Use(RequireRole(session.RoleObserver))
+			r.Get("/stations", s.handleGetStations)
+			r.Get("/stations/{callsign}", s.handleGetStation)
+			r.Get("/bulletins", s.handleGetBulletins)
+			r.Get("/messages", s.handleGetMessages)
+			r.Get("/messages/{callsign}", s.handleGetMessagesForCallsign)
+			r.Get("/transports", s.handleGetTransports)
+			r.Get("/objects", s.handleGetObjects)
+			r.Get("/items", s.handleGetItems)
+			r.Get("/annotations", s.handleGetAnnotations)
+			r.Get("/annotation-templates", s.handleGetAnnotationTemplates)
+			r.Get("/operations", s.handleGetOperations)
+			r.Get("/operations/{id}", s.handleGetOperation)
+			r.Get("/activity", s.handleGetActivity)
+			r.Get("/activity/export", s.handleExportActivityCSV)
 
-		// Weather
-		r.Get("/weather/stations", s.handleGetWeatherStations)
-		r.Get("/weather/config", s.handleGetWeatherConfig)
-		r.Get("/weather/{callsign}", s.handleGetWeatherReadings)
+			// Weather
+			r.Get("/weather/stations", s.handleGetWeatherStations)
+			r.Get("/weather/config", s.handleGetWeatherConfig)
+			r.Get("/weather/{callsign}", s.handleGetWeatherReadings)
 
-		// Telemetry
-		r.Get("/telemetry/stations", s.handleGetTelemetryStations)
-		r.Get("/telemetry/{callsign}", s.handleGetTelemetryReadings)
+			// Telemetry
+			r.Get("/telemetry/stations", s.handleGetTelemetryStations)
+			r.Get("/telemetry/{callsign}", s.handleGetTelemetryReadings)
 
-		// ICS-309 Communications Log
-		r.Get("/ics309", s.handleGetICS309)
-		r.Get("/ics309/export", s.handleExportICS309CSV)
+			// ICS-309 Communications Log
+			r.Get("/ics309", s.handleGetICS309)
+			r.Get("/ics309/export", s.handleExportICS309CSV)
 
-		// Tile cache — status (observer+)
-		r.Get("/tiles/cache", s.handleTileCacheStatus)
+			// Tile cache — status (observer+)
+			r.Get("/tiles/cache", s.handleTileCacheStatus)
 
-		// Session management — requires a valid session
-		r.Get("/session", s.handleGetSession)
-		r.Delete("/session", s.handleLogout)
-		r.Get("/users", s.handleGetUsers)
+			// Session management — requires a valid session
+			r.Get("/session", s.handleGetSession)
+			r.Delete("/session", s.handleLogout)
+			r.Get("/users", s.handleGetUsers)
 
-		// Tactical aliases — read access for observers
-		r.Get("/tactical", s.handleGetTacticalAliases)
+			// Tactical aliases — read access for observers
+			r.Get("/tactical", s.handleGetTacticalAliases)
+		})
 
 		// Plotter endpoints — annotations + tactical aliases write access
 		r.Group(func(r chi.Router) {
@@ -105,13 +109,20 @@ func (s *Server) routes() {
 		})
 
 		// Net Control — read endpoints (observer+)
-		r.Get("/nets", s.handleGetNets)
-		r.Get("/nets/search", s.handleSearchOperators)
-		r.Get("/nets/{id}", s.handleGetNet)
-		r.Get("/nets/{id}/events", s.handleGetNetEvents)
-		r.Get("/nets/{id}/notes", s.handleGetNetNotes)
-		r.Get("/nets/{id}/annotations", s.handleGetNetAnnotations)
-		r.Get("/nets/{id}/roster/export", s.handleExportRosterCSV)
+		r.Group(func(r chi.Router) {
+			r.Use(RequireRole(session.RoleObserver))
+			r.Get("/nets", s.handleGetNets)
+			r.Get("/nets/search", s.handleSearchOperators)
+			r.Get("/nets/{id}", s.handleGetNet)
+			r.Get("/nets/{id}/events", s.handleGetNetEvents)
+			r.Get("/nets/{id}/notes", s.handleGetNetNotes)
+			r.Get("/nets/{id}/annotations", s.handleGetNetAnnotations)
+			r.Get("/nets/{id}/roster/export", s.handleExportRosterCSV)
+
+			// Checkpoint progress — read endpoints (observer+)
+			r.Get("/nets/{id}/checkpoints", s.handleGetCheckpoints)
+			r.Get("/nets/{id}/progress", s.handleGetProgress)
+		})
 
 		// Net Control — write endpoints (operator+)
 		r.Group(func(r chi.Router) {
@@ -134,6 +145,8 @@ func (s *Server) routes() {
 			r.Delete("/nets/{id}/checkin/{ciId}/assign", s.handleUnassignMission)
 			r.Post("/nets/{id}/checkin/{ciId}/devices", s.handleAddTrackedStation)
 			r.Delete("/nets/{id}/checkin/{ciId}/devices/{callsign}", s.handleRemoveTrackedStation)
+			r.Put("/nets/{id}/checkpoints/{cpId}/meta", s.handleUpdateCheckpointMeta)
+			r.Post("/nets/{id}/checkpoints/{cpId}/passages", s.handleLogPassage)
 			r.Post("/nets/{id}/annotations/import", s.handleImportNetAnnotations)
 			r.Post("/nets/{id}/annotations/copy/{sourceNetId}", s.handleCopyNetAnnotations)
 			r.Post("/nets/{id}/pin/{callsign}", s.handlePinStation)
@@ -153,6 +166,9 @@ func (s *Server) routes() {
 			r.Use(RequireRole(session.RoleAdmin))
 			r.Put("/users/{id}/role", s.handleUpdateUserRole)
 			r.Delete("/users/{id}", s.handleRemoveUser)
+			r.Post("/session/approve", s.handleApproveUser)
+			r.Post("/session/deny", s.handleDenyUser)
+			r.Get("/session/pending", s.handleGetPending)
 		})
 
 		// Settings endpoints — admin only
@@ -176,13 +192,24 @@ func (s *Server) routes() {
 	}
 
 	// WebSocket endpoint
+	var sessionLookup ws.SessionLookup
+	if s.sessions != nil {
+		sessionLookup = func(token string) (string, bool) {
+			user, ok := s.sessions.Get(token)
+			if !ok {
+				return "", false
+			}
+			s.sessions.Touch(token)
+			return user.ID, true
+		}
+	}
 	s.router.Get("/ws", ws.HandleWS(s.hub, func(to, body string) error {
 		if s.msgEngine == nil {
 			return nil
 		}
 		_, err := s.msgEngine.Send(to, body)
 		return err
-	}))
+	}, sessionLookup))
 }
 
 func (s *Server) handleHealth(w http.ResponseWriter, _ *http.Request) {
@@ -382,16 +409,15 @@ func (s *Server) handleBeaconNow(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) handleGetConfig(w http.ResponseWriter, _ *http.Request) {
-	pinRequired := s.sessions != nil
 	needsSetup := false
 	if s.configMgr != nil {
 		needsSetup = s.configMgr.Get().Station.Callsign == "N0CALL"
 	}
 	writeJSON(w, http.StatusOK, map[string]any{
-		"transports":  len(s.transports.Statuses()),
-		"wsClients":   s.hub.ClientCount(),
-		"pinRequired": pinRequired,
-		"needsSetup":  needsSetup,
+		"transports": len(s.transports.Statuses()),
+		"wsClients":  s.hub.ClientCount(),
+		"authMode":   "invite",
+		"needsSetup": needsSetup,
 	})
 }
 
@@ -404,8 +430,9 @@ func (s *Server) handleLogin(w http.ResponseWriter, r *http.Request) {
 	}
 
 	var req struct {
-		Name string `json:"name"`
-		PIN  string `json:"pin"`
+		Name       string `json:"name"`
+		PIN        string `json:"pin"`
+		SavedToken string `json:"savedToken"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid request body"})
@@ -417,7 +444,10 @@ func (s *Server) handleLogin(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	user, err := s.sessions.Create(strings.TrimSpace(req.Name), req.PIN)
+	user, err := s.sessions.Create(strings.TrimSpace(req.Name), session.CreateOpts{
+		PIN:   req.PIN,
+		Token: req.SavedToken,
+	})
 	if err != nil {
 		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
 		return
@@ -467,6 +497,95 @@ func (s *Server) handleLogout(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, map[string]string{"status": "logged out"})
 }
 
+func (s *Server) handleApproveUser(w http.ResponseWriter, r *http.Request) {
+	if s.sessions == nil {
+		writeJSON(w, http.StatusServiceUnavailable, map[string]string{"error": "sessions not configured"})
+		return
+	}
+
+	var req struct {
+		UserID string       `json:"userId"`
+		Role   session.Role `json:"role"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid request body"})
+		return
+	}
+	if req.UserID == "" {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "userId is required"})
+		return
+	}
+	if session.RoleLevel(req.Role) < 0 {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid role"})
+		return
+	}
+
+	user, err := s.sessions.Approve(req.UserID, req.Role)
+	if err != nil {
+		writeJSON(w, http.StatusNotFound, map[string]string{"error": err.Error()})
+		return
+	}
+
+	if s.actLogger != nil {
+		admin, _ := UserFromContext(r.Context())
+		s.actLogger.Log(activity.Entry{
+			Timestamp: time.Now(),
+			UserID:    admin.ID,
+			UserName:  admin.Name,
+			Action:    "access_approved",
+			Target:    user.Name,
+			Details:   string(req.Role),
+		})
+	}
+
+	writeJSON(w, http.StatusOK, user)
+}
+
+func (s *Server) handleDenyUser(w http.ResponseWriter, r *http.Request) {
+	if s.sessions == nil {
+		writeJSON(w, http.StatusServiceUnavailable, map[string]string{"error": "sessions not configured"})
+		return
+	}
+
+	var req struct {
+		UserID string `json:"userId"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid request body"})
+		return
+	}
+	if req.UserID == "" {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "userId is required"})
+		return
+	}
+
+	if err := s.sessions.Deny(req.UserID); err != nil {
+		writeJSON(w, http.StatusNotFound, map[string]string{"error": err.Error()})
+		return
+	}
+
+	if s.actLogger != nil {
+		admin, _ := UserFromContext(r.Context())
+		s.actLogger.Log(activity.Entry{
+			Timestamp: time.Now(),
+			UserID:    admin.ID,
+			UserName:  admin.Name,
+			Action:    "access_denied",
+			Target:    req.UserID,
+		})
+	}
+
+	writeJSON(w, http.StatusOK, map[string]string{"userId": req.UserID, "status": "denied"})
+}
+
+func (s *Server) handleGetPending(w http.ResponseWriter, r *http.Request) {
+	if s.sessions == nil {
+		writeJSON(w, http.StatusOK, []any{})
+		return
+	}
+	writeJSON(w, http.StatusOK, s.sessions.Pending())
+}
+
 func (s *Server) handleGetUsers(w http.ResponseWriter, r *http.Request) {
 	if s.sessions == nil {
 		writeJSON(w, http.StatusOK, []any{})
@@ -476,11 +595,12 @@ func (s *Server) handleGetUsers(w http.ResponseWriter, r *http.Request) {
 	users := s.sessions.All()
 	// Strip tokens — only show public info
 	type publicUser struct {
-		ID          string       `json:"id"`
-		Name        string       `json:"name"`
-		Role        session.Role `json:"role"`
-		Callsign    string       `json:"callsign,omitempty"`
-		ConnectedAt time.Time    `json:"connectedAt"`
+		ID          string         `json:"id"`
+		Name        string         `json:"name"`
+		Role        session.Role   `json:"role"`
+		Status      session.Status `json:"status"`
+		Callsign    string         `json:"callsign,omitempty"`
+		ConnectedAt time.Time      `json:"connectedAt"`
 	}
 	result := make([]publicUser, len(users))
 	for i, u := range users {
@@ -488,6 +608,7 @@ func (s *Server) handleGetUsers(w http.ResponseWriter, r *http.Request) {
 			ID:          u.ID,
 			Name:        u.Name,
 			Role:        u.Role,
+			Status:      u.Status,
 			Callsign:    u.Callsign,
 			ConnectedAt: u.ConnectedAt,
 		}
@@ -2371,4 +2492,92 @@ func writeJSON(w http.ResponseWriter, status int, v any) {
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(status)
 	json.NewEncoder(w).Encode(v)
+}
+
+// --- Checkpoint Progress Handlers ---
+
+func (s *Server) handleGetCheckpoints(w http.ResponseWriter, r *http.Request) {
+	if s.cpMgr == nil {
+		writeJSON(w, http.StatusOK, []any{})
+		return
+	}
+	netID := chi.URLParam(r, "id")
+	checkpoints, err := s.cpMgr.GetCheckpointsForNet(netID)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+	if checkpoints == nil {
+		checkpoints = []checkpoint.CheckpointWithPassages{}
+	}
+	writeJSON(w, http.StatusOK, checkpoints)
+}
+
+func (s *Server) handleGetProgress(w http.ResponseWriter, r *http.Request) {
+	if s.cpMgr == nil {
+		writeJSON(w, http.StatusOK, map[string]any{"netId": chi.URLParam(r, "id"), "checkpoints": []any{}, "elements": []any{}})
+		return
+	}
+	netID := chi.URLParam(r, "id")
+	progress, err := s.cpMgr.GetProgress(netID)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+	writeJSON(w, http.StatusOK, progress)
+}
+
+func (s *Server) handleUpdateCheckpointMeta(w http.ResponseWriter, r *http.Request) {
+	if s.cpMgr == nil {
+		http.Error(w, "checkpoint manager not available", http.StatusServiceUnavailable)
+		return
+	}
+	netID := chi.URLParam(r, "id")
+	cpID := chi.URLParam(r, "cpId")
+
+	var meta store.CheckpointMeta
+	if err := json.NewDecoder(r.Body).Decode(&meta); err != nil {
+		http.Error(w, "invalid JSON", http.StatusBadRequest)
+		return
+	}
+	meta.AnnotationID = cpID
+	meta.NetID = netID
+
+	result, err := s.cpMgr.SetMeta(meta)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusBadRequest)
+		return
+	}
+	writeJSON(w, http.StatusOK, result)
+}
+
+func (s *Server) handleLogPassage(w http.ResponseWriter, r *http.Request) {
+	if s.cpMgr == nil {
+		http.Error(w, "checkpoint manager not available", http.StatusServiceUnavailable)
+		return
+	}
+	netID := chi.URLParam(r, "id")
+	cpID := chi.URLParam(r, "cpId")
+
+	var passage store.CheckpointPassage
+	if err := json.NewDecoder(r.Body).Decode(&passage); err != nil {
+		http.Error(w, "invalid JSON", http.StatusBadRequest)
+		return
+	}
+	passage.CheckpointID = cpID
+	passage.NetID = netID
+
+	// Populate ReportedBy from session user if available.
+	if passage.ReportedBy == "" {
+		if user, ok := UserFromContext(r.Context()); ok {
+			passage.ReportedBy = user.Name
+		}
+	}
+
+	result, err := s.cpMgr.LogPassage(passage)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusBadRequest)
+		return
+	}
+	writeJSON(w, http.StatusOK, result)
 }

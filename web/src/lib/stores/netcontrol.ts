@@ -1,5 +1,5 @@
 import { writable, derived } from 'svelte/store';
-import type { Net, NetCheckIn, NetMission, NetEvent, NetNote, StationCategory, Annotation } from '$lib/types';
+import type { Net, NetCheckIn, NetMission, NetEvent, NetNote, StationCategory, Annotation, CheckpointWithPassages, CheckpointPassage } from '$lib/types';
 import { api } from '$lib/api';
 import { wsClient } from './stations';
 import { annotations, annotationList } from './annotations';
@@ -10,6 +10,7 @@ export const checkIns = writable<NetCheckIn[]>([]);
 export const missions = writable<NetMission[]>([]);
 export const timeline = writable<NetEvent[]>([]);
 export const notes = writable<NetNote[]>([]);
+export const checkpoints = writable<CheckpointWithPassages[]>([]);
 
 // Net-scoped annotation views derived from the global annotation store.
 export const activeNetId = derived(activeNet, ($net) => $net?.id ?? '');
@@ -74,6 +75,41 @@ export const highlightedAnnotations = derived(
 		return new Set($anns.filter(a => a.missionIds?.includes($hovered)).map(a => a.id));
 	}
 );
+
+// --- Checkpoint derived stores ---
+
+export const orderedCheckpoints = derived(checkpoints, ($cps) =>
+	[...$cps].sort((a, b) => a.meta.sequenceNumber - b.meta.sequenceNumber)
+);
+
+export const hasCheckpoints = derived(checkpoints, ($cps) => $cps.length > 0);
+
+export const progressElements = derived(checkpoints, ($cps) => {
+	// Compute element positions from passage data.
+	const seqMap = new Map<string, number>();
+	for (const cp of $cps) {
+		seqMap.set(cp.meta.annotationId, cp.meta.sequenceNumber);
+	}
+
+	const elemMap = new Map<string, { label: string; lastCheckpointId: string; lastCheckpointSeq: number; lastPassageTime: string }>();
+	for (const cp of $cps) {
+		for (const p of cp.passages) {
+			const seq = seqMap.get(p.checkpointId);
+			if (seq == null) continue;
+			const existing = elemMap.get(p.label);
+			if (!existing || seq > existing.lastCheckpointSeq) {
+				elemMap.set(p.label, {
+					label: p.label,
+					lastCheckpointId: p.checkpointId,
+					lastCheckpointSeq: seq,
+					lastPassageTime: p.passageTime,
+				});
+			}
+		}
+	}
+
+	return [...elemMap.values()].sort((a, b) => b.lastCheckpointSeq - a.lastCheckpointSeq);
+});
 
 // Smart sort: missing > emergency > stale(>20m) > available > working > released
 function statusPriority(ci: NetCheckIn): number {
@@ -343,6 +379,43 @@ export function initNetControlStore(): void {
 		);
 	});
 
+	wsClient.on('checkpoint_passage', (msg) => {
+		const passage = msg.data as CheckpointPassage;
+		if (!passage) return;
+		checkpoints.update((list) =>
+			list.map((cp) => {
+				if (cp.meta.annotationId !== passage.checkpointId) return cp;
+				return {
+					...cp,
+					passages: [...cp.passages, passage],
+					passageCount: cp.passageCount + 1,
+					latestPassage: passage.passageTime,
+				};
+			})
+		);
+		// Also add a synthetic timeline entry.
+		timeline.update((list) => [...list, {
+			id: passage.id,
+			netId: passage.netId,
+			type: 'checkpoint_passage',
+			callsign: passage.reportedBy || '',
+			summary: `${passage.label} passed checkpoint`,
+			details: '',
+			createdAt: passage.passageTime,
+		}]);
+	});
+
+	wsClient.on('checkpoint_meta_updated', (msg) => {
+		const meta = msg.data as any;
+		if (!meta) return;
+		checkpoints.update((list) =>
+			list.map((cp) => {
+				if (cp.meta.annotationId !== meta.annotationId) return cp;
+				return { ...cp, meta: { ...cp.meta, ...meta } };
+			})
+		);
+	});
+
 	wsClient.on('net_timeline_entry', (msg) => {
 		const data = msg.data as any;
 		if (!data) return;
@@ -386,12 +459,14 @@ export async function loadNetData(netId: string): Promise<void> {
 			opsView.set({ lat: n.opsViewLat, lon: n.opsViewLon, zoom: n.opsViewZoom });
 		}
 
-		const [events, netNotes] = await Promise.all([
+		const [events, netNotes, cps] = await Promise.all([
 			api.netEvents(netId),
 			api.netNotes(netId),
+			api.getCheckpoints(netId).catch(() => []),
 		]);
 		timeline.set(events || []);
 		notes.set(netNotes || []);
+		checkpoints.set(cps || []);
 	} catch {
 		// Ignore fetch errors on init.
 	}
@@ -403,5 +478,6 @@ export function clearNetControl(): void {
 	missions.set([]);
 	timeline.set([]);
 	notes.set([]);
+	checkpoints.set([]);
 	opsView.set(null);
 }

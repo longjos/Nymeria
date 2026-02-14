@@ -22,6 +22,7 @@ type BeaconConfig struct {
 type SessionConfig struct {
 	PIN               string        `yaml:"pin" json:"pin,omitempty"`
 	InactivityTimeout time.Duration `yaml:"inactivity_timeout" json:"inactivityTimeout"`
+	ReconnectWindow   time.Duration `yaml:"reconnect_window" json:"reconnectWindow"`
 }
 
 // TileCacheConfig holds offline map tile cache settings.

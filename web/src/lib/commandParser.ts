@@ -35,6 +35,7 @@ export type ParsedCommand =
 	| { type: 'mission_create'; title: string }
 	| { type: 'mission_assign'; callsign: string; missionTitle: string }
 	| { type: 'location'; callsign: string; locationName?: string; lat?: number; lon?: number }
+	| { type: 'checkpoint_passage'; checkpointRef: string; label: string }
 	| { type: 'unknown'; raw: string };
 
 export interface AutocompleteContext {
@@ -57,6 +58,14 @@ export function parseCommand(
 
 	const parts = raw.split(/\s+/);
 	const firstToken = parts[0];
+
+	// Checkpoint passage: "cp3 lead" or "cp1"
+	const cpMatch = firstToken.match(/^cp(\d+)$/i);
+	if (cpMatch) {
+		const checkpointRef = cpMatch[1];
+		const label = parts.slice(1).join(' ').trim() || 'through';
+		return { type: 'checkpoint_passage', checkpointRef, label };
+	}
 
 	// Mission create: "mission <title>"
 	if (firstToken.toLowerCase() === 'mission') {
@@ -156,6 +165,8 @@ export function getModeIndicator(parsed: ParsedCommand): string {
 			return '[ASSIGN MISSION]';
 		case 'location':
 			return '[LOCATION]';
+		case 'checkpoint_passage':
+			return `[CP${parsed.checkpointRef} \u2192 ${parsed.label}]`;
 		case 'unknown':
 			return '';
 	}
@@ -175,13 +186,22 @@ export function getAutocompleteContext(
 	// Detect if user is mid-token or has typed a space after
 	const endsWithSpace = input.endsWith(' ');
 
-	// First token: callsign or "mission"
+	// First token: callsign, "mission", or "cpN"
 	if (parts.length === 1 && !endsWithSpace) {
 		const partial = parts[0].toUpperCase();
+		const partialLower = parts[0].toLowerCase();
 		// Suggest "mission" if partial matches
 		const suggestions: string[] = [];
-		if ('mission'.startsWith(partial.toLowerCase())) {
+		if ('mission'.startsWith(partialLower)) {
 			suggestions.push('mission');
+		}
+		// Suggest cpN if partial starts with "cp"
+		if (partialLower.startsWith('cp') || 'cp'.startsWith(partialLower)) {
+			// Suggest cp1 through cp9 for convenience
+			for (let i = 1; i <= 9; i++) {
+				const cpToken = `cp${i}`;
+				if (cpToken.startsWith(partialLower)) suggestions.push(cpToken);
+			}
 		}
 		// Suggest matching callsigns
 		for (const cs of checkedInCallsigns) {
@@ -190,6 +210,18 @@ export function getAutocompleteContext(
 			}
 		}
 		return { phase: 'callsign', partial: parts[0], suggestions };
+	}
+
+	// After "cpN ": suggest common labels
+	const cpAutoMatch = parts[0].match(/^cp(\d+)$/i);
+	if (cpAutoMatch) {
+		const knownLabels = ['lead', 'sweep', 'tail', 'main pack'];
+		if (parts.length === 1 && endsWithSpace) {
+			return { phase: 'action', partial: '', suggestions: knownLabels };
+		}
+		const labelPartial = parts.slice(1).join(' ').toLowerCase();
+		const suggestions = knownLabels.filter(l => l.startsWith(labelPartial));
+		return { phase: 'action', partial: labelPartial, suggestions };
 	}
 
 	// After "mission ": suggest nothing (free-form title)

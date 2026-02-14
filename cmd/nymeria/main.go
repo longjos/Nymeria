@@ -16,6 +16,7 @@ import (
 	"github.com/narvel/nymeria/internal/annotation"
 	"github.com/narvel/nymeria/internal/aprs"
 	"github.com/narvel/nymeria/internal/beacon"
+	"github.com/narvel/nymeria/internal/checkpoint"
 	"github.com/narvel/nymeria/internal/config"
 	"github.com/narvel/nymeria/internal/message"
 	"github.com/narvel/nymeria/internal/netcontrol"
@@ -204,6 +205,7 @@ func main() {
 	sessCfg := session.MemoryManagerConfig{
 		PIN:               cfg.Session.PIN,
 		InactivityTimeout: cfg.Session.InactivityTimeout,
+		ReconnectWindow:   cfg.Session.ReconnectWindow,
 	}
 	sessMgr := session.NewMemoryManager(sessCfg)
 
@@ -239,6 +241,12 @@ func main() {
 	netMgr := netcontrol.NewManager(db, tracker)
 	if err := netMgr.Load(); err != nil {
 		log.Printf("warning: failed to load nets: %v", err)
+	}
+
+	// Create checkpoint manager
+	cpMgr := checkpoint.NewManager(db, annMgr)
+	if err := cpMgr.Load(); err != nil {
+		log.Printf("warning: failed to load checkpoint data: %v", err)
 	}
 
 	// Initialize tile cache
@@ -307,6 +315,7 @@ func main() {
 		sessMgr.UpdateConfig(session.MemoryManagerConfig{
 			PIN:               newCfg.Session.PIN,
 			InactivityTimeout: newCfg.Session.InactivityTimeout,
+			ReconnectWindow:   newCfg.Session.ReconnectWindow,
 		})
 
 		// Logging: update log level
@@ -328,6 +337,7 @@ func main() {
 		server.WithActivityLogger(actLogger),
 		server.WithAnnotationManager(annMgr),
 		server.WithNetControlManager(netMgr),
+		server.WithCheckpointManager(cpMgr),
 		server.WithConfigManager(cfgMgr),
 		server.WithStationConfig(cfg.Station),
 		server.WithWeatherConfig(cfg.Weather),

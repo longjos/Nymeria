@@ -25,7 +25,7 @@
 	import LoginOverlay from '$lib/components/LoginOverlay.svelte';
 	import SetupWizard from '$lib/components/SetupWizard.svelte';
 	import CommandPalette from '$lib/components/CommandPalette.svelte';
-	import { stations, stationList, initStationStore } from '$lib/stores/stations';
+	import { stations, stationList, initStationStore, wsClient, connectWS } from '$lib/stores/stations';
 	import { initMessageStore, conversationList } from '$lib/stores/messages';
 	import { initTransportStore } from '$lib/stores/transports';
 	import { annotationList, initAnnotationStore } from '$lib/stores/annotations';
@@ -41,7 +41,7 @@
 	import { initWeatherStore, weatherStations, selectedWeatherStation } from '$lib/stores/weather';
 	import { dfStations } from '$lib/stores/df';
 	import { initPacketStore } from '$lib/stores/packets';
-	import { isLoggedIn, needsSetup, initSession } from '$lib/stores/session';
+	import { isLoggedIn, needsSetup, isApproved, isPending, isDenied, initSession, handleSessionEvent, currentUser, loadPendingRequests, canAdmin } from '$lib/stores/session';
 	import { mapSettings, AGE_FILTER_MS, TRACK_DURATION_MS } from '$lib/stores/mapSettings';
 	import { activeCheckIns } from '$lib/stores/netcontrol';
 	import MapPalette from '$lib/components/MapPalette.svelte';
@@ -97,9 +97,22 @@
 
 	let panelIsOpen = $derived($panelMode !== 'closed');
 
-	// Watch login state — init data stores when user logs in
+	let wsConnected = $state(false);
+
+	// Connect WS when logged in (even for pending — needed for approval events)
 	$effect(() => {
-		if ($isLoggedIn) {
+		if ($isLoggedIn && $currentUser && !wsConnected) {
+			connectWS($currentUser.token);
+			wsClient.on('access_approved', handleSessionEvent);
+			wsClient.on('access_denied', handleSessionEvent);
+			wsClient.on('access_request', handleSessionEvent);
+			wsConnected = true;
+		}
+	});
+
+	// Init data stores only when approved
+	$effect(() => {
+		if ($isApproved) {
 			initStationStore();
 			initMessageStore();
 			initTransportStore();
@@ -109,6 +122,9 @@
 			initBulletinStore();
 			initWeatherStore();
 			initPacketStore();
+			if ($canAdmin) {
+				loadPendingRequests();
+			}
 		}
 	});
 
@@ -351,7 +367,7 @@
 	<!-- Setup wizard takes priority over login -->
 	{#if sessionReady && $needsSetup}
 		<SetupWizard />
-	{:else if sessionReady && !$isLoggedIn}
+	{:else if sessionReady && (!$isLoggedIn || $isPending || $isDenied)}
 		<LoginOverlay />
 	{/if}
 

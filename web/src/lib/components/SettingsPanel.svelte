@@ -4,6 +4,7 @@
 	import { closePanel } from '$lib/stores/ui';
 	import { weatherConfig } from '$lib/stores/weather';
 	import FilterBuilder from './FilterBuilder.svelte';
+	import PendingApprovals from './PendingApprovals.svelte';
 	import type {
 		SettingsResponse, StationSettings, ServerSettings, BeaconSettings,
 		SessionSettings, LoggingSettings, TransportSettings, TileCacheSettings,
@@ -245,6 +246,9 @@
 		</div>
 	{:else if settings}
 		<div class="sections">
+			<!-- Access Requests (admin only) -->
+			<PendingApprovals />
+
 			<!-- Station -->
 			<div class="section" class:open={openSections.station}>
 				<button class="section-header" onclick={() => toggle('station')}>

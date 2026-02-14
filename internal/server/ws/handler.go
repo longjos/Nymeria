@@ -25,9 +25,28 @@ type SendMessageRequest struct {
 // MessageHandler is called when a client sends a message via WebSocket.
 type MessageHandler func(to, body string) error
 
+// SessionLookup retrieves a user ID from a token. Returns ("", false) if invalid.
+type SessionLookup func(token string) (userID string, ok bool)
+
 // HandleWS upgrades an HTTP connection to WebSocket and manages the client lifecycle.
-func HandleWS(hub *Hub, msgHandler MessageHandler) http.HandlerFunc {
+func HandleWS(hub *Hub, msgHandler MessageHandler, sessionLookup SessionLookup) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
+		// Authenticate via token query parameter
+		var userID string
+		if sessionLookup != nil {
+			token := r.URL.Query().Get("token")
+			if token == "" {
+				http.Error(w, "token required", http.StatusUnauthorized)
+				return
+			}
+			uid, ok := sessionLookup(token)
+			if !ok {
+				http.Error(w, "invalid token", http.StatusUnauthorized)
+				return
+			}
+			userID = uid
+		}
+
 		conn, err := websocket.Accept(w, r, &websocket.AcceptOptions{
 			InsecureSkipVerify: true, // Allow any origin for dev
 		})
@@ -37,8 +56,9 @@ func HandleWS(hub *Hub, msgHandler MessageHandler) http.HandlerFunc {
 		}
 
 		client := &Client{
-			ID:   r.RemoteAddr,
-			Send: make(chan []byte, 64),
+			ID:     r.RemoteAddr,
+			UserID: userID,
+			Send:   make(chan []byte, 64),
 		}
 
 		hub.Register(client)

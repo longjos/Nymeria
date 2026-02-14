@@ -84,7 +84,7 @@ var validPriorities = map[string]bool{
 var categoryStatuses = map[string]map[string]bool{
 	CategoryIncident:   {"reported": true, "responding": true, "on-scene": true, "resolved": true, "escalated": true},
 	CategoryResource:   {"planned": true, "open": true, "active": true, "at-capacity": true, "closing": true, "closed": true},
-	CategoryCheckpoint: {"planned": true, "open": true, "closed": true},
+	CategoryCheckpoint: {"planned": true, "open": true, "active": true, "closed": true},
 	CategoryHazard:     {"reported": true, "confirmed": true, "mitigated": true, "cleared": true},
 	CategoryRoute:      {"planned": true, "active": true, "closed": true},
 	CategoryBoundary:   {"planned": true, "active": true, "complete": true, "needs-re-search": true},
