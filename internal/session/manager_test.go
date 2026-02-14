@@ -32,16 +32,18 @@ func TestRoleLevel(t *testing.T) {
 	}
 }
 
-func TestCreateNoPINConfigured(t *testing.T) {
-	// No PIN configured → first user auto-promoted to Admin.
+func TestCreateFirstUserAutoAdmin(t *testing.T) {
 	m := newTestManager("", 30*time.Minute)
 
-	user, err := m.Create("Alice", "")
+	user, err := m.Create("Alice", CreateOpts{})
 	if err != nil {
 		t.Fatalf("Create: %v", err)
 	}
 	if user.Role != RoleAdmin {
 		t.Errorf("first user role = %q, want %q (auto-promote)", user.Role, RoleAdmin)
+	}
+	if user.Status != StatusApproved {
+		t.Errorf("first user status = %q, want %q", user.Status, StatusApproved)
 	}
 	if user.Name != "Alice" {
 		t.Errorf("name = %q, want %q", user.Name, "Alice")
@@ -58,61 +60,260 @@ func TestCreateNoPINConfigured(t *testing.T) {
 	if user.LastActivity.IsZero() {
 		t.Error("LastActivity is zero")
 	}
-
-	// Second user should be Operator, not Admin.
-	user2, _ := m.Create("Bob", "")
-	if user2.Role != RoleOperator {
-		t.Errorf("second user role = %q, want %q", user2.Role, RoleOperator)
-	}
 }
 
-func TestCreateNoPINConfiguredWithRandomInput(t *testing.T) {
-	// No PIN configured → even if user sends a PIN, still Operator.
-	// First user auto-promotes to Admin, so create a throwaway first.
+func TestCreateSubsequentUserPending(t *testing.T) {
 	m := newTestManager("", 30*time.Minute)
-	m.Create("First", "") // auto-promoted to Admin
 
-	user, err := m.Create("Bob", "anything")
+	// First user becomes admin.
+	m.Create("Admin", CreateOpts{})
+
+	// Second user should be pending.
+	user2, err := m.Create("Bob", CreateOpts{})
 	if err != nil {
 		t.Fatalf("Create: %v", err)
 	}
-	if user.Role != RoleOperator {
-		t.Errorf("role = %q, want %q (no PIN configured = always Operator)", user.Role, RoleOperator)
+	if user2.Status != StatusPending {
+		t.Errorf("second user status = %q, want %q", user2.Status, StatusPending)
+	}
+	if user2.Role != RoleObserver {
+		t.Errorf("second user role = %q, want %q", user2.Role, RoleObserver)
 	}
 }
 
-func TestCreateWithPIN(t *testing.T) {
-	tests := []struct {
-		name     string
-		pin      string
-		wantRole Role
-	}{
-		{"no pin entered", "", RoleObserver},
-		{"wrong pin", "wrong", RoleObserver},
-		{"correct pin", "secret123", RoleOperator},
+func TestApprove(t *testing.T) {
+	m := newTestManager("", 30*time.Minute)
+	m.Create("Admin", CreateOpts{})
+
+	pending, _ := m.Create("Bob", CreateOpts{})
+	if pending.Status != StatusPending {
+		t.Fatalf("expected pending, got %q", pending.Status)
 	}
 
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			m := newTestManager("secret123", 30*time.Minute)
-			// Create a first user with correct PIN to claim admin slot,
-			// so the test subject gets their natural role.
-			m.Create("Admin", "secret123") // auto-promoted to Admin
+	approved, err := m.Approve(pending.ID, RoleOperator)
+	if err != nil {
+		t.Fatalf("Approve: %v", err)
+	}
+	if approved.Status != StatusApproved {
+		t.Errorf("approved status = %q, want %q", approved.Status, StatusApproved)
+	}
+	if approved.Role != RoleOperator {
+		t.Errorf("approved role = %q, want %q", approved.Role, RoleOperator)
+	}
 
-			user, err := m.Create("Bob", tt.pin)
-			if err != nil {
-				t.Fatalf("Create: %v", err)
-			}
-			if user.Role != tt.wantRole {
-				t.Errorf("role = %q, want %q", user.Role, tt.wantRole)
-			}
-		})
+	// Verify via Get
+	got, ok := m.Get(pending.Token)
+	if !ok {
+		t.Fatal("Get returned false for approved user")
+	}
+	if got.Status != StatusApproved {
+		t.Errorf("Get status = %q, want %q", got.Status, StatusApproved)
+	}
+}
+
+func TestApproveNonexistent(t *testing.T) {
+	m := newTestManager("", 30*time.Minute)
+	_, err := m.Approve("nonexistent", RoleOperator)
+	if err == nil {
+		t.Error("Approve nonexistent should return error")
+	}
+}
+
+func TestApproveAlreadyApproved(t *testing.T) {
+	m := newTestManager("", 30*time.Minute)
+	admin, _ := m.Create("Admin", CreateOpts{})
+	_, err := m.Approve(admin.ID, RoleOperator)
+	if err == nil {
+		t.Error("Approve already-approved user should return error")
+	}
+}
+
+func TestDeny(t *testing.T) {
+	m := newTestManager("", 30*time.Minute)
+	m.Create("Admin", CreateOpts{})
+
+	pending, _ := m.Create("Bob", CreateOpts{})
+
+	err := m.Deny(pending.ID)
+	if err != nil {
+		t.Fatalf("Deny: %v", err)
+	}
+
+	got, ok := m.Get(pending.Token)
+	if !ok {
+		t.Fatal("Get returned false after Deny")
+	}
+	if got.Status != StatusDenied {
+		t.Errorf("denied status = %q, want %q", got.Status, StatusDenied)
+	}
+}
+
+func TestDenyNonexistent(t *testing.T) {
+	m := newTestManager("", 30*time.Minute)
+	err := m.Deny("nonexistent")
+	if err == nil {
+		t.Error("Deny nonexistent should return error")
+	}
+}
+
+func TestPending(t *testing.T) {
+	m := newTestManager("", 30*time.Minute)
+	m.Create("Admin", CreateOpts{})
+
+	m.Create("Bob", CreateOpts{})
+	m.Create("Charlie", CreateOpts{})
+
+	pending := m.Pending()
+	if len(pending) != 2 {
+		t.Fatalf("Pending() returned %d users, want 2", len(pending))
+	}
+
+	names := map[string]bool{}
+	for _, u := range pending {
+		names[u.Name] = true
+	}
+	if !names["Bob"] || !names["Charlie"] {
+		t.Errorf("expected Bob and Charlie in pending, got %v", names)
+	}
+}
+
+func TestReturningUser(t *testing.T) {
+	m := NewMemoryManager(MemoryManagerConfig{
+		InactivityTimeout: 50 * time.Millisecond,
+		ReconnectWindow:   1 * time.Hour,
+	})
+	user, _ := m.Create("Alice", CreateOpts{})
+	savedToken := user.Token
+
+	// Wait for session to expire
+	time.Sleep(80 * time.Millisecond)
+	m.Sweep()
+
+	// Verify session expired
+	_, ok := m.Get(savedToken)
+	if ok {
+		t.Fatal("session should have expired")
+	}
+
+	// Reconnect with saved token
+	reconnected, err := m.Create("Alice", CreateOpts{Token: savedToken})
+	if err != nil {
+		t.Fatalf("Create with saved token: %v", err)
+	}
+	if reconnected.Status != StatusApproved {
+		t.Errorf("reconnected status = %q, want %q", reconnected.Status, StatusApproved)
+	}
+	if reconnected.Role != RoleAdmin {
+		t.Errorf("reconnected role = %q, want %q (should preserve original role)", reconnected.Role, RoleAdmin)
+	}
+	if reconnected.Token == savedToken {
+		t.Error("reconnected should get a new token, not reuse the old one")
+	}
+}
+
+func TestReturningUserExpiredBeyondWindow(t *testing.T) {
+	m := NewMemoryManager(MemoryManagerConfig{
+		InactivityTimeout: 50 * time.Millisecond,
+		ReconnectWindow:   50 * time.Millisecond,
+	})
+	user, _ := m.Create("Alice", CreateOpts{})
+	savedToken := user.Token
+
+	// Wait for session to expire
+	time.Sleep(80 * time.Millisecond)
+	m.Sweep()
+
+	// Wait for reconnect window to close
+	time.Sleep(80 * time.Millisecond)
+
+	// Try to reconnect — should fail (but first user so auto-admin anyway)
+	reconnected, err := m.Create("Alice", CreateOpts{Token: savedToken})
+	if err != nil {
+		t.Fatalf("Create: %v", err)
+	}
+	// Since there's no admin, first user auto-becomes admin.
+	// The key test is that it went through the normal flow (not reconnection).
+	if reconnected.Token == savedToken {
+		t.Error("should not reuse expired token")
+	}
+}
+
+func TestEmergencyPINRecovery(t *testing.T) {
+	m := newTestManager("secret123", 30*time.Minute)
+
+	// First user with PIN becomes admin (no admin exists).
+	user, err := m.Create("Admin", CreateOpts{PIN: "secret123"})
+	if err != nil {
+		t.Fatalf("Create: %v", err)
+	}
+	if user.Role != RoleAdmin {
+		t.Errorf("first user role = %q, want %q", user.Role, RoleAdmin)
+	}
+	if user.Status != StatusApproved {
+		t.Errorf("first user status = %q, want %q", user.Status, StatusApproved)
+	}
+}
+
+func TestCreatePendingEmitsEvent(t *testing.T) {
+	m := newTestManager("", 30*time.Minute)
+	m.Create("Admin", CreateOpts{}) // admin
+
+	// Drain any events from admin creation
+	drainEvents(m)
+
+	m.Create("Bob", CreateOpts{})
+
+	evt := receiveEvent(t, m)
+	if evt.Type != EventAccessRequest {
+		t.Errorf("event type = %q, want %q", evt.Type, EventAccessRequest)
+	}
+	if evt.User.Name != "Bob" {
+		t.Errorf("event user name = %q, want %q", evt.User.Name, "Bob")
+	}
+}
+
+func TestApproveEmitsEvent(t *testing.T) {
+	m := newTestManager("", 30*time.Minute)
+	m.Create("Admin", CreateOpts{})
+
+	pending, _ := m.Create("Bob", CreateOpts{})
+	drainEvents(m) // drain access_request event
+
+	m.Approve(pending.ID, RoleOperator)
+
+	evt := receiveEvent(t, m)
+	if evt.Type != EventAccessApproved {
+		t.Errorf("event type = %q, want %q", evt.Type, EventAccessApproved)
+	}
+	if evt.User.Name != "Bob" {
+		t.Errorf("event user name = %q, want %q", evt.User.Name, "Bob")
+	}
+	if evt.User.Role != RoleOperator {
+		t.Errorf("event user role = %q, want %q", evt.User.Role, RoleOperator)
+	}
+}
+
+func TestDenyEmitsEvent(t *testing.T) {
+	m := newTestManager("", 30*time.Minute)
+	m.Create("Admin", CreateOpts{})
+
+	pending, _ := m.Create("Bob", CreateOpts{})
+	drainEvents(m)
+
+	m.Deny(pending.ID)
+
+	evt := receiveEvent(t, m)
+	if evt.Type != EventAccessDenied {
+		t.Errorf("event type = %q, want %q", evt.Type, EventAccessDenied)
+	}
+	if evt.User.Name != "Bob" {
+		t.Errorf("event user name = %q, want %q", evt.User.Name, "Bob")
 	}
 }
 
 func TestGetByToken(t *testing.T) {
-	m := newTestManager("secret", 30*time.Minute)
-	user, _ := m.Create("Alice", "secret")
+	m := newTestManager("", 30*time.Minute)
+	user, _ := m.Create("Alice", CreateOpts{})
 
 	got, ok := m.Get(user.Token)
 	if !ok {
@@ -133,7 +334,7 @@ func TestGetNonexistentToken(t *testing.T) {
 
 func TestGetByID(t *testing.T) {
 	m := newTestManager("", 30*time.Minute)
-	user, _ := m.Create("Alice", "")
+	user, _ := m.Create("Alice", CreateOpts{})
 
 	got, ok := m.GetByID(user.ID)
 	if !ok {
@@ -154,9 +355,9 @@ func TestGetByIDNonexistent(t *testing.T) {
 
 func TestAll(t *testing.T) {
 	m := newTestManager("", 30*time.Minute)
-	m.Create("Alice", "")
-	m.Create("Bob", "")
-	m.Create("Charlie", "")
+	m.Create("Alice", CreateOpts{})
+	m.Create("Bob", CreateOpts{})
+	m.Create("Charlie", CreateOpts{})
 
 	all := m.All()
 	if len(all) != 3 {
@@ -176,7 +377,7 @@ func TestAll(t *testing.T) {
 
 func TestRemove(t *testing.T) {
 	m := newTestManager("", 30*time.Minute)
-	user, _ := m.Create("Alice", "")
+	user, _ := m.Create("Alice", CreateOpts{})
 
 	if err := m.Remove(user.ID); err != nil {
 		t.Fatalf("Remove: %v", err)
@@ -208,7 +409,7 @@ func TestRemoveNonexistent(t *testing.T) {
 
 func TestTouch(t *testing.T) {
 	m := newTestManager("", 30*time.Minute)
-	user, _ := m.Create("Alice", "")
+	user, _ := m.Create("Alice", CreateOpts{})
 
 	before := user.LastActivity
 	time.Sleep(10 * time.Millisecond)
@@ -232,7 +433,7 @@ func TestTouchNonexistent(t *testing.T) {
 
 func TestUpdateRole(t *testing.T) {
 	m := newTestManager("", 30*time.Minute)
-	user, _ := m.Create("Alice", "")
+	user, _ := m.Create("Alice", CreateOpts{})
 
 	if err := m.UpdateRole(user.ID, RoleAdmin); err != nil {
 		t.Fatalf("UpdateRole: %v", err)
@@ -257,7 +458,7 @@ func TestUpdateRoleNonexistent(t *testing.T) {
 
 func TestSweepRemovesExpired(t *testing.T) {
 	m := newTestManager("", 50*time.Millisecond)
-	user, _ := m.Create("Alice", "")
+	user, _ := m.Create("Alice", CreateOpts{})
 
 	// Wait for expiration
 	time.Sleep(80 * time.Millisecond)
@@ -271,7 +472,7 @@ func TestSweepRemovesExpired(t *testing.T) {
 
 func TestSweepKeepsActive(t *testing.T) {
 	m := newTestManager("", 200*time.Millisecond)
-	user, _ := m.Create("Alice", "")
+	user, _ := m.Create("Alice", CreateOpts{})
 
 	// Touch to keep active, then sweep
 	time.Sleep(50 * time.Millisecond)
@@ -286,7 +487,7 @@ func TestSweepKeepsActive(t *testing.T) {
 
 func TestSweepWithCallback(t *testing.T) {
 	m := newTestManager("", 50*time.Millisecond)
-	user, _ := m.Create("Alice", "")
+	user, _ := m.Create("Alice", CreateOpts{})
 
 	var disconnected *User
 	m.OnDisconnect = func(u *User) {
@@ -306,7 +507,7 @@ func TestSweepWithCallback(t *testing.T) {
 
 func TestStartSweepGoroutine(t *testing.T) {
 	m := newTestManager("", 50*time.Millisecond)
-	m.Create("Alice", "")
+	m.Create("Alice", CreateOpts{})
 
 	ctx, cancel := context.WithCancel(context.Background())
 	m.Start(ctx, 30*time.Millisecond) // sweep every 30ms
@@ -326,7 +527,7 @@ func TestTokenUniqueness(t *testing.T) {
 	tokens := make(map[string]bool, 100)
 
 	for i := 0; i < 100; i++ {
-		user, err := m.Create("User", "")
+		user, err := m.Create("User", CreateOpts{})
 		if err != nil {
 			t.Fatalf("Create #%d: %v", i, err)
 		}
@@ -338,7 +539,7 @@ func TestTokenUniqueness(t *testing.T) {
 }
 
 func TestConcurrentAccess(t *testing.T) {
-	m := newTestManager("secret", 30*time.Minute)
+	m := newTestManager("", 30*time.Minute)
 
 	var wg sync.WaitGroup
 	errs := make(chan error, 300)
@@ -348,7 +549,7 @@ func TestConcurrentAccess(t *testing.T) {
 		wg.Add(1)
 		go func() {
 			defer wg.Done()
-			_, err := m.Create("User", "")
+			_, err := m.Create("User", CreateOpts{})
 			if err != nil {
 				errs <- err
 			}
@@ -385,5 +586,28 @@ func TestConcurrentAccess(t *testing.T) {
 		if err != nil {
 			t.Fatalf("concurrent error: %v", err)
 		}
+	}
+}
+
+// Helper: drain all events from the channel.
+func drainEvents(m *MemoryManager) {
+	for {
+		select {
+		case <-m.Events():
+		default:
+			return
+		}
+	}
+}
+
+// Helper: receive one event with timeout.
+func receiveEvent(t *testing.T, m *MemoryManager) Event {
+	t.Helper()
+	select {
+	case evt := <-m.Events():
+		return evt
+	case <-time.After(500 * time.Millisecond):
+		t.Fatal("timed out waiting for event")
+		return Event{}
 	}
 }

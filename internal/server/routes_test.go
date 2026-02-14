@@ -40,9 +40,8 @@ func TestHandleHealth(t *testing.T) {
 	}
 }
 
-func TestHandleConfig_PINRequired(t *testing.T) {
+func TestHandleConfig_AuthMode(t *testing.T) {
 	mgr := session.NewMemoryManager(session.MemoryManagerConfig{
-		PIN:               "1234",
 		InactivityTimeout: 30 * time.Minute,
 	})
 	srv := testServer(WithSessionManager(mgr))
@@ -57,43 +56,28 @@ func TestHandleConfig_PINRequired(t *testing.T) {
 
 	var resp map[string]any
 	json.NewDecoder(w.Body).Decode(&resp)
-	if resp["pinRequired"] != true {
-		t.Errorf("pinRequired = %v, want true", resp["pinRequired"])
-	}
-}
-
-func TestHandleConfig_NoPIN(t *testing.T) {
-	srv := testServer()
-
-	r := httptest.NewRequest("GET", "/api/config", nil)
-	w := httptest.NewRecorder()
-	srv.ServeHTTP(w, r)
-
-	var resp map[string]any
-	json.NewDecoder(w.Body).Decode(&resp)
-	if resp["pinRequired"] != false {
-		t.Errorf("pinRequired = %v, want false", resp["pinRequired"])
+	if resp["authMode"] != "invite" {
+		t.Errorf("authMode = %v, want %q", resp["authMode"], "invite")
 	}
 }
 
 func TestHandleLogin(t *testing.T) {
 	mgr := session.NewMemoryManager(session.MemoryManagerConfig{
-		PIN:               "secret",
 		InactivityTimeout: 30 * time.Minute,
 	})
 	srv := testServer(WithSessionManager(mgr))
 
 	tests := []struct {
-		name     string
-		body     string
-		wantCode int
-		wantRole session.Role
+		name       string
+		body       string
+		wantCode   int
+		wantRole   session.Role
+		wantStatus session.Status
 	}{
-		{"operator with correct pin (auto-admin)", `{"name":"Alice","pin":"secret"}`, 200, session.RoleAdmin},
-		{"observer with wrong pin", `{"name":"Bob","pin":"wrong"}`, 200, session.RoleObserver},
-		{"observer with no pin", `{"name":"Charlie"}`, 200, session.RoleObserver},
-		{"empty name", `{"name":""}`, 400, ""},
-		{"no body", `{`, 400, ""},
+		{"first user auto-admin", `{"name":"Alice"}`, 200, session.RoleAdmin, session.StatusApproved},
+		{"subsequent user pending", `{"name":"Bob"}`, 200, session.RoleObserver, session.StatusPending},
+		{"empty name", `{"name":""}`, 400, "", ""},
+		{"no body", `{`, 400, "", ""},
 	}
 
 	for _, tt := range tests {
@@ -113,6 +97,9 @@ func TestHandleLogin(t *testing.T) {
 				if resp.Role != tt.wantRole {
 					t.Errorf("role = %q, want %q", resp.Role, tt.wantRole)
 				}
+				if resp.Status != tt.wantStatus {
+					t.Errorf("status = %q, want %q", resp.Status, tt.wantStatus)
+				}
 				if resp.Token == "" {
 					t.Error("expected non-empty token")
 				}
@@ -126,13 +113,12 @@ func TestHandleLogin(t *testing.T) {
 
 func TestHandleGetSession(t *testing.T) {
 	mgr := session.NewMemoryManager(session.MemoryManagerConfig{
-		PIN:               "secret",
 		InactivityTimeout: 30 * time.Minute,
 	})
 	srv := testServer(WithSessionManager(mgr))
 
-	// Create a user first
-	user, _ := mgr.Create("Alice", "secret")
+	// First user = auto-admin (approved)
+	user, _ := mgr.Create("Alice", session.CreateOpts{})
 
 	// Authenticated request
 	r := httptest.NewRequest("GET", "/api/session", nil)
@@ -162,12 +148,11 @@ func TestHandleGetSession(t *testing.T) {
 
 func TestHandleLogout(t *testing.T) {
 	mgr := session.NewMemoryManager(session.MemoryManagerConfig{
-		PIN:               "secret",
 		InactivityTimeout: 30 * time.Minute,
 	})
 	srv := testServer(WithSessionManager(mgr))
 
-	user, _ := mgr.Create("Alice", "secret")
+	user, _ := mgr.Create("Alice", session.CreateOpts{})
 
 	r := httptest.NewRequest("DELETE", "/api/session", nil)
 	r.Header.Set("Authorization", "Bearer "+user.Token)
@@ -187,15 +172,15 @@ func TestHandleLogout(t *testing.T) {
 
 func TestHandleGetUsers(t *testing.T) {
 	mgr := session.NewMemoryManager(session.MemoryManagerConfig{
-		PIN:               "secret",
 		InactivityTimeout: 30 * time.Minute,
 	})
 	srv := testServer(WithSessionManager(mgr))
 
-	mgr.Create("Alice", "secret")
-	mgr.Create("Bob", "")
+	admin, _ := mgr.Create("Alice", session.CreateOpts{}) // auto-admin
+	mgr.Create("Bob", session.CreateOpts{})                // pending
 
 	r := httptest.NewRequest("GET", "/api/users", nil)
+	r.Header.Set("Authorization", "Bearer "+admin.Token)
 	w := httptest.NewRecorder()
 	srv.ServeHTTP(w, r)
 
@@ -219,15 +204,14 @@ func TestHandleGetUsers(t *testing.T) {
 
 func TestHandleUpdateUserRole(t *testing.T) {
 	mgr := session.NewMemoryManager(session.MemoryManagerConfig{
-		PIN:               "secret",
 		InactivityTimeout: 30 * time.Minute,
 	})
 	srv := testServer(WithSessionManager(mgr))
 
-	admin, _ := mgr.Create("Admin", "secret")
-	mgr.UpdateRole(admin.ID, session.RoleAdmin)
+	admin, _ := mgr.Create("Admin", session.CreateOpts{}) // auto-admin
 
-	target, _ := mgr.Create("Bob", "")
+	target, _ := mgr.Create("Bob", session.CreateOpts{}) // pending
+	mgr.Approve(target.ID, session.RoleObserver)          // approve first
 
 	// Admin promotes Bob to Operator
 	body := `{"role":"operator"}`
@@ -250,13 +234,13 @@ func TestHandleUpdateUserRole(t *testing.T) {
 
 func TestHandleUpdateUserRole_Forbidden(t *testing.T) {
 	mgr := session.NewMemoryManager(session.MemoryManagerConfig{
-		PIN:               "secret",
 		InactivityTimeout: 30 * time.Minute,
 	})
 	srv := testServer(WithSessionManager(mgr))
 
-	mgr.Create("Admin", "secret")                    // auto-promoted to Admin
-	operator, _ := mgr.Create("Operator", "secret") // Operator, not Admin
+	mgr.Create("Admin", session.CreateOpts{})                       // auto-admin
+	operator, _ := mgr.Create("Operator", session.CreateOpts{})     // pending
+	mgr.Approve(operator.ID, session.RoleOperator)                  // approve as operator
 
 	body := `{"role":"admin"}`
 	r := httptest.NewRequest("PUT", "/api/users/some-id/role", bytes.NewBufferString(body))
@@ -272,15 +256,13 @@ func TestHandleUpdateUserRole_Forbidden(t *testing.T) {
 
 func TestHandleRemoveUser(t *testing.T) {
 	mgr := session.NewMemoryManager(session.MemoryManagerConfig{
-		PIN:               "secret",
 		InactivityTimeout: 30 * time.Minute,
 	})
 	srv := testServer(WithSessionManager(mgr))
 
-	admin, _ := mgr.Create("Admin", "secret")
-	mgr.UpdateRole(admin.ID, session.RoleAdmin)
+	admin, _ := mgr.Create("Admin", session.CreateOpts{}) // auto-admin
 
-	target, _ := mgr.Create("Bob", "")
+	target, _ := mgr.Create("Bob", session.CreateOpts{})
 
 	r := httptest.NewRequest("DELETE", "/api/users/"+target.ID, nil)
 	r.Header.Set("Authorization", "Bearer "+admin.Token)
@@ -300,12 +282,13 @@ func TestHandleRemoveUser(t *testing.T) {
 
 func TestRoleGating_OperatorEndpoints(t *testing.T) {
 	mgr := session.NewMemoryManager(session.MemoryManagerConfig{
-		PIN:               "secret",
 		InactivityTimeout: 30 * time.Minute,
 	})
 	srv := testServer(WithSessionManager(mgr))
 
-	observer, _ := mgr.Create("Observer", "")
+	mgr.Create("Admin", session.CreateOpts{})                    // auto-admin
+	observer, _ := mgr.Create("Observer", session.CreateOpts{})  // pending
+	mgr.Approve(observer.ID, session.RoleObserver)               // approve as observer
 
 	// Observer should not be able to POST /api/beacon
 	r := httptest.NewRequest("POST", "/api/beacon", nil)
@@ -320,12 +303,13 @@ func TestRoleGating_OperatorEndpoints(t *testing.T) {
 
 func TestRoleGating_PlotterEndpoints(t *testing.T) {
 	mgr := session.NewMemoryManager(session.MemoryManagerConfig{
-		PIN:               "secret",
 		InactivityTimeout: 30 * time.Minute,
 	})
 	srv := testServer(WithSessionManager(mgr))
 
-	observer, _ := mgr.Create("Observer", "")
+	mgr.Create("Admin", session.CreateOpts{})                    // auto-admin
+	observer, _ := mgr.Create("Observer", session.CreateOpts{})  // pending
+	mgr.Approve(observer.ID, session.RoleObserver)               // approve as observer
 
 	// Observer should not be able to POST /api/annotations
 	body := `{"type":"point","label":"test","geometry":"{\"type\":\"Point\",\"coordinates\":[0,0]}"}`
@@ -337,5 +321,124 @@ func TestRoleGating_PlotterEndpoints(t *testing.T) {
 
 	if w.Code != 403 {
 		t.Errorf("observer POST /api/annotations: status = %d, want 403", w.Code)
+	}
+}
+
+func TestRoleGating_ReadEndpointsRequireAuth(t *testing.T) {
+	mgr := session.NewMemoryManager(session.MemoryManagerConfig{
+		InactivityTimeout: 30 * time.Minute,
+	})
+	srv := testServer(WithSessionManager(mgr))
+
+	// Unauthenticated request to protected read endpoint
+	r := httptest.NewRequest("GET", "/api/stations", nil)
+	w := httptest.NewRecorder()
+	srv.ServeHTTP(w, r)
+
+	if w.Code != 401 {
+		t.Errorf("unauthenticated GET /api/stations: status = %d, want 401", w.Code)
+	}
+}
+
+func TestRoleGating_PendingUserCannotRead(t *testing.T) {
+	mgr := session.NewMemoryManager(session.MemoryManagerConfig{
+		InactivityTimeout: 30 * time.Minute,
+	})
+	srv := testServer(WithSessionManager(mgr))
+
+	mgr.Create("Admin", session.CreateOpts{})                    // auto-admin
+	pending, _ := mgr.Create("Pending", session.CreateOpts{})    // pending user
+
+	// Pending user should not be able to GET /api/stations
+	r := httptest.NewRequest("GET", "/api/stations", nil)
+	r.Header.Set("Authorization", "Bearer "+pending.Token)
+	w := httptest.NewRecorder()
+	srv.ServeHTTP(w, r)
+
+	if w.Code != 403 {
+		t.Errorf("pending GET /api/stations: status = %d, want 403", w.Code)
+	}
+}
+
+func TestHandleApproveUser(t *testing.T) {
+	mgr := session.NewMemoryManager(session.MemoryManagerConfig{
+		InactivityTimeout: 30 * time.Minute,
+	})
+	srv := testServer(WithSessionManager(mgr))
+
+	admin, _ := mgr.Create("Admin", session.CreateOpts{})
+	pending, _ := mgr.Create("Bob", session.CreateOpts{})
+
+	body := `{"userId":"` + pending.ID + `","role":"operator"}`
+	r := httptest.NewRequest("POST", "/api/session/approve", bytes.NewBufferString(body))
+	r.Header.Set("Authorization", "Bearer "+admin.Token)
+	r.Header.Set("Content-Type", "application/json")
+	w := httptest.NewRecorder()
+	srv.ServeHTTP(w, r)
+
+	if w.Code != 200 {
+		t.Fatalf("approve status = %d, want 200, body: %s", w.Code, w.Body.String())
+	}
+
+	// Verify user is approved
+	user, _ := mgr.GetByID(pending.ID)
+	if user.Status != session.StatusApproved {
+		t.Errorf("status = %q, want %q", user.Status, session.StatusApproved)
+	}
+	if user.Role != session.RoleOperator {
+		t.Errorf("role = %q, want %q", user.Role, session.RoleOperator)
+	}
+}
+
+func TestHandleDenyUser(t *testing.T) {
+	mgr := session.NewMemoryManager(session.MemoryManagerConfig{
+		InactivityTimeout: 30 * time.Minute,
+	})
+	srv := testServer(WithSessionManager(mgr))
+
+	admin, _ := mgr.Create("Admin", session.CreateOpts{})
+	pending, _ := mgr.Create("Bob", session.CreateOpts{})
+
+	body := `{"userId":"` + pending.ID + `"}`
+	r := httptest.NewRequest("POST", "/api/session/deny", bytes.NewBufferString(body))
+	r.Header.Set("Authorization", "Bearer "+admin.Token)
+	r.Header.Set("Content-Type", "application/json")
+	w := httptest.NewRecorder()
+	srv.ServeHTTP(w, r)
+
+	if w.Code != 200 {
+		t.Fatalf("deny status = %d, want 200, body: %s", w.Code, w.Body.String())
+	}
+
+	// Verify user is denied
+	user, _ := mgr.GetByID(pending.ID)
+	if user.Status != session.StatusDenied {
+		t.Errorf("status = %q, want %q", user.Status, session.StatusDenied)
+	}
+}
+
+func TestHandleGetPending(t *testing.T) {
+	mgr := session.NewMemoryManager(session.MemoryManagerConfig{
+		InactivityTimeout: 30 * time.Minute,
+	})
+	srv := testServer(WithSessionManager(mgr))
+
+	admin, _ := mgr.Create("Admin", session.CreateOpts{})
+	mgr.Create("Bob", session.CreateOpts{})
+	mgr.Create("Charlie", session.CreateOpts{})
+
+	r := httptest.NewRequest("GET", "/api/session/pending", nil)
+	r.Header.Set("Authorization", "Bearer "+admin.Token)
+	w := httptest.NewRecorder()
+	srv.ServeHTTP(w, r)
+
+	if w.Code != 200 {
+		t.Fatalf("pending status = %d, want 200", w.Code)
+	}
+
+	var resp []session.User
+	json.NewDecoder(w.Body).Decode(&resp)
+	if len(resp) != 2 {
+		t.Errorf("got %d pending, want 2", len(resp))
 	}
 }

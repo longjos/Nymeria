@@ -13,6 +13,10 @@ export const stationList = derived(stations, ($stations) =>
 export const wsClient = new WSClient();
 let initialized = false;
 
+export function connectWS(token?: string): void {
+	wsClient.connect(undefined, token);
+}
+
 export function initStationStore(): void {
 	if (initialized) return;
 	initialized = true;
@@ -23,9 +27,6 @@ export function initStationStore(): void {
 	}).catch(() => {
 		// API not available yet
 	});
-
-	// Connect WebSocket
-	wsClient.connect();
 
 	wsClient.on('station_new', (msg) => {
 		const s = msg.station as Station;

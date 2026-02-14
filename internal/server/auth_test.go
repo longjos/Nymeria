@@ -29,7 +29,7 @@ func TestUserFromContext_NoUser(t *testing.T) {
 
 func TestSessionMiddleware_BearerToken(t *testing.T) {
 	mgr := testSessionManager()
-	user, _ := mgr.Create("Alice", "secret")
+	user, _ := mgr.Create("Alice", session.CreateOpts{}) // first user = auto-admin
 
 	mw := SessionMiddleware(mgr)
 
@@ -101,10 +101,10 @@ func TestSessionMiddleware_InvalidToken(t *testing.T) {
 
 func TestRequireRole_Sufficient(t *testing.T) {
 	mgr := testSessionManager()
-	user, _ := mgr.Create("Alice", "secret") // Operator role
+	user, _ := mgr.Create("Alice", session.CreateOpts{}) // first user = auto-admin, approved
 
 	smw := SessionMiddleware(mgr)
-	rmw := RequireRole(session.RoleObserver) // Operator >= Observer
+	rmw := RequireRole(session.RoleObserver) // Admin >= Observer
 
 	handler := smw(rmw(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(200)
@@ -122,7 +122,9 @@ func TestRequireRole_Sufficient(t *testing.T) {
 
 func TestRequireRole_Insufficient(t *testing.T) {
 	mgr := testSessionManager()
-	user, _ := mgr.Create("Bob", "") // Observer role (wrong PIN)
+	mgr.Create("Admin", session.CreateOpts{})                       // first = admin
+	user, _ := mgr.Create("Bob", session.CreateOpts{})              // pending
+	mgr.Approve(user.ID, session.RoleObserver)                      // approve as observer
 
 	smw := SessionMiddleware(mgr)
 	rmw := RequireRole(session.RoleOperator) // Observer < Operator
@@ -138,6 +140,28 @@ func TestRequireRole_Insufficient(t *testing.T) {
 
 	if w.Code != http.StatusForbidden {
 		t.Errorf("status = %d, want 403", w.Code)
+	}
+}
+
+func TestRequireRole_PendingUser(t *testing.T) {
+	mgr := testSessionManager()
+	mgr.Create("Admin", session.CreateOpts{})           // first = admin
+	user, _ := mgr.Create("Bob", session.CreateOpts{})  // pending
+
+	smw := SessionMiddleware(mgr)
+	rmw := RequireRole(session.RoleObserver)
+
+	handler := smw(rmw(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(200)
+	})))
+
+	r := httptest.NewRequest("GET", "/api/stations", nil)
+	r.Header.Set("Authorization", "Bearer "+user.Token)
+	w := httptest.NewRecorder()
+	handler.ServeHTTP(w, r)
+
+	if w.Code != http.StatusForbidden {
+		t.Errorf("pending user status = %d, want 403", w.Code)
 	}
 }
 
@@ -177,7 +201,9 @@ func TestRequireRole_Hierarchy(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			user, _ := mgr.Create("Test", "")
+			user, _ := mgr.Create("Test", session.CreateOpts{})
+			// Set status to approved and role to the test role
+			user.Status = session.StatusApproved
 			mgr.UpdateRole(user.ID, tt.userRole)
 
 			smw := SessionMiddleware(mgr)

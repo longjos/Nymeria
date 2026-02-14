@@ -1465,3 +1465,38 @@ func TestChangeStatusEmitsEvent(t *testing.T) {
 		t.Fatal("timeout waiting for status change event")
 	}
 }
+
+func TestCheckpointActiveStatusValid(t *testing.T) {
+	// Verify that 'active' is a valid status for the checkpoint category.
+	if err := ValidateStatusForCategory(CategoryCheckpoint, "active"); err != nil {
+		t.Errorf("active should be valid for checkpoint: %v", err)
+	}
+
+	// Verify all expected checkpoint statuses work.
+	for _, status := range []string{"planned", "open", "active", "closed"} {
+		if err := ValidateStatusForCategory(CategoryCheckpoint, status); err != nil {
+			t.Errorf("%q should be valid for checkpoint: %v", status, err)
+		}
+	}
+
+	// Verify invalid status still fails.
+	if err := ValidateStatusForCategory(CategoryCheckpoint, "bogus"); err == nil {
+		t.Error("bogus status should be invalid for checkpoint")
+	}
+
+	// Verify we can create a checkpoint annotation with active status.
+	mgr := newTestManager(t)
+	ann, err := mgr.Create(Annotation{
+		Type:     TypePoint,
+		Label:    "CP1",
+		Geometry: `{"type":"Point","coordinates":[-118.24,34.05]}`,
+		Category: CategoryCheckpoint,
+		Status:   "active",
+	})
+	if err != nil {
+		t.Fatalf("Create checkpoint with active status failed: %v", err)
+	}
+	if ann.Status != "active" {
+		t.Errorf("status: got %q, want %q", ann.Status, "active")
+	}
+}

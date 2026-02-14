@@ -221,6 +221,28 @@ type TelemetryFilter struct {
 	Limit    int
 }
 
+// CheckpointMeta holds checkpoint-specific metadata for progress tracking.
+type CheckpointMeta struct {
+	AnnotationID   string     `json:"annotationId"`
+	NetID          string     `json:"netId"`
+	SequenceNumber int        `json:"sequenceNumber"`
+	ExpectedTime   *time.Time `json:"expectedTime,omitempty"`
+	OpenedAt       *time.Time `json:"openedAt,omitempty"`
+	ClosedAt       *time.Time `json:"closedAt,omitempty"`
+}
+
+// CheckpointPassage records an element passing through a checkpoint.
+type CheckpointPassage struct {
+	ID           string    `json:"id"`
+	CheckpointID string    `json:"checkpointId"`
+	NetID        string    `json:"netId"`
+	Label        string    `json:"label"`
+	PassageTime  time.Time `json:"passageTime"`
+	Direction    string    `json:"direction"`
+	ReportedBy   string    `json:"reportedBy"`
+	Notes        string    `json:"notes,omitempty"`
+}
+
 // Store provides persistent storage for stations, messages, and configuration.
 type Store interface {
 	// Init initializes the store (creates tables, etc).
@@ -310,4 +332,13 @@ type Store interface {
 	LoadTelemetryReadings(filter TelemetryFilter) ([]TelemetryReading, error)
 	LoadTelemetryStations() ([]TelemetryReading, error)
 	PurgeTelemetryReadings(olderThan time.Time) (int64, error)
+
+	// Checkpoint Progress
+	SaveCheckpointMeta(m CheckpointMeta) error
+	LoadCheckpointMeta(netID string) ([]CheckpointMeta, error)
+	DeleteCheckpointMeta(annotationID string) error
+	SaveCheckpointPassage(p CheckpointPassage) error
+	LoadCheckpointPassages(netID string) ([]CheckpointPassage, error)
+	LoadCheckpointPassagesForCheckpoint(checkpointID string) ([]CheckpointPassage, error)
+	DeleteCheckpointPassages(netID string) error
 }

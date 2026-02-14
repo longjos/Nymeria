@@ -8,9 +8,16 @@ export class WSClient {
 	private reconnectTimer: ReturnType<typeof setTimeout> | null = null;
 	private _url: string | undefined;
 
-	connect(url?: string): void {
+	private _token: string | undefined;
+
+	connect(url?: string, token?: string): void {
 		this._url = url;
-		const wsUrl = url ?? `ws://${window.location.host}/ws`;
+		this._token = token;
+		let wsUrl = url ?? `ws://${window.location.host}/ws`;
+		if (token) {
+			const sep = wsUrl.includes('?') ? '&' : '?';
+			wsUrl += `${sep}token=${encodeURIComponent(token)}`;
+		}
 		connectionState.set('reconnecting');
 		this.ws = new WebSocket(wsUrl);
 
@@ -39,7 +46,7 @@ export class WSClient {
 
 		this.ws.onclose = () => {
 			connectionState.set('disconnected');
-			this.reconnectTimer = setTimeout(() => this.connect(this._url), 3000);
+			this.reconnectTimer = setTimeout(() => this.connect(this._url, this._token), 3000);
 		};
 
 		this.ws.onerror = () => {

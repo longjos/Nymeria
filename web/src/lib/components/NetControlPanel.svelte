@@ -14,7 +14,8 @@
 		opsView,
 		hoveredMissionId, highlightedCheckIns,
 		hoveredCheckInId,
-		netAnnotations, annotationsByName
+		netAnnotations, annotationsByName,
+		orderedCheckpoints
 	} from '$lib/stores/netcontrol';
 	import { annotationList } from '$lib/stores/annotations';
 	import { categoryMeta, isTerminalStatus } from '$lib/annotationMeta';
@@ -495,6 +496,14 @@
 						showToast('Location required: name or lat lon', 'error');
 						break;
 					}
+					break;
+				}
+				case 'checkpoint_passage': {
+					const seqNum = parseInt(parsed.checkpointRef, 10);
+					const cp = $orderedCheckpoints.find(c => c.meta.sequenceNumber === seqNum);
+					if (!cp) { showToast(`Checkpoint #${seqNum} not found`, 'error'); break; }
+					await api.logPassage($activeNet.id, cp.meta.annotationId, { label: parsed.label });
+					showToast(`${parsed.label} passed CP${seqNum} (${cp.annotation.label})`, 'success');
 					break;
 				}
 				case 'unknown':

@@ -5,7 +5,7 @@
 	import { activeNet, activeCheckIns } from '$lib/stores/netcontrol';
 	import { connectionState } from '$lib/stores/ui';
 	import type { PanelMode } from '$lib/stores/ui';
-	import { canAdmin } from '$lib/stores/session';
+	import { canAdmin, pendingRequests } from '$lib/stores/session';
 	import UserMenu from './UserMenu.svelte';
 
 	let {
@@ -349,6 +349,9 @@
 					<path d="M6.8 1.5h2.4l.3 1.8.8.3 1.5-1 1.7 1.7-1 1.5.3.8 1.8.3v2.4l-1.8.3-.3.8 1 1.5-1.7 1.7-1.5-1-.8.3-.3 1.8H6.8l-.3-1.8-.8-.3-1.5 1-1.7-1.7 1-1.5-.3-.8-1.8-.3V6.8l1.8-.3.3-.8-1-1.5 1.7-1.7 1.5 1 .8-.3.3-1.8z" stroke="currentColor" stroke-width="1.2" stroke-linejoin="round"/>
 					<circle cx="8" cy="8" r="2" stroke="currentColor" stroke-width="1.2"/>
 				</svg>
+				{#if $pendingRequests.length > 0}
+					<span class="pending-badge">{$pendingRequests.length}</span>
+				{/if}
 			</button>
 		{/if}
 		<div class="help-container">
@@ -475,6 +478,24 @@
 		color: var(--color-accent);
 		background: var(--color-primary);
 		box-shadow: inset 3px 0 0 var(--color-accent);
+	}
+
+	.pending-badge {
+		position: absolute;
+		top: 4px;
+		right: 4px;
+		min-width: 14px;
+		height: 14px;
+		padding: 0 3px;
+		background: var(--color-accent);
+		color: white;
+		border-radius: 7px;
+		font-size: 0.6rem;
+		font-weight: 700;
+		display: flex;
+		align-items: center;
+		justify-content: center;
+		pointer-events: none;
 	}
 
 	/* Command palette button */

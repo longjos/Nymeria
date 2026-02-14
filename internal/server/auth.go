@@ -39,13 +39,18 @@ func SessionMiddleware(mgr session.Manager) func(http.Handler) http.Handler {
 }
 
 // RequireRole returns middleware that rejects requests from users below
-// the given minimum role. Returns 401 if no session, 403 if insufficient role.
+// the given minimum role. Returns 401 if no session, 403 if insufficient role
+// or if the user is not yet approved.
 func RequireRole(minRole session.Role) func(http.Handler) http.Handler {
 	return func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			user, ok := UserFromContext(r.Context())
 			if !ok {
 				writeJSON(w, http.StatusUnauthorized, map[string]string{"error": "authentication required"})
+				return
+			}
+			if user.Status != session.StatusApproved {
+				writeJSON(w, http.StatusForbidden, map[string]string{"error": "access pending approval"})
 				return
 			}
 			if session.RoleLevel(user.Role) < session.RoleLevel(minRole) {

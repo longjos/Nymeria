@@ -16,6 +16,7 @@ import (
 	"github.com/narvel/nymeria/internal/annotation"
 	"github.com/narvel/nymeria/internal/aprs"
 	"github.com/narvel/nymeria/internal/beacon"
+	"github.com/narvel/nymeria/internal/checkpoint"
 	"github.com/narvel/nymeria/internal/config"
 	"github.com/narvel/nymeria/internal/message"
 	"github.com/narvel/nymeria/internal/netcontrol"
@@ -43,6 +44,7 @@ type Server struct {
 	actLogger  activity.Logger
 	annMgr     *annotation.Manager
 	netMgr     *netcontrol.Manager
+	cpMgr      *checkpoint.Manager
 	tileCache  *tilecache.Cache
 	configMgr  *config.Manager
 	stationCfg config.StationConfig
@@ -97,8 +99,14 @@ func New(tracker station.Tracker, tm *transport.Manager, eng message.Engine, db 
 	if s.netMgr != nil {
 		go s.bridgeNetControlEvents()
 	}
+	if s.cpMgr != nil {
+		go s.bridgeCheckpointEvents()
+	}
 	if s.tileCache != nil {
 		go s.bridgeTileCacheEvents()
+	}
+	if s.sessions != nil {
+		go s.bridgeSessionEvents()
 	}
 
 	return s
@@ -146,6 +154,13 @@ func WithAnnotationManager(mgr *annotation.Manager) Option {
 func WithNetControlManager(mgr *netcontrol.Manager) Option {
 	return func(s *Server) {
 		s.netMgr = mgr
+	}
+}
+
+// WithCheckpointManager sets the checkpoint manager on the server.
+func WithCheckpointManager(mgr *checkpoint.Manager) Option {
+	return func(s *Server) {
+		s.cpMgr = mgr
 	}
 }
 
@@ -455,6 +470,22 @@ func (s *Server) bridgeNetControlEvents() {
 	}
 }
 
+// bridgeCheckpointEvents reads checkpoint events and broadcasts via WebSocket.
+func (s *Server) bridgeCheckpointEvents() {
+	for evt := range s.cpMgr.Events() {
+		msg := map[string]any{
+			"type": evt.Type,
+			"data": evt.Data,
+		}
+		data, err := json.Marshal(msg)
+		if err != nil {
+			log.Printf("[server] marshal checkpoint event: %v", err)
+			continue
+		}
+		s.hub.Broadcast(data)
+	}
+}
+
 // bridgeTransportStatus periodically broadcasts transport statuses via WebSocket.
 func (s *Server) bridgeTransportStatus() {
 	ticker := time.NewTicker(5 * time.Second)
@@ -520,6 +551,31 @@ func (s *Server) bridgeTileCacheEvents() {
 			continue
 		}
 		s.hub.Broadcast(data)
+	}
+}
+
+// bridgeSessionEvents reads session lifecycle events and broadcasts/sends via WebSocket.
+func (s *Server) bridgeSessionEvents() {
+	for evt := range s.sessions.Events() {
+		msg := map[string]any{
+			"type": string(evt.Type),
+			"user": evt.User,
+		}
+		data, err := json.Marshal(msg)
+		if err != nil {
+			log.Printf("[server] marshal session event: %v", err)
+			continue
+		}
+
+		switch evt.Type {
+		case session.EventAccessApproved, session.EventAccessDenied:
+			// Send targeted message to the affected user + broadcast for admin UI updates
+			s.hub.SendTo(evt.User.ID, data)
+			s.hub.Broadcast(data)
+		default:
+			// access_request: broadcast to all (admins filter on frontend)
+			s.hub.Broadcast(data)
+		}
 	}
 }
 

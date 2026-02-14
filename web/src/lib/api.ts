@@ -6,7 +6,8 @@ import type {
 	WeatherReading, WeatherConfig, TelemetryReading, TelemetryReadingsResponse,
 	SettingsResponse, SettingsUpdateResponse,
 	StationSettings, ServerSettings, TransportSettings, BeaconSettings,
-	SessionSettings, LoggingSettings, WeatherSettings, TileCacheSettings
+	SessionSettings, LoggingSettings, WeatherSettings, TileCacheSettings,
+	CheckpointWithPassages, CheckpointMeta, CheckpointPassage, CheckpointProgress
 } from './types';
 
 const BASE = '/api';
@@ -107,9 +108,14 @@ export const api = {
 	setup: (data: SetupData) => post<{ status: string; restartRequired: boolean }>('/setup', data),
 
 	// Session
-	login: (name: string, pin?: string) => post<SessionUser>('/session', { name, pin }),
+	login: (name: string, savedToken?: string) => post<SessionUser>('/session', { name, savedToken }),
 	session: () => get<SessionUser>('/session'),
 	logout: () => del<{ status: string }>('/session'),
+
+	// Access approval (admin)
+	approveUser: (userId: string, role: string) => post<SessionUser>('/session/approve', { userId, role }),
+	denyUser: (userId: string) => post<{ userId: string; status: string }>('/session/deny', { userId }),
+	getPending: () => get<SessionUser[]>('/session/pending'),
 
 	// Users
 	users: () => get<PublicUser[]>('/users'),
@@ -214,6 +220,14 @@ export const api = {
 		del<Net>(`/nets/${netId}/pin/${encodeURIComponent(callsign)}`),
 	reorderPins: (netId: string, callsigns: string[]) =>
 		put<Net>(`/nets/${netId}/pins`, { callsigns }),
+
+	// Checkpoint progress
+	getCheckpoints: (netId: string) => get<CheckpointWithPassages[]>(`/nets/${netId}/checkpoints`),
+	getProgress: (netId: string) => get<CheckpointProgress>(`/nets/${netId}/progress`),
+	updateCheckpointMeta: (netId: string, cpId: string, data: Partial<CheckpointMeta>) =>
+		put<CheckpointMeta>(`/nets/${netId}/checkpoints/${cpId}/meta`, data),
+	logPassage: (netId: string, cpId: string, data: { label: string; direction?: string; notes?: string }) =>
+		post<CheckpointPassage>(`/nets/${netId}/checkpoints/${cpId}/passages`, data),
 
 	// Net-scoped annotations
 	netAnnotations: (netId: string) => get<Annotation[]>(`/nets/${netId}/annotations`),

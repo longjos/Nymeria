@@ -553,8 +553,8 @@ func TestV2SchemaVersion(t *testing.T) {
 	if err != nil {
 		t.Fatalf("query schema_version: %v", err)
 	}
-	if version != 18 {
-		t.Errorf("expected schema version 18, got %d", version)
+	if version != 19 {
+		t.Errorf("expected schema version 19, got %d", version)
 	}
 }
 
@@ -1053,8 +1053,8 @@ func TestV3SchemaVersion(t *testing.T) {
 	if err != nil {
 		t.Fatalf("query schema_version: %v", err)
 	}
-	if version != 18 {
-		t.Errorf("expected schema version 18, got %d", version)
+	if version != 19 {
+		t.Errorf("expected schema version 19, got %d", version)
 	}
 }
 
@@ -1675,8 +1675,8 @@ func TestV5MigrationAddsTrackedStationsColumn(t *testing.T) {
 
 	var version int
 	s.db.QueryRow("SELECT version FROM schema_version LIMIT 1").Scan(&version)
-	if version != 18 {
-		t.Errorf("expected schema version 18, got %d", version)
+	if version != 19 {
+		t.Errorf("expected schema version 19, got %d", version)
 	}
 }
 
@@ -1782,8 +1782,8 @@ func TestV6MigrationCreatesTacticalAliasesTable(t *testing.T) {
 
 	var version int
 	s.db.QueryRow("SELECT version FROM schema_version LIMIT 1").Scan(&version)
-	if version != 18 {
-		t.Errorf("expected schema version 18, got %d", version)
+	if version != 19 {
+		t.Errorf("expected schema version 19, got %d", version)
 	}
 }
 
@@ -1950,8 +1950,8 @@ func TestV7MigrationAddsAnnotationColumns(t *testing.T) {
 
 	var version int
 	s.db.QueryRow("SELECT version FROM schema_version LIMIT 1").Scan(&version)
-	if version != 18 {
-		t.Errorf("expected schema version 18, got %d", version)
+	if version != 19 {
+		t.Errorf("expected schema version 19, got %d", version)
 	}
 }
 
@@ -2253,8 +2253,8 @@ func TestMigrateV8CreatesOperationsTable(t *testing.T) {
 
 	var version int
 	s.db.QueryRow("SELECT version FROM schema_version LIMIT 1").Scan(&version)
-	if version != 18 {
-		t.Errorf("expected schema version 18, got %d", version)
+	if version != 19 {
+		t.Errorf("expected schema version 19, got %d", version)
 	}
 
 	// Verify operations table exists by doing a query.
@@ -2273,8 +2273,8 @@ func TestMigrateV11AddsOpsViewColumns(t *testing.T) {
 
 	var version int
 	s.db.QueryRow("SELECT version FROM schema_version LIMIT 1").Scan(&version)
-	if version != 18 {
-		t.Errorf("expected schema version 18, got %d", version)
+	if version != 19 {
+		t.Errorf("expected schema version 19, got %d", version)
 	}
 
 	// Verify ops_view columns exist.
@@ -2663,8 +2663,8 @@ func TestMigrateV13CreatesTelemetryReadingsTable(t *testing.T) {
 
 	var version int
 	s.db.QueryRow("SELECT version FROM schema_version LIMIT 1").Scan(&version)
-	if version != 18 {
-		t.Errorf("expected schema version 18, got %d", version)
+	if version != 19 {
+		t.Errorf("expected schema version 19, got %d", version)
 	}
 }
 
@@ -2907,8 +2907,8 @@ func TestMigrateV16(t *testing.T) {
 	if err != nil {
 		t.Fatalf("query schema_version: %v", err)
 	}
-	if version != 18 {
-		t.Errorf("expected schema version 18, got %d", version)
+	if version != 19 {
+		t.Errorf("expected schema version 19, got %d", version)
 	}
 }
 
@@ -2971,5 +2971,233 @@ func TestNetPinnedStationsRoundtrip(t *testing.T) {
 	}
 	if len(loaded2.PinnedStations) != 0 {
 		t.Errorf("expected 0 pinned stations after clear, got %d", len(loaded2.PinnedStations))
+	}
+}
+
+func TestSaveLoadCheckpointMeta(t *testing.T) {
+	s, _ := newTestStore(t)
+	defer s.Close()
+
+	now := time.Now().Truncate(time.Second).UTC()
+	expected := now.Add(30 * time.Minute)
+
+	m := CheckpointMeta{
+		AnnotationID:   "ann-cp-1",
+		NetID:          "net-1",
+		SequenceNumber: 3,
+		ExpectedTime:   &expected,
+		OpenedAt:       &now,
+	}
+
+	if err := s.SaveCheckpointMeta(m); err != nil {
+		t.Fatalf("SaveCheckpointMeta failed: %v", err)
+	}
+
+	metas, err := s.LoadCheckpointMeta("net-1")
+	if err != nil {
+		t.Fatalf("LoadCheckpointMeta failed: %v", err)
+	}
+	if len(metas) != 1 {
+		t.Fatalf("expected 1 meta, got %d", len(metas))
+	}
+	got := metas[0]
+	if got.AnnotationID != "ann-cp-1" {
+		t.Errorf("annotationID: got %q, want %q", got.AnnotationID, "ann-cp-1")
+	}
+	if got.NetID != "net-1" {
+		t.Errorf("netID: got %q, want %q", got.NetID, "net-1")
+	}
+	if got.SequenceNumber != 3 {
+		t.Errorf("sequenceNumber: got %d, want 3", got.SequenceNumber)
+	}
+	if got.ExpectedTime == nil || got.ExpectedTime.Truncate(time.Second) != expected {
+		t.Errorf("expectedTime: got %v, want %v", got.ExpectedTime, expected)
+	}
+	if got.OpenedAt == nil || got.OpenedAt.Truncate(time.Second) != now {
+		t.Errorf("openedAt: got %v, want %v", got.OpenedAt, now)
+	}
+	if got.ClosedAt != nil {
+		t.Errorf("closedAt: expected nil, got %v", got.ClosedAt)
+	}
+
+	// Upsert: update sequence number.
+	m.SequenceNumber = 5
+	if err := s.SaveCheckpointMeta(m); err != nil {
+		t.Fatalf("SaveCheckpointMeta upsert failed: %v", err)
+	}
+	metas2, _ := s.LoadCheckpointMeta("net-1")
+	if len(metas2) != 1 || metas2[0].SequenceNumber != 5 {
+		t.Errorf("upsert failed: got seq %d", metas2[0].SequenceNumber)
+	}
+}
+
+func TestLoadCheckpointMetaOrdering(t *testing.T) {
+	s, _ := newTestStore(t)
+	defer s.Close()
+
+	for _, seq := range []int{5, 1, 3} {
+		s.SaveCheckpointMeta(CheckpointMeta{
+			AnnotationID:   fmt.Sprintf("ann-%d", seq),
+			NetID:          "net-1",
+			SequenceNumber: seq,
+		})
+	}
+
+	metas, _ := s.LoadCheckpointMeta("net-1")
+	if len(metas) != 3 {
+		t.Fatalf("expected 3, got %d", len(metas))
+	}
+	if metas[0].SequenceNumber != 1 || metas[1].SequenceNumber != 3 || metas[2].SequenceNumber != 5 {
+		t.Errorf("ordering wrong: %d, %d, %d", metas[0].SequenceNumber, metas[1].SequenceNumber, metas[2].SequenceNumber)
+	}
+}
+
+func TestDeleteCheckpointMeta(t *testing.T) {
+	s, _ := newTestStore(t)
+	defer s.Close()
+
+	s.SaveCheckpointMeta(CheckpointMeta{AnnotationID: "ann-1", NetID: "net-1", SequenceNumber: 1})
+	s.SaveCheckpointMeta(CheckpointMeta{AnnotationID: "ann-2", NetID: "net-1", SequenceNumber: 2})
+
+	if err := s.DeleteCheckpointMeta("ann-1"); err != nil {
+		t.Fatalf("DeleteCheckpointMeta failed: %v", err)
+	}
+	metas, _ := s.LoadCheckpointMeta("net-1")
+	if len(metas) != 1 || metas[0].AnnotationID != "ann-2" {
+		t.Errorf("expected ann-2 only, got %v", metas)
+	}
+}
+
+func TestSaveLoadCheckpointPassages(t *testing.T) {
+	s, _ := newTestStore(t)
+	defer s.Close()
+
+	now := time.Now().Truncate(time.Second).UTC()
+	p := CheckpointPassage{
+		ID:           "pass-1",
+		CheckpointID: "ann-cp-1",
+		NetID:        "net-1",
+		Label:        "lead",
+		PassageTime:  now,
+		Direction:    "through",
+		ReportedBy:   "user-1",
+		Notes:        "looking good",
+	}
+
+	if err := s.SaveCheckpointPassage(p); err != nil {
+		t.Fatalf("SaveCheckpointPassage failed: %v", err)
+	}
+
+	passages, err := s.LoadCheckpointPassages("net-1")
+	if err != nil {
+		t.Fatalf("LoadCheckpointPassages failed: %v", err)
+	}
+	if len(passages) != 1 {
+		t.Fatalf("expected 1 passage, got %d", len(passages))
+	}
+
+	got := passages[0]
+	if got.ID != "pass-1" || got.CheckpointID != "ann-cp-1" || got.Label != "lead" {
+		t.Errorf("passage mismatch: %+v", got)
+	}
+	if got.ReportedBy != "user-1" || got.Notes != "looking good" {
+		t.Errorf("passage details mismatch: reportedBy=%q notes=%q", got.ReportedBy, got.Notes)
+	}
+	if got.PassageTime.Truncate(time.Second) != now {
+		t.Errorf("passageTime: got %v, want %v", got.PassageTime, now)
+	}
+}
+
+func TestLoadCheckpointPassagesOrdering(t *testing.T) {
+	s, _ := newTestStore(t)
+	defer s.Close()
+
+	base := time.Now().Truncate(time.Second).UTC()
+	for i, offset := range []int{30, 10, 20} {
+		s.SaveCheckpointPassage(CheckpointPassage{
+			ID:           fmt.Sprintf("pass-%d", i),
+			CheckpointID: "ann-1",
+			NetID:        "net-1",
+			Label:        "lead",
+			PassageTime:  base.Add(time.Duration(offset) * time.Minute),
+			Direction:    "through",
+		})
+	}
+
+	passages, _ := s.LoadCheckpointPassages("net-1")
+	if len(passages) != 3 {
+		t.Fatalf("expected 3, got %d", len(passages))
+	}
+	// Should be ordered by passage_time ASC: 10, 20, 30 minutes offset.
+	if passages[0].ID != "pass-1" || passages[1].ID != "pass-2" || passages[2].ID != "pass-0" {
+		t.Errorf("ordering wrong: %s, %s, %s", passages[0].ID, passages[1].ID, passages[2].ID)
+	}
+}
+
+func TestLoadCheckpointPassagesForCheckpoint(t *testing.T) {
+	s, _ := newTestStore(t)
+	defer s.Close()
+
+	now := time.Now().Truncate(time.Second).UTC()
+	s.SaveCheckpointPassage(CheckpointPassage{ID: "p1", CheckpointID: "cp1", NetID: "net-1", Label: "lead", PassageTime: now, Direction: "through"})
+	s.SaveCheckpointPassage(CheckpointPassage{ID: "p2", CheckpointID: "cp2", NetID: "net-1", Label: "lead", PassageTime: now, Direction: "through"})
+	s.SaveCheckpointPassage(CheckpointPassage{ID: "p3", CheckpointID: "cp1", NetID: "net-1", Label: "sweep", PassageTime: now.Add(time.Minute), Direction: "through"})
+
+	passages, err := s.LoadCheckpointPassagesForCheckpoint("cp1")
+	if err != nil {
+		t.Fatalf("LoadCheckpointPassagesForCheckpoint failed: %v", err)
+	}
+	if len(passages) != 2 {
+		t.Fatalf("expected 2 passages for cp1, got %d", len(passages))
+	}
+	if passages[0].ID != "p1" || passages[1].ID != "p3" {
+		t.Errorf("wrong passages: %s, %s", passages[0].ID, passages[1].ID)
+	}
+}
+
+func TestDeleteCheckpointPassages(t *testing.T) {
+	s, _ := newTestStore(t)
+	defer s.Close()
+
+	now := time.Now().Truncate(time.Second).UTC()
+	s.SaveCheckpointPassage(CheckpointPassage{ID: "p1", CheckpointID: "cp1", NetID: "net-1", Label: "lead", PassageTime: now, Direction: "through"})
+	s.SaveCheckpointPassage(CheckpointPassage{ID: "p2", CheckpointID: "cp1", NetID: "net-2", Label: "lead", PassageTime: now, Direction: "through"})
+
+	if err := s.DeleteCheckpointPassages("net-1"); err != nil {
+		t.Fatalf("DeleteCheckpointPassages failed: %v", err)
+	}
+
+	// net-1 should be empty.
+	p1, _ := s.LoadCheckpointPassages("net-1")
+	if len(p1) != 0 {
+		t.Errorf("expected 0 passages for net-1 after delete, got %d", len(p1))
+	}
+
+	// net-2 should be untouched.
+	p2, _ := s.LoadCheckpointPassages("net-2")
+	if len(p2) != 1 {
+		t.Errorf("expected 1 passage for net-2, got %d", len(p2))
+	}
+}
+
+func TestMigrateV19CreatesCheckpointTables(t *testing.T) {
+	s, _ := newTestStore(t)
+	defer s.Close()
+
+	var version int
+	if err := s.db.QueryRow("SELECT version FROM schema_version LIMIT 1").Scan(&version); err != nil {
+		t.Fatalf("read schema_version: %v", err)
+	}
+	if version != 19 {
+		t.Errorf("expected schema version 19, got %d", version)
+	}
+
+	// Verify tables exist.
+	for _, table := range []string{"checkpoint_meta", "checkpoint_passages"} {
+		var count int
+		err := s.db.QueryRow("SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name=?", table).Scan(&count)
+		if err != nil || count != 1 {
+			t.Errorf("table %q not found", table)
+		}
 	}
 }

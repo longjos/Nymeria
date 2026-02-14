@@ -3,12 +3,16 @@ import type { SessionUser, Role } from '$lib/types';
 import { api, setAuthToken, loadSavedToken } from '$lib/api';
 
 export const currentUser = writable<SessionUser | null>(null);
-export const pinRequired = writable<boolean>(false);
 export const needsSetup = writable<boolean>(false);
+export const pendingRequests = writable<SessionUser[]>([]);
 
 export const isLoggedIn = derived(currentUser, ($u) => $u !== null);
 export const userRole = derived(currentUser, ($u) => $u?.role ?? null);
 export const userName = derived(currentUser, ($u) => $u?.name ?? null);
+export const userStatus = derived(currentUser, ($u) => $u?.status ?? null);
+export const isPending = derived(currentUser, ($u) => $u?.status === 'pending');
+export const isDenied = derived(currentUser, ($u) => $u?.status === 'denied');
+export const isApproved = derived(currentUser, ($u) => $u?.status === 'approved');
 
 const ROLE_LEVELS: Record<Role, number> = {
 	observer: 0,
@@ -20,14 +24,14 @@ const ROLE_LEVELS: Record<Role, number> = {
 /** Check if the current user has at least the given role level. */
 export function hasRole(minRole: Role): boolean {
 	const user = get(currentUser);
-	if (!user) return false;
+	if (!user || user.status !== 'approved') return false;
 	return (ROLE_LEVELS[user.role] ?? -1) >= (ROLE_LEVELS[minRole] ?? 99);
 }
 
 /** Derived store version: true if user has at least the given role. */
 export function canRole(minRole: Role) {
 	return derived(currentUser, ($u) => {
-		if (!$u) return false;
+		if (!$u || $u.status !== 'approved') return false;
 		return (ROLE_LEVELS[$u.role] ?? -1) >= (ROLE_LEVELS[minRole] ?? 99);
 	});
 }
@@ -40,10 +44,8 @@ export const canAdmin = canRole('admin');
 export async function initSession() {
 	try {
 		const cfg = await api.config();
-		pinRequired.set(cfg.pinRequired);
 		needsSetup.set(cfg.needsSetup);
 	} catch {
-		pinRequired.set(false);
 		needsSetup.set(false);
 	}
 
@@ -61,9 +63,10 @@ export async function initSession() {
 	}
 }
 
-/** Log in with a display name and optional PIN. */
-export async function login(name: string, pin?: string): Promise<SessionUser> {
-	const user = await api.login(name, pin);
+/** Log in with a display name. Sends saved token for reconnection. */
+export async function login(name: string): Promise<SessionUser> {
+	const savedToken = loadSavedToken() ?? undefined;
+	const user = await api.login(name, savedToken);
 	setAuthToken(user.token);
 	currentUser.set(user);
 	return user;
@@ -78,4 +81,51 @@ export async function logout() {
 	}
 	setAuthToken(null);
 	currentUser.set(null);
+}
+
+/** Load pending access requests (for admin UI). */
+export async function loadPendingRequests() {
+	try {
+		const pending = await api.getPending();
+		pendingRequests.set(pending);
+	} catch {
+		pendingRequests.set([]);
+	}
+}
+
+/** Handle session WebSocket events — call from WS message handlers. */
+export function handleSessionEvent(msg: Record<string, unknown>) {
+	const type = msg.type as string;
+	const user = msg.user as SessionUser | undefined;
+
+	if (!user) return;
+
+	switch (type) {
+		case 'access_approved': {
+			const cur = get(currentUser);
+			if (cur && cur.id === user.id) {
+				currentUser.set({ ...cur, status: 'approved', role: user.role });
+			}
+			// Remove from pending list
+			pendingRequests.update((list) => list.filter((u) => u.id !== user.id));
+			break;
+		}
+		case 'access_denied': {
+			const cur = get(currentUser);
+			if (cur && cur.id === user.id) {
+				currentUser.set({ ...cur, status: 'denied' });
+			}
+			// Remove from pending list
+			pendingRequests.update((list) => list.filter((u) => u.id !== user.id));
+			break;
+		}
+		case 'access_request': {
+			// Add to pending requests (for admin notification)
+			pendingRequests.update((list) => {
+				if (list.some((u) => u.id === user.id)) return list;
+				return [...list, user];
+			});
+			break;
+		}
+	}
 }

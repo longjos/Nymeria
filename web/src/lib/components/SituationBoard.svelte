@@ -5,9 +5,10 @@
 	import {
 		activeNet, checkIns,
 		attentionItems, activeMissions, recentSignificantEvents,
-		pinnedNotes,
+		pinnedNotes, hasCheckpoints,
 	} from '$lib/stores/netcontrol';
 	import type { AttentionItem } from '$lib/stores/netcontrol';
+	import RouteProgressBar from './RouteProgressBar.svelte';
 
 	let {
 		onNavigateTab,
@@ -133,6 +134,11 @@
 				<span>All clear</span>
 			</div>
 		</section>
+	{/if}
+
+	<!-- ROUTE PROGRESS -->
+	{#if $hasCheckpoints}
+		<RouteProgressBar />
 	{/if}
 
 	<!-- ACTIVE MISSIONS -->

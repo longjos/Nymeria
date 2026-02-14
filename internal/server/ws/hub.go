@@ -6,8 +6,9 @@ import (
 
 // Client represents a connected WebSocket client.
 type Client struct {
-	ID   string
-	Send chan []byte
+	ID     string
+	UserID string
+	Send   chan []byte
 }
 
 // Hub maintains active WebSocket clients and broadcasts messages.
@@ -80,4 +81,18 @@ func (h *Hub) ClientCount() int {
 	h.mu.RLock()
 	defer h.mu.RUnlock()
 	return len(h.clients)
+}
+
+// SendTo sends a message to all clients associated with the given user ID.
+func (h *Hub) SendTo(userID string, msg []byte) {
+	h.mu.RLock()
+	defer h.mu.RUnlock()
+	for _, client := range h.clients {
+		if client.UserID == userID {
+			select {
+			case client.Send <- msg:
+			default:
+			}
+		}
+	}
 }

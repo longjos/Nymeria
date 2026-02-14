@@ -1,9 +1,10 @@
 <script lang="ts">
 	import { api } from '$lib/api';
 	import type { Annotation, AnnotationCategory, Net } from '$lib/types';
-	import { netAnnotations } from '$lib/stores/netcontrol';
+	import { netAnnotations, orderedCheckpoints } from '$lib/stores/netcontrol';
 	import { categoryMeta } from '$lib/annotationMeta';
 	import { eventTemplates, type LocationTemplate } from '$lib/data/locationTemplates';
+	import { showToast } from '$lib/stores/toast';
 
 	let {
 		net,
@@ -57,6 +58,42 @@
 	// Saving feedback
 	let saving = $state(false);
 
+	// Checkpoint meta editing
+	let editSeqNum = $state('');
+	let passageLabel = $state('lead');
+
+	// Get checkpoint meta for an annotation.
+	function getCheckpointSeq(annId: string): number | null {
+		const cp = $orderedCheckpoints.find(c => c.meta.annotationId === annId);
+		return cp?.meta.sequenceNumber ?? null;
+	}
+
+	// Auto-assign next sequence number for new checkpoint annotations.
+	function nextCheckpointSeq(): number {
+		if ($orderedCheckpoints.length === 0) return 1;
+		return Math.max(...$orderedCheckpoints.map(c => c.meta.sequenceNumber)) + 1;
+	}
+
+	async function saveCheckpointMeta(annId: string, seqStr: string) {
+		const seq = parseInt(seqStr, 10);
+		if (isNaN(seq) || seq < 1) return;
+		try {
+			await api.updateCheckpointMeta(net.id, annId, { sequenceNumber: seq });
+			showToast(`Checkpoint sequence set to #${seq}`, 'success');
+		} catch (e: any) {
+			showToast(e?.message || 'Failed to set checkpoint meta', 'error');
+		}
+	}
+
+	async function handleLogPassage(annId: string) {
+		try {
+			await api.logPassage(net.id, annId, { label: passageLabel });
+			showToast(`${passageLabel} passage logged`, 'success');
+		} catch (e: any) {
+			showToast(e?.message || 'Failed to log passage', 'error');
+		}
+	}
+
 	// Consume map-clicked coordinates into the active form
 	$effect(() => {
 		if (mapClickedCoords) {
@@ -98,7 +135,7 @@
 			const lat = parseFloat(newLat);
 			const lon = parseFloat(newLon);
 			const hasCoords = !isNaN(lat) && !isNaN(lon) && (lat !== 0 || lon !== 0);
-			await api.createAnnotation({
+			const created = await api.createAnnotation({
 				type: 'point',
 				label: newLabel.trim(),
 				shortName: newShortName.trim().toUpperCase(),
@@ -109,6 +146,11 @@
 				sortOrder: $netAnnotations.length,
 				priority: 'routine',
 			});
+			// Auto-set checkpoint meta for new checkpoint annotations.
+			if (newCategory === 'checkpoint' && created?.id) {
+				const seq = nextCheckpointSeq();
+				await api.updateCheckpointMeta(net.id, created.id, { sequenceNumber: seq }).catch(() => {});
+			}
 			resetAddForm();
 		} catch (e) {
 			console.error('Create location annotation failed:', e);
@@ -136,6 +178,9 @@
 		const coords = extractCoords(a);
 		editLat = coords?.lat ? String(coords.lat) : '';
 		editLon = coords?.lon ? String(coords.lon) : '';
+		// Populate checkpoint sequence if applicable.
+		const seq = getCheckpointSeq(a.id);
+		editSeqNum = seq != null ? String(seq) : String(nextCheckpointSeq());
 	}
 
 	async function saveEdit() {
@@ -152,6 +197,10 @@
 				description: editDescription.trim(),
 				geometry: hasCoords ? makeGeometry(lat, lon) : makeGeometry(0, 0),
 			});
+			// Save checkpoint meta if category is checkpoint.
+			if (editCategory === 'checkpoint' && editSeqNum) {
+				await saveCheckpointMeta(editingId, editSeqNum);
+			}
 			editingId = null;
 		} catch (e) {
 			console.error('Update location annotation failed:', e);
@@ -364,6 +413,12 @@
 						</select>
 					</div>
 					<textarea bind:value={editDescription} rows="2" placeholder="Description" class="loc-textarea"></textarea>
+					{#if editCategory === 'checkpoint'}
+						<div class="loc-form-row loc-cp-row">
+							<label class="loc-cp-label">Seq #</label>
+							<input type="number" bind:value={editSeqNum} min="1" class="loc-input loc-input-seq" />
+						</div>
+					{/if}
 					<div class="loc-form-row loc-coord-row">
 						<input type="text" bind:value={editLat} placeholder="Lat" inputmode="decimal" class="loc-input" />
 						<input type="text" bind:value={editLon} placeholder="Lon" inputmode="decimal" class="loc-input" />
@@ -398,6 +453,12 @@
 							{#if ann.shortName}
 								<span class="loc-short-badge">{ann.shortName}</span>
 							{/if}
+							{#if ann.category === 'checkpoint'}
+								{@const seq = getCheckpointSeq(ann.id)}
+								{#if seq != null}
+									<span class="loc-seq-badge">#{seq}</span>
+								{/if}
+							{/if}
 							<span class="loc-cat-badge" style="background: {categoryMeta[ann.category]?.defaultColor || '#6b7280'}">{categoryMeta[ann.category]?.label || ann.category}</span>
 						</div>
 						{#if hasCoords}
@@ -409,6 +470,13 @@
 						{/if}
 					</div>
 					<div class="loc-actions">
+						{#if ann.category === 'checkpoint' && getCheckpointSeq(ann.id) != null}
+							<button class="loc-action-btn loc-action-passage" onclick={() => handleLogPassage(ann.id)} title="Log passage">
+								<svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5">
+									<path d="M4 2v12M4 3h7l-2 3 2 3H4"/>
+								</svg>
+							</button>
+						{/if}
 						{#if hasCoords}
 							<button class="loc-action-btn" onclick={() => handleFlyTo(ann)} title="Fly to">
 								<svg width="14" height="14" viewBox="0 0 16 16" fill="none">
@@ -721,6 +789,40 @@
 		border-radius: 3px;
 		color: var(--color-text-muted);
 		flex-shrink: 0;
+	}
+
+	.loc-seq-badge {
+		padding: 1px 5px;
+		font-size: 0.65rem;
+		font-family: 'SF Mono', 'Fira Code', monospace;
+		font-weight: 700;
+		background: rgba(42, 157, 143, 0.15);
+		border-radius: 3px;
+		color: #2a9d8f;
+		flex-shrink: 0;
+	}
+
+	.loc-cp-row {
+		align-items: center;
+	}
+
+	.loc-cp-label {
+		font-size: 0.75rem;
+		color: var(--color-text-muted);
+		font-weight: 600;
+		white-space: nowrap;
+	}
+
+	.loc-input-seq {
+		width: 60px;
+	}
+
+	.loc-action-passage {
+		color: #2a9d8f;
+	}
+
+	.loc-action-passage:hover {
+		background: rgba(42, 157, 143, 0.15);
 	}
 
 	.loc-cat-badge {
