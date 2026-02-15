@@ -186,7 +186,7 @@ func (m *MemoryManager) Pending() []User {
 	m.mu.RLock()
 	defer m.mu.RUnlock()
 
-	var pending []User
+	pending := make([]User, 0)
 	for _, u := range m.users {
 		if u.Status == StatusPending {
 			pending = append(pending, *u)
