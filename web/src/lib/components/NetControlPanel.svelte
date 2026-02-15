@@ -19,6 +19,7 @@
 	} from '$lib/stores/netcontrol';
 	import { annotationList } from '$lib/stores/annotations';
 	import { categoryMeta, isTerminalStatus } from '$lib/annotationMeta';
+	import { stationCategoryMeta } from '$lib/stationCategoryMeta';
 	import { parseCommand, getModeIndicator, getAutocompleteContext, type ParsedCommand, type AutocompleteContext } from '$lib/commandParser';
 	import { showToast } from '$lib/stores/toast';
 	import LocationManager from './LocationManager.svelte';
@@ -54,17 +55,7 @@
 	// Category filter — clicking a category chip filters the roster (AND with metricsFilter)
 	let categoryFilter = $state<StationCategory | null>(null);
 
-	// Station category metadata (colors + short labels)
-	const stationCategoryMeta: Record<StationCategory, { label: string; short: string; color: string }> = {
-		general:  { label: 'General',  short: 'GEN', color: '#6b7280' },
-		command:  { label: 'Command',  short: 'CMD', color: '#eab308' },
-		medical:  { label: 'Medical',  short: 'MED', color: '#ef4444' },
-		sag:      { label: 'SAG',      short: 'SAG', color: '#f97316' },
-		marshal:  { label: 'Marshal',  short: 'MAR', color: '#3b82f6' },
-		fixed:    { label: 'Fixed',    short: 'FIX', color: '#14b8a6' },
-		mobile:   { label: 'Mobile',   short: 'MOB', color: '#8b5cf6' },
-		tactical: { label: 'Tactical', short: 'TAC', color: '#6366f1' },
-	};
+	// Station category metadata imported from shared module (stationCategoryMeta)
 
 	// Create net form
 	let showCreateForm = $state(false);
@@ -1281,6 +1272,19 @@
 						<path d="M6 5h4M6 8h4M6 11h2" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/>
 					</svg>
 				</button>
+				<a
+					href="/dashboard?net={$activeNet?.id}"
+					target="_blank"
+					rel="noopener"
+					class="action-btn agency-view-btn"
+					title="Agency View"
+				>
+					<svg width="16" height="16" viewBox="0 0 16 16" fill="none">
+						<rect x="2" y="3" width="12" height="8" rx="1" stroke="currentColor" stroke-width="1.5"/>
+						<line x1="5" y1="13" x2="11" y2="13" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/>
+						<line x1="8" y1="11" x2="8" y2="13" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/>
+					</svg>
+				</a>
 				<button class="action-btn danger" onclick={handleCloseNet} title="Close Net">
 					<svg width="16" height="16" viewBox="0 0 16 16" fill="none">
 						<path d="M4 4l8 8M12 4l-8 8" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/>
@@ -2330,6 +2334,18 @@
 
 	.action-btn.ops-view-set:hover {
 		background: rgba(34, 197, 94, 0.1);
+	}
+
+	.agency-view-btn {
+		text-decoration: none;
+		display: flex;
+		align-items: center;
+		justify-content: center;
+	}
+
+	.agency-view-btn:hover {
+		border-color: var(--color-accent);
+		color: var(--color-accent);
 	}
 
 	/* Tabs */
