@@ -2,6 +2,7 @@
 	import { api } from '$lib/api';
 	import type { Annotation, AnnotationCategory, Net } from '$lib/types';
 	import { netAnnotations, orderedCheckpoints } from '$lib/stores/netcontrol';
+	import { annotations, annotationList } from '$lib/stores/annotations';
 	import { categoryMeta } from '$lib/annotationMeta';
 	import { eventTemplates, type LocationTemplate } from '$lib/data/locationTemplates';
 	import { showToast } from '$lib/stores/toast';
@@ -57,6 +58,11 @@
 
 	// Saving feedback
 	let saving = $state(false);
+
+	// Link existing annotations modal
+	let showLinkModal = $state(false);
+	let unscopedAnnotations = $state<Annotation[]>([]);
+	let linkingIds = $state<Set<string>>(new Set());
 
 	// Checkpoint meta editing
 	let editSeqNum = $state('');
@@ -121,6 +127,12 @@
 			const geo = typeof a.geometry === 'string' ? JSON.parse(a.geometry) : a.geometry;
 			if (geo?.type === 'Point' && geo.coordinates) {
 				return { lat: geo.coordinates[1], lon: geo.coordinates[0] };
+			}
+			if (geo?.type === 'LineString' && geo.coordinates?.length > 0) {
+				return { lat: geo.coordinates[0][1], lon: geo.coordinates[0][0] };
+			}
+			if (geo?.type === 'Polygon' && geo.coordinates?.[0]?.length > 0) {
+				return { lat: geo.coordinates[0][0][1], lon: geo.coordinates[0][0][0] };
 			}
 		} catch { /* ignore */ }
 		return null;
@@ -255,6 +267,41 @@
 		}
 	}
 
+	// --- Link existing ---
+
+	function openLinkModal() {
+		unscopedAnnotations = $annotationList.filter(a => !a.netId);
+		showLinkModal = true;
+	}
+
+	async function handleLink(ann: Annotation) {
+		linkingIds = new Set([...linkingIds, ann.id]);
+		try {
+			const updated = await api.updateAnnotation(ann.id, { netId: net.id });
+			if (updated) {
+				annotations.update((m) => { m.set(updated.id, updated); return new Map(m); });
+			}
+			unscopedAnnotations = unscopedAnnotations.filter(a => a.id !== ann.id);
+			showToast(`Linked "${ann.label}" to net`, 'success');
+		} catch (e: any) {
+			showToast(e?.message || 'Failed to link annotation', 'error');
+		} finally {
+			linkingIds = new Set([...linkingIds].filter(id => id !== ann.id));
+		}
+	}
+
+	async function handleUnlink(ann: Annotation) {
+		try {
+			const updated = await api.updateAnnotation(ann.id, { netId: '' });
+			if (updated) {
+				annotations.update((m) => { m.set(updated.id, updated); return new Map(m); });
+			}
+			showToast(`Unlinked "${ann.label}" from net`, 'success');
+		} catch (e: any) {
+			showToast(e?.message || 'Failed to unlink annotation', 'error');
+		}
+	}
+
 	// --- Import ---
 
 	function triggerImport() {
@@ -340,6 +387,9 @@
 		</button>
 		<button class="loc-btn" onclick={openCopyModal}>
 			Copy from...
+		</button>
+		<button class="loc-btn" onclick={openLinkModal}>
+			Link existing
 		</button>
 		<button class="loc-btn" onclick={() => (showTemplateModal = true)}>
 			Template
@@ -496,6 +546,12 @@
 								<path d="M11.5 1.5l3 3L5 14H2v-3L11.5 1.5z" stroke="currentColor" stroke-width="1.5" stroke-linejoin="round"/>
 							</svg>
 						</button>
+						<button class="loc-action-btn loc-action-unlink" onclick={() => handleUnlink(ann)} title="Unlink from net">
+							<svg width="14" height="14" viewBox="0 0 16 16" fill="none">
+								<path d="M7 9l-1.5 1.5a2.12 2.12 0 01-3-3L4 6M9 7l1.5-1.5a2.12 2.12 0 013 3L12 10" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/>
+								<path d="M3 13L13 3" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/>
+							</svg>
+						</button>
 						<button class="loc-action-btn loc-action-danger" onclick={() => handleDelete(ann)} title="Delete">
 							<svg width="14" height="14" viewBox="0 0 16 16" fill="none">
 								<path d="M2 4h12M5 4V2h6v2M6 7v5M10 7v5M3 4l1 10h8l1-10" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/>
@@ -564,6 +620,41 @@
 							<span class="loc-copy-name">{pnet.name}</span>
 							<span class="loc-copy-status">{pnet.status}</span>
 						</button>
+					{/each}
+				{/if}
+			</div>
+		</div>
+	</div>
+{/if}
+
+<!-- Link existing modal -->
+{#if showLinkModal}
+	<!-- svelte-ignore a11y_no_static_element_interactions -->
+	<div class="loc-modal-backdrop" onmousedown={(e) => { if (e.target === e.currentTarget) showLinkModal = false; }}>
+		<div class="loc-modal" role="dialog" aria-label="Link existing annotations">
+			<div class="loc-modal-header">
+				<span class="loc-modal-title">Link Existing Annotations</span>
+				<button class="loc-modal-close" onclick={() => (showLinkModal = false)}>&times;</button>
+			</div>
+			<div class="loc-modal-body">
+				{#if unscopedAnnotations.length === 0}
+					<div class="loc-modal-loading">All annotations are already linked to a net</div>
+				{:else}
+					{#each unscopedAnnotations as ann (ann.id)}
+						<div class="loc-link-row">
+							<span class="loc-link-dot" style="background: {categoryMeta[ann.category]?.defaultColor || '#6b7280'}"></span>
+							<div class="loc-link-info">
+								<span class="loc-link-label">{ann.label}</span>
+								<span class="loc-link-type">{ann.type === 'point' ? 'Point' : ann.type === 'line' ? 'Line' : 'Area'}</span>
+							</div>
+							<button
+								class="loc-btn loc-btn-primary"
+								onclick={() => handleLink(ann)}
+								disabled={linkingIds.has(ann.id)}
+							>
+								{linkingIds.has(ann.id) ? 'Linking...' : 'Link'}
+							</button>
+						</div>
 					{/each}
 				{/if}
 			</div>
@@ -1062,5 +1153,56 @@
 		font-size: 0.72rem;
 		color: var(--color-text-muted);
 		text-transform: uppercase;
+	}
+
+	/* Link existing rows */
+	.loc-link-row {
+		display: flex;
+		align-items: center;
+		gap: var(--space-sm);
+		padding: var(--space-sm);
+		background: rgba(255, 255, 255, 0.03);
+		border: 1px solid rgba(255, 255, 255, 0.06);
+		border-radius: var(--radius-sm);
+	}
+
+	.loc-link-dot {
+		width: 10px;
+		height: 10px;
+		border-radius: 50%;
+		flex-shrink: 0;
+	}
+
+	.loc-link-info {
+		flex: 1;
+		display: flex;
+		align-items: center;
+		gap: var(--space-xs);
+		min-width: 0;
+	}
+
+	.loc-link-label {
+		font-size: 0.85rem;
+		font-weight: 600;
+		color: var(--color-text);
+		white-space: nowrap;
+		overflow: hidden;
+		text-overflow: ellipsis;
+	}
+
+	.loc-link-type {
+		font-size: 0.65rem;
+		padding: 1px 5px;
+		border-radius: 3px;
+		background: rgba(255, 255, 255, 0.08);
+		color: var(--color-text-muted);
+		text-transform: uppercase;
+		flex-shrink: 0;
+	}
+
+	/* Unlink action button */
+	.loc-action-unlink:hover {
+		color: #f59e0b;
+		background: rgba(245, 158, 11, 0.1);
 	}
 </style>
