@@ -87,7 +87,7 @@ export async function logout() {
 export async function loadPendingRequests() {
 	try {
 		const pending = await api.getPending();
-		pendingRequests.set(pending);
+		pendingRequests.set(pending ?? []);
 	} catch {
 		pendingRequests.set([]);
 	}
