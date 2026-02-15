@@ -1569,6 +1569,7 @@
 		font-family: monospace;
 		font-weight: 600;
 		font-size: 12px;
+		box-shadow: none;
 	}
 
 	:global(.annotation-tooltip) {

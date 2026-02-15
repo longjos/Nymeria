@@ -231,7 +231,14 @@
 		ws.on('annotation_updated', (msg) => {
 			const ann = msg.data as Annotation;
 			if (!ann) return;
-			dashAnnotations = dashAnnotations.map(a => a.id === ann.id ? ann : a);
+			if (ann.netId === net?.id) {
+				const exists = dashAnnotations.some(a => a.id === ann.id);
+				dashAnnotations = exists
+					? dashAnnotations.map(a => a.id === ann.id ? ann : a)
+					: [...dashAnnotations, ann];
+			} else {
+				dashAnnotations = dashAnnotations.filter(a => a.id !== ann.id);
+			}
 			lastUpdated = new Date();
 		});
 

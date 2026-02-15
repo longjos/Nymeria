@@ -183,8 +183,8 @@ export function createMarkerHtml(sym: APRSSymbol, color: string, selected: boole
 	const strokeWidth = selected ? 2.2 : 2.4;
 	const svg = wrapSvg(inner, iconSize, '#fff', strokeWidth);
 	const shadow = selected
-		? '0 2px 8px rgba(0,0,0,0.5), 0 0 0 3px rgba(255,255,255,0.8)'
-		: '0 1px 4px rgba(0,0,0,0.4)';
+		? '0 0 0 3px rgba(255,255,255,0.8)'
+		: 'none';
 	const border = selected ? '2px solid #fff' : '2px solid rgba(255,255,255,0.3)';
 
 	const arrow = isMoving(speed, course) ? directionArrow(course!, size) : '';
