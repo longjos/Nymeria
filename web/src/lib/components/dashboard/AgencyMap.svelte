@@ -2,6 +2,7 @@
 	import { onMount } from 'svelte';
 	import { browser } from '$app/environment';
 	import type { NetCheckIn, NetMission, Annotation } from '$lib/types';
+	import { categoryMeta } from '$lib/annotationMeta';
 	import { stationCategoryMeta } from '$lib/stationCategoryMeta';
 	import { humanName, priorityLabels } from '$lib/agencyTranslations';
 
@@ -20,9 +21,9 @@
 	} = $props();
 
 	let mapEl: HTMLDivElement;
-	let map: any;
-	let L: any;
-	let layerGroup: any;
+	let map = $state<any>(null);
+	let L = $state<any>(null);
+	let layerGroup = $state<any>(null);
 
 	onMount(async () => {
 		if (!browser) return;
@@ -66,6 +67,11 @@
 		}
 	});
 
+	function parseStyle(styleStr?: string): Record<string, unknown> {
+		if (!styleStr) return {};
+		try { return JSON.parse(styleStr); } catch { return {}; }
+	}
+
 	function renderLayers() {
 		layerGroup.clearLayers();
 
@@ -73,31 +79,37 @@
 		for (const ann of annotations) {
 			try {
 				const geo = typeof ann.geometry === 'string' ? JSON.parse(ann.geometry) : ann.geometry;
+				const cat = ann.category || 'general';
+				const fallbackColor = categoryMeta[cat as keyof typeof categoryMeta]?.defaultColor || '#e63946';
+				const style = parseStyle(ann.style);
+				const color = (style.color as string) || fallbackColor;
+				const fillColor = (style.fillColor as string) || color;
+
 				if (geo?.type === 'Point' && geo.coordinates) {
 					const [lon, lat] = geo.coordinates;
 					if (lat === 0 && lon === 0) continue;
 					L.circleMarker([lat, lon], {
-						radius: 5,
-						color: '#888',
-						fillColor: '#888',
-						fillOpacity: 0.4,
-						weight: 1,
+						radius: 6,
+						color,
+						fillColor,
+						fillOpacity: 0.6,
+						weight: 2,
 					}).bindTooltip(ann.label, { direction: 'top', offset: [0, -8] })
 					  .addTo(layerGroup);
 				} else if (geo?.type === 'LineString' && geo.coordinates) {
 					L.polyline(geo.coordinates.map((c: number[]) => [c[1], c[0]]), {
-						color: '#888',
-						weight: 2,
-						opacity: 0.5,
-						dashArray: '6,4',
+						color,
+						weight: 3,
+						opacity: 0.7,
+						dashArray: '8,5',
 					}).bindTooltip(ann.label)
 					  .addTo(layerGroup);
 				} else if (geo?.type === 'Polygon' && geo.coordinates?.[0]) {
 					L.polygon(geo.coordinates[0].map((c: number[]) => [c[1], c[0]]), {
-						color: '#888',
-						fillColor: '#888',
-						fillOpacity: 0.1,
-						weight: 1,
+						color,
+						fillColor,
+						fillOpacity: 0.2,
+						weight: 2,
 					}).bindTooltip(ann.label)
 					  .addTo(layerGroup);
 				}
