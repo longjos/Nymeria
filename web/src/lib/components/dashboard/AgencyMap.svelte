@@ -69,12 +69,14 @@
 	function renderLayers() {
 		layerGroup.clearLayers();
 
-		// Annotation geometries (lines, areas, points)
+		// Annotation geometries (GeoJSON format)
 		for (const ann of annotations) {
 			try {
-				const geo = JSON.parse(ann.geometry);
-				if (ann.type === 'point' && geo.lat != null && geo.lon != null) {
-					L.circleMarker([geo.lat, geo.lon], {
+				const geo = typeof ann.geometry === 'string' ? JSON.parse(ann.geometry) : ann.geometry;
+				if (geo?.type === 'Point' && geo.coordinates) {
+					const [lon, lat] = geo.coordinates;
+					if (lat === 0 && lon === 0) continue;
+					L.circleMarker([lat, lon], {
 						radius: 5,
 						color: '#888',
 						fillColor: '#888',
@@ -82,16 +84,16 @@
 						weight: 1,
 					}).bindTooltip(ann.label, { direction: 'top', offset: [0, -8] })
 					  .addTo(layerGroup);
-				} else if (ann.type === 'line' && Array.isArray(geo)) {
-					L.polyline(geo.map((p: any) => [p.lat, p.lon]), {
+				} else if (geo?.type === 'LineString' && geo.coordinates) {
+					L.polyline(geo.coordinates.map((c: number[]) => [c[1], c[0]]), {
 						color: '#888',
 						weight: 2,
 						opacity: 0.5,
 						dashArray: '6,4',
 					}).bindTooltip(ann.label)
 					  .addTo(layerGroup);
-				} else if (ann.type === 'area' && Array.isArray(geo)) {
-					L.polygon(geo.map((p: any) => [p.lat, p.lon]), {
+				} else if (geo?.type === 'Polygon' && geo.coordinates?.[0]) {
+					L.polygon(geo.coordinates[0].map((c: number[]) => [c[1], c[0]]), {
 						color: '#888',
 						fillColor: '#888',
 						fillOpacity: 0.1,
@@ -173,6 +175,19 @@
 			}
 			for (const m of missions) {
 				if (m.lat != null && m.lon != null) points.push([m.lat, m.lon]);
+			}
+			for (const ann of annotations) {
+				try {
+					const geo = typeof ann.geometry === 'string' ? JSON.parse(ann.geometry) : ann.geometry;
+					if (geo?.type === 'Point' && geo.coordinates) {
+						const [lon, lat] = geo.coordinates;
+						if (lat !== 0 || lon !== 0) points.push([lat, lon]);
+					} else if (geo?.type === 'LineString' && geo.coordinates) {
+						for (const c of geo.coordinates) points.push([c[1], c[0]]);
+					} else if (geo?.type === 'Polygon' && geo.coordinates?.[0]) {
+						for (const c of geo.coordinates[0]) points.push([c[1], c[0]]);
+					}
+				} catch { /* skip */ }
 			}
 			if (points.length > 1) {
 				map.fitBounds(L.latLngBounds(points), { padding: [30, 30] });
