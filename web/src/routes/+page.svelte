@@ -63,6 +63,7 @@
 	let annotationPanelRef = $state<AnnotationPanel>();
 	let mapRef = $state<Map>();
 	let editingAnnotationId = $state<string | null>(null);
+	let focusedAnnotationId = $state<string | null>(null);
 	let placingOperator = $state<{ id: string; callsign: string } | null>(null);
 	let placingAnnotation = $state<{ id: string | null; name: string; mode: 'update' | 'form' } | null>(null);
 	let annotationMapCoords = $state<{ lat: number; lon: number } | null>(null);
@@ -192,6 +193,7 @@
 
 	function handleAnnotationClick(id: string) {
 		openAnnotations();
+		focusedAnnotationId = id;
 	}
 
 	function handleNetOperatorClick(_checkInId: string) {
@@ -273,6 +275,10 @@
 
 	function handleAnnotationPlaceCancelled() {
 		placingAnnotation = null;
+	}
+
+	function handleAnnotationFocusConsumed() {
+		focusedAnnotationId = null;
 	}
 
 	function handleMapCoordsConsumed() {
@@ -504,6 +510,8 @@
 					onPreviewChange={handlePreviewChange}
 					onStartEdit={handleStartEdit}
 					onStopEdit={handleStopEdit}
+					{focusedAnnotationId}
+					onFocusConsumed={handleAnnotationFocusConsumed}
 				/>
 			{:else if $panelMode === 'bulletins'}
 				<BulletinPanel />
@@ -584,6 +592,8 @@
 					onPreviewChange={handlePreviewChange}
 					onStartEdit={handleStartEdit}
 					onStopEdit={handleStopEdit}
+					{focusedAnnotationId}
+					onFocusConsumed={handleAnnotationFocusConsumed}
 				/>
 			{:else if $panelMode === 'bulletins'}
 				<BulletinPanel />
