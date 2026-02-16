@@ -17,6 +17,7 @@
 	// Step 2: Location
 	let lat = $state(39.83);
 	let lon = $state(-98.58);
+	// svelte-ignore non_reactive_update — DOM ref for imperative Leaflet, not reactive
 	let mapContainer: HTMLDivElement;
 	let leafletMap: L.Map | null = null;
 	let marker: L.Marker | null = null;
@@ -273,6 +274,7 @@
 
 				<label class="field">
 					<span>Callsign</span>
+					<!-- svelte-ignore a11y_autofocus -->
 					<input
 						type="text"
 						value={callsign}
@@ -587,9 +589,6 @@
 		opacity: 0.5;
 	}
 
-	.field input[readonly] {
-		opacity: 0.7;
-	}
 
 	.field-error {
 		font-size: 0.75rem;

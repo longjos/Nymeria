@@ -18,6 +18,7 @@
 
 	// Mini-map state — plain `let` (not $state) to avoid Svelte 5 deep-proxying
 	// Leaflet objects, which breaks internal methods like containerPointToLatLng.
+	// svelte-ignore non_reactive_update
 	let mapEl: HTMLDivElement | undefined;
 	let mapInstance: any = null;
 	let mapCircle: any = null;
@@ -497,17 +498,17 @@
 								<div class="edit-fields">
 									<div class="field-group">
 										<div class="field-row half">
-											<label>Latitude</label>
-											<input type="number" step="0.0001" min="-90" max="90" bind:value={rule.lat} oninput={() => onGeoChange(rule)} />
+											<label for="r{i}-lat">Latitude</label>
+											<input id="r{i}-lat" type="number" step="0.0001" min="-90" max="90" bind:value={rule.lat} oninput={() => onGeoChange(rule)} />
 										</div>
 										<div class="field-row half">
-											<label>Longitude</label>
-											<input type="number" step="0.0001" min="-180" max="180" bind:value={rule.lon} oninput={() => onGeoChange(rule)} />
+											<label for="r{i}-lon">Longitude</label>
+											<input id="r{i}-lon" type="number" step="0.0001" min="-180" max="180" bind:value={rule.lon} oninput={() => onGeoChange(rule)} />
 										</div>
 									</div>
 									<div class="field-row">
-										<label>Radius (km)</label>
-										<input type="number" step="1" min="1" bind:value={rule.dist} oninput={() => onGeoChange(rule)} />
+										<label for="r{i}-dist">Radius (km)</label>
+										<input id="r{i}-dist" type="number" step="1" min="1" bind:value={rule.dist} oninput={() => onGeoChange(rule)} />
 									</div>
 								</div>
 
@@ -522,22 +523,22 @@
 								<div class="edit-fields">
 									<div class="field-group">
 										<div class="field-row half">
-											<label>North Lat</label>
-											<input type="number" step="0.0001" min="-90" max="90" bind:value={rule.latN} oninput={() => onGeoChange(rule)} />
+											<label for="r{i}-latN">North Lat</label>
+											<input id="r{i}-latN" type="number" step="0.0001" min="-90" max="90" bind:value={rule.latN} oninput={() => onGeoChange(rule)} />
 										</div>
 										<div class="field-row half">
-											<label>West Lon</label>
-											<input type="number" step="0.0001" min="-180" max="180" bind:value={rule.lonW} oninput={() => onGeoChange(rule)} />
+											<label for="r{i}-lonW">West Lon</label>
+											<input id="r{i}-lonW" type="number" step="0.0001" min="-180" max="180" bind:value={rule.lonW} oninput={() => onGeoChange(rule)} />
 										</div>
 									</div>
 									<div class="field-group">
 										<div class="field-row half">
-											<label>South Lat</label>
-											<input type="number" step="0.0001" min="-90" max="90" bind:value={rule.latS} oninput={() => onGeoChange(rule)} />
+											<label for="r{i}-latS">South Lat</label>
+											<input id="r{i}-latS" type="number" step="0.0001" min="-90" max="90" bind:value={rule.latS} oninput={() => onGeoChange(rule)} />
 										</div>
 										<div class="field-row half">
-											<label>East Lon</label>
-											<input type="number" step="0.0001" min="-180" max="180" bind:value={rule.lonE} oninput={() => onGeoChange(rule)} />
+											<label for="r{i}-lonE">East Lon</label>
+											<input id="r{i}-lonE" type="number" step="0.0001" min="-180" max="180" bind:value={rule.lonE} oninput={() => onGeoChange(rule)} />
 										</div>
 									</div>
 								</div>
@@ -553,13 +554,13 @@
 										{/each}
 									</div>
 									<div class="field-row">
-										<label>Near callsign (optional)</label>
-										<input type="text" bind:value={rule.callForType} oninput={() => { rules = [...rules]; syncToValue(); }} placeholder="e.g. W1AW-5" />
+										<label for="r{i}-callType">Near callsign (optional)</label>
+										<input id="r{i}-callType" type="text" bind:value={rule.callForType} oninput={() => { rules = [...rules]; syncToValue(); }} placeholder="e.g. W1AW-5" />
 									</div>
 									{#if rule.callForType}
 										<div class="field-row">
-											<label>Distance (km)</label>
-											<input type="number" step="1" min="1" bind:value={rule.distForType} oninput={() => { rules = [...rules]; syncToValue(); }} />
+											<label for="r{i}-distType">Distance (km)</label>
+											<input id="r{i}-distType" type="number" step="1" min="1" bind:value={rule.distForType} oninput={() => { rules = [...rules]; syncToValue(); }} />
 										</div>
 									{/if}
 								</div>
@@ -567,8 +568,8 @@
 							{:else if rule.type === 'myRange'}
 								<div class="edit-fields">
 									<div class="field-row">
-										<label>Distance from my station (km)</label>
-										<input type="number" step="1" min="1" bind:value={rule.dist} oninput={() => { rules = [...rules]; syncToValue(); }} />
+										<label for="r{i}-myDist">Distance from my station (km)</label>
+										<input id="r{i}-myDist" type="number" step="1" min="1" bind:value={rule.dist} oninput={() => { rules = [...rules]; syncToValue(); }} />
 									</div>
 									<div class="field-hint">Uses your station's last known APRS-IS position as center.</div>
 								</div>
@@ -576,12 +577,12 @@
 							{:else if rule.type === 'friendRange'}
 								<div class="edit-fields">
 									<div class="field-row">
-										<label>Friend callsign</label>
-										<input type="text" bind:value={rule.friendCall} oninput={() => { rules = [...rules]; syncToValue(); }} placeholder="e.g. W1AW-5" />
+										<label for="r{i}-friend">Friend callsign</label>
+										<input id="r{i}-friend" type="text" bind:value={rule.friendCall} oninput={() => { rules = [...rules]; syncToValue(); }} placeholder="e.g. W1AW-5" />
 									</div>
 									<div class="field-row">
-										<label>Distance (km)</label>
-										<input type="number" step="1" min="1" bind:value={rule.dist} oninput={() => { rules = [...rules]; syncToValue(); }} />
+										<label for="r{i}-friendDist">Distance (km)</label>
+										<input id="r{i}-friendDist" type="number" step="1" min="1" bind:value={rule.dist} oninput={() => { rules = [...rules]; syncToValue(); }} />
 									</div>
 									<div class="field-hint">Center follows the friend's position as they move.</div>
 								</div>
@@ -589,11 +590,12 @@
 							{:else if rule.type === 'prefix' || rule.type === 'budlist' || rule.type === 'object' || rule.type === 'strictObject' || rule.type === 'digipeater' || rule.type === 'entry' || rule.type === 'group' || rule.type === 'unproto'}
 								<div class="edit-fields">
 									<div class="field-row">
-										<label>
+										<label for="r{i}-items">
 											{#if rule.type === 'prefix'}Callsign prefixes{:else if rule.type === 'budlist'}Callsigns{:else if rule.type === 'object' || rule.type === 'strictObject'}Object names{:else if rule.type === 'digipeater'}Digipeater callsigns{:else if rule.type === 'entry'}IGate callsigns{:else if rule.type === 'group'}Message recipients{:else}Destination callsigns{/if}
 											<span class="label-hint">(one per line, * wildcard supported)</span>
 										</label>
 										<textarea
+											id="r{i}-items"
 											rows="4"
 											value={itemsText(rule)}
 											oninput={(e) => setItems(rule, (e.target as HTMLTextAreaElement).value)}
@@ -606,16 +608,16 @@
 							{:else if rule.type === 'symbol'}
 								<div class="edit-fields">
 									<div class="field-row">
-										<label>Primary table symbols</label>
-										<input type="text" bind:value={rule.primaryTable} oninput={() => { rules = [...rules]; syncToValue(); }} placeholder="-> (house, car)" />
+										<label for="r{i}-symPrimary">Primary table symbols</label>
+										<input id="r{i}-symPrimary" type="text" bind:value={rule.primaryTable} oninput={() => { rules = [...rules]; syncToValue(); }} placeholder="-> (house, car)" />
 									</div>
 									<div class="field-row">
-										<label>Alternate table symbols</label>
-										<input type="text" bind:value={rule.altTable} oninput={() => { rules = [...rules]; syncToValue(); }} placeholder="# (digi)" />
+										<label for="r{i}-symAlt">Alternate table symbols</label>
+										<input id="r{i}-symAlt" type="text" bind:value={rule.altTable} oninput={() => { rules = [...rules]; syncToValue(); }} placeholder="# (digi)" />
 									</div>
 									<div class="field-row">
-										<label>Overlay characters</label>
-										<input type="text" bind:value={rule.overlay} oninput={() => { rules = [...rules]; syncToValue(); }} placeholder="A-Z, 0-9" />
+										<label for="r{i}-symOverlay">Overlay characters</label>
+										<input id="r{i}-symOverlay" type="text" bind:value={rule.overlay} oninput={() => { rules = [...rules]; syncToValue(); }} placeholder="A-Z, 0-9" />
 									</div>
 								</div>
 

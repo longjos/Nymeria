@@ -575,6 +575,7 @@
 						{/if}
 						{#if addMissionPickerId === ann.id}
 							<!-- svelte-ignore a11y_no_static_element_interactions -->
+							<!-- svelte-ignore a11y_click_events_have_key_events -->
 							<div class="add-mission-picker" onclick={(e) => e.stopPropagation()}>
 								{#each $netMissions.filter((m) => m.status !== 'complete' && !ann.missionIds?.includes(m.id)) as m}
 									<button class="add-mission-option" onclick={(e) => handleAddToMission(ann, m.id, e)}>
@@ -603,6 +604,7 @@
 						{/if}
 						{#if colorEditId === ann.id}
 							<!-- svelte-ignore a11y_no_static_element_interactions -->
+							<!-- svelte-ignore a11y_click_events_have_key_events -->
 							<div class="inline-swatches" onclick={(e) => e.stopPropagation()}>
 								{#each COLORS as c}
 									<button
@@ -617,6 +619,7 @@
 						{/if}
 						{#if statusDropdownId === ann.id}
 							<!-- svelte-ignore a11y_no_static_element_interactions -->
+							<!-- svelte-ignore a11y_click_events_have_key_events -->
 							<div class="status-dropdown" onclick={(e) => e.stopPropagation()}>
 								{#each getStatusesForCategory(cat) as s}
 									<button

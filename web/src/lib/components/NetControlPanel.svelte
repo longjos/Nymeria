@@ -1445,7 +1445,7 @@
 							placeholder="KD7BBC R medical  ·  KD7BBC assigned  ·  mission Search Grid A"
 							class="quick-add-input"
 						/>
-						<button class="quick-add-btn" onclick={handleQuickAdd} disabled={!quickAddInput.trim()}>
+						<button class="quick-add-btn" onclick={handleQuickAdd} disabled={!quickAddInput.trim()} aria-label="Submit command">
 							<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><path d="M5 12h14M12 5l7 7-7 7"/></svg>
 						</button>
 					</div>
@@ -1612,6 +1612,7 @@
 									{#each ci.missionIds as mid}
 										{@const linkedMission = $missions.find((m) => m.id === mid)}
 										{#if linkedMission}
+											<!-- svelte-ignore a11y_no_static_element_interactions -->
 											<div
 													class="op-mission-chip"
 													class:chip-highlighted={$hoveredMissionId === mid}
