@@ -339,48 +339,49 @@
 								{#if t.type === 'aprsis'}
 									<div class="field-group">
 										<div class="field-row half">
-											<label>Host</label>
-											<input type="text" bind:value={t.host} />
+											<label for="t{i}-host">Host</label>
+											<input id="t{i}-host" type="text" bind:value={t.host} />
 										</div>
 										<div class="field-row half">
-											<label>Port</label>
-											<input type="number" bind:value={t.port} />
+											<label for="t{i}-port">Port</label>
+											<input id="t{i}-port" type="number" bind:value={t.port} />
 										</div>
 									</div>
 									<div class="field-row">
+										<!-- svelte-ignore a11y_label_has_associated_control -->
 										<label>Filter</label>
 										<FilterBuilder value={t.filter ?? ''} oninput={(v) => { t.filter = v; }} />
 									</div>
 									<div class="field-group">
 										<div class="field-row half">
-											<label>Callsign</label>
-											<input type="text" bind:value={t.callsign} placeholder="Override" />
+											<label for="t{i}-call">Callsign</label>
+											<input id="t{i}-call" type="text" bind:value={t.callsign} placeholder="Override" />
 										</div>
 										<div class="field-row half">
-											<label>Passcode</label>
-											<input type="password" bind:value={t.passcode} placeholder="***" />
+											<label for="t{i}-pass">Passcode</label>
+											<input id="t{i}-pass" type="password" bind:value={t.passcode} placeholder="***" />
 										</div>
 									</div>
 								{:else if t.type === 'kisstcp'}
 									<div class="field-group">
 										<div class="field-row half">
-											<label>Host</label>
-											<input type="text" bind:value={t.host} />
+											<label for="t{i}-host">Host</label>
+											<input id="t{i}-host" type="text" bind:value={t.host} />
 										</div>
 										<div class="field-row half">
-											<label>Port</label>
-											<input type="number" bind:value={t.port} />
+											<label for="t{i}-port">Port</label>
+											<input id="t{i}-port" type="number" bind:value={t.port} />
 										</div>
 									</div>
 								{:else if t.type === 'serial'}
 									<div class="field-group">
 										<div class="field-row half">
-											<label>Device</label>
-											<input type="text" bind:value={t.device} placeholder="/dev/ttyUSB0" />
+											<label for="t{i}-dev">Device</label>
+											<input id="t{i}-dev" type="text" bind:value={t.device} placeholder="/dev/ttyUSB0" />
 										</div>
 										<div class="field-row half">
-											<label>Baud</label>
-											<input type="number" bind:value={t.baud} />
+											<label for="t{i}-baud">Baud</label>
+											<input id="t{i}-baud" type="number" bind:value={t.baud} />
 										</div>
 									</div>
 								{/if}
@@ -519,6 +520,7 @@
 				{#if openSections.weather}
 					<div class="section-body">
 						<div class="field-row">
+							<!-- svelte-ignore a11y_label_has_associated_control -->
 							<label>Units</label>
 							<div class="unit-toggle">
 								<button
@@ -618,6 +620,7 @@
 				{#if openSections.database}
 					<div class="section-body">
 						<div class="field-row">
+							<!-- svelte-ignore a11y_label_has_associated_control -->
 							<label>Path</label>
 							<div class="readonly-value">{settings.store.path}</div>
 						</div>

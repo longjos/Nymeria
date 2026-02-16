@@ -10,21 +10,20 @@ RUN pnpm install --frozen-lockfile
 COPY web/ ./
 RUN pnpm build
 
-# Stage 2: Build backend (CGO required for modernc.org/sqlite)
-FROM golang:1.24-bookworm AS backend
+# Stage 2: Build backend (pure Go, no CGO — modernc.org/sqlite is CGO-free)
+FROM golang:1.24-alpine AS backend
+RUN apk add --no-cache git
 WORKDIR /app
 COPY go.mod go.sum ./
 RUN go mod download
 COPY . .
 COPY --from=frontend /app/web/build web/build
 ARG VERSION=docker
-RUN CGO_ENABLED=1 go build -ldflags "-s -w -X main.version=${VERSION}" -o nymeria ./cmd/nymeria
+RUN CGO_ENABLED=0 go build -ldflags "-s -w -X main.version=${VERSION}" -o nymeria ./cmd/nymeria
 
 # Stage 3: Runtime image
-FROM debian:bookworm-slim
-RUN apt-get update && \
-    apt-get install -y --no-install-recommends ca-certificates wget && \
-    rm -rf /var/lib/apt/lists/*
+FROM alpine:3.21
+RUN apk add --no-cache ca-certificates wget
 WORKDIR /app
 COPY --from=backend /app/nymeria .
 COPY --from=backend /app/nymeria.example.yaml ./nymeria.yaml

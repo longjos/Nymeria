@@ -465,8 +465,8 @@
 					<textarea bind:value={editDescription} rows="2" placeholder="Description" class="loc-textarea"></textarea>
 					{#if editCategory === 'checkpoint'}
 						<div class="loc-form-row loc-cp-row">
-							<label class="loc-cp-label">Seq #</label>
-							<input type="number" bind:value={editSeqNum} min="1" class="loc-input loc-input-seq" />
+							<label class="loc-cp-label" for="cp-seq">Seq #</label>
+							<input id="cp-seq" type="number" bind:value={editSeqNum} min="1" class="loc-input loc-input-seq" />
 						</div>
 					{/if}
 					<div class="loc-form-row loc-coord-row">

@@ -1,7 +1,7 @@
 .PHONY: build run dev clean docker frontend backend windows
 
 VERSION ?= dev
-LDFLAGS := -ldflags "-X main.version=$(VERSION)"
+LDFLAGS := -ldflags "-s -w -X main.version=$(VERSION)"
 
 build: frontend backend
 

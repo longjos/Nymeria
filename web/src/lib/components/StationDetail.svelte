@@ -31,7 +31,7 @@
 
 	let station = $state<Station | null>(null);
 	let loaded = $state(false);
-	let scrollEl: HTMLDivElement;
+	let scrollEl = $state<HTMLDivElement>(undefined!);
 
 	// Tactical alias state
 	let tacAlias = $derived($getTacticalAlias(stationKey));
