@@ -20,7 +20,7 @@ A modern, full-featured APRS client built with Go and SvelteKit. Nymeria runs as
 
 **Multi-User**
 - Session management with 4-tier roles (Admin, Operator, Observer, ReadOnly)
-- Optional PIN-based authentication
+- Admin-approved invite flow — zero-friction field deployment, no PINs or passwords
 - Message conversation claiming per operator
 - Activity logging with CSV export
 
@@ -30,17 +30,27 @@ A modern, full-featured APRS client built with Go and SvelteKit. Nymeria runs as
 - Direction finding overlay with bearing lines and triangulation
 - Protocol packet inspector
 
-**Operations**
-- Net control management for APRS nets
-- Local map annotations (points, lines, areas) with GeoJSON export
+**Emergency Communications**
+- Net control dashboard with roster, missions, timeline, roll call, and NCS transfer
+- NCS command palette for high-tempo keyboard-driven operations
+- Agency summary dashboard for EOC/ICP display — real-time multi-net overview
+- Annotations (points, lines, areas) with net-scoping, GPX/KML import, and APRS object bridge
+- Checkpoint and event progress tracking with route progress bar
 - ICS-309 communications log generation
+- First-run setup wizard with guided configuration
+
+**Map & Overlays**
+- Station age filtering, track/DR cone toggles, weather and DF overlays
 - Offline map tile caching
+- Station categories with priority-based sorting
+- APRS-IS filter builder with visual rule editor
 
 **Deployment**
 - Single binary with embedded frontend via `go:embed`
 - SQLite storage — no external database needed
 - Docker Compose setup with Direwolf for turnkey RF stations
-- Runs on amd64 and arm64 (Raspberry Pi 4+)
+- Cross-platform: Linux, Windows, macOS (amd64 and arm64)
+- [Pre-built binaries](https://github.com/longjos/Nymeria/releases) available
 
 ## Quick Start
 
@@ -177,8 +187,9 @@ internal/
   server/              Chi HTTP router, REST API, middleware
     ws/                WebSocket hub for real-time broadcasts
   activity/            Activity logging and CSV export
-  annotation/          Local map annotations (GeoJSON)
-  netcontrol/          Net control management
+  annotation/          Annotations with net-scoping, GPX/KML import, APRS bridge
+  netcontrol/          Net control management (nets, roster, missions, timeline)
+  checkpoint/          Checkpoint and event progress tracking
   ics309/              ICS-309 log generation
   tilecache/           Offline map tile caching
 web/                   SvelteKit frontend (adapter-static)
