@@ -16,12 +16,16 @@
 		onPreviewChange,
 		onStartEdit,
 		onStopEdit,
+		focusedAnnotationId = null,
+		onFocusConsumed,
 	}: {
 		onFlyToAnnotation?: (ann: Annotation) => void;
 		onStartDraw?: (mode: 'point' | 'line' | 'area') => void;
 		onPreviewChange?: (geometry: string | null, color: string) => void;
 		onStartEdit?: (id: string) => void;
 		onStopEdit?: () => void;
+		focusedAnnotationId?: string | null;
+		onFocusConsumed?: () => void;
 	} = $props();
 
 	let creating = $state(false);
@@ -45,6 +49,28 @@
 	// Filter state
 	let filterCategory = $state<AnnotationCategory | ''>('');
 	let filterExpanded = $state(false);
+
+	// Focused annotation highlight
+	let highlightedId = $state<string | null>(null);
+	let highlightTimer: ReturnType<typeof setTimeout> | null = null;
+
+	$effect(() => {
+		if (!focusedAnnotationId) return;
+		// Use a microtask to allow the DOM to render the entries first
+		const id = focusedAnnotationId;
+		onFocusConsumed?.();
+		requestAnimationFrame(() => {
+			const el = document.querySelector(`[data-annotation-id="${id}"]`) as HTMLElement | null;
+			if (el) {
+				el.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+				highlightedId = id;
+				if (highlightTimer) clearTimeout(highlightTimer);
+				highlightTimer = setTimeout(() => {
+					highlightedId = null;
+				}, 2000);
+			}
+		});
+	});
 
 	// Status dropdown
 	let statusDropdownId = $state<string | null>(null);
@@ -497,9 +523,11 @@
 				<div
 					class="entry"
 					class:terminal={isTerminalStatus(ann.status)}
+					class:focused={highlightedId === ann.id}
 					style="--pri-accent: {pMeta.color}"
 					role="button"
 					tabindex="0"
+					data-annotation-id={ann.id}
 					onclick={() => handleClick(ann)}
 					onkeydown={(e) => e.key === 'Enter' && handleClick(ann)}
 				>
@@ -1093,6 +1121,25 @@
 
 	.entry:hover {
 		background: var(--color-primary);
+	}
+
+	.entry.focused {
+		animation: annotation-focus-flash 2s ease-out;
+	}
+
+	@keyframes annotation-focus-flash {
+		0% {
+			background: rgba(230, 57, 70, 0.25);
+			box-shadow: inset 0 0 0 2px var(--color-accent);
+		}
+		60% {
+			background: rgba(230, 57, 70, 0.10);
+			box-shadow: inset 0 0 0 1px var(--color-accent);
+		}
+		100% {
+			background: transparent;
+			box-shadow: none;
+		}
 	}
 
 	.entry.terminal {
