@@ -1,4 +1,4 @@
-.PHONY: build run dev clean docker frontend backend windows
+.PHONY: build run dev clean docker frontend backend windows linux-arm64
 
 VERSION ?= dev
 LDFLAGS := -ldflags "-s -w -X main.version=$(VERSION)"
@@ -23,8 +23,11 @@ dev:
 windows: frontend
 	GOOS=windows GOARCH=amd64 go build $(LDFLAGS) -o nymeria.exe ./cmd/nymeria
 
+linux-arm64: frontend
+	GOOS=linux GOARCH=arm64 CGO_ENABLED=0 go build $(LDFLAGS) -o nymeria-linux-arm64 ./cmd/nymeria
+
 clean:
-	rm -f nymeria nymeria.exe
+	rm -f nymeria nymeria.exe nymeria-linux-arm64
 	rm -rf web/build web/.svelte-kit web/node_modules
 
 docker:
