@@ -19,7 +19,7 @@ A modern, full-featured APRS client built with Go and SvelteKit. Nymeria runs as
 - Dual transport with automatic cross-transport packet deduplication
 
 **Multi-User**
-- Session management with 4-tier roles (Admin, Operator, Observer, ReadOnly)
+- Session management with 4-tier roles (Admin, Operator, Plotter, Observer)
 - Admin-approved invite flow — zero-friction field deployment, no PINs or passwords
 - Message conversation claiming per operator
 - Activity logging with CSV export

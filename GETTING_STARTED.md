@@ -212,6 +212,7 @@ Nymeria supports multiple simultaneous users with role-based access. This is des
 |------|------------------|
 | **Admin** | Everything, plus approve/deny users and manage settings |
 | **Operator** | Send messages, transmit beacons/objects, manage nets and annotations |
+| **Plotter** | Create and manage map annotations, tactical aliases, and APRS objects |
 | **Observer** | View the map, stations, messages, and dashboards (read-only) |
 
 Admins can promote or demote users after approval.
