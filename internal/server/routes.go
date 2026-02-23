@@ -81,6 +81,7 @@ func (s *Server) routes() {
 			r.Post("/annotations", s.handleCreateAnnotation)
 			r.Put("/annotations/{id}", s.handleUpdateAnnotation)
 			r.Delete("/annotations/{id}", s.handleDeleteAnnotation)
+			r.Post("/annotations/import", s.handleImportAnnotations)
 			r.Post("/annotations/{id}/status", s.handleChangeAnnotationStatus)
 			r.Post("/annotations/{id}/promote", s.handlePromoteAnnotationToMission)
 			r.Post("/annotations/{id}/link", s.handleLinkAnnotation)
@@ -2430,6 +2431,50 @@ func (s *Server) handleImportNetAnnotations(w http.ResponseWriter, r *http.Reque
 	}
 
 	imported, err := s.annMgr.ImportAnnotations(id, items)
+	if err != nil {
+		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
+		return
+	}
+
+	writeJSON(w, http.StatusCreated, imported)
+}
+
+func (s *Server) handleImportAnnotations(w http.ResponseWriter, r *http.Request) {
+	if s.annMgr == nil {
+		writeJSON(w, http.StatusServiceUnavailable, map[string]string{"error": "annotation manager not available"})
+		return
+	}
+
+	if err := r.ParseMultipartForm(10 << 20); err != nil {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid multipart form"})
+		return
+	}
+
+	file, header, err := r.FormFile("file")
+	if err != nil {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "file is required"})
+		return
+	}
+	defer file.Close()
+
+	filename := strings.ToLower(header.Filename)
+	var items []annotation.ImportItem
+
+	if strings.HasSuffix(filename, ".gpx") {
+		items, err = annotation.ParseGPXWaypoints(file)
+	} else if strings.HasSuffix(filename, ".kml") {
+		items, err = annotation.ParseKMLPlacemarks(file)
+	} else {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "unsupported file type, use .gpx or .kml"})
+		return
+	}
+
+	if err != nil {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
+		return
+	}
+
+	imported, err := s.annMgr.ImportAnnotations("", items)
 	if err != nil {
 		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
 		return

@@ -58,12 +58,17 @@ type kmlDocument struct {
 }
 
 type kmlPlacemark struct {
-	Name        string   `xml:"name"`
-	Description string   `xml:"description"`
-	Point       kmlPoint `xml:"Point"`
+	Name        string        `xml:"name"`
+	Description string        `xml:"description"`
+	Point       kmlPoint      `xml:"Point"`
+	LineString  kmlLineString `xml:"LineString"`
 }
 
 type kmlPoint struct {
+	Coordinates string `xml:"coordinates"`
+}
+
+type kmlLineString struct {
 	Coordinates string `xml:"coordinates"`
 }
 
@@ -76,30 +81,88 @@ func ParseKMLPlacemarks(r io.Reader) ([]ImportItem, error) {
 
 	var items []ImportItem
 	for i, pm := range kml.Document.Placemarks {
-		if pm.Point.Coordinates == "" {
+		// Point placemarks.
+		if pm.Point.Coordinates != "" {
+			lat, lon, err := parseKMLCoordinates(pm.Point.Coordinates)
+			if err != nil {
+				continue
+			}
+
+			name := pm.Name
+			if name == "" {
+				name = fmt.Sprintf("Point %d", i+1)
+			}
+
+			items = append(items, ImportItem{
+				Name:        name,
+				Lat:         lat,
+				Lon:         lon,
+				Description: pm.Description,
+				Category:    CategoryGeneral,
+			})
 			continue
 		}
 
-		lat, lon, err := parseKMLCoordinates(pm.Point.Coordinates)
-		if err != nil {
+		// LineString placemarks.
+		if pm.LineString.Coordinates != "" {
+			coords, err := parseKMLCoordinateList(pm.LineString.Coordinates)
+			if err != nil || len(coords) < 2 {
+				continue
+			}
+
+			name := pm.Name
+			if name == "" {
+				name = fmt.Sprintf("Route %d", i+1)
+			}
+
+			geojson := buildLineStringGeoJSON(coords)
+
+			items = append(items, ImportItem{
+				Name:         name,
+				Description:  pm.Description,
+				Category:     CategoryRoute,
+				ItemType:     TypeLine,
+				GeometryJSON: geojson,
+			})
 			continue
 		}
-
-		name := pm.Name
-		if name == "" {
-			name = fmt.Sprintf("Point %d", i+1)
-		}
-
-		items = append(items, ImportItem{
-			Name:        name,
-			Lat:         lat,
-			Lon:         lon,
-			Description: pm.Description,
-			Category:    CategoryGeneral,
-		})
 	}
 
 	return items, nil
+}
+
+// parseKMLCoordinateList parses a whitespace-separated list of "lon,lat,alt" tuples
+// and returns [][2]float64 as [lon, lat] pairs (GeoJSON order).
+func parseKMLCoordinateList(s string) ([][2]float64, error) {
+	s = strings.TrimSpace(s)
+	if s == "" {
+		return nil, fmt.Errorf("empty coordinate list")
+	}
+
+	fields := strings.Fields(s)
+	coords := make([][2]float64, 0, len(fields))
+	for _, f := range fields {
+		lat, lon, err := parseKMLCoordinates(f)
+		if err != nil {
+			continue // skip unparseable tuples
+		}
+		coords = append(coords, [2]float64{lon, lat})
+	}
+	return coords, nil
+}
+
+// buildLineStringGeoJSON builds a GeoJSON LineString from [lon,lat] pairs.
+func buildLineStringGeoJSON(coords [][2]float64) string {
+	var sb strings.Builder
+	sb.WriteString(`{"type":"LineString","coordinates":[`)
+	for i, c := range coords {
+		if i > 0 {
+			sb.WriteByte(',')
+		}
+		sb.WriteString(fmt.Sprintf("[%g,%g]", c[0], c[1]))
+	}
+	sb.WriteString("]}")
+	return sb.String()
 }
 
 // parseKMLCoordinates parses "lon,lat,alt" KML coordinate string.

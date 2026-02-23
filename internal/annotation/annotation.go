@@ -360,7 +360,7 @@ func (m *Manager) CloseNetAnnotations(netID string) error {
 	return nil
 }
 
-// ImportItem represents a parsed GPX/KML waypoint for import.
+// ImportItem represents a parsed GPX/KML waypoint or geometry for import.
 type ImportItem struct {
 	Name        string
 	ShortName   string
@@ -368,6 +368,8 @@ type ImportItem struct {
 	Lat         float64
 	Lon         float64
 	Category    string
+	ItemType    string // "point", "line", "area" — empty defaults to "point"
+	GeometryJSON string // raw GeoJSON; if set, used directly instead of Lat/Lon
 }
 
 // ImportAnnotations bulk-creates annotations from parsed GPX/KML items.
@@ -378,16 +380,26 @@ func (m *Manager) ImportAnnotations(netID string, items []ImportItem) ([]Annotat
 		if cat == "" {
 			cat = CategoryGeneral
 		}
-		geom := fmt.Sprintf(`{"type":"Point","coordinates":[%f,%f]}`, item.Lon, item.Lat)
+
+		annType := item.ItemType
+		if annType == "" {
+			annType = TypePoint
+		}
+
+		geom := item.GeometryJSON
+		if geom == "" {
+			geom = fmt.Sprintf(`{"type":"Point","coordinates":[%f,%f]}`, item.Lon, item.Lat)
+		}
+
 		ann := Annotation{
-			Type:      TypePoint,
-			Label:     item.Name,
-			ShortName: item.ShortName,
+			Type:        annType,
+			Label:       item.Name,
+			ShortName:   item.ShortName,
 			Description: item.Description,
-			Geometry:  geom,
-			Category:  cat,
-			NetID:     netID,
-			SortOrder: i,
+			Geometry:    geom,
+			Category:    cat,
+			NetID:       netID,
+			SortOrder:   i,
 		}
 		result, err := m.Create(ann)
 		if err != nil {

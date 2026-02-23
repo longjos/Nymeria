@@ -231,6 +231,11 @@ export const api = {
 
 	// Net-scoped annotations
 	netAnnotations: (netId: string) => get<Annotation[]>(`/nets/${netId}/annotations`),
+	importAnnotations: async (file: File) => {
+		const form = new FormData();
+		form.append('file', file);
+		return uploadForm<Annotation[]>(`/annotations/import`, form);
+	},
 	importNetAnnotations: async (netId: string, file: File) => {
 		const form = new FormData();
 		form.append('file', file);

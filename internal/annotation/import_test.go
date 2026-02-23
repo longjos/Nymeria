@@ -118,6 +118,132 @@ func TestParseKMLPlacemarks(t *testing.T) {
 	}
 }
 
+const testKMLLineString = `<?xml version="1.0" encoding="UTF-8"?>
+<kml xmlns="http://www.opengis.net/kml/2.2">
+  <Document>
+    <name>Test Route</name>
+    <Placemark>
+      <name>My Route</name>
+      <description>A test route</description>
+      <LineString>
+        <coordinates>
+-87.626103,35.732921,169.6
+-87.626173,35.732791,169.5
+-87.626275,35.732608,169.5
+-87.62635,35.732518,168.8
+        </coordinates>
+      </LineString>
+    </Placemark>
+  </Document>
+</kml>`
+
+const testKMLMixed = `<?xml version="1.0" encoding="UTF-8"?>
+<kml xmlns="http://www.opengis.net/kml/2.2">
+  <Document>
+    <Placemark>
+      <name>Start Point</name>
+      <description>The start</description>
+      <Point>
+        <coordinates>-87.626103,35.732921,0</coordinates>
+      </Point>
+    </Placemark>
+    <Placemark>
+      <name>Course Route</name>
+      <description>Main course</description>
+      <LineString>
+        <coordinates>
+-87.626103,35.732921,0
+-87.626173,35.732791,0
+-87.626275,35.732608,0
+        </coordinates>
+      </LineString>
+    </Placemark>
+    <Placemark>
+      <name>Finish Point</name>
+      <description>The finish</description>
+      <Point>
+        <coordinates>-87.62635,35.732518,0</coordinates>
+      </Point>
+    </Placemark>
+  </Document>
+</kml>`
+
+func TestParseKMLLineString(t *testing.T) {
+	items, err := ParseKMLPlacemarks(strings.NewReader(testKMLLineString))
+	if err != nil {
+		t.Fatalf("ParseKMLPlacemarks: %v", err)
+	}
+
+	if len(items) != 1 {
+		t.Fatalf("got %d items, want 1", len(items))
+	}
+
+	route := items[0]
+	if route.Name != "My Route" {
+		t.Errorf("name = %q, want My Route", route.Name)
+	}
+	if route.Description != "A test route" {
+		t.Errorf("desc = %q, want A test route", route.Description)
+	}
+	if route.ItemType != "line" {
+		t.Errorf("type = %q, want line", route.ItemType)
+	}
+	if route.Category != "route" {
+		t.Errorf("category = %q, want route", route.Category)
+	}
+	if route.GeometryJSON == "" {
+		t.Fatal("GeometryJSON is empty")
+	}
+	// Verify it contains valid GeoJSON structure.
+	if !strings.Contains(route.GeometryJSON, `"type":"LineString"`) {
+		t.Errorf("GeometryJSON missing LineString type: %s", route.GeometryJSON)
+	}
+	if !strings.Contains(route.GeometryJSON, `"coordinates":[`) {
+		t.Errorf("GeometryJSON missing coordinates: %s", route.GeometryJSON)
+	}
+}
+
+func TestParseKMLMixed(t *testing.T) {
+	items, err := ParseKMLPlacemarks(strings.NewReader(testKMLMixed))
+	if err != nil {
+		t.Fatalf("ParseKMLPlacemarks: %v", err)
+	}
+
+	if len(items) != 3 {
+		t.Fatalf("got %d items, want 3", len(items))
+	}
+
+	// First item: Point.
+	if items[0].Name != "Start Point" {
+		t.Errorf("items[0].Name = %q, want Start Point", items[0].Name)
+	}
+	if items[0].ItemType != "" {
+		t.Errorf("items[0].ItemType = %q, want empty (default point)", items[0].ItemType)
+	}
+	if items[0].Lat != 35.732921 {
+		t.Errorf("items[0].Lat = %f, want 35.732921", items[0].Lat)
+	}
+
+	// Second item: LineString.
+	if items[1].Name != "Course Route" {
+		t.Errorf("items[1].Name = %q, want Course Route", items[1].Name)
+	}
+	if items[1].ItemType != "line" {
+		t.Errorf("items[1].ItemType = %q, want line", items[1].ItemType)
+	}
+	if items[1].Category != "route" {
+		t.Errorf("items[1].Category = %q, want route", items[1].Category)
+	}
+
+	// Third item: Point.
+	if items[2].Name != "Finish Point" {
+		t.Errorf("items[2].Name = %q, want Finish Point", items[2].Name)
+	}
+	if items[2].ItemType != "" {
+		t.Errorf("items[2].ItemType = %q, want empty (default point)", items[2].ItemType)
+	}
+}
+
 func TestParseKMLInvalid(t *testing.T) {
 	_, err := ParseKMLPlacemarks(strings.NewReader("not xml"))
 	if err == nil {

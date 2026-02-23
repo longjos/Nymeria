@@ -285,6 +285,25 @@
 		emergency: '#ef4444'
 	};
 
+	// File import
+	let importInput = $state<HTMLInputElement>(null!);
+	let importing = $state(false);
+
+	async function handleImportFile(e: Event) {
+		const input = e.target as HTMLInputElement;
+		const file = input.files?.[0];
+		if (!file) return;
+		importing = true;
+		try {
+			await api.importAnnotations(file);
+		} catch (err: any) {
+			console.error('Import failed:', err.message);
+		} finally {
+			importing = false;
+			input.value = '';
+		}
+	}
+
 	// Inline color editing
 	let colorEditId = $state<string | null>(null);
 
@@ -333,6 +352,24 @@
 				</svg>
 			</button>
 			{#if $canPlot && !creating}
+				<button
+					class="import-btn"
+					title="Import GPX/KML file"
+					disabled={importing}
+					onclick={() => importInput.click()}
+				>
+					<svg width="14" height="14" viewBox="0 0 16 16" fill="none">
+						<path d="M2 10v3h12v-3M8 2v8M5 7l3 3 3-3" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/>
+					</svg>
+					{importing ? 'Importing...' : 'Import'}
+				</button>
+				<input
+					type="file"
+					accept=".gpx,.kml"
+					style="display:none"
+					bind:this={importInput}
+					onchange={handleImportFile}
+				/>
 				<button class="add-btn" onclick={handleStartCreate}>
 					<svg width="14" height="14" viewBox="0 0 16 16" fill="none">
 						<path d="M8 2v12M2 8h12" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/>
@@ -787,6 +824,31 @@
 	.filter-btn:hover, .filter-btn.active {
 		border-color: var(--color-accent);
 		color: var(--color-accent);
+	}
+
+	.import-btn {
+		display: flex;
+		align-items: center;
+		gap: 6px;
+		padding: 8px 12px;
+		min-height: 36px;
+		background: none;
+		border: 1px solid var(--color-primary);
+		border-radius: var(--radius-sm);
+		color: var(--color-text-muted);
+		font-size: 0.85rem;
+		cursor: pointer;
+		transition: border-color var(--duration-fast), color var(--duration-fast);
+	}
+
+	.import-btn:hover {
+		border-color: var(--color-accent);
+		color: var(--color-accent);
+	}
+
+	.import-btn:disabled {
+		opacity: 0.5;
+		cursor: not-allowed;
 	}
 
 	.add-btn {

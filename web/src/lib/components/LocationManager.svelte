@@ -277,10 +277,9 @@
 	async function handleLink(ann: Annotation) {
 		linkingIds = new Set([...linkingIds, ann.id]);
 		try {
-			const updated = await api.updateAnnotation(ann.id, { netId: net.id });
-			if (updated) {
-				annotations.update((m) => { m.set(updated.id, updated); return new Map(m); });
-			}
+			await api.updateAnnotation(ann.id, { netId: net.id });
+			// Re-fetch net annotations to guarantee the store reflects the link.
+			await refreshNetAnnotations();
 			unscopedAnnotations = unscopedAnnotations.filter(a => a.id !== ann.id);
 			showToast(`Linked "${ann.label}" to net`, 'success');
 		} catch (e: any) {
@@ -292,13 +291,29 @@
 
 	async function handleUnlink(ann: Annotation) {
 		try {
-			const updated = await api.updateAnnotation(ann.id, { netId: '' });
-			if (updated) {
-				annotations.update((m) => { m.set(updated.id, updated); return new Map(m); });
-			}
+			await api.updateAnnotation(ann.id, { netId: '' });
+			// Re-fetch net annotations to guarantee the store reflects the unlink.
+			await refreshNetAnnotations();
 			showToast(`Unlinked "${ann.label}" from net`, 'success');
 		} catch (e: any) {
 			showToast(e?.message || 'Failed to unlink annotation', 'error');
+		}
+	}
+
+	async function refreshNetAnnotations() {
+		try {
+			const fresh = await api.netAnnotations(net.id);
+			annotations.update((m) => {
+				// Remove stale net-scoped entries for this net.
+				for (const [id, a] of m) {
+					if (a.netId === net.id) m.delete(id);
+				}
+				// Merge fresh net annotations.
+				for (const a of fresh) m.set(a.id, a);
+				return new Map(m);
+			});
+		} catch {
+			// Fallback: the WS event should still update the store.
 		}
 	}
 
