@@ -47,6 +47,7 @@ type loggingDTO struct {
 
 type transportDTO struct {
 	Type     string `json:"type"`
+	Name     string `json:"name,omitempty"`
 	Host     string `json:"host,omitempty"`
 	Port     int    `json:"port,omitempty"`
 	Device   string `json:"device,omitempty"`
@@ -179,6 +180,7 @@ func toTransportDTOs(configs []transport.TransportConfig) []transportDTO {
 	for i, c := range configs {
 		result[i] = transportDTO{
 			Type:     c.Type,
+			Name:     c.Name,
 			Host:     c.Host,
 			Port:     c.Port,
 			Device:   c.Device,
@@ -201,6 +203,7 @@ func fromTransportDTOs(dtos []transportDTO, existing []transport.TransportConfig
 		}
 		result[i] = transport.TransportConfig{
 			Type:     d.Type,
+			Name:     d.Name,
 			Host:     d.Host,
 			Port:     d.Port,
 			Device:   d.Device,

@@ -127,7 +127,7 @@
 							class:errored={!!t.error}
 						></span>
 						<div class="card-title">
-							<span class="transport-name">{t.id}</span>
+							<span class="transport-name">{t.name || t.id}</span>
 							<span class="transport-type">{transportLabel(t.type)}</span>
 						</div>
 						<span class="state-label" class:connected={t.connected}>

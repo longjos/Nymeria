@@ -73,6 +73,67 @@ func TestManagerTaggedFrames(t *testing.T) {
 	}
 }
 
+func TestManagerNamedTransportSourceName(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	mgr := NewManager()
+	// Named transport uses its custom name as the display identity.
+	named := newMockTransport("serial")
+	// Unnamed transport falls back to its type.
+	bare := newMockTransport("aprsis")
+
+	mgr.AddNamed("serial-0", named, "HA2 BT TNC")
+	mgr.Add("aprsis-0", bare)
+	mgr.ConnectAll(ctx)
+
+	frame := aprs.APRSFrame{
+		Source:      aprs.Address{Call: "N0CALL"},
+		Destination: aprs.Address{Call: "APRS"},
+		Payload:     "!4903.50N/07201.75W-",
+	}
+
+	named.frames <- frame
+	select {
+	case tf := <-mgr.TaggedFrames():
+		if tf.SourceName != "HA2 BT TNC" {
+			t.Errorf("SourceName = %q, want %q", tf.SourceName, "HA2 BT TNC")
+		}
+		if tf.SourceType != "serial" {
+			t.Errorf("SourceType = %q, want %q", tf.SourceType, "serial")
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("timeout waiting for named tagged frame")
+	}
+
+	// Different payload so it isn't deduped.
+	frame2 := frame
+	frame2.Payload = "!4904.50N/07202.75W-"
+	bare.frames <- frame2
+	select {
+	case tf := <-mgr.TaggedFrames():
+		if tf.SourceName != "aprsis" {
+			t.Errorf("unnamed SourceName = %q, want type fallback %q", tf.SourceName, "aprsis")
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("timeout waiting for unnamed tagged frame")
+	}
+
+	// Statuses should carry the display name too.
+	for _, s := range mgr.Statuses() {
+		switch s.ID {
+		case "serial-0":
+			if s.Name != "HA2 BT TNC" {
+				t.Errorf("status Name = %q, want %q", s.Name, "HA2 BT TNC")
+			}
+		case "aprsis-0":
+			if s.Name != "aprsis" {
+				t.Errorf("unnamed status Name = %q, want %q", s.Name, "aprsis")
+			}
+		}
+	}
+}
+
 func TestManagerDedup(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()

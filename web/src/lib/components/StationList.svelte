@@ -13,11 +13,14 @@
 	} = $props();
 
 	let search = $state('');
-	// Empty string means "all transports". Otherwise holds a transport type.
+	// Empty string means "all transports". Otherwise holds a transport
+	// display name (custom name if configured, else the transport type).
 	let sourceFilter = $state('');
 
-	// Friendly labels for known transport types; unknown types fall back to
-	// their raw name so the UI stays generic across deployments.
+	// Friendly labels for bare transport type names, used when a transport has
+	// no custom name configured. Custom names pass through unchanged, and any
+	// unknown type falls back to its raw value, so the UI stays generic across
+	// deployments and never hardcodes deployment-specific transport instances.
 	const SOURCE_LABELS: Record<string, string> = {
 		aprsis: 'Internet',
 		kisstcp: 'KISS TCP',
@@ -28,8 +31,8 @@
 	}
 
 	// The set of transports a station has been heard on. Prefers the new
-	// `sources` array, falling back to splitting the legacy `source` summary
-	// (which may be a single value or a '+'-joined set).
+	// `sources` array (transport display names), falling back to splitting the
+	// legacy `source` summary (which may be a single value or a '+'-joined set).
 	function stationSources(s: { sources?: string[]; source?: string }): string[] {
 		if (s.sources && s.sources.length) return s.sources;
 		if (s.source) return s.source.split('+');

@@ -253,6 +253,8 @@ export interface ActivityResponse {
 export interface TransportStatus {
 	id: string;
 	type: string;
+	/** Display name: custom transport name if configured, else the type. */
+	name?: string;
 	connected: boolean;
 	lastActivity?: string;
 	error?: string;
@@ -522,6 +524,8 @@ export interface LoggingSettings {
 
 export interface TransportSettings {
 	type: string;
+	/** Optional human-friendly label for this transport instance. */
+	name?: string;
 	host?: string;
 	port?: number;
 	device?: string;
