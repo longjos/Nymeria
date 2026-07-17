@@ -334,20 +334,28 @@ func TestSourceTracking(t *testing.T) {
 	tr := NewMemoryTracker(testConfig())
 
 	pkt1 := positionPacket("W1AW", 0, 41.0, -72.0, "first")
-	tr.HandlePacket(pkt1, "RF")
+	tr.HandlePacket(pkt1, "serial")
 
 	s, _ := tr.Get("W1AW")
-	if s.Source != "RF" {
-		t.Errorf("source = %q, want %q", s.Source, "RF")
+	if s.Source != "serial" {
+		t.Errorf("source = %q, want %q", s.Source, "serial")
+	}
+	if len(s.Sources) != 1 || s.Sources[0] != "serial" {
+		t.Errorf("sources = %v, want [serial]", s.Sources)
 	}
 
 	// Different position so it won't be deduped
 	pkt2 := positionPacket("W1AW", 0, 41.001, -72.001, "second")
-	tr.HandlePacket(pkt2, "APRS-IS")
+	tr.HandlePacket(pkt2, "aprsis")
 
 	s, _ = tr.Get("W1AW")
-	if s.Source != "both" {
-		t.Errorf("source = %q, want %q after hearing from both RF and APRS-IS", s.Source, "both")
+	// The Sources set retains every transport type (sorted); the Source
+	// summary joins them with '+' rather than collapsing to "both".
+	if s.Source != "aprsis+serial" {
+		t.Errorf("source = %q, want %q after hearing on both serial and aprsis", s.Source, "aprsis+serial")
+	}
+	if len(s.Sources) != 2 || s.Sources[0] != "aprsis" || s.Sources[1] != "serial" {
+		t.Errorf("sources = %v, want [aprsis serial]", s.Sources)
 	}
 }
 

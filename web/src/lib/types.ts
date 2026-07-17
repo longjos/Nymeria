@@ -90,7 +90,10 @@ export interface Station {
 	symbol: APRSSymbol;
 	comment?: string;
 	track: TrackPoint[];
+	/** Human-readable summary of the transport(s) heard (legacy). */
 	source: string;
+	/** Set of transport types this station was heard on (e.g. "aprsis", "kisstcp", "serial"). */
+	sources?: string[];
 	weather?: WeatherData;
 	df?: DFData;
 	telemetry?: TelemetryData;

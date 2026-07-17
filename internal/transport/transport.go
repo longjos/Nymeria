@@ -54,5 +54,9 @@ type TransportStatus struct {
 // TransportFrame wraps an APRSFrame with metadata about which transport delivered it.
 type TransportFrame struct {
 	Frame  aprs.APRSFrame
-	Source string // Transport ID that received this frame
+	Source string // Transport ID that received this frame (e.g. "aprsis-0")
+	// SourceType is the transport's generic type name (e.g. "aprsis",
+	// "kisstcp", "serial"). Used for source classification without
+	// hardcoding deployment-specific transport instances.
+	SourceType string
 }

@@ -33,7 +33,14 @@ type Station struct {
 	Symbol    aprs.Symbol       `json:"symbol"`
 	Comment   string            `json:"comment,omitempty"`
 	Track     []TrackPoint      `json:"track"`
-	Source    string            `json:"source"`
+	// Source is a human-readable summary of the transport(s) this station
+	// has been heard on. Retained for backward compatibility; prefer Sources
+	// for programmatic filtering.
+	Source string `json:"source"`
+	// Sources is the set of transport types this station has been heard on
+	// (e.g. "aprsis", "kisstcp", "serial"), sorted for stable output. Driven
+	// by the transport's own type name so it stays generic across deployments.
+	Sources []string `json:"sources"`
 	Weather         *aprs.WeatherData    `json:"weather,omitempty"`
 	DF              *aprs.DFData         `json:"df,omitempty"`
 	Telemetry       *aprs.TelemetryData  `json:"telemetry,omitempty"`

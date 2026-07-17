@@ -142,7 +142,7 @@ func (m *Manager) forwardFrames(ctx context.Context, id string, t Transport) {
 				st.packetsRx.Add(1)
 			}
 
-			tf := TransportFrame{Frame: frame, Source: id}
+			tf := TransportFrame{Frame: frame, Source: id, SourceType: t.Type()}
 
 			// Send on tagged channel (non-blocking)
 			select {

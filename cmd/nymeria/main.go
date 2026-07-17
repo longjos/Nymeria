@@ -362,7 +362,7 @@ func main() {
 					continue
 				}
 				srv.BroadcastRawPacket(pkt, tf.Source)
-				tracker.HandlePacket(pkt, tf.Source)
+				tracker.HandlePacket(pkt, tf.SourceType)
 				msgEngine.HandlePacket(pkt)
 				objMgr.HandlePacket(pkt)
 				srv.HandleTacticalPacket(pkt)
