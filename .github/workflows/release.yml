@@ -4,7 +4,17 @@ on:
   push:
     tags:
       - "v*"
-  workflow_dispatch: {}
+  workflow_dispatch:
+    inputs:
+      mode:
+        description: >-
+          dry-run: build artifacts + preview notes only.
+          tag-release: bump version with git-cliff, tag HEAD, draft a release.
+        type: choice
+        default: dry-run
+        options:
+          - dry-run
+          - tag-release
 
 permissions:
   contents: write
@@ -15,8 +25,18 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@v4
+        with:
+          # git-cliff needs the full history and all tags to group commits
+          # per release and compute the next version.
+          fetch-depth: 0
+          fetch-tags: true
         # No submodules on purpose: the wiki submodule isn't needed for the
         # build and may reference an SSH URL that CI can't fetch.
+
+      - name: Install git-cliff
+        uses: taiki-e/install-action@v2
+        with:
+          tool: git-cliff@2.13.1
 
       - name: Set up pnpm
         uses: pnpm/action-setup@v4
@@ -45,14 +65,55 @@ jobs:
       - name: Run Go tests
         run: go test ./...
 
-      - name: Determine version
+      - name: Determine mode and version
         id: version
+        env:
+          INPUT_MODE: ${{ inputs.mode }}
         run: |
           if [[ "${GITHUB_REF}" == refs/tags/* ]]; then
-            echo "version=${GITHUB_REF_NAME}" >> "$GITHUB_OUTPUT"
+            MODE="tag-push"
+            VERSION="${GITHUB_REF_NAME}"
           else
-            echo "version=dev-$(git rev-parse --short HEAD)" >> "$GITHUB_OUTPUT"
+            MODE="${INPUT_MODE:-dry-run}"
+            if [[ "$MODE" == "tag-release" ]]; then
+              VERSION="$(git cliff --bumped-version)"
+              LATEST="$(git tag --list 'v*' --sort=-v:refname | head -n1)"
+              if [[ ! "$VERSION" =~ ^v[0-9] ]]; then
+                echo "::error::git-cliff --bumped-version returned '$VERSION', which does not look like a version tag." >&2
+                exit 1
+              fi
+              if [[ "$VERSION" == "$LATEST" ]]; then
+                echo "::error::No releasable commits since $LATEST — nothing to release." >&2
+                exit 1
+              fi
+            else
+              VERSION="dev-$(git rev-parse --short HEAD)"
+            fi
           fi
+          echo "mode=$MODE" >> "$GITHUB_OUTPUT"
+          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
+          echo "Mode: $MODE, version: $VERSION"
+
+      - name: Generate release notes
+        env:
+          MODE: ${{ steps.version.outputs.mode }}
+          VERSION: ${{ steps.version.outputs.version }}
+        run: |
+          case "$MODE" in
+            tag-push)
+              # Notes for the tag that was just pushed (HEAD is at the tag).
+              git cliff --current -o release-notes.md
+              ;;
+            tag-release)
+              git cliff --unreleased --tag "$VERSION" -o release-notes.md
+              ;;
+            dry-run)
+              # Preview rendering with a placeholder tag; uploaded as an artifact.
+              git cliff --unreleased --tag v99.99.99 -o release-notes.md
+              ;;
+          esac
+          echo "--- release-notes.md ---"
+          cat release-notes.md
 
       - name: Cross-compile binaries
         env:
@@ -68,23 +129,25 @@ jobs:
         run: sha256sum nymeria-linux-amd64 nymeria-linux-arm64 nymeria.exe > checksums.txt
 
       # Draft on purpose: the maintainer polishes the notes and publishes by hand.
+      # On tag-release, `gh release create` also creates the tag on HEAD.
       - name: Create draft GitHub release
-        if: startsWith(github.ref, 'refs/tags/')
+        if: steps.version.outputs.mode != 'dry-run'
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          VERSION: ${{ steps.version.outputs.version }}
         run: |
-          gh release create "${GITHUB_REF_NAME}" \
+          gh release create "$VERSION" \
             --draft \
-            --generate-notes \
-            --title "${GITHUB_REF_NAME}" \
+            --notes-file release-notes.md \
+            --title "$VERSION" \
             nymeria-linux-amd64 \
             nymeria-linux-arm64 \
             nymeria.exe \
             checksums.txt
 
-      # workflow_dispatch is verification mode: no release, just artifacts.
+      # dry-run is verification mode: no release, just artifacts + notes preview.
       - name: Upload build artifacts
-        if: ${{ !startsWith(github.ref, 'refs/tags/') }}
+        if: steps.version.outputs.mode == 'dry-run'
         uses: actions/upload-artifact@v4
         with:
           name: nymeria-${{ steps.version.outputs.version }}
@@ -93,3 +156,4 @@ jobs:
             nymeria-linux-arm64
             nymeria.exe
             checksums.txt
+            release-notes.md

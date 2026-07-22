@@ -1,0 +1,73 @@
+# git-cliff configuration for Nymeria release notes.
+# https://git-cliff.org/docs/configuration
+#
+# Used by .github/workflows/release.yml to generate draft release notes and
+# to compute the next version (`git cliff --bumped-version`).
+
+[changelog]
+# No header: `gh release create` already shows the tag as the release title,
+# so the notes start directly with the grouped sections (no version/date line).
+body = '''
+{%- for group, commits in commits | group_by(attribute="group") -%}
+## {{ group | striptags | trim | upper_first }}
+
+{% for commit in commits -%}
+- {{ commit.message | split(pat="\n") | first | trim }}
+{% endfor %}
+{% endfor -%}
+'''
+# Standard downloads footer appended to every release's notes.
+footer = '''## Downloads
+
+| File | Platform |
+|------|----------|
+| `nymeria-linux-amd64` | Linux x86-64 |
+| `nymeria.exe` | Windows x86-64 |
+| `nymeria-linux-arm64` | Raspberry Pi / ARM64 Linux |
+
+All binaries ship with `checksums.txt` (SHA-256).
+'''
+trim = false
+
+[git]
+# Parse conventional commits, but do NOT drop non-conforming ones — the
+# project's history predates the conventional-commit requirement. They are
+# routed to "Other" by the catch-all parser below.
+conventional_commits = true
+filter_unconventional = false
+split_commits = false
+protect_breaking_commits = true
+
+# Linkify PR/issue references like (#73) before parsing.
+commit_preprocessors = [
+  { pattern = '\(#([0-9]+)\)', replace = "([#${1}](https://github.com/longjos/Nymeria/issues/${1}))" },
+]
+
+# The <!-- N --> prefixes force section ordering; the template strips them.
+commit_parsers = [
+  # Noise: merges and wiki-submodule bumps never appear in release notes.
+  { message = "^Merge pull request", skip = true },
+  { message = "^Merge branch", skip = true },
+  { message = "^Update wiki submodule", skip = true },
+  # Conventional types.
+  { message = "^feat", group = "<!-- 0 -->Features" },
+  { message = "^fix", group = "<!-- 1 -->Bug Fixes" },
+  { message = "^perf", group = "<!-- 2 -->Performance" },
+  { message = "^docs", group = "<!-- 3 -->Documentation" },
+  { message = "^refactor", group = "<!-- 4 -->Refactoring" },
+  { message = "^test", group = "<!-- 5 -->Testing" },
+  { message = "^(ci|build|chore)", group = "<!-- 6 -->CI/Build" },
+  # Catch-all: legacy / non-conventional commits.
+  { message = ".*", group = "<!-- 7 -->Other" },
+]
+
+filter_commits = false
+tag_pattern = "v[0-9]*"
+topo_order = false
+sort_commits = "oldest"
+
+[bump]
+# feat → minor, fix/other → patch, breaking (`!` or BREAKING CHANGE) → major.
+features_always_bump_minor = true
+breaking_always_bump_major = true
+initial_tag = "v0.1.0"
