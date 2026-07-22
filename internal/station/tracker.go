@@ -61,11 +61,11 @@ type MemoryTracker struct {
 // NewMemoryTracker creates a new in-memory tracker with the given config.
 func NewMemoryTracker(cfg config.StationConfig) *MemoryTracker {
 	return &MemoryTracker{
-		stations:  make(map[string]Station),
-		cfg:       cfg,
-		events:    make(chan Event, 256),
-		done:      make(chan struct{}),
-		dedupBuf:  make([]dedupEntry, 0, 256),
+		stations: make(map[string]Station),
+		cfg:      cfg,
+		events:   make(chan Event, 256),
+		done:     make(chan struct{}),
+		dedupBuf: make([]dedupEntry, 0, 256),
 	}
 }
 
@@ -423,8 +423,10 @@ func (t *MemoryTracker) handleTelemetryMeta(pkt *aprs.Packet) {
 
 // applySource records that a station was heard on the given transport source,
 // maintaining the Sources set and a derived human-readable Source summary.
-// The source value is the transport's own type name (e.g. "aprsis"), so the
-// tracker stays generic and never hardcodes deployment specifics.
+// The source value is the transport's display name (configured Name, falling
+// back to Type), so the tracker stays generic and never hardcodes deployment
+// specifics. Sources is updated copy-on-write so previously emitted/returned
+// Station values that share the old slice are not corrupted by sort.Strings.
 func (t *MemoryTracker) applySource(s *Station, source string) {
 	if source == "" {
 		return
@@ -434,8 +436,13 @@ func (t *MemoryTracker) applySource(s *Station, source string) {
 			return // already recorded
 		}
 	}
-	s.Sources = append(s.Sources, source)
-	sort.Strings(s.Sources)
+	// Copy-on-write: never mutate the existing backing array (shared by
+	// Get/List/event Station copies).
+	next := make([]string, 0, len(s.Sources)+1)
+	next = append(next, s.Sources...)
+	next = append(next, source)
+	sort.Strings(next)
+	s.Sources = next
 	s.Source = summarizeSources(s.Sources)
 }
 

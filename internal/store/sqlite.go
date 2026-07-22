@@ -6,6 +6,9 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"regexp"
+	"sort"
+	"strings"
 	"time"
 
 	"github.com/narvel/nymeria/internal/message"
@@ -14,7 +17,7 @@ import (
 	_ "modernc.org/sqlite"
 )
 
-const currentSchemaVersion = 19
+const currentSchemaVersion = 20
 
 // SQLiteStore implements Store using modernc.org/sqlite.
 type SQLiteStore struct {
@@ -188,6 +191,12 @@ func (s *SQLiteStore) migrate() error {
 		}
 	}
 
+	if version < 20 {
+		if err := s.migrateV20(); err != nil {
+			return err
+		}
+	}
+
 	return nil
 }
 
@@ -273,14 +282,23 @@ func (s *SQLiteStore) SaveStation(st station.Station) error {
 		symCode = sql.NullString{String: string(st.Symbol.Code), Valid: true}
 	}
 
+	sourcesJSON := "[]"
+	if len(st.Sources) > 0 {
+		b, err := json.Marshal(st.Sources)
+		if err != nil {
+			return fmt.Errorf("marshal sources: %w", err)
+		}
+		sourcesJSON = string(b)
+	}
+
 	_, err := s.db.Exec(`
 		INSERT OR REPLACE INTO stations
-			(callsign, ssid, last_heard, lat, lon, altitude, speed, course, symbol_table, symbol_code, comment, source)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+			(callsign, ssid, last_heard, lat, lon, altitude, speed, course, symbol_table, symbol_code, comment, source, sources)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
 		st.Callsign, st.SSID, st.LastHeard.UTC(),
 		lat, lon, alt, spd, crs,
 		symTable, symCode,
-		st.Comment, st.Source,
+		st.Comment, st.Source, sourcesJSON,
 	)
 	if err != nil {
 		return fmt.Errorf("save station: %w", err)
@@ -291,7 +309,7 @@ func (s *SQLiteStore) SaveStation(st station.Station) error {
 func (s *SQLiteStore) LoadStations() ([]station.Station, error) {
 	rows, err := s.db.Query(`
 		SELECT callsign, ssid, last_heard, lat, lon, altitude, speed, course,
-		       symbol_table, symbol_code, comment, source
+		       symbol_table, symbol_code, comment, source, sources
 		FROM stations`)
 	if err != nil {
 		return nil, fmt.Errorf("query stations: %w", err)
@@ -305,12 +323,13 @@ func (s *SQLiteStore) LoadStations() ([]station.Station, error) {
 		var lat, lon, alt, spd, crs sql.NullFloat64
 		var symTable, symCode sql.NullString
 		var comment, source sql.NullString
+		var sourcesJSON string
 
 		if err := rows.Scan(
 			&st.Callsign, &st.SSID, &lastHeard,
 			&lat, &lon, &alt, &spd, &crs,
 			&symTable, &symCode,
-			&comment, &source,
+			&comment, &source, &sourcesJSON,
 		); err != nil {
 			return nil, fmt.Errorf("scan station: %w", err)
 		}
@@ -355,6 +374,13 @@ func (s *SQLiteStore) LoadStations() ([]station.Station, error) {
 		}
 		if source.Valid {
 			st.Source = source.String
+		}
+
+		st.Sources = []string{}
+		if sourcesJSON != "" && sourcesJSON != "[]" {
+			if err := json.Unmarshal([]byte(sourcesJSON), &st.Sources); err != nil {
+				return nil, fmt.Errorf("unmarshal sources: %w", err)
+			}
 		}
 
 		stations = append(stations, st)
@@ -2338,6 +2364,102 @@ CREATE INDEX IF NOT EXISTS idx_checkpoint_passages_time ON checkpoint_passages(p
 		return fmt.Errorf("clear schema_version: %w", err)
 	}
 	if _, err := s.db.Exec("INSERT INTO schema_version (version) VALUES (?)", 19); err != nil {
+		return fmt.Errorf("set schema_version: %w", err)
+	}
+
+	return nil
+}
+
+// legacySourceIDRe matches old transport instance IDs like "aprsis-0", "kisstcp-1".
+var legacySourceIDRe = regexp.MustCompile(`^(aprsis|kisstcp|serial)-[0-9]+$`)
+
+// normalizeLegacySources converts a legacy stations.source value into a sorted,
+// deduplicated list of transport display names suitable for the sources column.
+// Instance IDs ("aprsis-0") collapse to their type prefix; "both" and empty
+// tokens are dropped; custom names are kept verbatim.
+func normalizeLegacySources(source string) []string {
+	if source == "" {
+		return nil
+	}
+	parts := strings.Split(source, "+")
+	seen := make(map[string]struct{})
+	var out []string
+	for _, p := range parts {
+		tok := strings.TrimSpace(p)
+		if tok == "" || tok == "both" {
+			continue
+		}
+		if m := legacySourceIDRe.FindStringSubmatch(tok); m != nil {
+			tok = m[1]
+		}
+		if _, ok := seen[tok]; ok {
+			continue
+		}
+		seen[tok] = struct{}{}
+		out = append(out, tok)
+	}
+	sort.Strings(out)
+	return out
+}
+
+func (s *SQLiteStore) migrateV20() error {
+	if _, err := s.db.Exec("ALTER TABLE stations ADD COLUMN sources TEXT NOT NULL DEFAULT '[]'"); err != nil {
+		if !isDuplicateColumnError(err) {
+			return fmt.Errorf("migrate v20 add sources column: %w", err)
+		}
+	}
+
+	rows, err := s.db.Query(`SELECT callsign, ssid, source FROM stations WHERE source IS NOT NULL AND source != ''`)
+	if err != nil {
+		return fmt.Errorf("migrate v20 select stations: %w", err)
+	}
+	defer rows.Close()
+
+	type stationSourceRow struct {
+		callsign string
+		ssid     int
+		source   string
+	}
+	var toUpdate []stationSourceRow
+	for rows.Next() {
+		var r stationSourceRow
+		var source sql.NullString
+		if err := rows.Scan(&r.callsign, &r.ssid, &source); err != nil {
+			return fmt.Errorf("migrate v20 scan station: %w", err)
+		}
+		if source.Valid {
+			r.source = source.String
+		}
+		toUpdate = append(toUpdate, r)
+	}
+	if err := rows.Err(); err != nil {
+		return fmt.Errorf("migrate v20 iterate stations: %w", err)
+	}
+	rows.Close()
+
+	for _, r := range toUpdate {
+		tokens := normalizeLegacySources(r.source)
+		sourcesJSON := "[]"
+		if len(tokens) > 0 {
+			b, err := json.Marshal(tokens)
+			if err != nil {
+				return fmt.Errorf("migrate v20 marshal sources for %s-%d: %w", r.callsign, r.ssid, err)
+			}
+			sourcesJSON = string(b)
+		}
+		newSource := strings.Join(tokens, "+")
+		if _, err := s.db.Exec(
+			`UPDATE stations SET sources = ?, source = ? WHERE callsign = ? AND ssid = ?`,
+			sourcesJSON, newSource, r.callsign, r.ssid,
+		); err != nil {
+			return fmt.Errorf("migrate v20 update station %s-%d: %w", r.callsign, r.ssid, err)
+		}
+	}
+
+	if _, err := s.db.Exec("DELETE FROM schema_version"); err != nil {
+		return fmt.Errorf("clear schema_version: %w", err)
+	}
+	if _, err := s.db.Exec("INSERT INTO schema_version (version) VALUES (?)", 20); err != nil {
 		return fmt.Errorf("set schema_version: %w", err)
 	}
 

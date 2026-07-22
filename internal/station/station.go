@@ -26,24 +26,24 @@ type TrackPoint struct {
 
 // Station represents a tracked APRS station.
 type Station struct {
-	Callsign  string            `json:"callsign"`
-	SSID      int               `json:"ssid"`
-	LastHeard time.Time         `json:"lastHeard"`
-	Position  *Position         `json:"position,omitempty"`
-	Symbol    aprs.Symbol       `json:"symbol"`
-	Comment   string            `json:"comment,omitempty"`
-	Track     []TrackPoint      `json:"track"`
+	Callsign  string       `json:"callsign"`
+	SSID      int          `json:"ssid"`
+	LastHeard time.Time    `json:"lastHeard"`
+	Position  *Position    `json:"position,omitempty"`
+	Symbol    aprs.Symbol  `json:"symbol"`
+	Comment   string       `json:"comment,omitempty"`
+	Track     []TrackPoint `json:"track"`
 	// Source is a human-readable summary of the transport(s) this station
 	// has been heard on. Retained for backward compatibility; prefer Sources
 	// for programmatic filtering.
 	Source string `json:"source"`
-	// Sources is the set of transport types this station has been heard on
-	// (e.g. "aprsis", "kisstcp", "serial"), sorted for stable output. Driven
-	// by the transport's own type name so it stays generic across deployments.
-	Sources []string `json:"sources"`
-	Weather         *aprs.WeatherData    `json:"weather,omitempty"`
-	DF              *aprs.DFData         `json:"df,omitempty"`
-	Telemetry       *aprs.TelemetryData  `json:"telemetry,omitempty"`
+	// Sources is the set of transport display names this station has been
+	// heard on (the configured custom transport Name, falling back to the
+	// Type, e.g. "aprsis", "kisstcp", "serial"), sorted for stable output.
+	Sources         []string              `json:"sources"`
+	Weather         *aprs.WeatherData     `json:"weather,omitempty"`
+	DF              *aprs.DFData          `json:"df,omitempty"`
+	Telemetry       *aprs.TelemetryData   `json:"telemetry,omitempty"`
 	TelemetryParams *aprs.TelemetryParams `json:"telemetryParams,omitempty"`
 }
 
@@ -51,9 +51,9 @@ type Station struct {
 type EventType int
 
 const (
-	EventNewStation    EventType = iota // A station was seen for the first time.
-	EventStationUpdate                  // An existing station was updated.
-	EventStationExpired                 // A station was removed due to age.
+	EventNewStation     EventType = iota // A station was seen for the first time.
+	EventStationUpdate                   // An existing station was updated.
+	EventStationExpired                  // A station was removed due to age.
 )
 
 // Event represents a change in station tracking state.

@@ -111,6 +111,58 @@ func TestSaveAndLoadStationsRoundtrip(t *testing.T) {
 	}
 }
 
+func TestSaveAndLoadStationSourcesRoundtrip(t *testing.T) {
+	s, _ := newTestStore(t)
+	defer s.Close()
+
+	now := time.Now().Truncate(time.Second).UTC()
+
+	withSources := station.Station{
+		Callsign:  "N0SRC",
+		SSID:      1,
+		LastHeard: now,
+		Source:    "aprsis+serial",
+		Sources:   []string{"aprsis", "serial"},
+	}
+	if err := s.SaveStation(withSources); err != nil {
+		t.Fatalf("SaveStation (with sources) failed: %v", err)
+	}
+
+	nilSources := station.Station{
+		Callsign:  "N0NIL",
+		SSID:      0,
+		LastHeard: now,
+		Source:    "aprsis",
+		Sources:   nil,
+	}
+	if err := s.SaveStation(nilSources); err != nil {
+		t.Fatalf("SaveStation (nil sources) failed: %v", err)
+	}
+
+	loaded, err := s.LoadStations()
+	if err != nil {
+		t.Fatalf("LoadStations failed: %v", err)
+	}
+	if len(loaded) != 2 {
+		t.Fatalf("expected 2 stations, got %d", len(loaded))
+	}
+
+	byCall := make(map[string]station.Station, len(loaded))
+	for _, st := range loaded {
+		byCall[st.Callsign] = st
+	}
+
+	got := byCall["N0SRC"]
+	if len(got.Sources) != 2 || got.Sources[0] != "aprsis" || got.Sources[1] != "serial" {
+		t.Errorf("N0SRC sources: got %v, want [aprsis serial]", got.Sources)
+	}
+
+	gotNil := byCall["N0NIL"]
+	if len(gotNil.Sources) != 0 {
+		t.Errorf("N0NIL sources: got %v, want empty", gotNil.Sources)
+	}
+}
+
 func TestSaveStationWithoutPosition(t *testing.T) {
 	s, _ := newTestStore(t)
 	defer s.Close()
@@ -553,8 +605,8 @@ func TestV2SchemaVersion(t *testing.T) {
 	if err != nil {
 		t.Fatalf("query schema_version: %v", err)
 	}
-	if version != 19 {
-		t.Errorf("expected schema version 19, got %d", version)
+	if version != 20 {
+		t.Errorf("expected schema version 20, got %d", version)
 	}
 }
 
@@ -1053,8 +1105,8 @@ func TestV3SchemaVersion(t *testing.T) {
 	if err != nil {
 		t.Fatalf("query schema_version: %v", err)
 	}
-	if version != 19 {
-		t.Errorf("expected schema version 19, got %d", version)
+	if version != 20 {
+		t.Errorf("expected schema version 20, got %d", version)
 	}
 }
 
@@ -1569,15 +1621,15 @@ func TestNetMissionLocationFields(t *testing.T) {
 	now := time.Now().Truncate(time.Second).UTC()
 	lat, lon := 34.0522, -118.2437
 	m := NetMission{
-		ID:         "m-loc",
-		NetID:      "net-1",
-		Title:      "Shelter Setup",
-		Priority:   "priority",
-		Status:     "open",
-		Location:   "Red Cross Shelter #3",
-		Lat:        &lat,
-		Lon:        &lon,
-		CreatedAt:  now,
+		ID:        "m-loc",
+		NetID:     "net-1",
+		Title:     "Shelter Setup",
+		Priority:  "priority",
+		Status:    "open",
+		Location:  "Red Cross Shelter #3",
+		Lat:       &lat,
+		Lon:       &lon,
+		CreatedAt: now,
 	}
 	if err := s.SaveNetMission(m); err != nil {
 		t.Fatalf("SaveNetMission failed: %v", err)
@@ -1675,8 +1727,8 @@ func TestV5MigrationAddsTrackedStationsColumn(t *testing.T) {
 
 	var version int
 	s.db.QueryRow("SELECT version FROM schema_version LIMIT 1").Scan(&version)
-	if version != 19 {
-		t.Errorf("expected schema version 19, got %d", version)
+	if version != 20 {
+		t.Errorf("expected schema version 20, got %d", version)
 	}
 }
 
@@ -1782,8 +1834,8 @@ func TestV6MigrationCreatesTacticalAliasesTable(t *testing.T) {
 
 	var version int
 	s.db.QueryRow("SELECT version FROM schema_version LIMIT 1").Scan(&version)
-	if version != 19 {
-		t.Errorf("expected schema version 19, got %d", version)
+	if version != 20 {
+		t.Errorf("expected schema version 20, got %d", version)
 	}
 }
 
@@ -1950,8 +2002,8 @@ func TestV7MigrationAddsAnnotationColumns(t *testing.T) {
 
 	var version int
 	s.db.QueryRow("SELECT version FROM schema_version LIMIT 1").Scan(&version)
-	if version != 19 {
-		t.Errorf("expected schema version 19, got %d", version)
+	if version != 20 {
+		t.Errorf("expected schema version 20, got %d", version)
 	}
 }
 
@@ -2253,8 +2305,8 @@ func TestMigrateV8CreatesOperationsTable(t *testing.T) {
 
 	var version int
 	s.db.QueryRow("SELECT version FROM schema_version LIMIT 1").Scan(&version)
-	if version != 19 {
-		t.Errorf("expected schema version 19, got %d", version)
+	if version != 20 {
+		t.Errorf("expected schema version 20, got %d", version)
 	}
 
 	// Verify operations table exists by doing a query.
@@ -2273,8 +2325,8 @@ func TestMigrateV11AddsOpsViewColumns(t *testing.T) {
 
 	var version int
 	s.db.QueryRow("SELECT version FROM schema_version LIMIT 1").Scan(&version)
-	if version != 19 {
-		t.Errorf("expected schema version 19, got %d", version)
+	if version != 20 {
+		t.Errorf("expected schema version 20, got %d", version)
 	}
 
 	// Verify ops_view columns exist.
@@ -2663,8 +2715,8 @@ func TestMigrateV13CreatesTelemetryReadingsTable(t *testing.T) {
 
 	var version int
 	s.db.QueryRow("SELECT version FROM schema_version LIMIT 1").Scan(&version)
-	if version != 19 {
-		t.Errorf("expected schema version 19, got %d", version)
+	if version != 20 {
+		t.Errorf("expected schema version 20, got %d", version)
 	}
 }
 
@@ -2907,8 +2959,8 @@ func TestMigrateV16(t *testing.T) {
 	if err != nil {
 		t.Fatalf("query schema_version: %v", err)
 	}
-	if version != 19 {
-		t.Errorf("expected schema version 19, got %d", version)
+	if version != 20 {
+		t.Errorf("expected schema version 20, got %d", version)
 	}
 }
 
@@ -3188,8 +3240,8 @@ func TestMigrateV19CreatesCheckpointTables(t *testing.T) {
 	if err := s.db.QueryRow("SELECT version FROM schema_version LIMIT 1").Scan(&version); err != nil {
 		t.Fatalf("read schema_version: %v", err)
 	}
-	if version != 19 {
-		t.Errorf("expected schema version 19, got %d", version)
+	if version != 20 {
+		t.Errorf("expected schema version 20, got %d", version)
 	}
 
 	// Verify tables exist.
@@ -3199,5 +3251,163 @@ func TestMigrateV19CreatesCheckpointTables(t *testing.T) {
 		if err != nil || count != 1 {
 			t.Errorf("table %q not found", table)
 		}
+	}
+}
+
+func TestNormalizeLegacySources(t *testing.T) {
+	tests := []struct {
+		in   string
+		want []string
+	}{
+		{"aprsis-0", []string{"aprsis"}},
+		{"both", nil},
+		{"aprsis+serial", []string{"aprsis", "serial"}},
+		{"HA2 BT TNC", []string{"HA2 BT TNC"}},
+		{"kisstcp-1", []string{"kisstcp"}},
+		{"serial-0", []string{"serial"}},
+		{"serial+aprsis", []string{"aprsis", "serial"}},
+		{"aprsis-0+kisstcp-1", []string{"aprsis", "kisstcp"}},
+		{"both+aprsis", []string{"aprsis"}},
+		{"aprsis+aprsis-0", []string{"aprsis"}},
+		{"", nil},
+		{"  ", nil},
+	}
+	for _, tt := range tests {
+		got := normalizeLegacySources(tt.in)
+		if len(got) != len(tt.want) {
+			t.Errorf("normalizeLegacySources(%q) = %v, want %v", tt.in, got, tt.want)
+			continue
+		}
+		for i := range got {
+			if got[i] != tt.want[i] {
+				t.Errorf("normalizeLegacySources(%q) = %v, want %v", tt.in, got, tt.want)
+				break
+			}
+		}
+	}
+}
+
+func TestMigrateV20NormalizesLegacySources(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "pre-v20.db")
+
+	// Build a minimal pre-v20 database (schema 19, no sources column).
+	db, err := sql.Open("sqlite", path)
+	if err != nil {
+		t.Fatalf("open raw db: %v", err)
+	}
+	for _, stmt := range []string{
+		`CREATE TABLE schema_version (version INTEGER NOT NULL)`,
+		`INSERT INTO schema_version (version) VALUES (19)`,
+		`CREATE TABLE stations (
+			callsign TEXT NOT NULL,
+			ssid INTEGER NOT NULL DEFAULT 0,
+			last_heard DATETIME NOT NULL,
+			lat REAL,
+			lon REAL,
+			altitude REAL,
+			speed REAL,
+			course REAL,
+			symbol_table TEXT,
+			symbol_code TEXT,
+			comment TEXT,
+			source TEXT,
+			PRIMARY KEY (callsign, ssid)
+		)`,
+	} {
+		if _, err := db.Exec(stmt); err != nil {
+			db.Close()
+			t.Fatalf("setup stmt %q: %v", stmt, err)
+		}
+	}
+
+	legacy := []struct {
+		callsign string
+		source   string
+	}{
+		{"LEGACY1", "aprsis-0"},
+		{"LEGACY2", "both"},
+		{"LEGACY3", "aprsis+serial"},
+		{"LEGACY4", "HA2 BT TNC"},
+	}
+	for i, row := range legacy {
+		if _, err := db.Exec(
+			`INSERT INTO stations (callsign, ssid, last_heard, source) VALUES (?, 0, ?, ?)`,
+			row.callsign, "2020-01-01T00:00:00Z", row.source,
+		); err != nil {
+			db.Close()
+			t.Fatalf("insert legacy row %d: %v", i, err)
+		}
+	}
+	if err := db.Close(); err != nil {
+		t.Fatalf("close raw db: %v", err)
+	}
+
+	// Open with the real store so migrate() runs v20 only.
+	s := NewSQLiteStore(path)
+	if err := s.Init(); err != nil {
+		t.Fatalf("Init failed: %v", err)
+	}
+	defer s.Close()
+
+	var version int
+	if err := s.db.QueryRow("SELECT version FROM schema_version LIMIT 1").Scan(&version); err != nil {
+		t.Fatalf("read schema_version: %v", err)
+	}
+	if version != 20 {
+		t.Errorf("expected schema version 20, got %d", version)
+	}
+
+	// sources column must exist.
+	if _, err := s.db.Exec(`SELECT sources FROM stations WHERE 1=0`); err != nil {
+		t.Fatalf("stations missing sources column: %v", err)
+	}
+
+	want := map[string]struct {
+		source  string
+		sources string
+	}{
+		"LEGACY1": {source: "aprsis", sources: `["aprsis"]`},
+		"LEGACY2": {source: "", sources: `[]`},
+		"LEGACY3": {source: "aprsis+serial", sources: `["aprsis","serial"]`},
+		"LEGACY4": {source: "HA2 BT TNC", sources: `["HA2 BT TNC"]`},
+	}
+
+	for callsign, exp := range want {
+		var source, sources string
+		err := s.db.QueryRow(
+			`SELECT source, sources FROM stations WHERE callsign = ? AND ssid = 0`, callsign,
+		).Scan(&source, &sources)
+		if err != nil {
+			t.Errorf("%s: query failed: %v", callsign, err)
+			continue
+		}
+		if source != exp.source {
+			t.Errorf("%s source: got %q, want %q", callsign, source, exp.source)
+		}
+		if sources != exp.sources {
+			t.Errorf("%s sources: got %q, want %q", callsign, sources, exp.sources)
+		}
+	}
+
+	// Also verify via LoadStations hydration.
+	loaded, err := s.LoadStations()
+	if err != nil {
+		t.Fatalf("LoadStations failed: %v", err)
+	}
+	byCall := make(map[string]station.Station, len(loaded))
+	for _, st := range loaded {
+		byCall[st.Callsign] = st
+	}
+	if got := byCall["LEGACY1"]; len(got.Sources) != 1 || got.Sources[0] != "aprsis" || got.Source != "aprsis" {
+		t.Errorf("LEGACY1 loaded: source=%q sources=%v", got.Source, got.Sources)
+	}
+	if got := byCall["LEGACY2"]; len(got.Sources) != 0 || got.Source != "" {
+		t.Errorf("LEGACY2 loaded: source=%q sources=%v", got.Source, got.Sources)
+	}
+	if got := byCall["LEGACY3"]; len(got.Sources) != 2 || got.Sources[0] != "aprsis" || got.Sources[1] != "serial" || got.Source != "aprsis+serial" {
+		t.Errorf("LEGACY3 loaded: source=%q sources=%v", got.Source, got.Sources)
+	}
+	if got := byCall["LEGACY4"]; len(got.Sources) != 1 || got.Sources[0] != "HA2 BT TNC" || got.Source != "HA2 BT TNC" {
+		t.Errorf("LEGACY4 loaded: source=%q sources=%v", got.Source, got.Sources)
 	}
 }
