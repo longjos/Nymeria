@@ -1,0 +1,95 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - "v*"
+  workflow_dispatch: {}
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        # No submodules on purpose: the wiki submodule isn't needed for the
+        # build and may reference an SSH URL that CI can't fetch.
+
+      - name: Set up pnpm
+        uses: pnpm/action-setup@v4
+        with:
+          version: 10
+
+      - name: Set up Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+          cache-dependency-path: web/pnpm-lock.yaml
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+
+      - name: Build frontend
+        working-directory: web
+        run: |
+          pnpm install --frozen-lockfile
+          pnpm build
+
+      # web/build/ now exists, so the go:embed directive resolves.
+      - name: Run Go tests
+        run: go test ./...
+
+      - name: Determine version
+        id: version
+        run: |
+          if [[ "${GITHUB_REF}" == refs/tags/* ]]; then
+            echo "version=${GITHUB_REF_NAME}" >> "$GITHUB_OUTPUT"
+          else
+            echo "version=dev-$(git rev-parse --short HEAD)" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Cross-compile binaries
+        env:
+          CGO_ENABLED: "0"
+          VERSION: ${{ steps.version.outputs.version }}
+        run: |
+          LDFLAGS="-s -w -X main.version=${VERSION}"
+          GOOS=linux   GOARCH=amd64 go build -ldflags "$LDFLAGS" -o nymeria-linux-amd64 ./cmd/nymeria
+          GOOS=linux   GOARCH=arm64 go build -ldflags "$LDFLAGS" -o nymeria-linux-arm64 ./cmd/nymeria
+          GOOS=windows GOARCH=amd64 go build -ldflags "$LDFLAGS" -o nymeria.exe ./cmd/nymeria
+
+      - name: Generate checksums
+        run: sha256sum nymeria-linux-amd64 nymeria-linux-arm64 nymeria.exe > checksums.txt
+
+      # Draft on purpose: the maintainer polishes the notes and publishes by hand.
+      - name: Create draft GitHub release
+        if: startsWith(github.ref, 'refs/tags/')
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          gh release create "${GITHUB_REF_NAME}" \
+            --draft \
+            --generate-notes \
+            --title "${GITHUB_REF_NAME}" \
+            nymeria-linux-amd64 \
+            nymeria-linux-arm64 \
+            nymeria.exe \
+            checksums.txt
+
+      # workflow_dispatch is verification mode: no release, just artifacts.
+      - name: Upload build artifacts
+        if: ${{ !startsWith(github.ref, 'refs/tags/') }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: nymeria-${{ steps.version.outputs.version }}
+          path: |
+            nymeria-linux-amd64
+            nymeria-linux-arm64
+            nymeria.exe
+            checksums.txt
