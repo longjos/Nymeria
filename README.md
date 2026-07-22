@@ -64,7 +64,7 @@ A modern, full-featured APRS client built with Go and SvelteKit. Nymeria runs as
 
 ### Prerequisites
 
-- Go 1.24+
+- Go 1.25+
 - Node.js 22+ with pnpm
 - Make
 
@@ -172,9 +172,18 @@ make lint       # Run go vet
 make dev        # Frontend dev server + Go backend with hot reload
 make windows    # Cross-compile for Windows (amd64)
 make desktop-windows   # Cross-compile the Windows desktop app (Wails v3)
+make desktop-syso      # Regenerate the desktop exe icon/manifest from build/appicon.png
 make docker     # Build Docker image
 make clean      # Remove build artifacts
 ```
+
+The Windows desktop app is a plain cross-compiled exe (built with
+`-H=windowsgui`) whose icon and GUI manifest come from the committed
+`cmd/nymeria-desktop/rsrc_windows_amd64.syso`, generated from
+`build/appicon.png` via `make desktop-syso`. The `wails3 package` tooling
+(NSIS installer + WebView2 bootstrapper) expects a full wails project
+scaffold and is deferred to a follow-up issue; until then the exe is
+distributed as-is.
 
 ### Project Structure
 

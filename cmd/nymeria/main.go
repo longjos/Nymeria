@@ -33,13 +33,16 @@ func main() {
 		if !os.IsNotExist(err) {
 			log.Fatalf("failed to load config: %v", err)
 		}
+		// Load already returned defaults with env overrides applied.
 		log.Println("no config file found, using defaults")
-		cfg = config.DefaultConfig()
 	}
 
-	// Override listen address if provided
+	// Override listen address if provided. Kept out of cfg on purpose: the
+	// settings API snapshots cfg, and a CLI override must never be persisted
+	// back into the YAML by a settings save.
+	listen := cfg.Server.Listen
 	if *listenAddr != "" {
-		cfg.Server.Listen = *listenAddr
+		listen = *listenAddr
 	}
 
 	a, err := app.New(app.Options{
@@ -52,12 +55,17 @@ func main() {
 	}
 
 	httpSrv := &http.Server{
-		Addr:    cfg.Server.Listen,
+		Addr:    listen,
 		Handler: a.Handler(),
 	}
 
-	// Graceful shutdown on signal
+	// Graceful shutdown on signal. ListenAndServe returns as soon as
+	// Shutdown is *called*, so main must block on done until teardown
+	// (connection drain + app.Shutdown) has actually finished.
+	done := make(chan struct{})
 	go func() {
+		defer close(done)
+
 		sigCh := make(chan os.Signal, 1)
 		signal.Notify(sigCh, syscall.SIGINT, syscall.SIGTERM)
 		<-sigCh
@@ -73,9 +81,10 @@ func main() {
 		_ = a.Shutdown(appShutdownCtx)
 	}()
 
-	log.Printf("nymeria %s listening on %s", version, cfg.Server.Listen)
+	log.Printf("nymeria %s listening on %s", version, listen)
 	if err := httpSrv.ListenAndServe(); err != nil && err != http.ErrServerClosed {
 		log.Fatalf("server error: %v", err)
 	}
+	<-done
 	log.Println("stopped")
 }

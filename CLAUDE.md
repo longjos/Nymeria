@@ -53,7 +53,7 @@
 ## Architecture
 - Go + SvelteKit single binary via `go:embed`
 - Module: `github.com/narvel/nymeria`
-- Go 1.24+ required (modernc.org/sqlite)
+- Go 1.25+ required (wails v3; modernc.org/sqlite needs 1.24+)
 - Frontend in `web/`, built to `web/build/`, embedded via `web/embed.go`
 - Chi v5 router, nhooyr.io/websocket, modernc.org/sqlite, gopkg.in/yaml.v3
 - `cmd/nymeria-desktop` (Windows-only, build-tagged) wraps `internal/app` in a Wails v3 window pointed at the real localhost server; `internal/app` owns all runtime wiring.
@@ -87,4 +87,5 @@
 - Svelte 5: `<button>` inside `<button>` is a build error — use `<div role="button" tabindex="0">` for outer interactive containers that need inner buttons
 - Wails v3 pinned at `v3.0.0-alpha2.117`; never serve the chi router through Wails `AssetOptions` — the asset-interception path cannot carry the `/ws` WebSocket upgrade; the webview must load `http://127.0.0.1:<port>` from a real listener.
 - Desktop mode stores data in the per-user dir (`%APPDATA%\Nymeria` / `~/.config/nymeria`) via `config.ResolveUserPaths`; headless keeps CWD-relative defaults — never wire `ResolveUserPaths` into `cmd/nymeria`.
-- `cmd/nymeria-desktop` builds the real app only under `GOOS=windows` (stub elsewhere); never try to build a Linux Wails target (needs CGo+GTK).
+- `cmd/nymeria-desktop` builds the real app only under `GOOS=windows` (stub elsewhere); never try to build a Linux Wails target (needs CGo+GTK)
+- Desktop exe icon/manifest: committed `cmd/nymeria-desktop/rsrc_windows_amd64.syso` (regenerate from `build/appicon.png` with `make desktop-syso`); `wails3 package`/NSIS installer deferred — it expects a wails project scaffold this repo doesn't have.
