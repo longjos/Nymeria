@@ -48,6 +48,7 @@
 - `./nymeria --version` — prints version
 - `make test` — `go test ./...`
 - `make lint` — `go vet ./...`
+- `make desktop-windows` — cross-compiles the Wails v3 Windows desktop shell (`Nymeria-desktop-windows-amd64.exe`); the CI gate is `GOOS=windows GOARCH=amd64 go build ./cmd/nymeria-desktop`
 
 ## Architecture
 - Go + SvelteKit single binary via `go:embed`
@@ -55,6 +56,7 @@
 - Go 1.24+ required (modernc.org/sqlite)
 - Frontend in `web/`, built to `web/build/`, embedded via `web/embed.go`
 - Chi v5 router, nhooyr.io/websocket, modernc.org/sqlite, gopkg.in/yaml.v3
+- `cmd/nymeria-desktop` (Windows-only, build-tagged) wraps `internal/app` in a Wails v3 window pointed at the real localhost server; `internal/app` owns all runtime wiring.
 
 ## Key Patterns
 - Annotations are the unified geographic markup system (no separate "location presets") — `internal/annotation/` handles categories, net-scoping, GPX/KML import, APRS object bridge
@@ -83,3 +85,6 @@
 - Weather data flows through existing station events — WebSocket broadcasts include it automatically, no separate weather WebSocket messages needed
 - Wiki submodule push order: push `wiki/` submodule first (`cd wiki && git push origin master`), then push main repo — `git push origin main` fails if submodule ref doesn't exist on remote
 - Svelte 5: `<button>` inside `<button>` is a build error — use `<div role="button" tabindex="0">` for outer interactive containers that need inner buttons
+- Wails v3 pinned at `v3.0.0-alpha2.117`; never serve the chi router through Wails `AssetOptions` — the asset-interception path cannot carry the `/ws` WebSocket upgrade; the webview must load `http://127.0.0.1:<port>` from a real listener.
+- Desktop mode stores data in the per-user dir (`%APPDATA%\Nymeria` / `~/.config/nymeria`) via `config.ResolveUserPaths`; headless keeps CWD-relative defaults — never wire `ResolveUserPaths` into `cmd/nymeria`.
+- `cmd/nymeria-desktop` builds the real app only under `GOOS=windows` (stub elsewhere); never try to build a Linux Wails target (needs CGo+GTK).
