@@ -33,12 +33,13 @@
 - After completing a feature or issue, update `wiki/Home.md`:
   - Check off the completed item in the Development Roadmap
   - Add a "Current Status" or "Changelog" section documenting what works now
-- Commit wiki changes with the feature: `cd wiki && git add -A && git commit -m "..." && cd .. && git add wiki && git commit -m "Update wiki submodule"`
+- Commit wiki changes with the feature: `cd wiki && git add -A && git commit -m "..." && cd .. && git add wiki && git commit -m "chore: update wiki submodule"` (wiki-submodule bumps are excluded from release notes, but the conventional format still applies)
 - Keep the wiki as the living source of truth for what Nymeria can do today.
 
 ### 5. Commit Discipline
+- **Conventional Commits required** (full spec in CONTRIBUTING.md): `type(scope)!: summary`. git-cliff generates release notes and computes version bumps from these — `feat` → minor, `fix`/`perf`/`docs`/`refactor`/`test`/`ci`/`build`/`chore` → patch, `!` or `BREAKING CHANGE:` footer → major. Summary is imperative, lowercase, no trailing period, and is published verbatim in the changelog.
 - One logical change per commit. Backend and frontend for the same feature can be one commit.
-- Reference GitHub issue numbers in commit messages (e.g., `Implement APRS-IS transport (#6)`)
+- Reference GitHub issue numbers in commit messages (e.g., `feat(transport): implement APRS-IS transport (#6)`)
 - Run `make test` and `make lint` before every commit.
 
 ## Build & Run
