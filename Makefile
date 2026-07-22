@@ -18,7 +18,7 @@ dev:
 	@echo "Starting frontend dev server..."
 	cd web && pnpm dev &
 	@echo "Starting Go server..."
-	go run $(LDFLAGS) ./cmd/nymeria --dev
+	go run $(LDFLAGS) ./cmd/nymeria --listen :9090
 
 windows: frontend
 	GOOS=windows GOARCH=amd64 go build $(LDFLAGS) -o nymeria.exe ./cmd/nymeria
