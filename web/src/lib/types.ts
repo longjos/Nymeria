@@ -92,7 +92,7 @@ export interface Station {
 	track: TrackPoint[];
 	/** Human-readable summary of the transport(s) heard (legacy). */
 	source: string;
-	/** Set of transport types this station was heard on (e.g. "aprsis", "kisstcp", "serial"). */
+	/** Set of transport display names this station was heard on (custom transport name if configured, else the type). */
 	sources?: string[];
 	weather?: WeatherData;
 	df?: DFData;

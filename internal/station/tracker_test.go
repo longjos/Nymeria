@@ -359,6 +359,43 @@ func TestSourceTracking(t *testing.T) {
 	}
 }
 
+// TestApplySourceCopyOnWrite ensures applySource never mutates the Sources
+// backing array shared by previously returned Station copies (data race with
+// concurrent event marshaling when sort.Strings reorders in place).
+func TestApplySourceCopyOnWrite(t *testing.T) {
+	tr := NewMemoryTracker(testConfig())
+
+	pkt1 := positionPacket("W1AW", 0, 41.0, -72.0, "first")
+	tr.HandlePacket(pkt1, "serial")
+
+	// Capture a Station copy while Sources is just ["serial"].
+	captured, ok := tr.Get("W1AW")
+	if !ok {
+		t.Fatal("station W1AW not found after first HandlePacket")
+	}
+	if len(captured.Sources) != 1 || captured.Sources[0] != "serial" {
+		t.Fatalf("captured Sources = %v, want [serial]", captured.Sources)
+	}
+
+	// Different position so the second packet is not deduped.
+	pkt2 := positionPacket("W1AW", 0, 41.001, -72.001, "second")
+	tr.HandlePacket(pkt2, "aprsis")
+
+	// Earlier copy must remain exactly ["serial"] (length and element values).
+	if len(captured.Sources) != 1 || captured.Sources[0] != "serial" {
+		t.Errorf("captured Sources = %v, want [serial] (must not share mutated backing array)", captured.Sources)
+	}
+
+	// Fresh Get should have the sorted multi-source set.
+	fresh, ok := tr.Get("W1AW")
+	if !ok {
+		t.Fatal("station W1AW not found after second HandlePacket")
+	}
+	if len(fresh.Sources) != 2 || fresh.Sources[0] != "aprsis" || fresh.Sources[1] != "serial" {
+		t.Errorf("fresh Sources = %v, want [aprsis serial]", fresh.Sources)
+	}
+}
+
 func TestAging(t *testing.T) {
 	cfg := testConfig()
 	cfg.StaleTimeout = 50 * time.Millisecond
