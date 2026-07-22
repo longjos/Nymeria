@@ -54,9 +54,17 @@ A modern, full-featured APRS client built with Go and SvelteKit. Nymeria runs as
 
 ## Quick Start
 
+### Install Options
+
+| Option | Artifact / command | When to pick it |
+|--------|--------------------|-----------------|
+| **Windows desktop** | `Nymeria-desktop-windows-amd64.exe` from [Releases](https://github.com/longjos/Nymeria/releases) | Native tray app on a Windows laptop; uses WebView2 (preinstalled on Windows 11 and most Windows 10) and falls back to your default browser when WebView2 is missing |
+| **Headless binaries** | `nymeria-linux-amd64`, `nymeria-linux-arm64`, `nymeria-darwin-amd64`, `nymeria-darwin-arm64` (Apple Silicon), `nymeria.exe` | Servers, Raspberry Pi, Macs, or any machine where you open the UI in a browser |
+| **Docker** | `docker compose up` | Turnkey RF station bundled with Direwolf |
+
 ### Prerequisites
 
-- Go 1.24+
+- Go 1.25+
 - Node.js 22+ with pnpm
 - Make
 
@@ -163,9 +171,19 @@ make test       # Run all Go tests
 make lint       # Run go vet
 make dev        # Frontend dev server + Go backend with hot reload
 make windows    # Cross-compile for Windows (amd64)
+make desktop-windows   # Cross-compile the Windows desktop app (Wails v3)
+make desktop-syso      # Regenerate the desktop exe icon/manifest from build/appicon.png
 make docker     # Build Docker image
 make clean      # Remove build artifacts
 ```
+
+The Windows desktop app is a plain cross-compiled exe (built with
+`-H=windowsgui`) whose icon and GUI manifest come from the committed
+`cmd/nymeria-desktop/rsrc_windows_amd64.syso`, generated from
+`build/appicon.png` via `make desktop-syso`. The `wails3 package` tooling
+(NSIS installer + WebView2 bootstrapper) expects a full wails project
+scaffold and is deferred to a follow-up issue; until then the exe is
+distributed as-is.
 
 ### Project Structure
 

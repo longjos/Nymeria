@@ -207,3 +207,34 @@ station:
 		t.Errorf("callsign = %q, want W3ADO (uppercased)", cfg.Station.Callsign)
 	}
 }
+
+// A missing config file is the normal desktop first-launch case: Load must
+// still return defaults with env overrides applied so NYMERIA_* keeps
+// winning over defaults in the no-config path (#78).
+func TestEnvOverridesAppliedWhenConfigFileMissing(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "does-not-exist.yaml")
+
+	t.Setenv("NYMERIA_LISTEN", ":7071")
+	t.Setenv("NYMERIA_CALLSIGN", "w3ado")
+	t.Setenv("NYMERIA_DB_PATH", filepath.Join(dir, "env.db"))
+	t.Setenv("NYMERIA_LOG_LEVEL", "debug")
+
+	cfg, err := Load(path)
+	if !os.IsNotExist(err) {
+		t.Fatalf("Load err = %v, want os.IsNotExist", err)
+	}
+
+	if cfg.Server.Listen != ":7071" {
+		t.Errorf("listen = %q, want :7071", cfg.Server.Listen)
+	}
+	if cfg.Station.Callsign != "W3ADO" {
+		t.Errorf("callsign = %q, want W3ADO (uppercased)", cfg.Station.Callsign)
+	}
+	if want := filepath.Join(dir, "env.db"); cfg.Store.Path != want {
+		t.Errorf("store path = %q, want %q", cfg.Store.Path, want)
+	}
+	if cfg.Logging.Level != "debug" {
+		t.Errorf("log level = %q, want debug", cfg.Logging.Level)
+	}
+}

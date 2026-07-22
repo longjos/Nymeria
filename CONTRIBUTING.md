@@ -55,7 +55,7 @@ test(aprs): add Mic-E destination-field decode cases
 
 ## Development Basics
 
-- **Requirements:** Go 1.24+, pnpm 10, Node 22.
+- **Requirements:** Go 1.25+, pnpm 10, Node 22.
 - `make build` — builds the frontend (pnpm) then the Go binary (frontend must
   build first: `web/build/` is embedded via `go:embed`).
 - `make test` — `go test ./...`; `make lint` — `go vet ./...`. Both must pass

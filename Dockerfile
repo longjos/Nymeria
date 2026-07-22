@@ -11,7 +11,7 @@ COPY web/ ./
 RUN pnpm build
 
 # Stage 2: Build backend (pure Go, no CGO — modernc.org/sqlite is CGO-free)
-FROM golang:1.24-alpine AS backend
+FROM golang:1.25-alpine AS backend
 RUN apk add --no-cache git
 WORKDIR /app
 COPY go.mod go.sum ./

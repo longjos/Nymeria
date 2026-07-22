@@ -44,3 +44,11 @@ jobs:
 
       - name: Test
         run: go test ./...
+
+      # Desktop shell must keep cross-compiling from Linux (pure-Go Windows
+      # target); catches Wails/API breakage without GUI deps on the runner.
+      - name: Desktop compile gate (windows/amd64)
+        env:
+          GOOS: windows
+          GOARCH: amd64
+        run: go build -o /dev/null ./cmd/nymeria-desktop

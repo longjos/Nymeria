@@ -126,11 +126,16 @@ func DefaultConfig() Config {
 }
 
 // Load reads a config file from the given path, applying env var overrides.
+// When the file cannot be read (including os.IsNotExist), the returned Config
+// is still usable: defaults with env overrides applied. Callers that treat a
+// missing file as "run with defaults" should use the returned Config as-is so
+// NYMERIA_* overrides keep winning over defaults in that path too.
 func Load(path string) (Config, error) {
 	cfg := DefaultConfig()
 
 	data, err := os.ReadFile(path)
 	if err != nil {
+		applyEnvOverrides(&cfg)
 		return cfg, err
 	}
 
