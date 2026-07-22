@@ -36,6 +36,27 @@ func fatalf(format string, args ...any) {
 	os.Exit(1)
 }
 
+// infoBox shows an informational message box; -H=windowsgui builds have no
+// console, so this is the only way to talk to the user outside the webview.
+func infoBox(msg string) {
+	if text, err := windows.UTF16PtrFromString(msg); err == nil {
+		caption, _ := windows.UTF16PtrFromString("Nymeria")
+		_, _ = windows.MessageBox(0, text, caption, windows.MB_OK|windows.MB_ICONINFORMATION)
+	}
+}
+
+// openBrowser opens url in the user's default browser.
+func openBrowser(url string) {
+	verb, _ := windows.UTF16PtrFromString("open")
+	u, err := windows.UTF16PtrFromString(url)
+	if err != nil {
+		return
+	}
+	if err := windows.ShellExecute(0, verb, u, nil, nil, windows.SW_SHOWNORMAL); err != nil {
+		log.Printf("failed to open browser: %v", err)
+	}
+}
+
 func main() {
 	configFlag := flag.String("config", "", "path to config file")
 	listenFlag := flag.String("listen", "", "override listen address (e.g. :9090)")
@@ -51,6 +72,7 @@ func main() {
 	// against nil so it is safe from every exit path.
 	var (
 		win          *application.WebviewWindow
+		browserURL   string
 		httpSrv      *http.Server
 		a            *app.App
 		shutdownOnce sync.Once
@@ -81,6 +103,11 @@ func main() {
 				if win != nil {
 					win.Show()
 					win.Focus()
+					return
+				}
+				// Browser-mode fallback: no window to focus, re-open the UI.
+				if browserURL != "" {
+					openBrowser(browserURL)
 				}
 			},
 		},
@@ -154,32 +181,56 @@ func main() {
 	}()
 
 	url := app.LocalURL(ln.Addr().String())
+	browserURL = url
 	log.Printf("nymeria %s (desktop) serving %s", version, url)
 
-	win = wapp.Window.NewWithOptions(application.WebviewWindowOptions{
-		Title:  "Nymeria",
-		URL:    url,
-		Width:  1280,
-		Height: 800,
-	})
+	// Without the WebView2 runtime a webview window cannot exist; fall back
+	// to browser mode: keep the tray (pure win32) and the local server, and
+	// hand the UI to the user's default browser.
+	hasWebView2 := webview2Available()
+	if hasWebView2 {
+		win = wapp.Window.NewWithOptions(application.WebviewWindowOptions{
+			Title:  "Nymeria",
+			URL:    url,
+			Width:  1280,
+			Height: 800,
+		})
 
-	// Closing the window hides to tray; the HTTP server keeps serving.
-	win.RegisterHook(events.Common.WindowClosing, func(e *application.WindowEvent) {
-		win.Hide()
-		e.Cancel()
-	})
+		// Closing the window hides to tray; the HTTP server keeps serving.
+		win.RegisterHook(events.Common.WindowClosing, func(e *application.WindowEvent) {
+			win.Hide()
+			e.Cancel()
+		})
+	} else {
+		log.Printf("WebView2 runtime not found; running in browser mode at %s", url)
+	}
 
 	tray := wapp.SystemTray.New()
 	trayMenu := application.NewMenu()
-	trayMenu.Add("Show Nymeria").OnClick(func(*application.Context) {
-		win.Show()
-		win.Focus()
-	})
+	if hasWebView2 {
+		trayMenu.Add("Show Nymeria").OnClick(func(*application.Context) {
+			win.Show()
+			win.Focus()
+		})
+	} else {
+		trayMenu.Add("Open in Browser").OnClick(func(*application.Context) {
+			openBrowser(url)
+		})
+	}
 	trayMenu.Add("Quit").OnClick(func(*application.Context) {
 		wapp.Quit()
 	})
 	tray.SetMenu(trayMenu)
-	tray.AttachWindow(win)
+	if hasWebView2 {
+		tray.AttachWindow(win)
+	} else {
+		infoBox("The WebView2 runtime was not found, so Nymeria is running in browser mode.\n\n" +
+			"The app keeps running in the system tray and serves the UI at " + url + " — " +
+			"your default browser will open it now.\n\n" +
+			"To get the built-in window, install the WebView2 runtime from:\n" +
+			"https://developer.microsoft.com/microsoft-edge/webview2/")
+		openBrowser(url)
+	}
 
 	if err := wapp.Run(); err != nil {
 		shutdown()
