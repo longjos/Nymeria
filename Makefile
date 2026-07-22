@@ -1,4 +1,4 @@
-.PHONY: build run dev clean docker frontend backend windows linux-arm64 desktop-windows desktop-syso
+.PHONY: build run dev clean docker frontend backend windows linux-arm64 darwin desktop-windows desktop-syso
 
 VERSION ?= dev
 LDFLAGS := -ldflags "-s -w -X main.version=$(VERSION)"
@@ -27,6 +27,10 @@ windows: frontend
 linux-arm64: frontend
 	GOOS=linux GOARCH=arm64 CGO_ENABLED=0 go build $(LDFLAGS) -o nymeria-linux-arm64 ./cmd/nymeria
 
+darwin: frontend
+	GOOS=darwin GOARCH=amd64 CGO_ENABLED=0 go build $(LDFLAGS) -o nymeria-darwin-amd64 ./cmd/nymeria
+	GOOS=darwin GOARCH=arm64 CGO_ENABLED=0 go build $(LDFLAGS) -o nymeria-darwin-arm64 ./cmd/nymeria
+
 # The committed cmd/nymeria-desktop/rsrc_windows_amd64.syso embeds the app
 # icon + GUI manifest; `go build` links *_windows_amd64.syso automatically.
 desktop-windows: frontend
@@ -47,7 +51,7 @@ desktop-syso:
 		--out cmd/nymeria-desktop/rsrc
 
 clean:
-	rm -f nymeria nymeria.exe nymeria-linux-arm64 Nymeria-desktop-windows-amd64.exe
+	rm -f nymeria nymeria.exe nymeria-linux-arm64 nymeria-darwin-amd64 nymeria-darwin-arm64 Nymeria-desktop-windows-amd64.exe
 	rm -rf web/build web/.svelte-kit web/node_modules
 
 docker:

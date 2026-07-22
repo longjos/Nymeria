@@ -59,7 +59,7 @@ A modern, full-featured APRS client built with Go and SvelteKit. Nymeria runs as
 | Option | Artifact / command | When to pick it |
 |--------|--------------------|-----------------|
 | **Windows desktop** | `Nymeria-desktop-windows-amd64.exe` from [Releases](https://github.com/longjos/Nymeria/releases) | Native tray app on a Windows laptop; uses WebView2 (preinstalled on Windows 11 and most Windows 10) and falls back to your default browser when WebView2 is missing |
-| **Headless binaries** | `nymeria-linux-amd64`, `nymeria-linux-arm64`, `nymeria.exe` | Servers, Raspberry Pi, or any machine where you open the UI in a browser |
+| **Headless binaries** | `nymeria-linux-amd64`, `nymeria-linux-arm64`, `nymeria-darwin-amd64`, `nymeria-darwin-arm64` (Apple Silicon), `nymeria.exe` | Servers, Raspberry Pi, Macs, or any machine where you open the UI in a browser |
 | **Docker** | `docker compose up` | Turnkey RF station bundled with Direwolf |
 
 ### Prerequisites

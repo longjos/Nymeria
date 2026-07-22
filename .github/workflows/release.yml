@@ -123,6 +123,8 @@ jobs:
           LDFLAGS="-s -w -X main.version=${VERSION}"
           GOOS=linux   GOARCH=amd64 go build -ldflags "$LDFLAGS" -o nymeria-linux-amd64 ./cmd/nymeria
           GOOS=linux   GOARCH=arm64 go build -ldflags "$LDFLAGS" -o nymeria-linux-arm64 ./cmd/nymeria
+          GOOS=darwin  GOARCH=amd64 go build -ldflags "$LDFLAGS" -o nymeria-darwin-amd64 ./cmd/nymeria
+          GOOS=darwin  GOARCH=arm64 go build -ldflags "$LDFLAGS" -o nymeria-darwin-arm64 ./cmd/nymeria
           GOOS=windows GOARCH=amd64 go build -ldflags "$LDFLAGS" -o nymeria.exe ./cmd/nymeria
 
       - name: Build desktop (windows/amd64)
@@ -134,7 +136,7 @@ jobs:
             -o Nymeria-desktop-windows-amd64.exe ./cmd/nymeria-desktop
 
       - name: Generate checksums
-        run: sha256sum nymeria-linux-amd64 nymeria-linux-arm64 nymeria.exe Nymeria-desktop-windows-amd64.exe > checksums.txt
+        run: sha256sum nymeria-linux-amd64 nymeria-linux-arm64 nymeria-darwin-amd64 nymeria-darwin-arm64 nymeria.exe Nymeria-desktop-windows-amd64.exe > checksums.txt
 
       # Draft on purpose: the maintainer polishes the notes and publishes by hand.
       # On tag-release, `gh release create` also creates the tag on HEAD.
@@ -150,6 +152,8 @@ jobs:
             --title "$VERSION" \
             nymeria-linux-amd64 \
             nymeria-linux-arm64 \
+            nymeria-darwin-amd64 \
+            nymeria-darwin-arm64 \
             nymeria.exe \
             Nymeria-desktop-windows-amd64.exe \
             checksums.txt
@@ -163,6 +167,8 @@ jobs:
           path: |
             nymeria-linux-amd64
             nymeria-linux-arm64
+            nymeria-darwin-amd64
+            nymeria-darwin-arm64
             nymeria.exe
             Nymeria-desktop-windows-amd64.exe
             checksums.txt
