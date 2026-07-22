@@ -90,7 +90,10 @@ export interface Station {
 	symbol: APRSSymbol;
 	comment?: string;
 	track: TrackPoint[];
+	/** Human-readable summary of the transport(s) heard (legacy). */
 	source: string;
+	/** Set of transport types this station was heard on (e.g. "aprsis", "kisstcp", "serial"). */
+	sources?: string[];
 	weather?: WeatherData;
 	df?: DFData;
 	telemetry?: TelemetryData;
@@ -250,6 +253,8 @@ export interface ActivityResponse {
 export interface TransportStatus {
 	id: string;
 	type: string;
+	/** Display name: custom transport name if configured, else the type. */
+	name?: string;
 	connected: boolean;
 	lastActivity?: string;
 	error?: string;
@@ -519,6 +524,8 @@ export interface LoggingSettings {
 
 export interface TransportSettings {
 	type: string;
+	/** Optional human-friendly label for this transport instance. */
+	name?: string;
 	host?: string;
 	port?: number;
 	device?: string;

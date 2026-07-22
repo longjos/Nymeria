@@ -3,6 +3,7 @@ package station
 import (
 	"context"
 	"hash/fnv"
+	"sort"
 	"strings"
 	"sync"
 	"time"
@@ -132,7 +133,7 @@ func (t *MemoryTracker) HandlePacket(pkt *aprs.Packet, source string) {
 	}
 	s.Symbol = pos.Symbol
 	s.Comment = pos.Comment
-	s.Source = t.mergeSource(s.Source, source)
+	t.applySource(&s, source)
 	if pkt.Weather != nil {
 		s.Weather = pkt.Weather
 	}
@@ -373,7 +374,7 @@ func (t *MemoryTracker) handleTelemetryPacket(pkt *aprs.Packet, source string) {
 
 	existing.Telemetry = pkt.Telemetry
 	existing.LastHeard = time.Now()
-	existing.Source = t.mergeSource(existing.Source, source)
+	t.applySource(&existing, source)
 	t.stations[key] = existing
 	t.mu.Unlock()
 
@@ -420,12 +421,35 @@ func (t *MemoryTracker) handleTelemetryMeta(pkt *aprs.Packet) {
 	t.emit(Event{Type: EventStationUpdate, Station: existing})
 }
 
-// mergeSource returns the combined source string.
-func (t *MemoryTracker) mergeSource(existing, incoming string) string {
-	if existing == "" || existing == incoming {
-		return incoming
+// applySource records that a station was heard on the given transport source,
+// maintaining the Sources set and a derived human-readable Source summary.
+// The source value is the transport's own type name (e.g. "aprsis"), so the
+// tracker stays generic and never hardcodes deployment specifics.
+func (t *MemoryTracker) applySource(s *Station, source string) {
+	if source == "" {
+		return
 	}
-	return "both"
+	for _, existing := range s.Sources {
+		if existing == source {
+			return // already recorded
+		}
+	}
+	s.Sources = append(s.Sources, source)
+	sort.Strings(s.Sources)
+	s.Source = summarizeSources(s.Sources)
+}
+
+// summarizeSources renders the transport set as a compact human-readable
+// summary for the legacy Source field (e.g. "aprsis" or "aprsis+kisstcp").
+func summarizeSources(sources []string) string {
+	switch len(sources) {
+	case 0:
+		return ""
+	case 1:
+		return sources[0]
+	default:
+		return strings.Join(sources, "+")
+	}
 }
 
 // emit sends an event on the channel without blocking.

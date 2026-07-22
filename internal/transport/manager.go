@@ -28,6 +28,7 @@ type transportStats struct {
 type Manager struct {
 	mu         sync.RWMutex
 	transports map[string]Transport
+	names      map[string]string // per-transport display name (custom Name or Type)
 	stats      map[string]*transportStats
 	cancels    map[string]context.CancelFunc // per-transport context cancellers
 	frames     chan aprs.APRSFrame
@@ -44,6 +45,7 @@ type Manager struct {
 func NewManager() *Manager {
 	return &Manager{
 		transports:  make(map[string]Transport),
+		names:       make(map[string]string),
 		stats:       make(map[string]*transportStats),
 		cancels:     make(map[string]context.CancelFunc),
 		frames:      make(chan aprs.APRSFrame, 256),
@@ -52,11 +54,23 @@ func NewManager() *Manager {
 	}
 }
 
-// Add registers a transport with the given ID.
+// Add registers a transport with the given ID. Its display name defaults to
+// the transport's Type; use AddNamed to supply a custom display name.
 func (m *Manager) Add(id string, t Transport) {
+	m.AddNamed(id, t, "")
+}
+
+// AddNamed registers a transport with the given ID and an optional display
+// name. When name is empty the transport's Type is used, keeping behavior
+// generic and deployment-agnostic.
+func (m *Manager) AddNamed(id string, t Transport, name string) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	m.transports[id] = t
+	if name == "" {
+		name = t.Type()
+	}
+	m.names[id] = name
 	m.stats[id] = &transportStats{}
 }
 
@@ -110,6 +124,7 @@ func (m *Manager) Remove(id string) error {
 		delete(m.cancels, id)
 	}
 	delete(m.transports, id)
+	delete(m.names, id)
 	delete(m.stats, id)
 	m.mu.Unlock()
 
@@ -142,7 +157,13 @@ func (m *Manager) forwardFrames(ctx context.Context, id string, t Transport) {
 				st.packetsRx.Add(1)
 			}
 
-			tf := TransportFrame{Frame: frame, Source: id}
+			m.mu.RLock()
+			name := m.names[id]
+			m.mu.RUnlock()
+			if name == "" {
+				name = t.Type()
+			}
+			tf := TransportFrame{Frame: frame, Source: id, SourceType: t.Type(), SourceName: name}
 
 			// Send on tagged channel (non-blocking)
 			select {
@@ -271,6 +292,11 @@ func (m *Manager) Statuses() []TransportStatus {
 	for id, t := range m.transports {
 		s := t.Status()
 		s.ID = id
+		if name := m.names[id]; name != "" {
+			s.Name = name
+		} else {
+			s.Name = t.Type()
+		}
 		if st, ok := m.stats[id]; ok {
 			s.PacketsRx = st.packetsRx.Load()
 			s.PacketsTx = st.packetsTx.Load()

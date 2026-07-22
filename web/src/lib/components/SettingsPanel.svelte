@@ -336,6 +336,10 @@
 										</svg>
 									</button>
 								</div>
+								<div class="field-row">
+									<label for="t{i}-name">Name</label>
+									<input id="t{i}-name" type="text" bind:value={t.name} placeholder="Optional label (e.g. HA2 BT TNC)" />
+								</div>
 								{#if t.type === 'aprsis'}
 									<div class="field-group">
 										<div class="field-row half">

@@ -126,13 +126,13 @@ func main() {
 				tc.Callsign = cfg.Station.Callsign
 			}
 			t := aprsis.New(tc)
-			tm.Add(fmt.Sprintf("aprsis-%d", i), t)
+			tm.AddNamed(fmt.Sprintf("aprsis-%d", i), t, tc.Name)
 		case "kisstcp":
 			t := kisstcp.New(tc)
-			tm.Add(fmt.Sprintf("kisstcp-%d", i), t)
+			tm.AddNamed(fmt.Sprintf("kisstcp-%d", i), t, tc.Name)
 		case "serial":
 			t := serial.New(tc)
-			tm.Add(fmt.Sprintf("serial-%d", i), t)
+			tm.AddNamed(fmt.Sprintf("serial-%d", i), t, tc.Name)
 		default:
 			log.Printf("warning: unknown transport type %q, skipping", tc.Type)
 		}
@@ -362,7 +362,7 @@ func main() {
 					continue
 				}
 				srv.BroadcastRawPacket(pkt, tf.Source)
-				tracker.HandlePacket(pkt, tf.Source)
+				tracker.HandlePacket(pkt, tf.SourceName)
 				msgEngine.HandlePacket(pkt)
 				objMgr.HandlePacket(pkt)
 				srv.HandleTacticalPacket(pkt)
@@ -424,7 +424,7 @@ func reconcileTransports(ctx context.Context, old, newCfg config.Config, tm *tra
 			if t == nil {
 				continue
 			}
-			tm.Add(id, t)
+			tm.AddNamed(id, t, newTC.Name)
 			if err := tm.ConnectOne(ctx, id); err != nil {
 				log.Printf("[config] failed to connect transport %s: %v", id, err)
 			} else {
@@ -443,7 +443,7 @@ func reconcileTransports(ctx context.Context, old, newCfg config.Config, tm *tra
 			if t == nil {
 				continue
 			}
-			tm.Add(id, t)
+			tm.AddNamed(id, t, newTC.Name)
 			if err := tm.ConnectOne(ctx, id); err != nil {
 				log.Printf("[config] failed to reconnect transport %s: %v", id, err)
 			} else {
@@ -487,6 +487,7 @@ func createTransport(tc transport.TransportConfig, stationCallsign string) trans
 // transportConfigEqual returns true if two transport configs are identical.
 func transportConfigEqual(a, b transport.TransportConfig) bool {
 	return a.Type == b.Type &&
+		a.Name == b.Name &&
 		a.Host == b.Host &&
 		a.Port == b.Port &&
 		a.Device == b.Device &&
