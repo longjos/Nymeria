@@ -290,6 +290,13 @@ type Store interface {
 	// UpdateMessageClaim sets the claimed_by and claimed_at fields on a message.
 	UpdateMessageClaim(messageID string, claimedBy string, claimedAt *time.Time) error
 
+	// SaveConversationRead persists the read marker for a conversation.
+	SaveConversationRead(callsign string, lastReadAt time.Time) error
+
+	// LoadConversationReads returns all persisted conversation read markers
+	// keyed by remote callsign. The map is never nil.
+	LoadConversationReads() (map[string]time.Time, error)
+
 	// Net Control
 	SaveNet(n Net) error
 	LoadNet(id string) (*Net, error)

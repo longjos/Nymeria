@@ -564,6 +564,7 @@
 				<StationDetail
 					stationKey={$selectedStation}
 					activeTab={$detailTab}
+					visible={$sheetState !== 'peek'}
 					onTabChange={handleTabChange}
 					onClose={closePanel}
 					onFlyTo={handleFlyTo}
@@ -576,6 +577,7 @@
 				<StationDetail
 					stationKey={$selectedStation}
 					activeTab={$detailTab}
+					visible={$sheetState !== 'peek'}
 					onTabChange={handleTabChange}
 					onClose={closePanel}
 					onFlyTo={handleFlyTo}

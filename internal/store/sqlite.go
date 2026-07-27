@@ -17,7 +17,7 @@ import (
 	_ "modernc.org/sqlite"
 )
 
-const currentSchemaVersion = 20
+const currentSchemaVersion = 21
 
 // SQLiteStore implements Store using modernc.org/sqlite.
 type SQLiteStore struct {
@@ -193,6 +193,12 @@ func (s *SQLiteStore) migrate() error {
 
 	if version < 20 {
 		if err := s.migrateV20(); err != nil {
+			return err
+		}
+	}
+
+	if version < 21 {
+		if err := s.migrateV21(); err != nil {
 			return err
 		}
 	}
@@ -2594,6 +2600,145 @@ func (s *SQLiteStore) DeleteCheckpointPassages(netID string) error {
 		return fmt.Errorf("delete checkpoint passages: %w", err)
 	}
 	return nil
+}
+
+func (s *SQLiteStore) migrateV21() error {
+	ddl := `
+CREATE TABLE IF NOT EXISTS conversation_reads (
+    callsign TEXT PRIMARY KEY,
+    last_read_at DATETIME NOT NULL
+);
+`
+	if _, err := s.db.Exec(ddl); err != nil {
+		return fmt.Errorf("migrate v21 create conversation_reads: %w", err)
+	}
+
+	if err := s.backfillConversationReads(); err != nil {
+		return err
+	}
+
+	if _, err := s.db.Exec("DELETE FROM schema_version"); err != nil {
+		return fmt.Errorf("clear schema_version: %w", err)
+	}
+	if _, err := s.db.Exec("INSERT INTO schema_version (version) VALUES (?)", 21); err != nil {
+		return fmt.Errorf("set schema_version: %w", err)
+	}
+
+	return nil
+}
+
+// backfillConversationReads seeds an "everything so far is read" marker for
+// every conversation that already has inbound messages.
+//
+// Before schema 21, unread meant "inbound and not yet acked" — and inbound
+// messages are always stored acked, so the count was effectively always zero.
+// Read markers change that to "inbound and newer than the marker", so without
+// this backfill the first launch after upgrade would light up every message an
+// operator has ever received, with no way to clear it but opening every thread.
+//
+// The marker is the newest inbound timestamp per conversation rather than
+// "now", so it can never mark a message read that has not arrived yet. Max is
+// computed in Go: the timestamp column holds several historical text formats
+// and SQL MAX() would compare them lexicographically. Bulletins are skipped —
+// they are excluded from conversations and never carry read state.
+func (s *SQLiteStore) backfillConversationReads() error {
+	// Databases created by older partial fixtures may not have the messages
+	// table at all; there is then nothing to backfill.
+	var present int
+	if err := s.db.QueryRow(
+		`SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name='messages'`,
+	).Scan(&present); err != nil {
+		return fmt.Errorf("migrate v21 check messages table: %w", err)
+	}
+	if present == 0 {
+		return nil
+	}
+
+	rows, err := s.db.Query(`SELECT from_call, to_call, timestamp FROM messages WHERE inbound = 1`)
+	if err != nil {
+		return fmt.Errorf("migrate v21 read messages: %w", err)
+	}
+	defer rows.Close()
+
+	newest := make(map[string]time.Time)
+	for rows.Next() {
+		var fromCall, toCall, ts string
+		if err := rows.Scan(&fromCall, &toCall, &ts); err != nil {
+			return fmt.Errorf("migrate v21 scan message: %w", err)
+		}
+		if strings.HasPrefix(toCall, "BLN") || strings.HasPrefix(toCall, "ANN") {
+			continue
+		}
+		t, err := parseTime(ts)
+		if err != nil {
+			// An unparseable legacy row must not block the upgrade; skipping it
+			// only means the marker lands slightly earlier.
+			continue
+		}
+		if cur, ok := newest[fromCall]; !ok || t.After(cur) {
+			newest[fromCall] = t
+		}
+	}
+	if err := rows.Err(); err != nil {
+		return fmt.Errorf("migrate v21 iterate messages: %w", err)
+	}
+
+	for callsign, t := range newest {
+		if _, err := s.db.Exec(
+			`INSERT INTO conversation_reads (callsign, last_read_at) VALUES (?, ?)
+			 ON CONFLICT(callsign) DO NOTHING`,
+			callsign, t.UTC(),
+		); err != nil {
+			return fmt.Errorf("migrate v21 backfill %s: %w", callsign, err)
+		}
+	}
+
+	return nil
+}
+
+// SaveConversationRead persists the read marker for a conversation.
+//
+// Monotonicity is enforced in the message engine (the single in-process
+// authority, under mutex) rather than in SQL: RFC3339Nano omits trailing
+// zeros, so a lexicographic comparison of the stored strings would be wrong.
+func (s *SQLiteStore) SaveConversationRead(callsign string, lastReadAt time.Time) error {
+	_, err := s.db.Exec(`
+		INSERT INTO conversation_reads (callsign, last_read_at)
+		VALUES (?, ?)
+		ON CONFLICT(callsign) DO UPDATE SET last_read_at = excluded.last_read_at`,
+		callsign, lastReadAt.UTC(),
+	)
+	if err != nil {
+		return fmt.Errorf("save conversation read: %w", err)
+	}
+	return nil
+}
+
+// LoadConversationReads returns all conversation read markers keyed by callsign.
+func (s *SQLiteStore) LoadConversationReads() (map[string]time.Time, error) {
+	rows, err := s.db.Query(`SELECT callsign, last_read_at FROM conversation_reads`)
+	if err != nil {
+		return nil, fmt.Errorf("query conversation reads: %w", err)
+	}
+	defer rows.Close()
+
+	reads := make(map[string]time.Time)
+	for rows.Next() {
+		var callsign, ts string
+		if err := rows.Scan(&callsign, &ts); err != nil {
+			return nil, fmt.Errorf("scan conversation read: %w", err)
+		}
+		t, err := parseTime(ts)
+		if err != nil {
+			return nil, fmt.Errorf("parse conversation read time %q: %w", ts, err)
+		}
+		reads[callsign] = t
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("iterate conversation reads: %w", err)
+	}
+
+	return reads, nil
 }
 
 // Compile-time check that SQLiteStore implements Store.

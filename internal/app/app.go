@@ -159,6 +159,13 @@ func New(opts Options) (*App, error) {
 		}
 	}
 
+	// Hydrate per-conversation read markers so unread badges survive restart
+	if reads, err := db.LoadConversationReads(); err != nil {
+		log.Printf("warning: failed to load conversation read state from db: %v", err)
+	} else {
+		msgEngine.ImportReadState(reads)
+	}
+
 	// Create object manager
 	objMgr := object.NewManager(
 		cfg.Station.Callsign,

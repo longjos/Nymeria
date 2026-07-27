@@ -58,6 +58,7 @@ type MemoryEngine struct {
 	pending  map[string]*pendingMsg // keyed by msgno
 	seen     map[string]time.Time   // dedup: keyed by "from:msgno"
 	claims   map[string]*claimInfo  // keyed by remote callsign
+	reads    map[string]time.Time   // read markers: keyed by remote callsign
 	emitMu   sync.Mutex             // guards events channel close/send
 	events   chan Event
 
@@ -75,6 +76,7 @@ func NewMemoryEngine(callsign string, sendFn SendFunc, cfg RetryConfig) *MemoryE
 		pending:  make(map[string]*pendingMsg),
 		seen:     make(map[string]time.Time),
 		claims:   make(map[string]*claimInfo),
+		reads:    make(map[string]time.Time),
 		events:   make(chan Event, 64),
 		closed:   make(chan struct{}),
 	}
@@ -222,10 +224,16 @@ func (e *MemoryEngine) Conversations() []Conversation {
 		if isBulletinKey(callsign) {
 			continue
 		}
+		// Unread is derived from the conversation's read marker: an inbound
+		// message is unread iff it is newer than lastReadAt. No marker means
+		// every inbound message is unread. This is the single authority — the
+		// browser never re-derives unread from timestamps (it cannot represent
+		// nanoseconds), it only applies counts the server hands it.
+		lastRead, hasRead := e.reads[callsign]
 		unread := 0
 		var lastActive time.Time
 		for _, m := range msgs {
-			if m.Inbound && m.State != StateAcked {
+			if m.Inbound && (!hasRead || m.Timestamp.After(lastRead)) {
 				unread++
 			}
 			if m.Timestamp.After(lastActive) {
@@ -239,6 +247,10 @@ func (e *MemoryEngine) Conversations() []Conversation {
 			Messages:    msgsCopy,
 			UnreadCount: unread,
 			LastActive:  lastActive,
+		}
+		if hasRead {
+			lr := lastRead
+			conv.LastReadAt = &lr
 		}
 		if ci, ok := e.claims[callsign]; ok {
 			conv.ClaimedBy = ci.UserID
@@ -336,6 +348,69 @@ func (e *MemoryEngine) UnclaimByUser(userID string) {
 		}
 	}
 	e.mu.Unlock()
+}
+
+// MarkRead records a read marker for a conversation, clearing its unread count.
+//
+// The marker is clamped UP to the newest message already in the conversation.
+// Message timestamps are stamped from the same wall clock, so this only bites
+// after the clock steps backwards (NTP correction) — and there it is what makes
+// the badge clearable at all: without the clamp, messages received before the
+// step would stay permanently newer than the marker, which is exactly the bug
+// this feature exists to fix. The marker also never regresses below a
+// previously stored value, so a late-arriving request from a second client
+// cannot resurrect already-read messages.
+//
+// Bulletin (BLN*/ANN*) and empty keys are rejected — bulletins are excluded
+// from Conversations() and must never carry a read marker. A callsign with no
+// messages is accepted idempotently but produces NO marker: there is nothing to
+// read, and the caller persists whatever marker comes back, so returning one
+// would let any client grow the read table without bound.
+func (e *MemoryEngine) MarkRead(callsign string, readAt time.Time) (*Conversation, error) {
+	if callsign == "" || isBulletinKey(callsign) {
+		return nil, fmt.Errorf("cannot mark read: %q", callsign)
+	}
+
+	// UTC() strips the monotonic reading so in-memory and DB-loaded values
+	// compare consistently.
+	effective := readAt.UTC()
+
+	e.mu.Lock()
+	msgs := e.messages[callsign]
+	if len(msgs) == 0 {
+		e.mu.Unlock()
+		return &Conversation{Callsign: callsign, UnreadCount: 0}, nil
+	}
+	for _, m := range msgs {
+		if m.Inbound && m.Timestamp.After(effective) {
+			effective = m.Timestamp
+		}
+	}
+	if prev, ok := e.reads[callsign]; ok && !effective.After(prev) {
+		effective = prev
+	}
+	e.reads[callsign] = effective
+	e.mu.Unlock()
+
+	// Messages is deliberately left nil — this payload rides the WebSocket and
+	// consumers merge fields rather than replacing the message list.
+	conv := &Conversation{
+		Callsign:    callsign,
+		UnreadCount: 0,
+		LastReadAt:  &effective,
+	}
+	e.emit(Event{Type: "conversation_read", Conversation: conv})
+	return conv, nil
+}
+
+// ImportReadState loads persisted per-conversation read markers into the engine.
+// It emits no events.
+func (e *MemoryEngine) ImportReadState(reads map[string]time.Time) {
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	for callsign, t := range reads {
+		e.reads[callsign] = t.UTC()
+	}
 }
 
 // Events returns a channel that emits message lifecycle events.
@@ -462,7 +537,7 @@ func (e *MemoryEngine) retryMessage(msgNo string) {
 	pm.retries++
 	if pm.retries > e.retryCfg.MaxRetries {
 		// Max retries exhausted — mark as failed
-		e.updateMessageStateLocked(pm, msgNo, StateFailed)
+		e.updateMessageStateLocked(pm, StateFailed)
 		delete(e.pending, msgNo)
 		msgCopy := *pm.msg
 		e.mu.Unlock()
@@ -500,7 +575,7 @@ func (e *MemoryEngine) handleAck(msgNo string) {
 		}
 		delete(e.pending, msgNo)
 	}
-	e.updateMessageStateLocked(pm, msgNo, StateAcked)
+	e.updateMessageStateLocked(pm, StateAcked)
 	e.mu.Unlock()
 
 	if ok {
@@ -517,7 +592,7 @@ func (e *MemoryEngine) handleRej(msgNo string) {
 		}
 		delete(e.pending, msgNo)
 	}
-	e.updateMessageStateLocked(pm, msgNo, StateRejected)
+	e.updateMessageStateLocked(pm, StateRejected)
 	e.mu.Unlock()
 
 	if ok {
@@ -525,32 +600,24 @@ func (e *MemoryEngine) handleRej(msgNo string) {
 	}
 }
 
-// updateMessageState updates the state of a message in the conversation store.
-// Must NOT hold e.mu when calling.
-func (e *MemoryEngine) updateMessageState(convKey, msgNo string, state MessageState) {
-	e.mu.Lock()
-	defer e.mu.Unlock()
-	for i := range e.messages[convKey] {
-		if e.messages[convKey][i].MsgNo == msgNo {
-			e.messages[convKey][i].State = state
-			return
-		}
-	}
-}
-
 // updateMessageStateLocked updates state when we have a pending msg reference.
 // Caller MUST hold e.mu.
-func (e *MemoryEngine) updateMessageStateLocked(pm *pendingMsg, msgNo string, state MessageState) {
+//
+// The stored copy is located by message ID, not by MsgNo. MsgNo comes from a
+// counter that restarts at 1 every process start, so after a restart today's
+// first outbound message shares a MsgNo with one reloaded from the database;
+// a MsgNo match would stamp the ack onto the historical message and leave the
+// real in-flight one retrying until it failed. IDs are UUIDs and unique.
+func (e *MemoryEngine) updateMessageStateLocked(pm *pendingMsg, state MessageState) {
 	if pm == nil {
 		return
 	}
 	pm.msg.State = state
-	for convKey, msgs := range e.messages {
-		for i := range msgs {
-			if msgs[i].MsgNo == msgNo {
-				e.messages[convKey][i].State = state
-				return
-			}
+	convKey := pm.msg.To
+	for i := range e.messages[convKey] {
+		if e.messages[convKey][i].ID == pm.msg.ID {
+			e.messages[convKey][i].State = state
+			return
 		}
 	}
 }

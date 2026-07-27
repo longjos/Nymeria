@@ -140,6 +140,11 @@ export const api = {
 		post<unknown>(`/messages/${encodeURIComponent(callsign)}/claim`, { userId, userName }),
 	unclaimConversation: (callsign: string) =>
 		del<unknown>(`/messages/${encodeURIComponent(callsign)}/claim`),
+	markConversationRead: (callsign: string) =>
+		post<{ callsign: string; unreadCount: number; lastReadAt: string | null }>(
+			`/messages/${encodeURIComponent(callsign)}/read`,
+			{}
+		),
 
 	// Transports
 	transports: () => get<TransportStatus[]>('/transports'),

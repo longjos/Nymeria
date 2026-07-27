@@ -3,6 +3,7 @@ package server
 import (
 	"context"
 	"encoding/json"
+	"log"
 	"net/http"
 	"strconv"
 	"strings"
@@ -40,6 +41,7 @@ func (s *Server) routes() {
 			r.Get("/bulletins", s.handleGetBulletins)
 			r.Get("/messages", s.handleGetMessages)
 			r.Get("/messages/{callsign}", s.handleGetMessagesForCallsign)
+			r.Post("/messages/{callsign}/read", s.handleMarkConversationRead)
 			r.Get("/transports", s.handleGetTransports)
 			r.Get("/objects", s.handleGetObjects)
 			r.Get("/items", s.handleGetItems)
@@ -379,6 +381,49 @@ func (s *Server) handleUnclaimConversation(w http.ResponseWriter, r *http.Reques
 	}
 
 	writeJSON(w, http.StatusOK, map[string]string{"callsign": callsign, "status": "unclaimed"})
+}
+
+// handleMarkConversationRead clears the unread badge for a conversation.
+//
+// The request body is deliberately ignored — the frontend post() helper always
+// sends one, and decoding it would only add a 400 path for no benefit. The
+// callsign is used verbatim: engine conversation keys are SSID-suffixed source
+// callsigns, so normalizing here would 200 while clearing nothing.
+func (s *Server) handleMarkConversationRead(w http.ResponseWriter, r *http.Request) {
+	if s.msgEngine == nil {
+		writeJSON(w, http.StatusServiceUnavailable, map[string]string{"error": "message engine not available"})
+		return
+	}
+
+	callsign := chi.URLParam(r, "callsign")
+	readAt := time.Now().UTC()
+
+	conv, err := s.msgEngine.MarkRead(callsign, readAt)
+	if err != nil {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
+		return
+	}
+
+	// Persist synchronously here, not in the event bridge: engine emits are
+	// non-blocking and may be dropped, which would lose the read marker.
+	// Persist the engine-returned value — it may have been clamped forward.
+	if s.store != nil && conv.LastReadAt != nil {
+		if err := s.store.SaveConversationRead(callsign, *conv.LastReadAt); err != nil {
+			log.Printf("[server] save conversation read: %v", err)
+			writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
+			return
+		}
+	}
+
+	// Deliberately NOT written to the activity log. A read receipt fires again
+	// every time a message lands on an open thread, for every viewing client;
+	// logging it would bury the operational record (and its ICS-309 export)
+	// under hundreds of rows that record nothing an operator did.
+	writeJSON(w, http.StatusOK, map[string]any{
+		"callsign":    callsign,
+		"unreadCount": 0,
+		"lastReadAt":  conv.LastReadAt,
+	})
 }
 
 func (s *Server) handleGetTransports(w http.ResponseWriter, _ *http.Request) {
