@@ -5,7 +5,7 @@
 	import MessageCompose from './MessageCompose.svelte';
 	import { api } from '$lib/api';
 	import { stations } from '$lib/stores/stations';
-	import { conversations, loadMessages } from '$lib/stores/messages';
+	import { conversations, loadMessages, markConversationRead } from '$lib/stores/messages';
 	import { canOperate, canPlot } from '$lib/stores/session';
 	import { getTacticalAlias, tacticalAliases } from '$lib/stores/tactical';
 	import { symbolInfo } from '$lib/symbols';
@@ -18,12 +18,19 @@
 	let {
 		stationKey,
 		activeTab = 'info',
+		visible = true,
 		onTabChange,
 		onClose,
 		onFlyTo
 	}: {
 		stationKey: string;
 		activeTab?: DetailTab;
+		/**
+		 * False when this panel is mounted but not actually on screen — the
+		 * mobile bottom sheet keeps its children mounted and only slides them
+		 * out of view. Messages are only marked read while genuinely visible.
+		 */
+		visible?: boolean;
 		onTabChange?: (tab: DetailTab) => void;
 		onClose?: () => void;
 		onFlyTo?: (lat: number, lon: number) => void;
@@ -117,6 +124,33 @@
 		if (activeTab === 'messages' && stationKey) {
 			loadMessages(stationKey);
 		}
+	});
+
+	// Whether the browser tab itself is in front. Without this, a backgrounded
+	// tab left on a thread would silently swallow the badge for every message
+	// that arrived while the operator was looking at something else.
+	let tabVisible = $state(true);
+	onMount(() => {
+		if (typeof document === 'undefined') return;
+		const sync = () => { tabVisible = document.visibilityState === 'visible'; };
+		sync();
+		document.addEventListener('visibilitychange', sync);
+		return () => document.removeEventListener('visibilitychange', sync);
+	});
+
+	// Viewing the thread is what marks it read. Reading convo?.unreadCount here
+	// registers it as a dependency, so this also fires when a new message lands
+	// while the thread is already open. The unread > 0 guard keeps it loop-free:
+	// markConversationRead zeroes the count, the effect re-runs and returns.
+	//
+	// `visible` and `tabVisible` are dependencies too, so collapsing the mobile
+	// sheet or backgrounding the tab stops marking read, and coming back marks
+	// whatever accumulated meanwhile.
+	$effect(() => {
+		if (!visible || !tabVisible) return;
+		if (activeTab !== 'messages' || !stationKey) return;
+		if ((convo?.unreadCount ?? 0) <= 0) return;
+		markConversationRead(stationKey);
 	});
 
 	$effect(() => {

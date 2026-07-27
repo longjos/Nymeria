@@ -1,6 +1,10 @@
 package message
 
-import "github.com/narvel/nymeria/internal/aprs"
+import (
+	"time"
+
+	"github.com/narvel/nymeria/internal/aprs"
+)
 
 // SendFunc is a function that transmits an APRS frame.
 // Used to decouple the engine from transport implementation.
@@ -35,6 +39,15 @@ type Engine interface {
 
 	// Import loads historical messages into the engine (e.g. from DB on startup).
 	Import(msgs []Message)
+
+	// MarkRead records a read marker for a conversation, clearing its unread
+	// count. Bulletin and empty keys are rejected. Unknown callsigns are
+	// accepted idempotently and create no conversation.
+	MarkRead(callsign string, readAt time.Time) (*Conversation, error)
+
+	// ImportReadState loads persisted per-conversation read markers into the
+	// engine (e.g. from DB on startup). It emits no events.
+	ImportReadState(reads map[string]time.Time)
 
 	// ClaimConversation assigns an operator to a conversation.
 	ClaimConversation(callsign, userID, userName string) error

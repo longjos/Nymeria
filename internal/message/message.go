@@ -45,4 +45,8 @@ type Conversation struct {
 	ClaimedBy   string     `json:"claimedBy,omitempty"`
 	ClaimedName string     `json:"claimedName,omitempty"`
 	ClaimedAt   *time.Time `json:"claimedAt,omitempty"`
+	// LastReadAt is the per-conversation read marker. Inbound messages newer
+	// than this timestamp are unread; a nil marker means everything inbound
+	// is unread.
+	LastReadAt *time.Time `json:"lastReadAt,omitempty"`
 }

@@ -323,8 +323,10 @@ func (s *Server) bridgeTrackerEvents() {
 // bridgeMessageEvents reads message events, persists to DB, and broadcasts via WebSocket.
 func (s *Server) bridgeMessageEvents() {
 	for evt := range s.msgEngine.Events() {
-		// Persist to database
-		if s.store != nil {
+		// Persist only real message payloads — conversation-scoped events
+		// (claim/unclaim/read) carry a zero Message and would otherwise
+		// write a junk row keyed by an empty ID.
+		if s.store != nil && evt.Message.ID != "" {
 			if err := s.store.SaveMessage(evt.Message); err != nil {
 				log.Printf("[server] save message: %v", err)
 			}
@@ -334,6 +336,9 @@ func (s *Server) bridgeMessageEvents() {
 		msg := map[string]any{
 			"type":    evt.Type,
 			"message": evt.Message,
+		}
+		if evt.Conversation != nil {
+			msg["conversation"] = evt.Conversation
 		}
 		data, err := json.Marshal(msg)
 		if err != nil {

@@ -605,8 +605,8 @@ func TestV2SchemaVersion(t *testing.T) {
 	if err != nil {
 		t.Fatalf("query schema_version: %v", err)
 	}
-	if version != 20 {
-		t.Errorf("expected schema version 20, got %d", version)
+	if version != 21 {
+		t.Errorf("expected schema version 21, got %d", version)
 	}
 }
 
@@ -1105,8 +1105,8 @@ func TestV3SchemaVersion(t *testing.T) {
 	if err != nil {
 		t.Fatalf("query schema_version: %v", err)
 	}
-	if version != 20 {
-		t.Errorf("expected schema version 20, got %d", version)
+	if version != 21 {
+		t.Errorf("expected schema version 21, got %d", version)
 	}
 }
 
@@ -1727,8 +1727,8 @@ func TestV5MigrationAddsTrackedStationsColumn(t *testing.T) {
 
 	var version int
 	s.db.QueryRow("SELECT version FROM schema_version LIMIT 1").Scan(&version)
-	if version != 20 {
-		t.Errorf("expected schema version 20, got %d", version)
+	if version != 21 {
+		t.Errorf("expected schema version 21, got %d", version)
 	}
 }
 
@@ -1834,8 +1834,8 @@ func TestV6MigrationCreatesTacticalAliasesTable(t *testing.T) {
 
 	var version int
 	s.db.QueryRow("SELECT version FROM schema_version LIMIT 1").Scan(&version)
-	if version != 20 {
-		t.Errorf("expected schema version 20, got %d", version)
+	if version != 21 {
+		t.Errorf("expected schema version 21, got %d", version)
 	}
 }
 
@@ -2002,8 +2002,8 @@ func TestV7MigrationAddsAnnotationColumns(t *testing.T) {
 
 	var version int
 	s.db.QueryRow("SELECT version FROM schema_version LIMIT 1").Scan(&version)
-	if version != 20 {
-		t.Errorf("expected schema version 20, got %d", version)
+	if version != 21 {
+		t.Errorf("expected schema version 21, got %d", version)
 	}
 }
 
@@ -2305,8 +2305,8 @@ func TestMigrateV8CreatesOperationsTable(t *testing.T) {
 
 	var version int
 	s.db.QueryRow("SELECT version FROM schema_version LIMIT 1").Scan(&version)
-	if version != 20 {
-		t.Errorf("expected schema version 20, got %d", version)
+	if version != 21 {
+		t.Errorf("expected schema version 21, got %d", version)
 	}
 
 	// Verify operations table exists by doing a query.
@@ -2325,8 +2325,8 @@ func TestMigrateV11AddsOpsViewColumns(t *testing.T) {
 
 	var version int
 	s.db.QueryRow("SELECT version FROM schema_version LIMIT 1").Scan(&version)
-	if version != 20 {
-		t.Errorf("expected schema version 20, got %d", version)
+	if version != 21 {
+		t.Errorf("expected schema version 21, got %d", version)
 	}
 
 	// Verify ops_view columns exist.
@@ -2715,8 +2715,8 @@ func TestMigrateV13CreatesTelemetryReadingsTable(t *testing.T) {
 
 	var version int
 	s.db.QueryRow("SELECT version FROM schema_version LIMIT 1").Scan(&version)
-	if version != 20 {
-		t.Errorf("expected schema version 20, got %d", version)
+	if version != 21 {
+		t.Errorf("expected schema version 21, got %d", version)
 	}
 }
 
@@ -2959,8 +2959,8 @@ func TestMigrateV16(t *testing.T) {
 	if err != nil {
 		t.Fatalf("query schema_version: %v", err)
 	}
-	if version != 20 {
-		t.Errorf("expected schema version 20, got %d", version)
+	if version != 21 {
+		t.Errorf("expected schema version 21, got %d", version)
 	}
 }
 
@@ -3240,8 +3240,8 @@ func TestMigrateV19CreatesCheckpointTables(t *testing.T) {
 	if err := s.db.QueryRow("SELECT version FROM schema_version LIMIT 1").Scan(&version); err != nil {
 		t.Fatalf("read schema_version: %v", err)
 	}
-	if version != 20 {
-		t.Errorf("expected schema version 20, got %d", version)
+	if version != 21 {
+		t.Errorf("expected schema version 21, got %d", version)
 	}
 
 	// Verify tables exist.
@@ -3353,8 +3353,8 @@ func TestMigrateV20NormalizesLegacySources(t *testing.T) {
 	if err := s.db.QueryRow("SELECT version FROM schema_version LIMIT 1").Scan(&version); err != nil {
 		t.Fatalf("read schema_version: %v", err)
 	}
-	if version != 20 {
-		t.Errorf("expected schema version 20, got %d", version)
+	if version != 21 {
+		t.Errorf("expected schema version 21, got %d", version)
 	}
 
 	// sources column must exist.
@@ -3409,5 +3409,307 @@ func TestMigrateV20NormalizesLegacySources(t *testing.T) {
 	}
 	if got := byCall["LEGACY4"]; len(got.Sources) != 1 || got.Sources[0] != "HA2 BT TNC" || got.Source != "HA2 BT TNC" {
 		t.Errorf("LEGACY4 loaded: source=%q sources=%v", got.Source, got.Sources)
+	}
+}
+
+// --- conversation read state (#83) ---
+
+func TestSaveAndLoadConversationReadsRoundtrip(t *testing.T) {
+	s, _ := newTestStore(t)
+	defer s.Close()
+
+	now := time.Now().UTC()
+	earlier := now.Add(-time.Hour)
+
+	if err := s.SaveConversationRead("W1AW-9", now); err != nil {
+		t.Fatalf("SaveConversationRead W1AW-9: %v", err)
+	}
+	if err := s.SaveConversationRead("KJ4ERJ", earlier); err != nil {
+		t.Fatalf("SaveConversationRead KJ4ERJ: %v", err)
+	}
+
+	reads, err := s.LoadConversationReads()
+	if err != nil {
+		t.Fatalf("LoadConversationReads: %v", err)
+	}
+	if len(reads) != 2 {
+		t.Fatalf("got %d reads, want 2", len(reads))
+	}
+	if got := reads["W1AW-9"]; !got.Equal(now) {
+		t.Errorf("W1AW-9 = %v, want %v", got, now)
+	}
+	if got := reads["KJ4ERJ"]; !got.Equal(earlier) {
+		t.Errorf("KJ4ERJ = %v, want %v", got, earlier)
+	}
+}
+
+func TestSaveConversationReadUpsert(t *testing.T) {
+	s, _ := newTestStore(t)
+	defer s.Close()
+
+	first := time.Now().UTC().Add(-time.Hour)
+	second := time.Now().UTC()
+
+	if err := s.SaveConversationRead("W1AW-9", first); err != nil {
+		t.Fatalf("first save: %v", err)
+	}
+	if err := s.SaveConversationRead("W1AW-9", second); err != nil {
+		t.Fatalf("second save: %v", err)
+	}
+
+	reads, err := s.LoadConversationReads()
+	if err != nil {
+		t.Fatalf("LoadConversationReads: %v", err)
+	}
+	if len(reads) != 1 {
+		t.Fatalf("got %d reads, want 1", len(reads))
+	}
+	if got := reads["W1AW-9"]; !got.Equal(second) {
+		t.Errorf("W1AW-9 = %v, want %v (second write wins)", got, second)
+	}
+}
+
+func TestLoadConversationReadsEmpty(t *testing.T) {
+	s, _ := newTestStore(t)
+	defer s.Close()
+
+	reads, err := s.LoadConversationReads()
+	if err != nil {
+		t.Fatalf("LoadConversationReads: %v", err)
+	}
+	if reads == nil {
+		t.Fatal("LoadConversationReads returned nil map, want empty non-nil map")
+	}
+	if len(reads) != 0 {
+		t.Errorf("got %d reads, want 0", len(reads))
+	}
+}
+
+func TestMigrateV21CreatesConversationReadsTable(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "pre-v21.db")
+
+	db, err := sql.Open("sqlite", path)
+	if err != nil {
+		t.Fatalf("open raw db: %v", err)
+	}
+	for _, stmt := range []string{
+		`CREATE TABLE schema_version (version INTEGER NOT NULL)`,
+		`INSERT INTO schema_version (version) VALUES (20)`,
+		`CREATE TABLE messages (
+			id TEXT PRIMARY KEY,
+			from_call TEXT NOT NULL,
+			to_call TEXT NOT NULL,
+			body TEXT NOT NULL,
+			msg_no TEXT NOT NULL DEFAULT '',
+			state INTEGER NOT NULL DEFAULT 0,
+			retries INTEGER NOT NULL DEFAULT 0,
+			inbound INTEGER NOT NULL DEFAULT 0,
+			timestamp DATETIME NOT NULL
+		)`,
+	} {
+		if _, err := db.Exec(stmt); err != nil {
+			db.Close()
+			t.Fatalf("setup stmt %q: %v", stmt, err)
+		}
+	}
+	if err := db.Close(); err != nil {
+		t.Fatalf("close raw db: %v", err)
+	}
+
+	s := NewSQLiteStore(path)
+	if err := s.Init(); err != nil {
+		t.Fatalf("Init failed: %v", err)
+	}
+	defer s.Close()
+
+	var version int
+	if err := s.db.QueryRow("SELECT version FROM schema_version LIMIT 1").Scan(&version); err != nil {
+		t.Fatalf("read schema_version: %v", err)
+	}
+	if version != 21 {
+		t.Errorf("expected schema version 21, got %d", version)
+	}
+
+	var count int
+	if err := s.db.QueryRow(
+		`SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name='conversation_reads'`,
+	).Scan(&count); err != nil {
+		t.Fatalf("query sqlite_master: %v", err)
+	}
+	if count != 1 {
+		t.Fatalf("conversation_reads table count = %d, want 1", count)
+	}
+
+	now := time.Now().UTC()
+	if err := s.SaveConversationRead("W1AW-9", now); err != nil {
+		t.Fatalf("SaveConversationRead on upgraded db: %v", err)
+	}
+	reads, err := s.LoadConversationReads()
+	if err != nil {
+		t.Fatalf("LoadConversationReads on upgraded db: %v", err)
+	}
+	if got := reads["W1AW-9"]; !got.Equal(now) {
+		t.Errorf("W1AW-9 = %v, want %v", got, now)
+	}
+}
+
+// Before #83 an inbound message was "unread" only while its state was not
+// StateAcked — and inbound messages are always stored as StateAcked, so the
+// count was effectively always zero. Switching to a read marker means a
+// database that predates the marker table would light up every historical
+// inbound message as unread. The migration must therefore backfill an
+// "everything so far is read" marker for each existing conversation.
+func TestMigrateV21BackfillsExistingConversationsAsRead(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "pre-v21-backfill.db")
+
+	newest := time.Date(2026, 7, 20, 14, 30, 0, 0, time.UTC)
+	older := newest.Add(-time.Hour)
+
+	db, err := sql.Open("sqlite", path)
+	if err != nil {
+		t.Fatalf("open raw db: %v", err)
+	}
+	for _, stmt := range []string{
+		`CREATE TABLE schema_version (version INTEGER NOT NULL)`,
+		`INSERT INTO schema_version (version) VALUES (20)`,
+		`CREATE TABLE messages (
+			id TEXT PRIMARY KEY,
+			from_call TEXT NOT NULL,
+			to_call TEXT NOT NULL,
+			body TEXT NOT NULL,
+			msg_no TEXT NOT NULL DEFAULT '',
+			state INTEGER NOT NULL DEFAULT 0,
+			retries INTEGER NOT NULL DEFAULT 0,
+			inbound INTEGER NOT NULL DEFAULT 0,
+			timestamp DATETIME NOT NULL
+		)`,
+	} {
+		if _, err := db.Exec(stmt); err != nil {
+			db.Close()
+			t.Fatalf("setup stmt %q: %v", stmt, err)
+		}
+	}
+
+	rows := []struct {
+		id, from, to string
+		inbound      int
+		ts           time.Time
+	}{
+		{"a1", "W1AW-9", "N0CALL", 1, older},
+		{"a2", "W1AW-9", "N0CALL", 1, newest},
+		{"a3", "N0CALL", "W1AW-9", 0, newest.Add(time.Minute)}, // outbound, ignored
+		{"b1", "KJ4ERJ", "N0CALL", 1, older},
+		{"c1", "N0CALL", "W3ADO", 0, older}, // outbound-only conversation
+		{"d1", "W3ADO", "BLN1", 1, newest},  // bulletin, never has read state
+	}
+	for _, r := range rows {
+		if _, err := db.Exec(
+			`INSERT INTO messages (id, from_call, to_call, body, msg_no, state, retries, inbound, timestamp)
+			 VALUES (?, ?, ?, 'x', '', 3, 0, ?, ?)`,
+			r.id, r.from, r.to, r.inbound, r.ts.Format(time.RFC3339Nano),
+		); err != nil {
+			db.Close()
+			t.Fatalf("insert %s: %v", r.id, err)
+		}
+	}
+	if err := db.Close(); err != nil {
+		t.Fatalf("close raw db: %v", err)
+	}
+
+	s := NewSQLiteStore(path)
+	if err := s.Init(); err != nil {
+		t.Fatalf("Init failed: %v", err)
+	}
+	defer s.Close()
+
+	reads, err := s.LoadConversationReads()
+	if err != nil {
+		t.Fatalf("LoadConversationReads: %v", err)
+	}
+
+	got, ok := reads["W1AW-9"]
+	if !ok {
+		t.Fatal("W1AW-9 has no backfilled read marker — every historical message would show as unread after upgrade")
+	}
+	if got.Before(newest) {
+		t.Errorf("W1AW-9 marker = %v, want >= newest inbound %v", got, newest)
+	}
+	if _, ok := reads["KJ4ERJ"]; !ok {
+		t.Error("KJ4ERJ has no backfilled read marker")
+	}
+	if _, ok := reads["BLN1"]; ok {
+		t.Error("bulletins must not get a read marker")
+	}
+	if _, ok := reads["W3ADO"]; ok {
+		t.Error("an outbound-only conversation has nothing unread and needs no marker")
+	}
+	if len(reads) != 2 {
+		t.Errorf("backfilled %d markers (%v), want 2", len(reads), reads)
+	}
+
+	// Idempotent: re-running Init on an already-migrated db must not disturb
+	// markers that have since moved forward.
+	moved := newest.Add(48 * time.Hour)
+	if err := s.SaveConversationRead("W1AW-9", moved); err != nil {
+		t.Fatalf("SaveConversationRead: %v", err)
+	}
+	if err := s.migrate(); err != nil {
+		t.Fatalf("re-migrate: %v", err)
+	}
+	reads, err = s.LoadConversationReads()
+	if err != nil {
+		t.Fatalf("LoadConversationReads after re-migrate: %v", err)
+	}
+	if got := reads["W1AW-9"]; !got.Equal(moved) {
+		t.Errorf("W1AW-9 marker after re-migrate = %v, want %v", got, moved)
+	}
+}
+
+// The backfill parses whatever the sqlite driver actually wrote for a
+// time.Time. A format the parser does not recognize would silently skip the
+// conversation and re-raise every historical badge, so exercise the real
+// SaveMessage encoding rather than a hand-written string.
+func TestMigrateV21BackfillReadsDriverWrittenTimestamps(t *testing.T) {
+	s, _ := newTestStore(t)
+	defer s.Close()
+
+	newest := time.Now().UTC().Truncate(time.Second)
+	if err := s.SaveMessage(message.Message{
+		ID: "x1", From: "W1AW-9", To: "N0CALL", Body: "hi",
+		Inbound: true, State: message.StateAcked, Timestamp: newest.Add(-time.Hour),
+	}); err != nil {
+		t.Fatalf("SaveMessage: %v", err)
+	}
+	if err := s.SaveMessage(message.Message{
+		ID: "x2", From: "W1AW-9", To: "N0CALL", Body: "hi again",
+		Inbound: true, State: message.StateAcked, Timestamp: newest,
+	}); err != nil {
+		t.Fatalf("SaveMessage: %v", err)
+	}
+
+	// Rewind to a pre-v21 database and migrate forward again.
+	if _, err := s.db.Exec("DROP TABLE conversation_reads"); err != nil {
+		t.Fatalf("drop conversation_reads: %v", err)
+	}
+	if _, err := s.db.Exec("DELETE FROM schema_version"); err != nil {
+		t.Fatalf("clear schema_version: %v", err)
+	}
+	if _, err := s.db.Exec("INSERT INTO schema_version (version) VALUES (20)"); err != nil {
+		t.Fatalf("set schema_version: %v", err)
+	}
+	if err := s.migrate(); err != nil {
+		t.Fatalf("migrate: %v", err)
+	}
+
+	reads, err := s.LoadConversationReads()
+	if err != nil {
+		t.Fatalf("LoadConversationReads: %v", err)
+	}
+	got, ok := reads["W1AW-9"]
+	if !ok {
+		t.Fatal("no backfilled marker — the driver's timestamp format was not understood")
+	}
+	if got.Before(newest) {
+		t.Errorf("marker = %v, want >= newest inbound %v", got, newest)
 	}
 }

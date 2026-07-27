@@ -781,3 +781,470 @@ func TestUpdateCallsign(t *testing.T) {
 		t.Errorf("frame source after update = %q, want W1AW", lastFrame.Source.Call)
 	}
 }
+
+// --- read state (#83) ---
+
+// findConvo locates a conversation by callsign in the engine's snapshot.
+func findConvo(t *testing.T, eng *MemoryEngine, callsign string) *Conversation {
+	t.Helper()
+	convos := eng.Conversations()
+	for i := range convos {
+		if convos[i].Callsign == callsign {
+			return &convos[i]
+		}
+	}
+	return nil
+}
+
+func TestConversationUnreadFromReadState(t *testing.T) {
+	base := time.Date(2026, 7, 26, 12, 0, 0, 0, time.UTC)
+	t1 := base
+	t2 := base.Add(10 * time.Minute)
+	mid := base.Add(5 * time.Minute)
+	after := base.Add(time.Hour)
+
+	inbound := func(id string, ts time.Time) Message {
+		return Message{ID: id, From: "W1AW-9", To: "N0CALL", Body: "hi", Inbound: true, State: StateAcked, Timestamp: ts}
+	}
+	outbound := func(id string, ts time.Time) Message {
+		return Message{ID: id, From: "N0CALL", To: "W1AW-9", Body: "yo", Inbound: false, State: StateSent, Timestamp: ts}
+	}
+
+	tests := []struct {
+		name       string
+		msgs       []Message
+		readAt     *time.Time
+		wantUnread int
+	}{
+		{"no marker, two inbound", []Message{inbound("a", t1), inbound("b", t2)}, nil, 2},
+		{"marker after both", []Message{inbound("a", t1), inbound("b", t2)}, &after, 0},
+		{"marker between", []Message{inbound("a", t1), inbound("b", t2)}, &mid, 1},
+		{"marker equals timestamp is read", []Message{inbound("a", t1)}, &t1, 0},
+		// Full timestamp resolution: a message that arrives a fraction of a
+		// millisecond after the marker is still unread. The browser cannot
+		// represent this (Date floors to milliseconds), which is exactly why
+		// the client applies server-supplied counts instead of re-deriving
+		// them — see markConversationRead in web/src/lib/stores/messages.ts.
+		{"sub-millisecond newer than marker is unread", []Message{inbound("a", t1.Add(500*time.Microsecond))}, &t1, 1},
+		{"sub-millisecond older than marker is read", []Message{inbound("a", t1.Add(-500*time.Microsecond))}, &t1, 0},
+		{"outbound only, no marker", []Message{outbound("a", t1), outbound("b", t2)}, nil, 0},
+		{"mixed, marker after all", []Message{inbound("a", t1), outbound("b", t2)}, &after, 0},
+		{"mixed, no marker", []Message{inbound("a", t1), outbound("b", t2)}, nil, 1},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			eng, _ := newTestEngine()
+			defer eng.Close()
+
+			eng.Import(tt.msgs)
+			if tt.readAt != nil {
+				eng.ImportReadState(map[string]time.Time{"W1AW-9": *tt.readAt})
+			}
+
+			convo := findConvo(t, eng, "W1AW-9")
+			if convo == nil {
+				t.Fatal("W1AW-9 conversation not found")
+			}
+			if convo.UnreadCount != tt.wantUnread {
+				t.Errorf("UnreadCount = %d, want %d", convo.UnreadCount, tt.wantUnread)
+			}
+			if tt.readAt != nil && convo.LastReadAt == nil {
+				t.Error("LastReadAt should be set when a marker exists")
+			}
+			if tt.readAt == nil && convo.LastReadAt != nil {
+				t.Error("LastReadAt should be nil when no marker exists")
+			}
+		})
+	}
+}
+
+func TestMarkReadClearsUnreadAndReturnsConversation(t *testing.T) {
+	eng, _ := newTestEngine()
+	defer eng.Close()
+
+	now := time.Now()
+	eng.Import([]Message{
+		{ID: "m1", From: "W1AW-9", To: "N0CALL", Body: "one", Inbound: true, State: StateAcked, Timestamp: now.Add(-2 * time.Minute)},
+		{ID: "m2", From: "W1AW-9", To: "N0CALL", Body: "two", Inbound: true, State: StateAcked, Timestamp: now.Add(-time.Minute)},
+	})
+
+	convo := findConvo(t, eng, "W1AW-9")
+	if convo == nil || convo.UnreadCount != 2 {
+		t.Fatalf("pre-mark UnreadCount = %v, want 2", convo)
+	}
+
+	conv, err := eng.MarkRead("W1AW-9", now)
+	if err != nil {
+		t.Fatalf("MarkRead: %v", err)
+	}
+	if conv.UnreadCount != 0 {
+		t.Errorf("returned UnreadCount = %d, want 0", conv.UnreadCount)
+	}
+	if conv.LastReadAt == nil {
+		t.Error("returned LastReadAt is nil")
+	}
+	if conv.Messages != nil {
+		t.Error("returned Conversation.Messages should be nil")
+	}
+	if conv.Callsign != "W1AW-9" {
+		t.Errorf("returned Callsign = %q, want W1AW-9", conv.Callsign)
+	}
+
+	convo = findConvo(t, eng, "W1AW-9")
+	if convo == nil {
+		t.Fatal("W1AW-9 conversation not found")
+	}
+	if convo.UnreadCount != 0 {
+		t.Errorf("post-mark UnreadCount = %d, want 0", convo.UnreadCount)
+	}
+	if convo.LastReadAt == nil {
+		t.Error("post-mark LastReadAt is nil")
+	}
+}
+
+func TestMarkReadEmitsConversationReadEvent(t *testing.T) {
+	eng, _ := newTestEngine()
+	defer eng.Close()
+
+	eng.Import([]Message{
+		{ID: "m1", From: "W1AW-9", To: "N0CALL", Body: "one", Inbound: true, State: StateAcked, Timestamp: time.Now()},
+	})
+
+	// Drain any pending events.
+	for {
+		select {
+		case <-eng.Events():
+			continue
+		default:
+		}
+		break
+	}
+
+	if _, err := eng.MarkRead("W1AW-9", time.Now()); err != nil {
+		t.Fatalf("MarkRead: %v", err)
+	}
+
+	select {
+	case evt := <-eng.Events():
+		if evt.Type != "conversation_read" {
+			t.Errorf("event type = %q, want conversation_read", evt.Type)
+		}
+		if evt.Conversation == nil {
+			t.Fatal("event Conversation is nil")
+		}
+		if evt.Conversation.Callsign != "W1AW-9" {
+			t.Errorf("event callsign = %q, want W1AW-9", evt.Conversation.Callsign)
+		}
+		if evt.Conversation.UnreadCount != 0 {
+			t.Errorf("event UnreadCount = %d, want 0", evt.Conversation.UnreadCount)
+		}
+		if evt.Conversation.LastReadAt == nil {
+			t.Error("event LastReadAt is nil")
+		}
+	case <-time.After(time.Second):
+		t.Fatal("timeout waiting for conversation_read event")
+	}
+}
+
+func TestNewInboundAfterMarkReadRaisesUnread(t *testing.T) {
+	eng, _ := newTestEngine()
+	defer eng.Close()
+
+	eng.Import([]Message{
+		{ID: "m1", From: "W1AW-9", To: "N0CALL", Body: "one", Inbound: true, State: StateAcked, Timestamp: time.Now().Add(-time.Minute)},
+	})
+
+	if _, err := eng.MarkRead("W1AW-9", time.Now()); err != nil {
+		t.Fatalf("MarkRead: %v", err)
+	}
+	if c := findConvo(t, eng, "W1AW-9"); c == nil || c.UnreadCount != 0 {
+		t.Fatalf("after MarkRead UnreadCount = %v, want 0", c)
+	}
+
+	// A new inbound message must re-raise the badge.
+	frame := aprs.APRSFrame{
+		Source:      aprs.Address{Call: "W1AW", SSID: 9},
+		Destination: aprs.Address{Call: "N0CALL"},
+		Payload:     ":N0CALL   :later{124",
+	}
+	pkt, err := aprs.NewParser().Parse(frame)
+	if err != nil {
+		t.Fatalf("parse: %v", err)
+	}
+	eng.HandlePacket(pkt)
+
+	c := findConvo(t, eng, "W1AW-9")
+	if c == nil {
+		t.Fatal("W1AW-9 conversation not found")
+	}
+	if c.UnreadCount != 1 {
+		t.Fatalf("UnreadCount after new inbound = %d, want 1", c.UnreadCount)
+	}
+
+	if _, err := eng.MarkRead("W1AW-9", time.Now()); err != nil {
+		t.Fatalf("second MarkRead: %v", err)
+	}
+	if c := findConvo(t, eng, "W1AW-9"); c == nil || c.UnreadCount != 0 {
+		t.Fatalf("after second MarkRead UnreadCount = %v, want 0", c)
+	}
+}
+
+func TestMarkReadClampsToFutureDatedMessage(t *testing.T) {
+	eng, _ := newTestEngine()
+	defer eng.Close()
+
+	future := time.Now().Add(time.Hour)
+	eng.Import([]Message{
+		{ID: "m1", From: "W1AW-9", To: "N0CALL", Body: "skew", Inbound: true, State: StateAcked, Timestamp: future},
+	})
+
+	conv, err := eng.MarkRead("W1AW-9", time.Now())
+	if err != nil {
+		t.Fatalf("MarkRead: %v", err)
+	}
+	if conv.LastReadAt == nil {
+		t.Fatal("LastReadAt is nil")
+	}
+	if conv.LastReadAt.Before(future) {
+		t.Errorf("LastReadAt = %v, want >= %v", conv.LastReadAt, future)
+	}
+	if c := findConvo(t, eng, "W1AW-9"); c == nil || c.UnreadCount != 0 {
+		t.Fatalf("UnreadCount = %v, want 0 for future-dated message", c)
+	}
+}
+
+func TestMarkReadNeverRegresses(t *testing.T) {
+	eng, _ := newTestEngine()
+	defer eng.Close()
+
+	t1 := time.Now().UTC()
+	t2 := t1.Add(time.Minute)
+	eng.Import([]Message{
+		{ID: "m1", From: "W1AW-9", To: "N0CALL", Body: "mid", Inbound: true, State: StateAcked, Timestamp: t1.Add(30 * time.Second)},
+	})
+
+	if _, err := eng.MarkRead("W1AW-9", t2); err != nil {
+		t.Fatalf("MarkRead t2: %v", err)
+	}
+	if c := findConvo(t, eng, "W1AW-9"); c == nil || c.UnreadCount != 0 {
+		t.Fatalf("UnreadCount after t2 = %v, want 0", c)
+	}
+
+	// A late-arriving request from another client must not roll the marker back.
+	conv, err := eng.MarkRead("W1AW-9", t1)
+	if err != nil {
+		t.Fatalf("MarkRead t1: %v", err)
+	}
+	if conv.LastReadAt == nil || !conv.LastReadAt.Equal(t2) {
+		t.Errorf("LastReadAt = %v, want %v", conv.LastReadAt, t2)
+	}
+	if c := findConvo(t, eng, "W1AW-9"); c == nil || c.UnreadCount != 0 {
+		t.Fatalf("UnreadCount after regression attempt = %v, want 0", c)
+	}
+}
+
+func TestMarkReadRejectsBulletinAndEmpty(t *testing.T) {
+	eng, _ := newTestEngine()
+	defer eng.Close()
+
+	for _, key := range []string{"BLN1", "ANN3", ""} {
+		t.Run("key="+key, func(t *testing.T) {
+			conv, err := eng.MarkRead(key, time.Now())
+			if err == nil {
+				t.Errorf("MarkRead(%q) error = nil, want non-nil", key)
+			}
+			if conv != nil {
+				t.Errorf("MarkRead(%q) conversation = %v, want nil", key, conv)
+			}
+		})
+	}
+}
+
+func TestMarkReadUnknownCallsignIsIdempotent(t *testing.T) {
+	eng, _ := newTestEngine()
+	defer eng.Close()
+
+	for i := 0; i < 2; i++ {
+		conv, err := eng.MarkRead("W9XYZ", time.Now())
+		if err != nil {
+			t.Fatalf("MarkRead pass %d: %v", i, err)
+		}
+		if conv.UnreadCount != 0 {
+			t.Errorf("pass %d UnreadCount = %d, want 0", i, conv.UnreadCount)
+		}
+		// A callsign with no messages has nothing to read, so it must NOT
+		// produce a marker: the handler persists whatever marker comes back,
+		// and an unauthenticated-shaped loop over made-up callsigns would
+		// otherwise grow the conversation_reads table without bound.
+		if conv.LastReadAt != nil {
+			t.Errorf("pass %d LastReadAt = %v, want nil for a callsign with no messages", i, conv.LastReadAt)
+		}
+	}
+
+	if c := findConvo(t, eng, "W9XYZ"); c != nil {
+		t.Error("MarkRead created a phantom conversation for an unknown callsign")
+	}
+}
+
+// A conversation that exists but holds only outbound messages still gets a
+// marker — it is a real conversation, just one with nothing unread.
+func TestMarkReadOutboundOnlyConversationStillMarks(t *testing.T) {
+	eng, _ := newTestEngine()
+	defer eng.Close()
+
+	eng.Import([]Message{
+		{ID: "o1", From: "N0CALL", To: "W1AW-9", Body: "yo", Inbound: false, State: StateSent, Timestamp: time.Now()},
+	})
+
+	conv, err := eng.MarkRead("W1AW-9", time.Now())
+	if err != nil {
+		t.Fatalf("MarkRead: %v", err)
+	}
+	if conv.LastReadAt == nil {
+		t.Error("LastReadAt is nil for an existing outbound-only conversation")
+	}
+}
+
+// After a restart the per-process msgno counter restarts at 1, colliding with
+// msgnos on outbound messages reloaded from the DB. An ack must land on the
+// message it actually acknowledges, matched by ID.
+func TestAckMatchesOutboundByIDNotMsgNo(t *testing.T) {
+	eng, _ := newTestEngine()
+	defer eng.Close()
+
+	eng.Import([]Message{{
+		ID: "yesterday", From: "N0CALL", To: "W1AW-9", Body: "old",
+		MsgNo: "1", Inbound: false, State: StateFailed,
+		Timestamp: time.Now().Add(-24 * time.Hour),
+	}})
+
+	out, err := eng.Send("W1AW-9", "today")
+	if err != nil {
+		t.Fatalf("Send: %v", err)
+	}
+	if out.MsgNo != "1" {
+		t.Fatalf("outbound MsgNo = %q, want 1 (the collision this test exercises)", out.MsgNo)
+	}
+
+	frame := aprs.APRSFrame{
+		Source:      aprs.Address{Call: "W1AW", SSID: 9},
+		Destination: aprs.Address{Call: "N0CALL"},
+		Payload:     ":N0CALL   :ack1",
+	}
+	pkt, err := aprs.NewParser().Parse(frame)
+	if err != nil {
+		t.Fatalf("parse ack: %v", err)
+	}
+	eng.HandlePacket(pkt)
+
+	var sawOld, sawNew bool
+	for _, m := range eng.Messages("W1AW-9") {
+		switch m.ID {
+		case "yesterday":
+			sawOld = true
+			if m.State != StateFailed {
+				t.Errorf("historical message state = %d, want %d (StateFailed) — the ack landed on the wrong message", m.State, StateFailed)
+			}
+		case out.ID:
+			sawNew = true
+			if m.State != StateAcked {
+				t.Errorf("acked message state = %d, want %d (StateAcked)", m.State, StateAcked)
+			}
+		}
+	}
+	if !sawOld || !sawNew {
+		t.Fatalf("expected both messages in the conversation (old=%v new=%v)", sawOld, sawNew)
+	}
+}
+
+func TestImportReadStateHydratesUnread(t *testing.T) {
+	eng, _ := newTestEngine()
+	defer eng.Close()
+
+	base := time.Date(2026, 7, 26, 9, 0, 0, 0, time.UTC)
+	eng.Import([]Message{
+		{ID: "m1", From: "W1AW-9", To: "N0CALL", Body: "one", Inbound: true, State: StateAcked, Timestamp: base},
+		{ID: "m2", From: "W1AW-9", To: "N0CALL", Body: "two", Inbound: true, State: StateAcked, Timestamp: base.Add(time.Minute)},
+		{ID: "m3", From: "W1AW-9", To: "N0CALL", Body: "three", Inbound: true, State: StateAcked, Timestamp: base.Add(2 * time.Minute)},
+	})
+
+	eng.ImportReadState(map[string]time.Time{"W1AW-9": base.Add(time.Minute)})
+
+	c := findConvo(t, eng, "W1AW-9")
+	if c == nil {
+		t.Fatal("W1AW-9 conversation not found")
+	}
+	if c.UnreadCount != 1 {
+		t.Errorf("UnreadCount = %d, want 1", c.UnreadCount)
+	}
+	if c.LastReadAt == nil {
+		t.Error("LastReadAt is nil after ImportReadState")
+	}
+}
+
+func TestBulletinsHaveNoReadState(t *testing.T) {
+	eng, _ := newTestEngine()
+	defer eng.Close()
+
+	frame := aprs.APRSFrame{
+		Source:      aprs.Address{Call: "W3ADO"},
+		Destination: aprs.Address{Call: "APRS"},
+		Payload:     ":BLN1     :Net starts at 1900",
+	}
+	pkt, err := aprs.NewParser().Parse(frame)
+	if err != nil {
+		t.Fatalf("parse: %v", err)
+	}
+	eng.HandlePacket(pkt)
+
+	if c := findConvo(t, eng, "BLN1"); c != nil {
+		t.Error("bulletins must not appear in Conversations()")
+	}
+	if len(eng.Bulletins()) != 1 {
+		t.Errorf("got %d bulletins, want 1", len(eng.Bulletins()))
+	}
+}
+
+func TestRetryExhaustionDoesNotCorruptInboundState(t *testing.T) {
+	eng, _ := newTestEngine()
+	defer eng.Close()
+
+	// Inbound messages that share msgNo "1" with our first outbound message.
+	eng.Import([]Message{
+		{ID: "in-w3ado", From: "W3ADO", To: "N0CALL", Body: "theirs", MsgNo: "1", Inbound: true, State: StateAcked, Timestamp: time.Now()},
+		{ID: "in-kj4erj", From: "KJ4ERJ", To: "N0CALL", Body: "theirs", MsgNo: "1", Inbound: true, State: StateAcked, Timestamp: time.Now()},
+	})
+
+	out, err := eng.Send("W3ADO", "out")
+	if err != nil {
+		t.Fatalf("Send: %v", err)
+	}
+	if out.MsgNo != "1" {
+		t.Fatalf("outbound MsgNo = %q, want 1", out.MsgNo)
+	}
+
+	// Let retries exhaust (10ms initial, 3 max retries).
+	time.Sleep(300 * time.Millisecond)
+
+	for _, convKey := range []string{"W3ADO", "KJ4ERJ"} {
+		for _, m := range eng.Messages(convKey) {
+			if m.Inbound && m.State != StateAcked {
+				t.Errorf("inbound message %s in %s state = %d, want %d (StateAcked)", m.ID, convKey, m.State, StateAcked)
+			}
+		}
+	}
+
+	foundOut := false
+	for _, m := range eng.Messages("W3ADO") {
+		if !m.Inbound && m.MsgNo == "1" {
+			foundOut = true
+			if m.State != StateFailed {
+				t.Errorf("outbound state = %d, want %d (StateFailed)", m.State, StateFailed)
+			}
+		}
+	}
+	if !foundOut {
+		t.Error("outbound message not found in W3ADO conversation")
+	}
+}

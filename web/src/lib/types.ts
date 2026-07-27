@@ -147,6 +147,9 @@ export interface Conversation {
 	lastActive: string;
 	claimedBy?: string;
 	claimedName?: string;
+	claimedAt?: string;
+	/** Per-conversation read marker. Inbound messages newer than this are unread. */
+	lastReadAt?: string;
 }
 
 export interface Bulletin {
