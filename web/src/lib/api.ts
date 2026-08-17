@@ -4,7 +4,7 @@ import type {
 	Net, NetCheckIn, NetMission, NetNote, NetEvent, NetSummary, TacticalAlias,
 	AnnotationTemplate, Operation, ICS309Report, TileCacheStatus,
 	WeatherReading, WeatherConfig, TelemetryReading, TelemetryReadingsResponse,
-	SettingsResponse, SettingsUpdateResponse,
+	SettingsResponse, SettingsUpdateResponse, SerialPortsResponse, KissTncsResponse,
 	StationSettings, ServerSettings, TransportSettings, BeaconSettings,
 	SessionSettings, LoggingSettings, WeatherSettings, TileCacheSettings,
 	CheckpointWithPassages, CheckpointMeta, CheckpointPassage, CheckpointProgress
@@ -293,6 +293,8 @@ export const api = {
 	updateStation: (data: StationSettings) => put<SettingsUpdateResponse>('/settings/station', data),
 	updateServer: (data: ServerSettings) => put<SettingsUpdateResponse>('/settings/server', data),
 	updateTransports: (data: TransportSettings[]) => put<SettingsUpdateResponse>('/settings/transports', data),
+	serialPorts: () => get<SerialPortsResponse>('/serial-ports'),
+	kissTncs: () => get<KissTncsResponse>('/kiss-tncs'),
 	updateBeacon: (data: BeaconSettings) => put<SettingsUpdateResponse>('/settings/beacon', data),
 	updateSession: (data: SessionSettings) => put<SettingsUpdateResponse>('/settings/session', data),
 	updateLogging: (data: LoggingSettings) => put<SettingsUpdateResponse>('/settings/logging', data),

@@ -18,12 +18,12 @@ import (
 	"github.com/narvel/nymeria/internal/ics309"
 	"github.com/narvel/nymeria/internal/message"
 	"github.com/narvel/nymeria/internal/netcontrol"
-	"github.com/narvel/nymeria/internal/tilecache"
 	"github.com/narvel/nymeria/internal/object"
 	"github.com/narvel/nymeria/internal/server/ws"
 	"github.com/narvel/nymeria/internal/session"
 	"github.com/narvel/nymeria/internal/station"
 	"github.com/narvel/nymeria/internal/store"
+	"github.com/narvel/nymeria/internal/tilecache"
 )
 
 func (s *Server) routes() {
@@ -179,6 +179,8 @@ func (s *Server) routes() {
 		r.Group(func(r chi.Router) {
 			r.Use(RequireRole(session.RoleAdmin))
 			r.Get("/settings", s.handleGetSettings)
+			r.Get("/serial-ports", s.handleListSerialPorts)
+			r.Get("/kiss-tncs", s.handleListKissTNCs)
 			r.Put("/settings/station", s.handleUpdateStation)
 			r.Put("/settings/server", s.handleUpdateServer)
 			r.Put("/settings/transports", s.handleUpdateTransports)
@@ -747,12 +749,12 @@ func (s *Server) handleCreateObject(w http.ResponseWriter, r *http.Request) {
 	}
 
 	var req struct {
-		Name       string  `json:"name"`
-		Lat        float64 `json:"lat"`
-		Lon        float64 `json:"lon"`
-		SymbolTable string `json:"symbolTable"`
-		SymbolCode  string `json:"symbolCode"`
-		Comment    string  `json:"comment"`
+		Name        string  `json:"name"`
+		Lat         float64 `json:"lat"`
+		Lon         float64 `json:"lon"`
+		SymbolTable string  `json:"symbolTable"`
+		SymbolCode  string  `json:"symbolCode"`
+		Comment     string  `json:"comment"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid request body"})
@@ -853,12 +855,12 @@ func (s *Server) handleCreateItem(w http.ResponseWriter, r *http.Request) {
 	}
 
 	var req struct {
-		Name       string  `json:"name"`
-		Lat        float64 `json:"lat"`
-		Lon        float64 `json:"lon"`
-		SymbolTable string `json:"symbolTable"`
-		SymbolCode  string `json:"symbolCode"`
-		Comment    string  `json:"comment"`
+		Name        string  `json:"name"`
+		Lat         float64 `json:"lat"`
+		Lon         float64 `json:"lon"`
+		SymbolTable string  `json:"symbolTable"`
+		SymbolCode  string  `json:"symbolCode"`
+		Comment     string  `json:"comment"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid request body"})

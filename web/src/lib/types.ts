@@ -267,6 +267,10 @@ export interface TransportStatus {
 	error?: string;
 	packetsRx: number;
 	packetsTx: number;
+	/** When this transport last delivered a decoded frame. */
+	lastRx?: string;
+	/** When this transport last accepted an outbound frame. */
+	lastTx?: string;
 }
 
 // --- Net Control ---
@@ -544,6 +548,53 @@ export interface TransportSettings {
 	filter?: string;
 	callsign?: string;
 	passcode?: string;
+}
+
+export interface SerialPortInfo {
+	name: string;
+	label: string;
+	present: boolean;
+	isUSB?: boolean;
+	vid?: string;
+	pid?: string;
+	serialNumber?: string;
+	product?: string;
+	stablePath?: string;
+	suggestedProfile?: string;
+	highlight?: boolean;
+}
+
+export interface SerialProfile {
+	id: string;
+	label: string;
+	baud: number;
+	help: string;
+}
+
+export interface SerialPortsResponse {
+	hostOS: string;
+	ports: SerialPortInfo[];
+	profiles: SerialProfile[];
+	baudRates: number[];
+	error?: string;
+}
+
+export interface KissTncInfo {
+	name: string;
+	label: string;
+	host: string;
+	port: number;
+	source: string;
+	local?: boolean;
+	highlight?: boolean;
+	portsNote?: string;
+	present?: boolean;
+}
+
+export interface KissTncsResponse {
+	hostOS: string;
+	tncs: KissTncInfo[];
+	error?: string;
 }
 
 // --- APRS-IS Filter Builder ---

@@ -5,6 +5,7 @@
 	import { timeAgo } from '$lib/utils';
 	import { api } from '$lib/api';
 	import type { TileCacheStatus } from '$lib/types';
+	import { kissLinkState, kissLinkLabel, kissLinkHint } from '$lib/serialPorts';
 
 	let list = $derived($transports);
 	let connectedCount = $derived(list.filter((t) => t.connected).length);
@@ -90,6 +91,10 @@
 		}
 	}
 
+	function isKissPipe(type: string): boolean {
+		return type === 'serial' || type === 'kisstcp';
+	}
+
 	function formatPackets(n: number): string {
 		if (n >= 1000000) return `${(n / 1000000).toFixed(1)}M`;
 		if (n >= 1000) return `${(n / 1000).toFixed(1)}K`;
@@ -130,9 +135,14 @@
 							<span class="transport-name">{t.name || t.id}</span>
 							<span class="transport-type">{transportLabel(t.type)}</span>
 						</div>
-						<span class="state-label" class:connected={t.connected}>
-							{t.connected ? 'Connected' : t.error ? 'Error' : 'Disconnected'}
-						</span>
+						{#if isKissPipe(t.type)}
+							{@const link = kissLinkState(t)}
+							<span class="state-label {link}" title={kissLinkHint(link)}>{kissLinkLabel(link)}</span>
+						{:else}
+							<span class="state-label" class:connected={t.connected}>
+								{t.connected ? 'Connected' : t.error ? 'Error' : 'Disconnected'}
+							</span>
+						{/if}
 					</div>
 
 					<div class="card-stats">
@@ -372,9 +382,20 @@
 		flex-shrink: 0;
 	}
 
-	.state-label.connected {
+	.state-label.connected,
+	.state-label.kiss {
 		background: color-mix(in srgb, var(--color-connected) 15%, transparent);
 		color: var(--color-connected);
+	}
+
+	.state-label.quiet {
+		background: color-mix(in srgb, var(--color-warning) 15%, transparent);
+		color: var(--color-warning);
+	}
+
+	.state-label.error {
+		background: color-mix(in srgb, var(--color-error) 15%, transparent);
+		color: var(--color-error);
 	}
 
 	.card-stats {

@@ -58,6 +58,11 @@ type TransportStatus struct {
 	Error        string    `json:"error,omitempty"`
 	PacketsRx    int64     `json:"packetsRx"`
 	PacketsTx    int64     `json:"packetsTx"`
+	// LastRx is when this transport last delivered a decoded frame (KISS/AX.25
+	// or APRS-IS). Zero means nothing has been heard since connect.
+	LastRx time.Time `json:"lastRx,omitempty"`
+	// LastTx is when this transport last accepted an outbound frame.
+	LastTx time.Time `json:"lastTx,omitempty"`
 }
 
 // TransportFrame wraps an APRSFrame with metadata about which transport delivered it.
