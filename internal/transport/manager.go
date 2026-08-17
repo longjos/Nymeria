@@ -22,6 +22,8 @@ type dedupEntry struct {
 type transportStats struct {
 	packetsRx atomic.Int64
 	packetsTx atomic.Int64
+	lastRx    atomic.Int64 // unix nano
+	lastTx    atomic.Int64
 }
 
 // Manager multiplexes multiple transports and merges their received frames.
@@ -155,6 +157,7 @@ func (m *Manager) forwardFrames(ctx context.Context, id string, t Transport) {
 			m.mu.RUnlock()
 			if st != nil {
 				st.packetsRx.Add(1)
+				st.lastRx.Store(time.Now().UnixNano())
 			}
 
 			m.mu.RLock()
@@ -251,6 +254,7 @@ func (m *Manager) Send(frame aprs.APRSFrame) error {
 			}
 			if st, ok := m.stats[id]; ok {
 				st.packetsTx.Add(1)
+				st.lastTx.Store(time.Now().UnixNano())
 			}
 		}
 	}
@@ -270,6 +274,7 @@ func (m *Manager) SendVia(id string, frame aprs.APRSFrame) error {
 	}
 	if st, ok := m.stats[id]; ok {
 		st.packetsTx.Add(1)
+		st.lastTx.Store(time.Now().UnixNano())
 	}
 	return nil
 }
@@ -300,6 +305,12 @@ func (m *Manager) Statuses() []TransportStatus {
 		if st, ok := m.stats[id]; ok {
 			s.PacketsRx = st.packetsRx.Load()
 			s.PacketsTx = st.packetsTx.Load()
+			if n := st.lastRx.Load(); n > 0 {
+				s.LastRx = time.Unix(0, n)
+			}
+			if n := st.lastTx.Load(); n > 0 {
+				s.LastTx = time.Unix(0, n)
+			}
 		}
 		statuses = append(statuses, s)
 	}

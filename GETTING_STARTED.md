@@ -316,17 +316,19 @@ This is especially handy on a Raspberry Pi where you want Nymeria to start autom
 
 ### Hardware TNC (Serial KISS)
 
-If you have a dedicated hardware TNC (like a TNC-X, Mobilinkd, or KPC-3+) connected via USB or serial port, you can skip Direwolf entirely:
+If you have a dedicated hardware TNC (Mobilinkd, TNC-X, KPC-3+) or a Kenwood TH-D74/D75 in KISS, you can skip Direwolf. The easiest path is **Settings → Transports → Add Serial**: Nymeria lists COM/`tty` ports on the server and fills baud from a device profile.
+
+For a TH-D74/D75: press **[F][LIST]** until the display shows **KISS+1200** or **KISS+9600**. On Windows, install Kenwood’s USB CDC VCP driver *before* plugging in (not Silicon Labs CP210x). Menu 505 is the on-air rate, not USB baud.
 
 ```yaml
 transports:
   - type: serial
-    device: /dev/ttyUSB0    # Linux — check "ls /dev/ttyUSB*"
-    baud: 9600               # Match your TNC's baud rate
+    device: COM5             # or /dev/serial/by-id/… on Linux
+    baud: 9600               # USB CDC usually ignores this
 
-  # On Windows, use the COM port:
+  # Linux fallback if you prefer to edit YAML:
   # - type: serial
-  #   device: COM3
+  #   device: /dev/ttyACM0
   #   baud: 9600
 ```
 

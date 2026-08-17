@@ -2,11 +2,15 @@ package server
 
 import (
 	"encoding/json"
+	"log"
 	"net/http"
+	"runtime"
 	"time"
 
 	"github.com/narvel/nymeria/internal/config"
 	"github.com/narvel/nymeria/internal/transport"
+	"github.com/narvel/nymeria/internal/transport/kisstcp"
+	"github.com/narvel/nymeria/internal/transport/serial"
 )
 
 // --- DTO types for duration serialization ---
@@ -38,8 +42,8 @@ type beaconDTO struct {
 }
 
 type sessionDTO struct {
-	PINConfigured bool   `json:"pinConfigured"`
-	PIN           string `json:"pin,omitempty"`
+	PINConfigured     bool   `json:"pinConfigured"`
+	PIN               string `json:"pin,omitempty"`
 	InactivityTimeout string `json:"inactivityTimeout"`
 }
 
@@ -71,9 +75,9 @@ type storeDTO struct {
 }
 
 type weatherDTO struct {
-	RetentionDays int                                 `json:"retentionDays"`
+	RetentionDays int                                     `json:"retentionDays"`
 	Alerts        map[string]config.WeatherAlertThreshold `json:"alerts,omitempty"`
-	Units         string                               `json:"units"`
+	Units         string                                  `json:"units"`
 }
 
 type settingsResponse struct {
@@ -90,6 +94,20 @@ type settingsResponse struct {
 
 type updateResponse struct {
 	RestartRequired bool `json:"restartRequired"`
+}
+
+type serialPortsResponse struct {
+	HostOS    string            `json:"hostOS"`
+	Ports     []serial.PortInfo `json:"ports"`
+	Profiles  []serial.Profile  `json:"profiles"`
+	BaudRates []int             `json:"baudRates"`
+	Error     string            `json:"error,omitempty"`
+}
+
+type kissTNCsResponse struct {
+	HostOS string            `json:"hostOS"`
+	TNCs   []kisstcp.TNCInfo `json:"tncs"`
+	Error  string            `json:"error,omitempty"`
 }
 
 // --- DTO converters ---
@@ -344,6 +362,42 @@ func (s *Server) handleUpdateServer(w http.ResponseWriter, r *http.Request) {
 	}
 
 	writeJSON(w, http.StatusOK, updateResponse{RestartRequired: true})
+}
+
+func (s *Server) handleListSerialPorts(w http.ResponseWriter, _ *http.Request) {
+	resp := serialPortsResponse{
+		HostOS:    runtime.GOOS,
+		Ports:     make([]serial.PortInfo, 0),
+		Profiles:  serial.Profiles(),
+		BaudRates: serial.StandardBaudRates,
+	}
+	ports, err := serial.ListPorts()
+	if err != nil {
+		log.Printf("[serial] list ports: %v", err)
+		resp.Error = err.Error()
+		writeJSON(w, http.StatusOK, resp)
+		return
+	}
+	if ports != nil {
+		resp.Ports = ports
+	}
+	writeJSON(w, http.StatusOK, resp)
+}
+
+func (s *Server) handleListKissTNCs(w http.ResponseWriter, _ *http.Request) {
+	resp := kissTNCsResponse{
+		HostOS: runtime.GOOS,
+		TNCs:   make([]kisstcp.TNCInfo, 0),
+	}
+	tncs, err := kisstcp.Discover()
+	if err != nil {
+		log.Printf("[kisstcp] discover: %v", err)
+		resp.Error = err.Error()
+	}
+	if tncs != nil {
+		resp.TNCs = tncs
+	}
+	writeJSON(w, http.StatusOK, resp)
 }
 
 func (s *Server) handleUpdateTransports(w http.ResponseWriter, r *http.Request) {

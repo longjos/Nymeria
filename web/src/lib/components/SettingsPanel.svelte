@@ -6,12 +6,17 @@
 	import FilterBuilder from './FilterBuilder.svelte';
 	import PathSelect from './PathSelect.svelte';
 	import PendingApprovals from './PendingApprovals.svelte';
+	import SerialPortFields from './SerialPortFields.svelte';
+	import KissTcpFields from './KissTcpFields.svelte';
 	import { setPaths } from '$lib/stores/paths';
 	import PathHint from './PathHint.svelte';
+	import { transports } from '$lib/stores/transports';
+	import { serialTransportId } from '$lib/serialPorts';
+	import { kissTcpTransportId } from '$lib/kissTncs';
 	import type {
 		SettingsResponse, StationSettings, ServerSettings, BeaconSettings,
 		SessionSettings, LoggingSettings, TransportSettings, TileCacheSettings,
-		WeatherSettings
+		WeatherSettings, SerialPortInfo, SerialProfile, KissTncInfo
 	} from '$lib/types';
 
 	let loading = $state(true);
@@ -63,6 +68,58 @@
 
 	function toggle(section: string) {
 		openSections[section] = !openSections[section];
+		if (section === 'transports' && openSections.transports) {
+			loadSerialPorts();
+			loadKissTncs();
+		}
+	}
+
+	let serialPorts = $state<SerialPortInfo[]>([]);
+	let serialProfiles = $state<SerialProfile[]>([]);
+	let serialBaudRates = $state<number[]>([1200, 2400, 4800, 9600, 19200, 38400, 57600, 115200]);
+	let serialHostOS = $state('');
+	let serialPortsLoading = $state(false);
+	let serialPortsError = $state<string | null>(null);
+	let serialListLoaded = $state(false);
+
+	let kissTncs = $state<KissTncInfo[]>([]);
+	let kissTncsLoading = $state(false);
+	let kissTncsError = $state<string | null>(null);
+	let kissListLoaded = $state(false);
+
+	async function loadKissTncs() {
+		kissTncsLoading = true;
+		try {
+			const resp = await api.kissTncs();
+			kissTncs = resp.tncs ?? [];
+			kissTncsError = resp.error || null;
+			kissListLoaded = true;
+		} catch (e: any) {
+			kissTncs = [];
+			kissTncsError = e.message || 'Failed to discover KISS TCP TNCs';
+			kissListLoaded = true;
+		} finally {
+			kissTncsLoading = false;
+		}
+	}
+
+	async function loadSerialPorts() {
+		serialPortsLoading = true;
+		try {
+			const resp = await api.serialPorts();
+			serialPorts = resp.ports ?? [];
+			serialProfiles = resp.profiles ?? [];
+			if (resp.baudRates?.length) serialBaudRates = resp.baudRates;
+			serialHostOS = resp.hostOS ?? '';
+			serialPortsError = resp.error || null;
+			serialListLoaded = true;
+		} catch (e: any) {
+			serialPorts = [];
+			serialPortsError = e.message || 'Failed to list serial ports';
+			serialListLoaded = true;
+		} finally {
+			serialPortsLoading = false;
+		}
 	}
 
 	// --- Save handlers ---
@@ -103,6 +160,12 @@
 			const resp = await api.updateTransports(settings.transports);
 			if (resp.restartRequired) restartBanner = true;
 			showToast('transports', 'Transport settings saved', 'success');
+			try {
+				const list = await api.transports();
+				transports.set(list);
+			} catch {
+				// WS ticker will catch up
+			}
 		} catch (e: any) {
 			showToast('transports', e.message || 'Save failed', 'error');
 		} finally {
@@ -197,9 +260,22 @@
 		} else if (type === 'kisstcp') {
 			t.host = 'localhost';
 			t.port = 8001;
+			if (!kissListLoaded && !kissTncsLoading) loadKissTncs();
+			const highlighted = kissTncs.filter((n) => n.highlight);
+			if (highlighted.length === 1) {
+				t.host = highlighted[0].host;
+				t.port = highlighted[0].port;
+			}
 		} else if (type === 'serial') {
-			t.device = '/dev/ttyUSB0';
+			t.device = '';
 			t.baud = 9600;
+			if (!serialListLoaded && !serialPortsLoading) loadSerialPorts();
+			const highlighted = serialPorts.filter((p) => p.highlight);
+			if (highlighted.length === 1) {
+				t.device = highlighted[0].stablePath || highlighted[0].name;
+				const prof = serialProfiles.find((p) => p.id === highlighted[0].suggestedProfile);
+				if (prof) t.baud = prof.baud;
+			}
 		}
 		settings.transports = [...settings.transports, t];
 	}
@@ -385,27 +461,30 @@
 										</div>
 									</div>
 								{:else if t.type === 'kisstcp'}
-									<div class="field-group">
-										<div class="field-row half">
-											<label for="t{i}-host">Host</label>
-											<input id="t{i}-host" type="text" bind:value={t.host} />
-										</div>
-										<div class="field-row half">
-											<label for="t{i}-port">Port</label>
-											<input id="t{i}-port" type="number" bind:value={t.port} />
-										</div>
-									</div>
+									<KissTcpFields
+										idPrefix={"t" + i}
+										bind:host={t.host}
+										bind:port={t.port}
+										tncs={kissTncs}
+										tncsLoading={kissTncsLoading}
+										tncsError={kissTncsError}
+										onrefresh={loadKissTncs}
+										liveStatus={$transports.find((s) => s.id === kissTcpTransportId(settings?.transports ?? [], i)) ?? null}
+									/>
 								{:else if t.type === 'serial'}
-									<div class="field-group">
-										<div class="field-row half">
-											<label for="t{i}-dev">Device</label>
-											<input id="t{i}-dev" type="text" bind:value={t.device} placeholder="/dev/ttyUSB0" />
-										</div>
-										<div class="field-row half">
-											<label for="t{i}-baud">Baud</label>
-											<input id="t{i}-baud" type="number" bind:value={t.baud} />
-										</div>
-									</div>
+									<SerialPortFields
+										idPrefix={"t" + i}
+										bind:device={t.device}
+										bind:baud={t.baud}
+										ports={serialPorts}
+										hostOS={serialHostOS}
+										profiles={serialProfiles}
+										baudRates={serialBaudRates}
+										portsLoading={serialPortsLoading}
+										portsError={serialPortsError}
+										onrefresh={loadSerialPorts}
+										liveStatus={$transports.find((s) => s.id === serialTransportId(settings?.transports ?? [], i)) ?? null}
+									/>
 								{/if}
 							</div>
 						{/each}

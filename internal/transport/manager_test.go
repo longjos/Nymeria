@@ -33,7 +33,7 @@ func (m *mockTransport) Close() error {
 	}
 	return nil
 }
-func (m *mockTransport) Send(f aprs.APRSFrame) error   { m.sent = append(m.sent, f); return nil }
+func (m *mockTransport) Send(f aprs.APRSFrame) error    { m.sent = append(m.sent, f); return nil }
 func (m *mockTransport) Receive() <-chan aprs.APRSFrame { return m.frames }
 func (m *mockTransport) Status() TransportStatus        { return m.status }
 func (m *mockTransport) Type() string                   { return m.typ }
@@ -492,5 +492,11 @@ func TestManagerStats(t *testing.T) {
 	}
 	if statuses[0].PacketsTx != 1 {
 		t.Errorf("PacketsTx = %d, want 1", statuses[0].PacketsTx)
+	}
+	if statuses[0].LastRx.IsZero() {
+		t.Error("LastRx should be set after a received frame")
+	}
+	if statuses[0].LastTx.IsZero() {
+		t.Error("LastTx should be set after Send")
 	}
 }

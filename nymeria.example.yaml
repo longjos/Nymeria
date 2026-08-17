@@ -28,15 +28,26 @@ transports:
   #   port: 14580
   #   filter: "r/35.0/-106.0/100"
 
-  # KISS TCP (e.g., Direwolf)
+  # KISS TCP (e.g., Direwolf). Prefer Settings → Transports (mDNS + localhost:8001).
+  # Direwolf 1.7+ on Linux/macOS advertises _kiss-tnc._tcp ("Dire Wolf on hostname").
+  # Windows Direwolf does not advertise — use localhost:8001 if it is on this PC.
   # - type: kisstcp
   #   host: localhost
-  #   port: 8001
+  #   port: 8001          # KISS, not AGWPE 8000
 
-  # Serial KISS TNC
+  # Serial KISS TNC (hardware TNC, Kenwood TH-D74/D75 USB or Bluetooth, Mobilinkd)
+  # Prefer Settings → Transports (port picker) over guessing a path.
+  # Windows: COM5  (Device Manager → Ports → "TH-D74 (COM5)" after Kenwood USB CDC VCP)
+  #          Install the Kenwood VCP driver BEFORE first plug — not Silicon Labs CP210x.
+  # Linux:   /dev/serial/by-id/usb-…  (stable) or /dev/ttyACM0 / /dev/ttyUSB0
+  #          Motherboard /dev/ttyS* is omitted from the picker; type it manually if needed.
+  # macOS:   /dev/cu.usbmodem*
+  # TH-D74:  [F][LIST] until KISS+1200 / KISS+9600. Never send KISS ON/RESTART.
+  #          Menu 505 is the on-air 1200/9600 rate. Menu 980 Mass Storage removes the COM port.
   # - type: serial
-  #   device: /dev/ttyUSB0
-  #   baud: 9600
+  #   device: COM5
+  #   baud: 9600          # USB CDC usually ignores this. Bluetooth SPP often 115200.
+  #                       # NOT the same as Kenwood Menu 505 (RF).
 
 # Storage
 store:

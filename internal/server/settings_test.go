@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -18,6 +19,8 @@ import (
 	"github.com/narvel/nymeria/internal/session"
 	"github.com/narvel/nymeria/internal/station"
 	"github.com/narvel/nymeria/internal/transport"
+	"github.com/narvel/nymeria/internal/transport/kisstcp"
+	"github.com/narvel/nymeria/internal/transport/serial"
 )
 
 // helper to create a test server with session + config manager
@@ -374,6 +377,246 @@ func TestUpdateLogging(t *testing.T) {
 
 	if cfgMgr.Get().Logging.Level != "debug" {
 		t.Errorf("level = %q, want %q", cfgMgr.Get().Logging.Level, "debug")
+	}
+}
+
+func TestListSerialPortsRequiresAdmin(t *testing.T) {
+	srv, sessMgr, _, _ := newTestSettingsServer(t)
+	restore := serial.SetListerForTest(func() ([]serial.PortInfo, error) {
+		return []serial.PortInfo{}, nil
+	})
+	t.Cleanup(restore)
+
+	w := doRequest(srv, "GET", "/api/serial-ports", nil, "")
+	if w.Code != http.StatusUnauthorized {
+		t.Errorf("no auth: got %d, want %d", w.Code, http.StatusUnauthorized)
+	}
+
+	admin := adminToken(sessMgr)
+	w = doRequest(srv, "GET", "/api/serial-ports", nil, admin)
+	if w.Code != http.StatusOK {
+		t.Errorf("admin: got %d, want %d body=%s", w.Code, http.StatusOK, w.Body.String())
+	}
+
+	op := operatorToken(sessMgr)
+	w = doRequest(srv, "GET", "/api/serial-ports", nil, op)
+	if w.Code != http.StatusForbidden {
+		t.Errorf("operator: got %d, want %d", w.Code, http.StatusForbidden)
+	}
+}
+
+func TestListSerialPortsEmpty(t *testing.T) {
+	srv, sessMgr, _, _ := newTestSettingsServer(t)
+	restore := serial.SetListerForTest(func() ([]serial.PortInfo, error) {
+		return []serial.PortInfo{}, nil
+	})
+	t.Cleanup(restore)
+
+	w := doRequest(srv, "GET", "/api/serial-ports", nil, adminToken(sessMgr))
+	if w.Code != http.StatusOK {
+		t.Fatalf("status %d %s", w.Code, w.Body.String())
+	}
+
+	var resp serialPortsResponse
+	if err := json.Unmarshal(w.Body.Bytes(), &resp); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	if resp.HostOS == "" {
+		t.Error("hostOS empty")
+	}
+	if resp.Ports == nil {
+		t.Fatal("ports is null, want []")
+	}
+	if len(resp.Ports) != 0 {
+		t.Errorf("ports len = %d, want 0", len(resp.Ports))
+	}
+	if len(resp.Profiles) == 0 {
+		t.Error("profiles empty")
+	}
+	if len(resp.BaudRates) == 0 {
+		t.Error("baudRates empty")
+	}
+	if resp.Error != "" {
+		t.Errorf("error = %q, want empty", resp.Error)
+	}
+
+	// camelCase on the wire
+	var raw map[string]any
+	if err := json.Unmarshal(w.Body.Bytes(), &raw); err != nil {
+		t.Fatal(err)
+	}
+	for _, key := range []string{"hostOS", "ports", "profiles", "baudRates"} {
+		if _, ok := raw[key]; !ok {
+			t.Errorf("missing JSON key %q", key)
+		}
+	}
+}
+
+func TestListSerialPortsKenwoodHighlight(t *testing.T) {
+	srv, sessMgr, _, _ := newTestSettingsServer(t)
+	restore := serial.SetListerForTest(func() ([]serial.PortInfo, error) {
+		return []serial.PortInfo{{
+			Name:             "COM5",
+			Label:            "TH-D74 (COM5)",
+			Present:          true,
+			IsUSB:            true,
+			SuggestedProfile: "kenwood-thd7x-usb",
+			Highlight:        true,
+		}}, nil
+	})
+	t.Cleanup(restore)
+
+	w := doRequest(srv, "GET", "/api/serial-ports", nil, adminToken(sessMgr))
+	if w.Code != http.StatusOK {
+		t.Fatalf("status %d %s", w.Code, w.Body.String())
+	}
+	var resp serialPortsResponse
+	if err := json.Unmarshal(w.Body.Bytes(), &resp); err != nil {
+		t.Fatal(err)
+	}
+	if len(resp.Ports) != 1 {
+		t.Fatalf("ports = %d", len(resp.Ports))
+	}
+	if !resp.Ports[0].Highlight || resp.Ports[0].SuggestedProfile != "kenwood-thd7x-usb" {
+		t.Errorf("port = %+v", resp.Ports[0])
+	}
+
+	var raw map[string]any
+	json.Unmarshal(w.Body.Bytes(), &raw)
+	ports, _ := raw["ports"].([]any)
+	first, _ := ports[0].(map[string]any)
+	if _, ok := first["isUSB"]; !ok {
+		t.Error("missing isUSB")
+	}
+	if _, ok := first["suggestedProfile"]; !ok {
+		t.Error("missing suggestedProfile")
+	}
+}
+
+func TestListSerialPortsListerError(t *testing.T) {
+	srv, sessMgr, _, _ := newTestSettingsServer(t)
+	restore := serial.SetListerForTest(func() ([]serial.PortInfo, error) {
+		return nil, errors.New("setupapi failed")
+	})
+	t.Cleanup(restore)
+
+	w := doRequest(srv, "GET", "/api/serial-ports", nil, adminToken(sessMgr))
+	if w.Code != http.StatusOK {
+		t.Fatalf("status %d (want 200) %s", w.Code, w.Body.String())
+	}
+	var resp serialPortsResponse
+	if err := json.Unmarshal(w.Body.Bytes(), &resp); err != nil {
+		t.Fatal(err)
+	}
+	if resp.Error == "" {
+		t.Error("error empty")
+	}
+	if resp.Ports == nil {
+		t.Fatal("ports is null")
+	}
+	if len(resp.Ports) != 0 {
+		t.Errorf("ports len = %d", len(resp.Ports))
+	}
+	if len(resp.Profiles) == 0 || len(resp.BaudRates) == 0 {
+		t.Error("catalogs missing on error")
+	}
+}
+
+func TestListKissTNCsRequiresAdmin(t *testing.T) {
+	srv, sessMgr, _, _ := newTestSettingsServer(t)
+	restore := kisstcp.SetDiscoverForTest(func() ([]kisstcp.TNCInfo, error) {
+		return []kisstcp.TNCInfo{}, nil
+	})
+	t.Cleanup(restore)
+
+	w := doRequest(srv, "GET", "/api/kiss-tncs", nil, "")
+	if w.Code != http.StatusUnauthorized {
+		t.Errorf("no auth: got %d", w.Code)
+	}
+	w = doRequest(srv, "GET", "/api/kiss-tncs", nil, adminToken(sessMgr))
+	if w.Code != http.StatusOK {
+		t.Errorf("admin: got %d %s", w.Code, w.Body.String())
+	}
+	w = doRequest(srv, "GET", "/api/kiss-tncs", nil, operatorToken(sessMgr))
+	if w.Code != http.StatusForbidden {
+		t.Errorf("operator: got %d", w.Code)
+	}
+}
+
+func TestListKissTNCsEmpty(t *testing.T) {
+	srv, sessMgr, _, _ := newTestSettingsServer(t)
+	restore := kisstcp.SetDiscoverForTest(func() ([]kisstcp.TNCInfo, error) {
+		return []kisstcp.TNCInfo{}, nil
+	})
+	t.Cleanup(restore)
+
+	w := doRequest(srv, "GET", "/api/kiss-tncs", nil, adminToken(sessMgr))
+	if w.Code != http.StatusOK {
+		t.Fatalf("status %d %s", w.Code, w.Body.String())
+	}
+	var resp kissTNCsResponse
+	if err := json.Unmarshal(w.Body.Bytes(), &resp); err != nil {
+		t.Fatal(err)
+	}
+	if resp.TNCs == nil {
+		t.Fatal("tncs is null")
+	}
+	if len(resp.TNCs) != 0 {
+		t.Errorf("len = %d", len(resp.TNCs))
+	}
+	var raw map[string]any
+	json.Unmarshal(w.Body.Bytes(), &raw)
+	if _, ok := raw["hostOS"]; !ok {
+		t.Error("missing hostOS")
+	}
+	if _, ok := raw["tncs"]; !ok {
+		t.Error("missing tncs")
+	}
+}
+
+func TestListKissTNCsDirewolf(t *testing.T) {
+	srv, sessMgr, _, _ := newTestSettingsServer(t)
+	restore := kisstcp.SetDiscoverForTest(func() ([]kisstcp.TNCInfo, error) {
+		return []kisstcp.TNCInfo{{
+			Name:      "Dire Wolf on radiopi",
+			Label:     "Dire Wolf on radiopi — 192.168.1.40:8001",
+			Host:      "192.168.1.40",
+			Port:      8001,
+			Source:    "mdns",
+			Highlight: true,
+		}}, nil
+	})
+	t.Cleanup(restore)
+
+	w := doRequest(srv, "GET", "/api/kiss-tncs", nil, adminToken(sessMgr))
+	if w.Code != http.StatusOK {
+		t.Fatalf("%d %s", w.Code, w.Body.String())
+	}
+	var resp kissTNCsResponse
+	json.Unmarshal(w.Body.Bytes(), &resp)
+	if len(resp.TNCs) != 1 || resp.TNCs[0].Host != "192.168.1.40" || !resp.TNCs[0].Highlight {
+		t.Fatalf("%+v", resp.TNCs)
+	}
+}
+
+func TestListKissTNCsDiscoverError(t *testing.T) {
+	srv, sessMgr, _, _ := newTestSettingsServer(t)
+	restore := kisstcp.SetDiscoverForTest(func() ([]kisstcp.TNCInfo, error) {
+		return []kisstcp.TNCInfo{{Name: "This computer", Host: "localhost", Port: 8001, Local: true}}, errors.New("no multicast")
+	})
+	t.Cleanup(restore)
+
+	w := doRequest(srv, "GET", "/api/kiss-tncs", nil, adminToken(sessMgr))
+	if w.Code != http.StatusOK {
+		t.Fatalf("%d %s", w.Code, w.Body.String())
+	}
+	var resp kissTNCsResponse
+	json.Unmarshal(w.Body.Bytes(), &resp)
+	if resp.Error == "" {
+		t.Error("error empty")
+	}
+	if len(resp.TNCs) != 1 {
+		t.Fatalf("want local fallback, got %+v", resp.TNCs)
 	}
 }
 

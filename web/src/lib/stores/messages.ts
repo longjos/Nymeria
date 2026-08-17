@@ -3,6 +3,7 @@ import type { Conversation, Message } from '$lib/types';
 import { api } from '$lib/api';
 import { wsClient } from './stations';
 import { showToast } from './toast';
+import { transports } from './transports';
 
 export const conversations = writable<Map<string, Conversation>>(new Map());
 export const conversationList = derived(conversations, ($convos) =>
@@ -148,6 +149,8 @@ function updateMessageInConversation(m: Message): void {
 export async function sendMessage(to: string, body: string, path?: string): Promise<Message> {
 	const msg = await api.sendMessage(to, body, path);
 	addMessageToConversation(msg);
+	// TX counts live on transport status; don't wait for the 5s ticker.
+	api.transports().then((list) => transports.set(list)).catch(() => {});
 	return msg;
 }
 
