@@ -1,10 +1,48 @@
 import type { AnnotationCategory, AnnotationPriority } from './types';
 
+export type AnnotationGeometry = 'point' | 'line' | 'area';
+
 export interface CategoryMeta {
 	label: string;
 	icon: string; // SVG path for 16x16 viewBox
-	allowedGeometry: ('point' | 'line' | 'area')[];
+	allowedGeometry: AnnotationGeometry[];
 	defaultColor: string;
+}
+
+export interface GeometryMeta {
+	label: string;
+	/** True when this geometry can be promoted to an APRS Object. */
+	aprsTx: boolean;
+	aprsNote: string;
+}
+
+/** APRS objects/items are named points. Lines and areas stay local. */
+export const geometryMeta: Record<AnnotationGeometry, GeometryMeta> = {
+	point: {
+		label: 'Point',
+		aprsTx: true,
+		aprsNote: 'Can be transmitted as an APRS object',
+	},
+	line: {
+		label: 'Line',
+		aprsTx: false,
+		aprsNote: 'Local only — APRS has no standard encoding for lines',
+	},
+	area: {
+		label: 'Area',
+		aprsTx: false,
+		aprsNote: 'Local only — APRS has no standard encoding for areas',
+	},
+};
+
+/** Whether this annotation geometry can be sent over APRS. */
+export function canTransmitViaAPRS(type: string): type is 'point' {
+	return type === 'point';
+}
+
+/** Whether any allowed geometry for this category can be sent over APRS. */
+export function categoryCanTransmitViaAPRS(category: AnnotationCategory): boolean {
+	return categoryMeta[category]?.allowedGeometry.some(canTransmitViaAPRS) ?? false;
 }
 
 export interface StatusMeta {

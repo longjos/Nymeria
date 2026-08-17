@@ -10,7 +10,8 @@
 	import type { Annotation, AnnotationCategory, AnnotationPriority, AnnotationTemplate } from '$lib/types';
 	import {
 		categoryMeta, statusMeta, priorityMeta, allCategories,
-		statusLabelToValue, statusValueToLabel, statusColor, isTerminalStatus
+		statusLabelToValue, statusValueToLabel, statusColor, isTerminalStatus,
+		geometryMeta, canTransmitViaAPRS, categoryCanTransmitViaAPRS,
 	} from '$lib/annotationMeta';
 
 	let {
@@ -341,7 +342,7 @@
 	<div class="panel-header">
 		<div class="header-text">
 			<span class="title">Annotations</span>
-			<span class="subtitle">Local map markups shared with your team. Not transmitted over APRS.</span>
+			<span class="subtitle">Local map markups shared with your team.</span>
 		</div>
 		<div class="header-actions">
 			<button
@@ -381,6 +382,21 @@
 				</button>
 			{/if}
 		</div>
+	</div>
+
+	<div class="tx-legend" title="APRS objects and items are named points. Lines and areas stay on Nymeria maps.">
+		<span class="tx-legend-item">
+			<span class="tx-legend-type">Point</span>
+			<span class="aprs-tx-badge">APRS</span>
+		</span>
+		<span class="tx-legend-item">
+			<span class="tx-legend-type">Line</span>
+			<span class="aprs-local-badge">Local</span>
+		</span>
+		<span class="tx-legend-item">
+			<span class="tx-legend-type">Area</span>
+			<span class="aprs-local-badge">Local</span>
+		</span>
 	</div>
 
 	{#if filterExpanded}
@@ -448,7 +464,13 @@
 						class="cat-btn"
 						class:active={formCategory === cat}
 						onclick={() => handleSelectCategory(cat)}
+						title={categoryCanTransmitViaAPRS(cat)
+							? `${categoryMeta[cat].label} — point annotations can be transmitted as APRS objects`
+							: `${categoryMeta[cat].label} — local only, cannot be sent over APRS`}
 					>
+						{#if categoryCanTransmitViaAPRS(cat)}
+							<span class="cat-aprs" aria-hidden="true">APRS</span>
+						{/if}
 						<svg width="16" height="16" viewBox="0 0 16 16" fill="none">
 							<path d={categoryMeta[cat].icon} stroke="currentColor" stroke-width="1.2" fill="none" stroke-linecap="round" stroke-linejoin="round"/>
 						</svg>
@@ -457,18 +479,36 @@
 				{/each}
 			</div>
 
-			<!-- Geometry type (auto-restricted by category) -->
+			<!-- Geometry type (auto-restricted by category) with APRS capability -->
 			{#if categoryMeta[formCategory].allowedGeometry.length > 1}
 				<div class="type-selector">
 					{#each categoryMeta[formCategory].allowedGeometry as t}
 						<button
 							class="type-btn"
 							class:active={formType === t}
+							class:aprs-capable={canTransmitViaAPRS(t)}
+							title={geometryMeta[t].aprsNote}
 							onclick={() => { formType = t; pendingGeometry = null; waitingForDraw = false; }}
 						>
-							{t.charAt(0).toUpperCase() + t.slice(1)}
+							<span class="type-btn-label">{geometryMeta[t].label}</span>
+							{#if canTransmitViaAPRS(t)}
+								<span class="aprs-tx-badge">APRS</span>
+							{:else}
+								<span class="aprs-local-badge">Local</span>
+							{/if}
 						</button>
 					{/each}
+				</div>
+			{:else}
+				<div class="type-locked" class:aprs-capable={canTransmitViaAPRS(formType)}>
+					<span class="type-locked-label">{geometryMeta[formType].label}</span>
+					{#if canTransmitViaAPRS(formType)}
+						<span class="aprs-tx-badge">APRS</span>
+						<span class="type-locked-note">Can be transmitted as an APRS object</span>
+					{:else}
+						<span class="aprs-local-badge">Local</span>
+						<span class="type-locked-note">Cannot be sent over APRS</span>
+					{/if}
 				</div>
 			{/if}
 
@@ -540,7 +580,11 @@
 					Cancel
 				</button>
 			</div>
-			<p class="form-scope-hint">Visible to all connected users. Does not transmit over RF or APRS-IS.</p>
+			{#if canTransmitViaAPRS(formType)}
+				<p class="form-scope-hint">Visible to all connected users. After saving, an operator can transmit this as an APRS object (name truncated to 9 characters).</p>
+			{:else}
+				<p class="form-scope-hint">Visible to all connected users. {geometryMeta[formType].label}s stay on Nymeria maps — APRS has no standard encoding for them.</p>
+			{/if}
 		</div>
 	{/if}
 
@@ -551,7 +595,7 @@
 					<p>No {categoryMeta[filterCategory].label.toLowerCase()} annotations.</p>
 				{:else}
 					<p>No annotations yet.</p>
-					<p class="empty-hint">Annotations are local markers, lines, and areas that appear on every connected user's map. Use them to mark points of interest, search boundaries, or rally points.</p>
+					<p class="empty-hint">Annotations are local markers, lines, and areas that appear on every connected user's map. Point annotations can later be transmitted as APRS objects; lines and areas stay local.</p>
 				{/if}
 			</div>
 		{:else}
@@ -589,6 +633,16 @@
 						{/if}
 						<span class="entry-meta">
 							<span class="cat-tag">{meta.label}</span>
+							<span class="geo-tag">{geometryMeta[ann.type]?.label ?? ann.type}</span>
+							{#if canTransmitViaAPRS(ann.type)}
+								<span
+									class="aprs-tx-badge"
+									class:live={ann.transmitting}
+									title={ann.transmitting
+										? 'Currently transmitting as an APRS object'
+										: geometryMeta.point.aprsNote}
+								>APRS</span>
+							{/if}
 							{#if ann.priority && ann.priority !== 'routine'}
 								<span class="pri-tag" style="color: {pMeta.color}">{pMeta.label}</span>
 							{/if}
@@ -821,6 +875,29 @@
 		flex-shrink: 0;
 	}
 
+	.tx-legend {
+		display: flex;
+		align-items: center;
+		flex-wrap: wrap;
+		gap: 10px 14px;
+		padding: 6px var(--space-md);
+		border-bottom: 1px solid var(--color-primary);
+		background: rgba(15, 52, 96, 0.25);
+	}
+
+	.tx-legend-item {
+		display: inline-flex;
+		align-items: center;
+		gap: 6px;
+	}
+
+	.tx-legend-type {
+		font-size: 0.7rem;
+		font-weight: 600;
+		color: var(--color-text-muted);
+		letter-spacing: 0.02em;
+	}
+
 	.filter-btn {
 		display: flex;
 		align-items: center;
@@ -939,6 +1016,7 @@
 	}
 
 	.cat-btn {
+		position: relative;
 		display: flex;
 		flex-direction: column;
 		align-items: center;
@@ -952,6 +1030,20 @@
 		font-size: 0.7rem;
 		cursor: pointer;
 		transition: border-color var(--duration-fast), color var(--duration-fast);
+	}
+
+	.cat-aprs {
+		position: absolute;
+		top: 3px;
+		right: 3px;
+		padding: 0 3px;
+		border-radius: 2px;
+		font-size: 0.5rem;
+		font-weight: 700;
+		letter-spacing: 0.04em;
+		line-height: 1.4;
+		color: #2a9d8f;
+		background: rgba(42, 157, 143, 0.16);
 	}
 
 	.cat-btn:hover {
@@ -978,6 +1070,7 @@
 		display: flex;
 		align-items: center;
 		justify-content: center;
+		gap: 6px;
 		padding: 10px 8px;
 		min-height: 44px;
 		background: none;
@@ -997,6 +1090,75 @@
 	.type-btn.active {
 		border-color: var(--color-accent);
 		color: var(--color-accent);
+	}
+
+	.type-btn.aprs-capable.active {
+		border-color: #2a9d8f;
+	}
+
+	.type-locked {
+		display: flex;
+		align-items: center;
+		flex-wrap: wrap;
+		gap: 6px 8px;
+		padding: 8px 10px;
+		min-height: 40px;
+		border: 1px solid var(--color-primary);
+		border-radius: var(--radius-sm);
+		background: rgba(15, 52, 96, 0.35);
+	}
+
+	.type-locked.aprs-capable {
+		border-color: rgba(42, 157, 143, 0.45);
+	}
+
+	.type-locked-label {
+		font-size: 0.85rem;
+		font-weight: 600;
+		color: var(--color-text);
+	}
+
+	.type-locked-note {
+		font-size: 0.7rem;
+		color: var(--color-text-muted);
+		line-height: 1.3;
+	}
+
+	.aprs-tx-badge,
+	.aprs-local-badge {
+		display: inline-flex;
+		align-items: center;
+		padding: 1px 5px;
+		border-radius: 3px;
+		font-size: 0.6rem;
+		font-weight: 700;
+		letter-spacing: 0.04em;
+		text-transform: uppercase;
+		line-height: 1.4;
+		flex-shrink: 0;
+	}
+
+	.aprs-tx-badge {
+		color: #2a9d8f;
+		background: rgba(42, 157, 143, 0.15);
+		border: 1px solid rgba(42, 157, 143, 0.4);
+	}
+
+	.aprs-tx-badge.live {
+		color: #e63946;
+		background: rgba(230, 57, 70, 0.15);
+		border-color: rgba(230, 57, 70, 0.5);
+		animation: pulse-tx 1.5s ease-in-out infinite;
+	}
+
+	.aprs-local-badge {
+		color: var(--color-text-muted);
+		background: rgba(108, 117, 125, 0.15);
+		border: 1px solid rgba(108, 117, 125, 0.35);
+	}
+
+	.geo-tag {
+		text-transform: lowercase;
 	}
 
 	.form-input {
