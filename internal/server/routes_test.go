@@ -59,6 +59,12 @@ func TestHandleConfig_AuthMode(t *testing.T) {
 	if resp["authMode"] != "invite" {
 		t.Errorf("authMode = %v, want %q", resp["authMode"], "invite")
 	}
+	if resp["messagePath"] != "WIDE1-1,WIDE2-1" {
+		t.Errorf("messagePath = %v, want default WIDE1-1,WIDE2-1", resp["messagePath"])
+	}
+	if resp["beaconPath"] != "WIDE1-1,WIDE2-1" {
+		t.Errorf("beaconPath = %v, want default WIDE1-1,WIDE2-1", resp["beaconPath"])
+	}
 }
 
 func TestHandleLogin(t *testing.T) {

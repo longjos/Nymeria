@@ -340,11 +340,49 @@ func TestManagerCreateObject(t *testing.T) {
 		if frame.Destination.Call != "APNMRA" {
 			t.Errorf("destination = %q, want %q", frame.Destination.Call, "APNMRA")
 		}
-		if len(frame.Path) != 2 {
-			t.Errorf("path length = %d, want 2", len(frame.Path))
+		if got := aprs.FormatPath(frame.Path); got != "WIDE1-1,WIDE2-1" {
+			t.Errorf("default path = %q, want WIDE1-1,WIDE2-1", got)
 		}
 		if !strings.HasPrefix(frame.Payload, ";TORNADO") {
 			t.Errorf("payload = %q, expected object format", frame.Payload)
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("timeout waiting for sent frame")
+	}
+}
+
+func TestManagerCreateObjectCustomPath(t *testing.T) {
+	sent := make(chan aprs.APRSFrame, 10)
+	sendFunc := func(frame aprs.APRSFrame) error {
+		sent <- frame
+		return nil
+	}
+	mgr := NewManager("N0CALL", 0, sendFunc, ManagerConfig{
+		RetransmitInterval: time.Hour,
+	})
+	defer mgr.Close()
+	path, err := aprs.ParsePath("WIDE1-1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	mgr.UpdatePath(path)
+
+	_, err = mgr.CreateObject(Object{
+		Name:    "TORNADO",
+		Lat:     49.0583333,
+		Lon:     -72.0291667,
+		Symbol:  aprs.Symbol{Table: '/', Code: '@'},
+		Comment: "F3 tornado",
+		Live:    true,
+	})
+	if err != nil {
+		t.Fatalf("CreateObject: %v", err)
+	}
+
+	select {
+	case frame := <-sent:
+		if got := aprs.FormatPath(frame.Path); got != "WIDE1-1" {
+			t.Errorf("path = %q, want WIDE1-1", got)
 		}
 	case <-time.After(2 * time.Second):
 		t.Fatal("timeout waiting for sent frame")

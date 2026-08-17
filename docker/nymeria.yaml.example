@@ -9,6 +9,9 @@ station:
   symbol_table: "/"
   symbol_code: "-"   # House symbol
   comment: "Nymeria APRS Client"
+  # New-N RF path so Direwolf can be digipeated. Use TCPIP* only for APRS-IS-only messages.
+  message_path: "WIDE1-1,WIDE2-1"
+  beacon_path: "WIDE1-1,WIDE2-1"
 
 server:
   listen: ":8080"

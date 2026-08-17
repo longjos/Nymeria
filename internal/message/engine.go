@@ -19,8 +19,12 @@ type Event struct {
 
 // Engine manages APRS message sending, receiving, and acknowledgements.
 type Engine interface {
-	// Send queues an outbound message with automatic retry.
+	// Send queues an outbound message with automatic retry using the station path.
 	Send(to, body string) (*Message, error)
+
+	// SendWithPath is Send with an explicit TNC2 path (e.g. "WIDE1-1").
+	// An empty path is Direct (no digipeaters). Invalid paths return an error.
+	SendWithPath(to, body, path string) (*Message, error)
 
 	// HandlePacket processes a parsed APRS packet for message content.
 	HandlePacket(pkt *aprs.Packet)

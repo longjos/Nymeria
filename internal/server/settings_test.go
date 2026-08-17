@@ -121,6 +121,12 @@ func TestGetSettingsRedactsPasscodes(t *testing.T) {
 	if resp.Station.Callsign != "W1AW" {
 		t.Errorf("callsign = %q, want %q", resp.Station.Callsign, "W1AW")
 	}
+	if resp.Station.MessagePath != "WIDE1-1,WIDE2-1" {
+		t.Errorf("messagePath = %q, want WIDE1-1,WIDE2-1", resp.Station.MessagePath)
+	}
+	if resp.Station.BeaconPath != "WIDE1-1,WIDE2-1" {
+		t.Errorf("beaconPath = %q, want WIDE1-1,WIDE2-1", resp.Station.BeaconPath)
+	}
 }
 
 func TestUpdateStation(t *testing.T) {
@@ -135,6 +141,8 @@ func TestUpdateStation(t *testing.T) {
 		TrackMaxPoints: 200,
 		StaleTimeout:   "2h0m0s",
 		DedupWindow:    "1m0s",
+		MessagePath:    "WIDE1-1,WIDE2-1",
+		BeaconPath:     "WIDE1-1,WIDE2-1",
 	}
 
 	w := doRequest(srv, "PUT", "/api/settings/station", dto, token)
@@ -163,6 +171,81 @@ func TestUpdateStation(t *testing.T) {
 	yaml.Unmarshal(data, &fromDisk)
 	if fromDisk.Station.Callsign != "K1ABC" {
 		t.Errorf("disk callsign = %q, want %q", fromDisk.Station.Callsign, "K1ABC")
+	}
+}
+
+func TestUpdateStationPaths(t *testing.T) {
+	srv, sessMgr, cfgMgr, _ := newTestSettingsServer(t)
+	token := adminToken(sessMgr)
+
+	cfg := cfgMgr.Get()
+	dto := stationDTO{
+		Callsign:       cfg.Station.Callsign,
+		SSID:           cfg.Station.SSID,
+		Lat:            cfg.Station.Lat,
+		Lon:            cfg.Station.Lon,
+		TrackMaxPoints: cfg.Station.TrackMaxPoints,
+		StaleTimeout:   cfg.Station.StaleTimeout.String(),
+		DedupWindow:    cfg.Station.DedupWindow.String(),
+		MessagePath:    "WIDE1-1",
+		BeaconPath:     "TCPIP*",
+	}
+
+	w := doRequest(srv, "PUT", "/api/settings/station", dto, token)
+	if w.Code != http.StatusOK {
+		t.Fatalf("PUT station paths: %d %s", w.Code, w.Body.String())
+	}
+
+	got := cfgMgr.Get()
+	if got.Station.MessagePath != "WIDE1-1" {
+		t.Errorf("messagePath = %q, want WIDE1-1", got.Station.MessagePath)
+	}
+	if got.Station.BeaconPath != "TCPIP*" {
+		t.Errorf("beaconPath = %q, want TCPIP*", got.Station.BeaconPath)
+	}
+
+	w = doRequest(srv, "GET", "/api/settings", nil, token)
+	var resp settingsResponse
+	json.Unmarshal(w.Body.Bytes(), &resp)
+	if resp.Station.MessagePath != "WIDE1-1" {
+		t.Errorf("GET messagePath = %q", resp.Station.MessagePath)
+	}
+	if resp.Station.BeaconPath != "TCPIP*" {
+		t.Errorf("GET beaconPath = %q", resp.Station.BeaconPath)
+	}
+
+	w = doRequest(srv, "GET", "/api/config", nil, "")
+	var pub map[string]any
+	json.Unmarshal(w.Body.Bytes(), &pub)
+	if pub["messagePath"] != "WIDE1-1" {
+		t.Errorf("public config messagePath = %v, want WIDE1-1", pub["messagePath"])
+	}
+	if pub["beaconPath"] != "TCPIP*" {
+		t.Errorf("public config beaconPath = %v, want TCPIP*", pub["beaconPath"])
+	}
+}
+
+func TestUpdateStationRejectsInvalidPath(t *testing.T) {
+	srv, sessMgr, cfgMgr, _ := newTestSettingsServer(t)
+	token := adminToken(sessMgr)
+
+	cfg := cfgMgr.Get()
+	dto := stationDTO{
+		Callsign:       cfg.Station.Callsign,
+		SSID:           cfg.Station.SSID,
+		TrackMaxPoints: cfg.Station.TrackMaxPoints,
+		StaleTimeout:   cfg.Station.StaleTimeout.String(),
+		DedupWindow:    cfg.Station.DedupWindow.String(),
+		MessagePath:    "TOOLONG-1",
+		BeaconPath:     cfg.Station.BeaconPath,
+	}
+
+	w := doRequest(srv, "PUT", "/api/settings/station", dto, token)
+	if w.Code != http.StatusBadRequest {
+		t.Errorf("invalid path: got %d, want %d (%s)", w.Code, http.StatusBadRequest, w.Body.String())
+	}
+	if cfgMgr.Get().Station.MessagePath != cfg.Station.MessagePath {
+		t.Error("config should be unchanged after rejected path")
 	}
 }
 

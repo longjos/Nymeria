@@ -12,10 +12,11 @@ import (
 
 // Config holds beacon configuration.
 type Config struct {
-	Enabled     bool          `yaml:"enabled"`
-	Interval    time.Duration `yaml:"interval"`      // Fixed interval (default 10min)
-	Comment     string        `yaml:"comment"`        // Beacon comment text
-	SmartBeacon *SmartConfig  `yaml:"smart_beacon"`   // nil = disabled
+	Enabled     bool           `yaml:"enabled"`
+	Interval    time.Duration  `yaml:"interval"`    // Fixed interval (default 10min)
+	Comment     string         `yaml:"comment"`     // Beacon comment text
+	SmartBeacon *SmartConfig   `yaml:"smart_beacon"` // nil = disabled
+	Path        []aprs.Address // nil = default WIDE1-1,WIDE2-1; empty = direct
 }
 
 // SmartConfig holds smart beaconing parameters.
@@ -177,6 +178,7 @@ func (m *Manager) buildFrame() aprs.APRSFrame {
 	m.mu.Lock()
 	station := m.station
 	comment := m.cfg.Comment
+	path := m.cfg.Path
 	m.mu.Unlock()
 
 	symTable := station.SymbolTable
@@ -188,16 +190,19 @@ func (m *Manager) buildFrame() aprs.APRSFrame {
 		symCode = "-"
 	}
 
+	if path == nil {
+		path = aprs.DefaultRFPath()
+	} else {
+		path = append([]aprs.Address(nil), path...)
+	}
+
 	payload := "!" + FormatLat(station.Lat) + symTable + FormatLon(station.Lon) + symCode + comment
 
 	return aprs.APRSFrame{
 		Source:      aprs.Address{Call: station.Callsign, SSID: station.SSID},
 		Destination: aprs.Address{Call: "APNMRA"},
-		Path: []aprs.Address{
-			{Call: "WIDE1", SSID: 1},
-			{Call: "WIDE2", SSID: 1},
-		},
-		Payload: payload,
+		Path:        path,
+		Payload:     payload,
 	}
 }
 

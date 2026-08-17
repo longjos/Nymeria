@@ -529,6 +529,24 @@ func (s *Server) loadConfigAliases() {
 	log.Printf("loaded %d tactical aliases from config", len(s.stationCfg.TacticalAliases))
 }
 
+// broadcastPaths notifies connected browsers that outbound AX.25 paths changed.
+func (s *Server) broadcastPaths(messagePath, beaconPath string) {
+	if s.hub == nil {
+		return
+	}
+	msg := map[string]any{
+		"type":        "paths_updated",
+		"messagePath": messagePath,
+		"beaconPath":  beaconPath,
+	}
+	data, err := json.Marshal(msg)
+	if err != nil {
+		log.Printf("[server] marshal paths event: %v", err)
+		return
+	}
+	s.hub.Broadcast(data)
+}
+
 // broadcastTactical sends a tactical alias event via WebSocket.
 func (s *Server) broadcastTactical(eventType string, payload any) {
 	msg := map[string]any{

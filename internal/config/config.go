@@ -8,6 +8,7 @@ import (
 
 	"gopkg.in/yaml.v3"
 
+	"github.com/narvel/nymeria/internal/aprs"
 	"github.com/narvel/nymeria/internal/transport"
 )
 
@@ -77,6 +78,11 @@ type StationConfig struct {
 	StaleTimeout    time.Duration     `yaml:"stale_timeout" json:"staleTimeout"`
 	DedupWindow     time.Duration     `yaml:"dedup_window" json:"dedupWindow"`
 	TacticalAliases map[string]string `yaml:"tactical_aliases" json:"tacticalAliases,omitempty"`
+	// MessagePath is the TNC2 digipeater path for messages and acks
+	// (e.g. "WIDE1-1,WIDE2-1" or "TCPIP*"). Empty means direct / no path.
+	MessagePath string `yaml:"message_path" json:"messagePath"`
+	// BeaconPath is the TNC2 digipeater path for beacons and APRS objects/items.
+	BeaconPath string `yaml:"beacon_path" json:"beaconPath"`
 }
 
 // StoreConfig holds storage settings.
@@ -100,6 +106,8 @@ func DefaultConfig() Config {
 			TrackMaxPoints: 100,
 			StaleTimeout:   80 * time.Minute,
 			DedupWindow:    30 * time.Second,
+			MessagePath:    aprs.FormatPath(aprs.DefaultRFPath()),
+			BeaconPath:     aprs.FormatPath(aprs.DefaultRFPath()),
 		},
 		Store: StoreConfig{
 			Path: "./nymeria.db",
@@ -174,6 +182,12 @@ func (c *Config) Validate() error {
 	}
 	if c.Server.Listen == "" {
 		return fmt.Errorf("server.listen is required")
+	}
+	if _, err := aprs.ParsePath(c.Station.MessagePath); err != nil {
+		return fmt.Errorf("station.message_path: %w", err)
+	}
+	if _, err := aprs.ParsePath(c.Station.BeaconPath); err != nil {
+		return fmt.Errorf("station.beacon_path: %w", err)
 	}
 
 	for i, t := range c.Transports {

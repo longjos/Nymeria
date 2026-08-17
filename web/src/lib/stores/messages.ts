@@ -145,8 +145,8 @@ function updateMessageInConversation(m: Message): void {
 	});
 }
 
-export async function sendMessage(to: string, body: string): Promise<Message> {
-	const msg = await api.sendMessage(to, body);
+export async function sendMessage(to: string, body: string, path?: string): Promise<Message> {
+	const msg = await api.sendMessage(to, body, path);
 	addMessageToConversation(msg);
 	return msg;
 }

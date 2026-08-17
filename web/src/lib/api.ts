@@ -135,7 +135,8 @@ export const api = {
 	// Messages
 	conversations: () => get<Conversation[]>('/messages'),
 	messages: (callsign: string) => get<Message[]>(`/messages/${encodeURIComponent(callsign)}`),
-	sendMessage: (to: string, body: string) => post<Message>('/messages', { to, body }),
+	sendMessage: (to: string, body: string, path?: string) =>
+		post<Message>('/messages', path !== undefined ? { to, body, path } : { to, body }),
 	claimConversation: (callsign: string, userId: string, userName: string) =>
 		post<unknown>(`/messages/${encodeURIComponent(callsign)}/claim`, { userId, userName }),
 	unclaimConversation: (callsign: string) =>

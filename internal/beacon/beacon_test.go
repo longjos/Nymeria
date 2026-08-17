@@ -104,6 +104,49 @@ func TestBuildFrame(t *testing.T) {
 	}
 }
 
+func TestBuildFrame_CustomPath(t *testing.T) {
+	path, err := aprs.ParsePath("WIDE2-1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	m := New(Config{
+		Enabled:  true,
+		Interval: 10 * time.Minute,
+		Path:     path,
+	}, StationInfo{Callsign: "N0CALL", Lat: 35, Lon: -84, SymbolTable: "/", SymbolCode: "-"}, nil)
+
+	frame := m.buildFrame()
+	if got := aprs.FormatPath(frame.Path); got != "WIDE2-1" {
+		t.Errorf("path = %q, want WIDE2-1", got)
+	}
+}
+
+func TestBuildFrame_DirectPath(t *testing.T) {
+	m := New(Config{
+		Enabled: true,
+		Path:    []aprs.Address{},
+	}, StationInfo{Callsign: "N0CALL", Lat: 35, Lon: -84, SymbolTable: "/", SymbolCode: "-"}, nil)
+
+	frame := m.buildFrame()
+	if len(frame.Path) != 0 {
+		t.Errorf("direct path = %v, want empty", frame.Path)
+	}
+}
+
+func TestBuildFrame_UpdateConfigPath(t *testing.T) {
+	m := New(Config{Enabled: true}, StationInfo{Callsign: "N0CALL", Lat: 35, Lon: -84}, nil)
+	path, _ := aprs.ParsePath("TCPIP*")
+	m.UpdateConfig(Config{Enabled: true, Path: path})
+
+	frame := m.buildFrame()
+	if got := aprs.FormatPath(frame.Path); got != "TCPIP*" {
+		t.Errorf("path after UpdateConfig = %q, want TCPIP*", got)
+	}
+	if frame.Path[0].Call != "TCPIP" || !frame.Path[0].HBit {
+		t.Errorf("path[0] = %+v, want TCPIP HBit", frame.Path[0])
+	}
+}
+
 func TestBuildFrame_AlternateSymbolTable(t *testing.T) {
 	m := New(Config{
 		Enabled:  true,

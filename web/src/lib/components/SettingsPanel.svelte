@@ -4,7 +4,10 @@
 	import { closePanel } from '$lib/stores/ui';
 	import { weatherConfig } from '$lib/stores/weather';
 	import FilterBuilder from './FilterBuilder.svelte';
+	import PathSelect from './PathSelect.svelte';
 	import PendingApprovals from './PendingApprovals.svelte';
+	import { setPaths } from '$lib/stores/paths';
+	import PathHint from './PathHint.svelte';
 	import type {
 		SettingsResponse, StationSettings, ServerSettings, BeaconSettings,
 		SessionSettings, LoggingSettings, TransportSettings, TileCacheSettings,
@@ -43,6 +46,12 @@
 		error = null;
 		try {
 			settings = await api.getSettings();
+			if (settings.station.messagePath == null) {
+				settings.station.messagePath = 'WIDE1-1,WIDE2-1';
+			}
+			if (settings.station.beaconPath == null) {
+				settings.station.beaconPath = 'WIDE1-1,WIDE2-1';
+			}
 		} catch (e: any) {
 			error = e.message || 'Failed to load settings';
 		} finally {
@@ -64,6 +73,7 @@
 		try {
 			const resp = await api.updateStation(settings.station);
 			if (resp.restartRequired) restartBanner = true;
+			setPaths(settings.station.messagePath, settings.station.beaconPath);
 			showToast('station', 'Station settings saved', 'success');
 		} catch (e: any) {
 			showToast('station', e.message || 'Save failed', 'error');
@@ -292,6 +302,14 @@
 							<label for="st-comment">Comment</label>
 							<input id="st-comment" type="text" bind:value={settings.station.comment} />
 						</div>
+						<div class="field-subhead">Digipeater path</div>
+						<p class="field-help">
+							New-N digipeater paths. Mobile (WIDE1-1,WIDE2-1) is the usual RF default.
+							Use Fixed for a well-sited home station; Rural only in sparse areas.
+							Internet (TCPIP*) is APRS-IS only. RELAY, WIDE, TRACE, and WIDE3+ are rejected.
+						</p>
+						<PathSelect id="st-msg-path" label="Messages" bind:value={settings.station.messagePath} />
+						<PathSelect id="st-bcn-path" label="Beacons & objects" bind:value={settings.station.beaconPath} />
 						<div class="field-row">
 							<label for="st-maxpts">Track Max Points</label>
 							<input id="st-maxpts" type="number" min="0" bind:value={settings.station.trackMaxPoints} />
@@ -437,6 +455,11 @@
 							<label for="bcn-comment">Comment</label>
 							<input id="bcn-comment" type="text" bind:value={settings.beacon.comment} />
 						</div>
+						<p class="field-help beacon-path-line">
+							Position reports go
+							<PathHint kind="beacon" />
+							— change under Station → Digipeater path.
+						</p>
 						<div class="section-actions">
 							<button class="save-btn" onclick={saveBeacon} disabled={saving['beacon']}>
 								{saving['beacon'] ? 'Saving...' : 'Save Beacon'}
@@ -895,6 +918,29 @@
 	.field-group {
 		display: flex;
 		gap: var(--space-sm);
+	}
+
+	.field-subhead {
+		margin: var(--space-md) 0 var(--space-xs);
+		font-size: 0.72rem;
+		font-weight: 600;
+		color: var(--color-text);
+		text-transform: uppercase;
+		letter-spacing: 0.04em;
+	}
+
+	.field-help {
+		margin: 0 0 var(--space-sm);
+		font-size: 0.72rem;
+		color: var(--color-text-muted);
+		line-height: 1.4;
+	}
+
+	.beacon-path-line {
+		display: flex;
+		flex-wrap: wrap;
+		align-items: baseline;
+		gap: 0.35em;
 	}
 
 	.field-row.half {

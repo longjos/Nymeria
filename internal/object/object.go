@@ -77,6 +77,7 @@ type Event struct {
 type Manager struct {
 	callsign string
 	ssid     int
+	path     []aprs.Address
 	send     SendFunc
 	config   ManagerConfig
 
@@ -95,6 +96,7 @@ func NewManager(callsign string, ssid int, send SendFunc, cfg ManagerConfig) *Ma
 	return &Manager{
 		callsign: callsign,
 		ssid:     ssid,
+		path:     aprs.DefaultRFPath(),
 		send:     send,
 		config:   cfg,
 		events:   make(chan Event, 64),
@@ -386,6 +388,7 @@ func (m *Manager) retransmitAll() {
 	// Snapshot identity and live objects/items for retransmission
 	callsign := m.callsign
 	ssid := m.ssid
+	path := append([]aprs.Address(nil), m.path...)
 	var liveObjects []Object
 	for _, obj := range m.objects {
 		if obj.Live {
@@ -401,12 +404,12 @@ func (m *Manager) retransmitAll() {
 	m.mu.Unlock()
 
 	for _, obj := range liveObjects {
-		if err := m.send(buildFrame(callsign, ssid, FormatObjectPayload(obj))); err != nil {
+		if err := m.send(buildFrame(callsign, ssid, path, FormatObjectPayload(obj))); err != nil {
 			log.Printf("[object] retransmit object %q: %v", obj.Name, err)
 		}
 	}
 	for _, item := range liveItems {
-		if err := m.send(buildFrame(callsign, ssid, FormatItemPayload(item))); err != nil {
+		if err := m.send(buildFrame(callsign, ssid, path, FormatItemPayload(item))); err != nil {
 			log.Printf("[object] retransmit item %q: %v", item.Name, err)
 		}
 	}
@@ -420,16 +423,20 @@ func (m *Manager) UpdateStationInfo(callsign string, ssid int) {
 	m.ssid = ssid
 }
 
+// UpdatePath updates the digipeater path used for object/item frames.
+func (m *Manager) UpdatePath(path []aprs.Address) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.path = append([]aprs.Address(nil), path...)
+}
+
 // buildFrame creates an APRS frame with the given source identity and payload.
-func buildFrame(callsign string, ssid int, payload string) aprs.APRSFrame {
+func buildFrame(callsign string, ssid int, path []aprs.Address, payload string) aprs.APRSFrame {
 	return aprs.APRSFrame{
 		Source:      aprs.Address{Call: callsign, SSID: ssid},
 		Destination: aprs.Address{Call: "APNMRA"},
-		Path: []aprs.Address{
-			{Call: "WIDE1", SSID: 1},
-			{Call: "WIDE2", SSID: 1},
-		},
-		Payload: payload,
+		Path:        append([]aprs.Address(nil), path...),
+		Payload:     payload,
 	}
 }
 
@@ -438,8 +445,9 @@ func (m *Manager) transmitObject(obj Object) error {
 	m.mu.Lock()
 	callsign := m.callsign
 	ssid := m.ssid
+	path := append([]aprs.Address(nil), m.path...)
 	m.mu.Unlock()
-	return m.send(buildFrame(callsign, ssid, FormatObjectPayload(obj)))
+	return m.send(buildFrame(callsign, ssid, path, FormatObjectPayload(obj)))
 }
 
 // transmitItem sends an item frame using the current station identity.
@@ -447,8 +455,9 @@ func (m *Manager) transmitItem(item Item) error {
 	m.mu.Lock()
 	callsign := m.callsign
 	ssid := m.ssid
+	path := append([]aprs.Address(nil), m.path...)
 	m.mu.Unlock()
-	return m.send(buildFrame(callsign, ssid, FormatItemPayload(item)))
+	return m.send(buildFrame(callsign, ssid, path, FormatItemPayload(item)))
 }
 
 func (m *Manager) emitEvent(eventType string, data any) {

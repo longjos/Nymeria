@@ -3,11 +3,19 @@
 	import { canOperate } from '$lib/stores/session';
 	import { sendMessage } from '$lib/stores/messages';
 	import { timeAgo } from '$lib/utils';
+	import { messagePath } from '$lib/stores/paths';
+	import PathSelect from './PathSelect.svelte';
 
 	let showCompose = $state(false);
 	let blnNumber = $state('0');
 	let blnBody = $state('');
 	let sending = $state(false);
+	let path = $state($messagePath);
+	let pathTouched = $state(false);
+
+	$effect(() => {
+		if (!pathTouched) path = $messagePath;
+	});
 
 	const MAX_BODY = 67;
 
@@ -18,7 +26,7 @@
 		if (!canSend) return;
 		sending = true;
 		try {
-			await sendMessage(`BLN${blnNumber}`, blnBody.trim());
+			await sendMessage(`BLN${blnNumber}`, blnBody.trim(), path);
 			blnBody = '';
 			showCompose = false;
 		} catch {
@@ -64,7 +72,10 @@
 					/>
 				</div>
 				<div class="compose-footer">
-					<span class="char-count" class:warn={charsLeft < 10}>{charsLeft}</span>
+					<div class="footer-meta">
+						<PathSelect id="bln-path" compact bind:value={path} onchange={() => { pathTouched = true; }} />
+						<span class="char-count" class:warn={charsLeft < 10}>{charsLeft}</span>
+					</div>
 					<button type="submit" disabled={!canSend}>
 						{sending ? 'Sending...' : 'Send'}
 					</button>
@@ -218,9 +229,17 @@
 		margin-top: 0.4rem;
 	}
 
+	.footer-meta {
+		display: flex;
+		align-items: baseline;
+		gap: 0.75rem;
+		min-width: 0;
+	}
+
 	.char-count {
 		font-size: 0.7rem;
 		color: var(--color-text-muted);
+		flex-shrink: 0;
 	}
 
 	.char-count.warn {
