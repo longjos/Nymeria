@@ -41,6 +41,7 @@
 	import { initWeatherStore, weatherStations, selectedWeatherStation } from '$lib/stores/weather';
 	import { dfStations } from '$lib/stores/df';
 	import { initPacketStore } from '$lib/stores/packets';
+	import { initPathStore } from '$lib/stores/paths';
 	import { isLoggedIn, needsSetup, isApproved, isPending, isDenied, initSession, handleSessionEvent, currentUser, loadPendingRequests, canAdmin } from '$lib/stores/session';
 	import { mapSettings, AGE_FILTER_MS, TRACK_DURATION_MS } from '$lib/stores/mapSettings';
 	import { activeCheckIns } from '$lib/stores/netcontrol';
@@ -115,6 +116,7 @@
 	$effect(() => {
 		if ($isApproved) {
 			initStationStore();
+			initPathStore();
 			initMessageStore();
 			initTransportStore();
 			initAnnotationStore();
@@ -471,6 +473,7 @@
 		<SidePanel
 			open={panelIsOpen}
 			onClose={closePanel}
+			onBack={$panelMode === 'convo' ? openMessages : undefined}
 			onTransitionEnd={() => {}}
 		>
 			{#if $panelMode === 'stations'}
@@ -580,6 +583,7 @@
 					visible={$sheetState !== 'peek'}
 					onTabChange={handleTabChange}
 					onClose={closePanel}
+					onBack={openMessages}
 					onFlyTo={handleFlyTo}
 				/>
 			{:else if $panelMode === 'transports'}

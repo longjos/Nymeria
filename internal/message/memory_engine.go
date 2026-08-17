@@ -38,6 +38,7 @@ type pendingMsg struct {
 	msg     *Message
 	timer   *time.Timer
 	retries int
+	path    []aprs.Address
 }
 
 // claimInfo tracks which operator has claimed a conversation.
@@ -51,6 +52,8 @@ type claimInfo struct {
 type MemoryEngine struct {
 	mu       sync.Mutex
 	callsign string
+	ssid     int
+	path     []aprs.Address
 	sendFn   SendFunc
 	retryCfg RetryConfig
 
@@ -70,6 +73,7 @@ type MemoryEngine struct {
 func NewMemoryEngine(callsign string, sendFn SendFunc, cfg RetryConfig) *MemoryEngine {
 	return &MemoryEngine{
 		callsign: callsign,
+		path:     aprs.DefaultRFPath(),
 		sendFn:   sendFn,
 		retryCfg: cfg,
 		messages: make(map[string][]Message),
@@ -82,14 +86,32 @@ func NewMemoryEngine(callsign string, sendFn SendFunc, cfg RetryConfig) *MemoryE
 	}
 }
 
-// Send queues an outbound message with automatic retry.
+// Send queues an outbound message with automatic retry using the station path.
 func (e *MemoryEngine) Send(to, body string) (*Message, error) {
+	e.mu.Lock()
+	path := copyPath(e.path)
+	e.mu.Unlock()
+	return e.sendWithResolvedPath(to, body, path)
+}
+
+// SendWithPath sends using an explicit TNC2 path. Empty path is Direct.
+func (e *MemoryEngine) SendWithPath(to, body, pathStr string) (*Message, error) {
+	path, err := aprs.ParsePath(pathStr)
+	if err != nil {
+		return nil, fmt.Errorf("path: %w", err)
+	}
+	return e.sendWithResolvedPath(to, body, path)
+}
+
+func (e *MemoryEngine) sendWithResolvedPath(to, body string, path []aprs.Address) (*Message, error) {
 	msgNo := e.nextMsgNo()
 
-	// Snapshot callsign under lock
 	e.mu.Lock()
 	callsign := e.callsign
+	ssid := e.ssid
 	e.mu.Unlock()
+
+	path = copyPath(path)
 
 	msg := Message{
 		ID:        uuid.NewString(),
@@ -100,10 +122,10 @@ func (e *MemoryEngine) Send(to, body string) (*Message, error) {
 		State:     StateSent,
 		Inbound:   false,
 		Timestamp: time.Now(),
+		Path:      aprs.FormatPath(path),
 	}
 
-	// Build and send the APRS frame
-	frame := e.buildMessageFrame(callsign, to, body, msgNo)
+	frame := e.buildMessageFrame(callsign, ssid, to, body, msgNo, path)
 	if err := e.sendFn(frame); err != nil {
 		msg.State = StateFailed
 		e.storeMessage(to, msg)
@@ -112,10 +134,9 @@ func (e *MemoryEngine) Send(to, body string) (*Message, error) {
 
 	e.storeMessage(to, msg)
 
-	// Start retry timer — use a separate copy so retries don't race with the caller's *Message.
 	e.mu.Lock()
 	pendingCopy := msg
-	pm := &pendingMsg{msg: &pendingCopy, retries: 0}
+	pm := &pendingMsg{msg: &pendingCopy, retries: 0, path: path}
 	e.pending[msgNo] = pm
 	pm.timer = time.AfterFunc(e.retryCfg.InitialInterval, func() {
 		e.retryMessage(msgNo)
@@ -164,8 +185,10 @@ func (e *MemoryEngine) HandlePacket(pkt *aprs.Packet) {
 	if msgData.MessageNo != "" {
 		e.mu.Lock()
 		cs := e.callsign
+		ssid := e.ssid
+		path := copyPath(e.path)
 		e.mu.Unlock()
-		ackFrame := e.buildAckFrame(cs, from, msgData.MessageNo)
+		ackFrame := e.buildAckFrame(cs, ssid, from, msgData.MessageNo, path)
 		e.sendFn(ackFrame)
 	}
 
@@ -471,9 +494,28 @@ func (e *MemoryEngine) Close() {
 
 // UpdateCallsign updates the station callsign used for outbound messages.
 func (e *MemoryEngine) UpdateCallsign(callsign string) {
+	e.UpdateIdentity(callsign, e.ssidSnapshot())
+}
+
+// UpdateIdentity updates the source callsign and SSID for outbound messages.
+func (e *MemoryEngine) UpdateIdentity(callsign string, ssid int) {
 	e.mu.Lock()
 	defer e.mu.Unlock()
 	e.callsign = callsign
+	e.ssid = ssid
+}
+
+func (e *MemoryEngine) ssidSnapshot() int {
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	return e.ssid
+}
+
+// UpdatePath updates the digipeater path used for outbound messages and acks.
+func (e *MemoryEngine) UpdatePath(path []aprs.Address) {
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	e.path = append([]aprs.Address(nil), path...)
 }
 
 func (e *MemoryEngine) nextMsgNo() string {
@@ -481,7 +523,11 @@ func (e *MemoryEngine) nextMsgNo() string {
 	return fmt.Sprintf("%d", n)
 }
 
-func (e *MemoryEngine) buildMessageFrame(callsign, to, body, msgNo string) aprs.APRSFrame {
+func copyPath(path []aprs.Address) []aprs.Address {
+	return append([]aprs.Address(nil), path...)
+}
+
+func (e *MemoryEngine) buildMessageFrame(callsign string, ssid int, to, body, msgNo string, path []aprs.Address) aprs.APRSFrame {
 	// Pad addressee to 9 characters
 	padded := to
 	for len(padded) < 9 {
@@ -491,14 +537,14 @@ func (e *MemoryEngine) buildMessageFrame(callsign, to, body, msgNo string) aprs.
 	payload := fmt.Sprintf(":%s:%s{%s", padded, body, msgNo)
 
 	return aprs.APRSFrame{
-		Source:      aprs.Address{Call: callsign},
+		Source:      aprs.Address{Call: callsign, SSID: ssid},
 		Destination: aprs.Address{Call: "APRS"},
-		Path:        []aprs.Address{{Call: "TCPIP*"}},
+		Path:        copyPath(path),
 		Payload:     payload,
 	}
 }
 
-func (e *MemoryEngine) buildAckFrame(callsign, to, msgNo string) aprs.APRSFrame {
+func (e *MemoryEngine) buildAckFrame(callsign string, ssid int, to, msgNo string, path []aprs.Address) aprs.APRSFrame {
 	padded := to
 	for len(padded) < 9 {
 		padded += " "
@@ -507,9 +553,9 @@ func (e *MemoryEngine) buildAckFrame(callsign, to, msgNo string) aprs.APRSFrame 
 	payload := fmt.Sprintf(":%s:ack%s", padded, msgNo)
 
 	return aprs.APRSFrame{
-		Source:      aprs.Address{Call: callsign},
+		Source:      aprs.Address{Call: callsign, SSID: ssid},
 		Destination: aprs.Address{Call: "APRS"},
-		Path:        []aprs.Address{{Call: "TCPIP*"}},
+		Path:        copyPath(path),
 		Payload:     payload,
 	}
 }
@@ -546,8 +592,8 @@ func (e *MemoryEngine) retryMessage(msgNo string) {
 		return
 	}
 
-	// Resend
-	frame := e.buildMessageFrame(e.callsign, pm.msg.To, pm.msg.Body, msgNo)
+	// Resend on the path this message was originally sent with.
+	frame := e.buildMessageFrame(e.callsign, e.ssid, pm.msg.To, pm.msg.Body, msgNo, copyPath(pm.path))
 
 	// Calculate next backoff
 	interval := e.retryCfg.InitialInterval

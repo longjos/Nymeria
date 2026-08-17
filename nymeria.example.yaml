@@ -15,6 +15,10 @@ station:
   track_max_points: 100
   stale_timeout: 80m
   dedup_window: 30s
+  # New-N AX.25 path. Empty = direct. Common: WIDE1-1,WIDE2-1 (mobile),
+  # WIDE2-1 (fixed), WIDE1-1,WIDE2-2 (rural), TCPIP* (APRS-IS only).
+  message_path: "WIDE1-1,WIDE2-1"
+  beacon_path: "WIDE1-1,WIDE2-1"
 
 # Transport connections
 transports:

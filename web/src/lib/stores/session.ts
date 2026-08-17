@@ -1,6 +1,7 @@
 import { writable, derived, get } from 'svelte/store';
 import type { SessionUser, Role } from '$lib/types';
 import { api, setAuthToken, loadSavedToken } from '$lib/api';
+import { setPaths } from './paths';
 
 export const currentUser = writable<SessionUser | null>(null);
 export const needsSetup = writable<boolean>(false);
@@ -45,6 +46,7 @@ export async function initSession() {
 	try {
 		const cfg = await api.config();
 		needsSetup.set(cfg.needsSetup);
+		setPaths(cfg.messagePath, cfg.beaconPath);
 	} catch {
 		needsSetup.set(false);
 	}

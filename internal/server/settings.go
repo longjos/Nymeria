@@ -23,6 +23,8 @@ type stationDTO struct {
 	StaleTimeout    string            `json:"staleTimeout"`
 	DedupWindow     string            `json:"dedupWindow"`
 	TacticalAliases map[string]string `json:"tacticalAliases,omitempty"`
+	MessagePath     string            `json:"messagePath"`
+	BeaconPath      string            `json:"beaconPath"`
 }
 
 type serverDTO struct {
@@ -105,6 +107,8 @@ func toStationDTO(c config.StationConfig) stationDTO {
 		StaleTimeout:    c.StaleTimeout.String(),
 		DedupWindow:     c.DedupWindow.String(),
 		TacticalAliases: c.TacticalAliases,
+		MessagePath:     c.MessagePath,
+		BeaconPath:      c.BeaconPath,
 	}
 }
 
@@ -129,6 +133,8 @@ func fromStationDTO(d stationDTO) (config.StationConfig, error) {
 		StaleTimeout:    stale,
 		DedupWindow:     dedup,
 		TacticalAliases: d.TacticalAliases,
+		MessagePath:     d.MessagePath,
+		BeaconPath:      d.BeaconPath,
 	}, nil
 }
 
@@ -312,6 +318,8 @@ func (s *Server) handleUpdateStation(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
 		return
 	}
+
+	s.broadcastPaths(stationCfg.MessagePath, stationCfg.BeaconPath)
 
 	writeJSON(w, http.StatusOK, updateResponse{RestartRequired: false})
 }

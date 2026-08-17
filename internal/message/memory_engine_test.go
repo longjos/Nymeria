@@ -89,6 +89,164 @@ func TestSendFormat(t *testing.T) {
 	if !strings.HasPrefix(payload, ":W3ADO-5  :Hello World{") {
 		t.Errorf("payload = %q, want prefix :W3ADO-5  :Hello World{", payload)
 	}
+
+	// Default path is the standard RF path, not TCPIP*
+	if got := aprs.FormatPath(frame.Path); got != "WIDE1-1,WIDE2-1" {
+		t.Errorf("default path = %q, want WIDE1-1,WIDE2-1", got)
+	}
+	if len(frame.Path) == 1 && frame.Path[0].Call == "TCPIP*" {
+		t.Error("path must not bake the H-bit asterisk into the callsign")
+	}
+}
+
+func TestSendUsesConfiguredPath(t *testing.T) {
+	eng, mock := newTestEngine()
+	defer eng.Close()
+
+	path, err := aprs.ParsePath("WIDE1-1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	eng.UpdatePath(path)
+
+	if _, err := eng.Send("W3ADO", "Hello"); err != nil {
+		t.Fatalf("Send: %v", err)
+	}
+	frames := mock.getFrames()
+	if len(frames) == 0 {
+		t.Fatal("no frames sent")
+	}
+	if got := aprs.FormatPath(frames[0].Path); got != "WIDE1-1" {
+		t.Errorf("path = %q, want WIDE1-1", got)
+	}
+}
+
+func TestSendWithPathOverride(t *testing.T) {
+	eng, mock := newTestEngine()
+	defer eng.Close()
+
+	msg, err := eng.SendWithPath("W3ADO", "Hello", "WIDE2-1")
+	if err != nil {
+		t.Fatalf("SendWithPath: %v", err)
+	}
+	if msg.Path != "WIDE2-1" {
+		t.Errorf("msg.Path = %q, want WIDE2-1", msg.Path)
+	}
+	frames := mock.getFrames()
+	if len(frames) == 0 {
+		t.Fatal("no frames sent")
+	}
+	if got := aprs.FormatPath(frames[0].Path); got != "WIDE2-1" {
+		t.Errorf("frame path = %q, want WIDE2-1", got)
+	}
+}
+
+func TestSendWithPathEmptyIsDirect(t *testing.T) {
+	eng, mock := newTestEngine()
+	defer eng.Close()
+
+	msg, err := eng.SendWithPath("W3ADO", "Hello", "")
+	if err != nil {
+		t.Fatalf("SendWithPath: %v", err)
+	}
+	if msg.Path != "" {
+		t.Errorf("msg.Path = %q, want empty (direct)", msg.Path)
+	}
+	if len(mock.getFrames()[0].Path) != 0 {
+		t.Errorf("frame path = %v, want direct", mock.getFrames()[0].Path)
+	}
+}
+
+func TestSendWithPathInvalid(t *testing.T) {
+	eng, _ := newTestEngine()
+	defer eng.Close()
+
+	if _, err := eng.SendWithPath("W3ADO", "Hello", "TOOLONG-1"); err == nil {
+		t.Fatal("expected error for invalid path")
+	}
+}
+
+func TestRetryUsesPerMessagePath(t *testing.T) {
+	eng, mock := newTestEngine()
+	defer eng.Close()
+
+	if _, err := eng.SendWithPath("W3ADO", "Hello", "WIDE1-1"); err != nil {
+		t.Fatalf("SendWithPath: %v", err)
+	}
+
+	// Change the station default after send — retry must keep the original path.
+	newPath, err := aprs.ParsePath("TCPIP*")
+	if err != nil {
+		t.Fatal(err)
+	}
+	eng.UpdatePath(newPath)
+
+	deadline := time.Now().Add(200 * time.Millisecond)
+	for mock.frameCount() < 2 && time.Now().Before(deadline) {
+		time.Sleep(5 * time.Millisecond)
+	}
+	frames := mock.getFrames()
+	if len(frames) < 2 {
+		t.Fatalf("expected retry frame, got %d", len(frames))
+	}
+	if got := aprs.FormatPath(frames[1].Path); got != "WIDE1-1" {
+		t.Errorf("retry path = %q, want WIDE1-1", got)
+	}
+}
+
+func TestSendDirectPath(t *testing.T) {
+	eng, mock := newTestEngine()
+	defer eng.Close()
+	eng.UpdatePath(nil)
+
+	if _, err := eng.Send("W3ADO", "Hello"); err != nil {
+		t.Fatalf("Send: %v", err)
+	}
+	frames := mock.getFrames()
+	if len(frames[0].Path) != 0 {
+		t.Errorf("direct path = %v, want empty", frames[0].Path)
+	}
+}
+
+func TestAckUsesConfiguredPath(t *testing.T) {
+	eng, mock := newTestEngine()
+	defer eng.Close()
+
+	path, err := aprs.ParsePath("TCPIP*")
+	if err != nil {
+		t.Fatal(err)
+	}
+	eng.UpdatePath(path)
+
+	inbound := aprs.APRSFrame{
+		Source:      aprs.Address{Call: "W3ADO"},
+		Destination: aprs.Address{Call: "APRS"},
+		Payload:     ":N0CALL   :Hello{42",
+	}
+	parser := aprs.NewParser()
+	pkt, err := parser.Parse(inbound)
+	if err != nil {
+		t.Fatalf("parse: %v", err)
+	}
+	eng.HandlePacket(pkt)
+
+	var ack *aprs.APRSFrame
+	for i := range mock.getFrames() {
+		f := mock.getFrames()[i]
+		if strings.Contains(f.Payload, ":ack") {
+			ack = &f
+			break
+		}
+	}
+	if ack == nil {
+		t.Fatal("expected ack frame")
+	}
+	if got := aprs.FormatPath(ack.Path); got != "TCPIP*" {
+		t.Errorf("ack path = %q, want TCPIP*", got)
+	}
+	if len(ack.Path) != 1 || ack.Path[0].Call != "TCPIP" || !ack.Path[0].HBit {
+		t.Errorf("ack path address = %+v, want {Call:TCPIP HBit:true}", ack.Path)
+	}
 }
 
 func TestSequentialMsgNo(t *testing.T) {
@@ -779,6 +937,20 @@ func TestUpdateCallsign(t *testing.T) {
 	lastFrame := frames[len(frames)-1]
 	if lastFrame.Source.Call != "W1AW" {
 		t.Errorf("frame source after update = %q, want W1AW", lastFrame.Source.Call)
+	}
+}
+
+func TestSendIncludesSSID(t *testing.T) {
+	eng, mock := newTestEngine()
+	defer eng.Close()
+	eng.UpdateIdentity("N0CALL", 9)
+
+	if _, err := eng.Send("W3ADO", "Hello"); err != nil {
+		t.Fatalf("Send: %v", err)
+	}
+	frame := mock.getFrames()[0]
+	if frame.Source.Call != "N0CALL" || frame.Source.SSID != 9 {
+		t.Errorf("source = %v, want N0CALL-9", frame.Source)
 	}
 }
 

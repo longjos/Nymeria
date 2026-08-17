@@ -24,6 +24,9 @@ type Message struct {
 	Retries   int          `json:"retries"`
 	Inbound   bool         `json:"inbound"`
 	Timestamp time.Time    `json:"timestamp"`
+	// Path is the TNC2 digipeater path used for this outbound message.
+	// Empty means Direct. Omitted on inbound messages.
+	Path string `json:"path,omitempty"`
 }
 
 // Bulletin represents a deduplicated APRS bulletin message.

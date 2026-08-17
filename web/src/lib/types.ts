@@ -131,6 +131,8 @@ export interface Message {
 	retries: number;
 	inbound: boolean;
 	timestamp: string;
+	/** TNC2 path used for this outbound message. Empty/omitted = Direct or inbound. */
+	path?: string;
 }
 
 export type MessageState = 0 | 1 | 2 | 3 | 4;
@@ -194,6 +196,8 @@ export interface ConfigResponse {
 	wsClients: number;
 	authMode: string;
 	needsSetup: boolean;
+	messagePath: string;
+	beaconPath: string;
 }
 
 export interface SetupData {
@@ -503,6 +507,10 @@ export interface StationSettings {
 	staleTimeout: string;
 	dedupWindow: string;
 	tacticalAliases?: Record<string, string>;
+	/** TNC2 digipeater path for messages and acks (e.g. "WIDE1-1,WIDE2-1"). */
+	messagePath: string;
+	/** TNC2 digipeater path for beacons and APRS objects/items. */
+	beaconPath: string;
 }
 
 export interface ServerSettings {

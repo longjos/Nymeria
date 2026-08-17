@@ -1,10 +1,18 @@
 <script lang="ts">
 	import { sendMessage } from '$lib/stores/messages';
+	import { messagePath } from '$lib/stores/paths';
+	import PathSelect from './PathSelect.svelte';
 
 	let { to, onSent }: { to: string; onSent?: () => void } = $props();
 	let body = $state('');
 	let sending = $state(false);
 	let error = $state('');
+	let path = $state($messagePath);
+	let pathTouched = $state(false);
+
+	$effect(() => {
+		if (!pathTouched) path = $messagePath;
+	});
 
 	async function handleSubmit(e: Event) {
 		e.preventDefault();
@@ -14,7 +22,7 @@
 		sending = true;
 		error = '';
 		try {
-			await sendMessage(to, text);
+			await sendMessage(to, text, path);
 			body = '';
 			onSent?.();
 		} catch (err) {
@@ -49,7 +57,12 @@
 			{sending ? '...' : 'Send'}
 		</button>
 	</div>
-	<div class="hint">{body.length}/67 characters (APRS limit)</div>
+	<div class="hint">
+		<div class="path-wrap">
+			<PathSelect id="msg-path" compact bind:value={path} onchange={() => { pathTouched = true; }} />
+		</div>
+		<span>{body.length}/67 characters (APRS limit)</span>
+	</div>
 </form>
 
 <style>
@@ -103,9 +116,17 @@
 	}
 
 	.hint {
+		display: flex;
+		justify-content: space-between;
+		align-items: center;
+		gap: 0.75rem;
 		font-size: 0.7rem;
 		color: var(--color-text-muted);
-		margin-top: 0.25rem;
-		text-align: right;
+		margin-top: 0.35rem;
+	}
+
+	.path-wrap {
+		min-width: 0;
+		flex: 1;
 	}
 </style>

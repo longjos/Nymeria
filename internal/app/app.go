@@ -148,6 +148,8 @@ func New(opts Options) (*App, error) {
 		func(frame aprs.APRSFrame) error { return tm.Send(frame) },
 		message.DefaultRetryConfig(),
 	)
+	msgEngine.UpdateIdentity(cfg.Station.Callsign, cfg.Station.SSID)
+	msgEngine.UpdatePath(stationPath(cfg.Station.MessagePath))
 
 	// Hydrate message engine from database
 	if msgs, err := db.LoadMessages(); err != nil {
@@ -175,6 +177,7 @@ func New(opts Options) (*App, error) {
 			RetransmitInterval: 10 * time.Minute,
 		},
 	)
+	objMgr.UpdatePath(stationPath(cfg.Station.BeaconPath))
 	objMgr.Start(ctx)
 
 	// Connect all transports
@@ -187,6 +190,7 @@ func New(opts Options) (*App, error) {
 		Enabled:  cfg.Beacon.Enabled,
 		Interval: cfg.Beacon.Interval,
 		Comment:  cfg.Beacon.Comment,
+		Path:     stationPath(cfg.Station.BeaconPath),
 	}
 	if bcnCfg.Interval == 0 {
 		bcnCfg.Interval = 10 * time.Minute
@@ -287,6 +291,7 @@ func New(opts Options) (*App, error) {
 			Enabled:  newCfg.Beacon.Enabled,
 			Interval: newCfg.Beacon.Interval,
 			Comment:  newCfg.Beacon.Comment,
+			Path:     stationPath(newCfg.Station.BeaconPath),
 		})
 		if newCfg.Beacon.Enabled && !bcn.IsRunning() {
 			bcn.Start(ctx)
@@ -311,9 +316,18 @@ func New(opts Options) (*App, error) {
 				SymbolTable: newCfg.Station.SymbolTable,
 				SymbolCode:  newCfg.Station.SymbolCode,
 			})
-			msgEngine.UpdateCallsign(newCfg.Station.Callsign)
+			msgEngine.UpdateIdentity(newCfg.Station.Callsign, newCfg.Station.SSID)
 			objMgr.UpdateStationInfo(newCfg.Station.Callsign, newCfg.Station.SSID)
 			log.Printf("[config] station identity updated: %s-%d", newCfg.Station.Callsign, newCfg.Station.SSID)
+		}
+
+		if old.Station.MessagePath != newCfg.Station.MessagePath {
+			msgEngine.UpdatePath(stationPath(newCfg.Station.MessagePath))
+			log.Printf("[config] message path updated: %q", newCfg.Station.MessagePath)
+		}
+		if old.Station.BeaconPath != newCfg.Station.BeaconPath {
+			objMgr.UpdatePath(stationPath(newCfg.Station.BeaconPath))
+			log.Printf("[config] beacon path updated: %q", newCfg.Station.BeaconPath)
 		}
 
 		// Station tracker settings: hot-reload
@@ -437,4 +451,15 @@ func (a *App) Shutdown(ctx context.Context) error {
 		}
 	})
 	return err
+}
+
+// stationPath parses a configured TNC2 path. Invalid values fall back to WIDE1-1,WIDE2-1
+// so a live reload cannot leave outbound traffic unpathable.
+func stationPath(s string) []aprs.Address {
+	path, err := aprs.ParsePath(s)
+	if err != nil {
+		log.Printf("[config] invalid path %q: %v; using WIDE1-1,WIDE2-1", s, err)
+		return aprs.DefaultRFPath()
+	}
+	return path
 }

@@ -21,6 +21,7 @@
 		visible = true,
 		onTabChange,
 		onClose,
+		onBack,
 		onFlyTo
 	}: {
 		stationKey: string;
@@ -33,6 +34,7 @@
 		visible?: boolean;
 		onTabChange?: (tab: DetailTab) => void;
 		onClose?: () => void;
+		onBack?: () => void;
 		onFlyTo?: (lat: number, lon: number) => void;
 	} = $props();
 
@@ -187,6 +189,13 @@
 	{:else if unknownStation}
 		<!-- Unknown station: show header + messages only -->
 		<div class="detail-header">
+			{#if onBack}
+				<button class="back-btn" onclick={onBack} aria-label="Back to conversations">
+					<svg width="16" height="16" viewBox="0 0 16 16" fill="none">
+						<path d="M10 12L6 8l4-4" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/>
+					</svg>
+				</button>
+			{/if}
 			<div class="unknown-icon">?</div>
 			<div class="header-text">
 				<span class="callsign">{stationKey}</span>
@@ -212,6 +221,13 @@
 		</div>
 	{:else if station}
 		<div class="detail-header">
+			{#if onBack}
+				<button class="back-btn" onclick={onBack} aria-label="Back to conversations">
+					<svg width="16" height="16" viewBox="0 0 16 16" fill="none">
+						<path d="M10 12L6 8l4-4" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/>
+					</svg>
+				</button>
+			{/if}
 			<APRSIcon symbol={station.symbol} size={36} />
 			<div class="header-text">
 				{#if editingAlias}
@@ -430,6 +446,25 @@
 		display: flex;
 		flex-direction: column;
 		height: 100%;
+	}
+
+	.back-btn {
+		display: flex;
+		align-items: center;
+		justify-content: center;
+		flex-shrink: 0;
+		width: 28px;
+		height: 28px;
+		padding: 0;
+		background: none;
+		border: none;
+		border-radius: var(--radius-sm);
+		color: var(--color-text);
+		cursor: pointer;
+	}
+
+	.back-btn:hover {
+		color: var(--color-accent);
 	}
 
 	.detail-header {

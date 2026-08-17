@@ -1,6 +1,9 @@
 <script lang="ts">
 	import { api } from '$lib/api';
 	import { canPlot, canOperate } from '$lib/stores/session';
+	import { beaconPath } from '$lib/stores/paths';
+	import { formatPathDisplay } from '$lib/aprsPath';
+	import PathHint from './PathHint.svelte';
 	import { annotationList, operations, activeOperationId } from '$lib/stores/annotations';
 	import { missions as netMissions, activeNet } from '$lib/stores/netcontrol';
 	import { timeAgo } from '$lib/utils';
@@ -655,17 +658,28 @@
 							</div>
 						{/if}
 						{#if $canOperate && ann.type === 'point' && !isTerminalStatus(ann.status)}
-							{#if ann.transmitting}
-								<button class="transmit-btn active" onclick={(e) => handleStopTransmit(ann, e)}>
-									<svg width="10" height="10" viewBox="0 0 16 16" fill="none"><path d="M8 2v12M4 6l4-4 4 4M3 10a5 5 0 0 0 10 0" stroke="currentColor" stroke-width="1.2" fill="none" stroke-linecap="round"/></svg>
-									Stop TX
-								</button>
-							{:else}
-								<button class="transmit-btn" onclick={(e) => handleTransmit(ann, e)}>
-									<svg width="10" height="10" viewBox="0 0 16 16" fill="none"><path d="M8 2v12M4 6l4-4 4 4M3 10a5 5 0 0 0 10 0" stroke="currentColor" stroke-width="1.2" fill="none" stroke-linecap="round"/></svg>
-									Transmit
-								</button>
-							{/if}
+							<div class="transmit-row">
+								{#if ann.transmitting}
+									<button
+										class="transmit-btn active"
+										title="Stop APRS object transmission via {formatPathDisplay($beaconPath)}"
+										onclick={(e) => handleStopTransmit(ann, e)}
+									>
+										<svg width="10" height="10" viewBox="0 0 16 16" fill="none"><path d="M8 2v12M4 6l4-4 4 4M3 10a5 5 0 0 0 10 0" stroke="currentColor" stroke-width="1.2" fill="none" stroke-linecap="round"/></svg>
+										Stop TX
+									</button>
+								{:else}
+									<button
+										class="transmit-btn"
+										title="Transmit as APRS object via {formatPathDisplay($beaconPath)}"
+										onclick={(e) => handleTransmit(ann, e)}
+									>
+										<svg width="10" height="10" viewBox="0 0 16 16" fill="none"><path d="M8 2v12M4 6l4-4 4 4M3 10a5 5 0 0 0 10 0" stroke="currentColor" stroke-width="1.2" fill="none" stroke-linecap="round"/></svg>
+										Transmit
+									</button>
+								{/if}
+								<PathHint kind="beacon" />
+							</div>
 						{/if}
 						{#if colorEditId === ann.id}
 							<!-- svelte-ignore a11y_no_static_element_interactions -->
@@ -1444,6 +1458,14 @@
 	.promote-btn:hover {
 		color: var(--color-accent);
 		border-color: var(--color-accent);
+	}
+
+	.transmit-row {
+		display: flex;
+		align-items: center;
+		gap: 8px;
+		flex-wrap: wrap;
+		margin-top: 4px;
 	}
 
 	.transmit-btn {

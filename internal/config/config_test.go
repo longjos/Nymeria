@@ -25,6 +25,12 @@ func TestDefaultConfig(t *testing.T) {
 	if cfg.Station.TrackMaxPoints != 100 {
 		t.Errorf("track_max_points = %d, want 100", cfg.Station.TrackMaxPoints)
 	}
+	if cfg.Station.MessagePath != "WIDE1-1,WIDE2-1" {
+		t.Errorf("message_path = %q, want WIDE1-1,WIDE2-1", cfg.Station.MessagePath)
+	}
+	if cfg.Station.BeaconPath != "WIDE1-1,WIDE2-1" {
+		t.Errorf("beacon_path = %q, want WIDE1-1,WIDE2-1", cfg.Station.BeaconPath)
+	}
 	if cfg.Store.Path != "./nymeria.db" {
 		t.Errorf("store.path = %q, want ./nymeria.db", cfg.Store.Path)
 	}
@@ -69,6 +75,36 @@ func TestValidation(t *testing.T) {
 		{
 			name:    "empty listen address",
 			modify:  func(c *Config) { c.Server.Listen = "" },
+			wantErr: true,
+		},
+		{
+			name:    "empty paths are valid (direct)",
+			modify:  func(c *Config) { c.Station.MessagePath = ""; c.Station.BeaconPath = "" },
+			wantErr: false,
+		},
+		{
+			name:    "internet path is valid",
+			modify:  func(c *Config) { c.Station.MessagePath = "TCPIP*" },
+			wantErr: false,
+		},
+		{
+			name:    "invalid message path",
+			modify:  func(c *Config) { c.Station.MessagePath = "TOOLONG-1" },
+			wantErr: true,
+		},
+		{
+			name:    "invalid beacon path hop count",
+			modify:  func(c *Config) { c.Station.BeaconPath = "A-1,B-1,C-1,D-1,E-1,F-1,G-1,H-1,I-1" },
+			wantErr: true,
+		},
+		{
+			name:    "deprecated RELAY path",
+			modify:  func(c *Config) { c.Station.MessagePath = "RELAY,WIDE" },
+			wantErr: true,
+		},
+		{
+			name:    "WIDE3 exceeds New-N",
+			modify:  func(c *Config) { c.Station.BeaconPath = "WIDE3-3" },
 			wantErr: true,
 		},
 	}
@@ -128,6 +164,10 @@ transports:
 	}
 	if cfg.Transports[0].Host != "rotate.aprs2.net" {
 		t.Errorf("host = %q, want rotate.aprs2.net", cfg.Transports[0].Host)
+	}
+	// Missing path keys keep DefaultConfig values
+	if cfg.Station.MessagePath != "WIDE1-1,WIDE2-1" {
+		t.Errorf("message_path defaulted = %q, want WIDE1-1,WIDE2-1", cfg.Station.MessagePath)
 	}
 }
 

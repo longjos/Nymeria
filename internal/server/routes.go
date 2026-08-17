@@ -16,6 +16,7 @@ import (
 	"github.com/narvel/nymeria/internal/aprs"
 	"github.com/narvel/nymeria/internal/checkpoint"
 	"github.com/narvel/nymeria/internal/ics309"
+	"github.com/narvel/nymeria/internal/message"
 	"github.com/narvel/nymeria/internal/netcontrol"
 	"github.com/narvel/nymeria/internal/tilecache"
 	"github.com/narvel/nymeria/internal/object"
@@ -291,8 +292,9 @@ func (s *Server) handleSendMessage(w http.ResponseWriter, r *http.Request) {
 	}
 
 	var req struct {
-		To   string `json:"to"`
-		Body string `json:"body"`
+		To   string  `json:"to"`
+		Body string  `json:"body"`
+		Path *string `json:"path"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid request body"})
@@ -304,9 +306,21 @@ func (s *Server) handleSendMessage(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	msg, err := s.msgEngine.Send(req.To, req.Body)
+	var (
+		msg *message.Message
+		err error
+	)
+	if req.Path != nil {
+		msg, err = s.msgEngine.SendWithPath(req.To, req.Body, *req.Path)
+	} else {
+		msg, err = s.msgEngine.Send(req.To, req.Body)
+	}
 	if err != nil {
-		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
+		status := http.StatusInternalServerError
+		if req.Path != nil && strings.HasPrefix(err.Error(), "path:") {
+			status = http.StatusBadRequest
+		}
+		writeJSON(w, status, map[string]string{"error": err.Error()})
 		return
 	}
 
@@ -456,14 +470,21 @@ func (s *Server) handleBeaconNow(w http.ResponseWriter, r *http.Request) {
 
 func (s *Server) handleGetConfig(w http.ResponseWriter, _ *http.Request) {
 	needsSetup := false
+	messagePath := "WIDE1-1,WIDE2-1"
+	beaconPath := "WIDE1-1,WIDE2-1"
 	if s.configMgr != nil {
-		needsSetup = s.configMgr.Get().Station.Callsign == "N0CALL"
+		st := s.configMgr.Get().Station
+		needsSetup = st.Callsign == "N0CALL"
+		messagePath = st.MessagePath
+		beaconPath = st.BeaconPath
 	}
 	writeJSON(w, http.StatusOK, map[string]any{
-		"transports": len(s.transports.Statuses()),
-		"wsClients":  s.hub.ClientCount(),
-		"authMode":   "invite",
-		"needsSetup": needsSetup,
+		"transports":  len(s.transports.Statuses()),
+		"wsClients":   s.hub.ClientCount(),
+		"authMode":    "invite",
+		"needsSetup":  needsSetup,
+		"messagePath": messagePath,
+		"beaconPath":  beaconPath,
 	})
 }
 
