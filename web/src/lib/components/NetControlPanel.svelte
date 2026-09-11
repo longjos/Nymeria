@@ -31,6 +31,13 @@
 		isW3WLocation, extractWords, w3wSuffix, cachedReverse, putReverse
 	} from '$lib/w3w';
 	import { w3wConfigured } from '$lib/stores/w3w';
+	import {
+		detectFormat, parsePlusCode, parseMGRS, isGeocodeError,
+		formatMGRSGroups, formatPlusCode, formatMGRS,
+		geocodeLocationLabel, extractGeocode,
+		type GeocodeParse, type GeocodeResult, type GeocodeErrorCode, type GeocodeFormat, type RefPoint
+	} from '$lib/geocodes';
+	import { gpsStatus } from '$lib/stores/gps';
 	import LocationManager from './LocationManager.svelte';
 	import SituationBoard from './SituationBoard.svelte';
 
@@ -128,11 +135,11 @@
 	let titleEl = $state<HTMLInputElement>();
 
 	// Mission location — one source of truth (design doc task #92 §3).
-	// 'w3w' is distinct from 'map': the missionMapCoords effect below
-	// overwrites the label with a nearby annotation's label, which would
-	// destroy the exact words a what3words resolve needs to preserve so the
-	// NCS can read them back on air.
-	type MissionLocSource = 'none' | 'annotation' | 'map' | 'typed' | 'coords' | 'w3w';
+	// 'w3w'/'pluscode'/'mgrs' are distinct from 'map': the missionMapCoords
+	// effect below overwrites the label with a nearby annotation's label,
+	// which would destroy the exact words/code a resolve needs to preserve so
+	// the NCS can read them back on air.
+	type MissionLocSource = 'none' | 'annotation' | 'map' | 'typed' | 'coords' | 'w3w' | 'pluscode' | 'mgrs';
 	let missionLocLabel = $state('');
 	let missionLocLat = $state<number | null>(null);
 	let missionLocLon = $state<number | null>(null);
@@ -144,6 +151,9 @@
 	let missionLocWords = $state('');
 	let missionLocNear = $state('');
 	let missionLocConfirmed = $state(false);
+	// Offline geocodes (#94) — normalized Plus Code / MGRS string, '' for
+	// every other source. Shares missionLocConfirmed's gate with w3w.
+	let missionLocCode = $state('');
 	let w3wSuggestions = $state<W3WSuggestion[]>([]);
 	let w3wLoading = $state(false);
 	let w3wError = $state('');
@@ -152,7 +162,7 @@
 	let w3wSeq = 0;
 	// Lazy reverse (coords -> ///words) shown under any chosen location.
 	let reverseWords = $state('');
-	let reverseCopied = $state(false);
+	let reverseCopied = $state<'plus' | 'mgrs' | 'w3w' | null>(null);
 
 	let locOpen = $state(false);
 	let locQuery = $state('');
@@ -305,6 +315,7 @@
 				missionLocWords = backup.locWords;
 				missionLocNear = backup.locNear;
 				missionLocConfirmed = backup.locConfirmed;
+				missionLocCode = backup.locCode;
 				selectedAnnotationIds = backup.selectedAnnotationIds;
 			}
 			missionDraftBackup.set(null);
@@ -883,12 +894,14 @@
 		missionLocSource = 'map';
 		missionLocNearId = near?.annotation.id ?? null;
 		missionLocLabel = near?.annotation.label ?? '';
-		// Dragging (or re-clicking) away from a what3words square means the
-		// NCS is overriding the words — they're gone because the pin is no
-		// longer in that square, which is correct and honest.
+		// Dragging (or re-clicking) away from a what3words square / geocode
+		// cell means the NCS is overriding it — the words/code are gone
+		// because the pin is no longer in that square, which is correct and
+		// honest.
 		missionLocWords = '';
 		missionLocNear = '';
 		missionLocConfirmed = false;
+		missionLocCode = '';
 		srMessage = near ? `Location set near ${near.annotation.label}` : `Location set to ${formatCoord(lat, lon)}`;
 		pickingOnMap = false;
 		onMissionMapCoordsConsumed?.();
@@ -984,6 +997,7 @@
 		missionLocWords = '';
 		missionLocNear = '';
 		missionLocConfirmed = false;
+		missionLocCode = '';
 		unlinkStaleAutoLink();
 		onClearMissionDraft?.();
 		srMessage = 'Location cleared.';
@@ -1004,10 +1018,11 @@
 	}
 
 	function openLocPopover() {
-		// Clicking the chip body is forgiving for a w3w-sourced location — it
-		// re-flies to the pin (the confirmation check) without auto-confirming.
-		if (missionLocSource === 'w3w' && missionLocLat != null && missionLocLon != null) {
-			flyToW3WPin(missionLocLat, missionLocLon);
+		// Clicking the chip body is forgiving for an unconfirmed resolve
+		// (w3w/Plus Code/MGRS) — it re-flies to the pin (the confirmation
+		// check) without auto-confirming.
+		if (locNeedsConfirm && missionLocLat != null && missionLocLon != null) {
+			flyToLocationPin(missionLocLat, missionLocLon);
 		}
 		locOpen = true;
 		locQuery = missionLocSource !== 'none' ? missionLocLabel : '';
@@ -1043,7 +1058,7 @@
 		return (metersPerPixel * pixelShift) / 111320;
 	}
 
-	function flyToW3WPin(lat: number, lon: number) {
+	function flyToLocationPin(lat: number, lon: number) {
 		const zoom = 16;
 		const flyLat = isMobileViewport() ? lat + latOffsetForSheet(lat, zoom) : lat;
 		onFlyTo?.(flyLat, lon, zoom);
@@ -1153,12 +1168,13 @@
 			missionLocWords = r.words;
 			missionLocNear = nearText;
 			missionLocSource = 'w3w';
+			missionLocCode = ''; // not a geocode selection
 			missionLocNearId = near?.annotation.id ?? null;
 			missionLocLabel = w3wLocationLabel(r.words, nearText || undefined);
 			missionLocConfirmed = false;
 			putReverse(r.lat, r.lon, r.words); // seed the reverse cache — free
 			onSetMissionDraftPoint?.(r.lat, r.lon);
-			flyToW3WPin(r.lat, r.lon);
+			flyToLocationPin(r.lat, r.lon);
 			locOpen = false;
 			locQuery = '';
 			resetW3WSuggestState();
@@ -1172,11 +1188,11 @@
 		}
 	}
 
-	function confirmW3WLocation() {
+	function confirmLocation() {
 		if (missionLocLat == null || missionLocLon == null) return;
-		flyToW3WPin(missionLocLat, missionLocLon);
+		flyToLocationPin(missionLocLat, missionLocLon);
 		missionLocConfirmed = true;
-		srMessage = `Confirmed ${formatWords(missionLocWords)} on the map.`;
+		srMessage = `Confirmed ${locChipPrimary} on the map.`;
 	}
 
 	function openW3WSettings() {
@@ -1200,22 +1216,90 @@
 				locWords: missionLocWords,
 				locNear: missionLocNear,
 				locConfirmed: missionLocConfirmed,
+				locCode: missionLocCode,
 				selectedAnnotationIds: [...selectedAnnotationIds],
 			});
 		}
 		openSettings('what3words');
 	}
 
-	async function copyReverseWords() {
-		if (!reverseWords) return;
+	/** Shared copy handler for the reverse-formats row (§4) — one clipboard
+	 * path for Plus Code / MGRS / what3words, "Copied" feedback keyed by
+	 * which token was copied. Clipboard may be unavailable (permissions,
+	 * insecure context) — this is a convenience, not worth an error row. */
+	async function copyToken(kind: 'plus' | 'mgrs' | 'w3w', text: string) {
+		if (!text) return;
 		try {
-			await navigator.clipboard?.writeText(formatWords(reverseWords));
-			reverseCopied = true;
-			setTimeout(() => { reverseCopied = false; }, 1500);
+			await navigator.clipboard?.writeText(text);
+			reverseCopied = kind;
+			setTimeout(() => { if (reverseCopied === kind) reverseCopied = null; }, 1500);
 		} catch {
-			// Clipboard may be unavailable (permissions, insecure context) —
-			// this is a convenience, not worth an error row.
+			// silent — see comment above
 		}
+	}
+
+	// --- Offline geocodes (Plus Code / MGRS) — #94 -------------------------
+
+	// Reference point for recovering a short Plus Code, and for shortening
+	// the Plus Code shown in the reverse row — same order both places so the
+	// code an operator reads out matches the code they'd type back in.
+	// Captured fresh on every call; never stored, so a resolved code is
+	// always a fixed lat/lon regardless of where the map pans afterward.
+	function currentRefPoint(): RefPoint | null {
+		// 1. Map centre — what the NCS is actually looking at. Same source the
+		//    w3w autosuggest focus already uses.
+		const c = getMapCenter?.();
+		if (c) return { lat: c.lat, lon: c.lon };
+		// 2. Net location centroid — the event's own footprint.
+		const centroid = annotationCentroid(locOptions);
+		if (centroid) return centroid;
+		// 3. Our own GPS fix, when it's a real, non-stale one.
+		const status = get(gpsStatus);
+		if (status.fix && status.fix.mode >= 2 && !status.stale) {
+			return { lat: status.fix.lat, lon: status.fix.lon };
+		}
+		return null;
+	}
+
+	// resolveW3W's success branch with the await removed — offline codes
+	// resolve synchronously, but everything downstream (draft pin, fly-to,
+	// unconfirmed chip, srMessage) is identical so the NCS gets the same
+	// safety check regardless of which format they typed.
+	function useGeocode(g: GeocodeResult) {
+		unlinkStaleAutoLink();
+		const near = nearestAnnotation(g.lat, g.lon, locOptions, 100);
+		const nearText = near?.annotation.label ?? '';
+		missionLocLat = g.lat;
+		missionLocLon = g.lon;
+		missionLocCode = g.label;
+		missionLocWords = ''; // not a w3w selection
+		missionLocNear = nearText;
+		missionLocSource = g.format;
+		missionLocNearId = near?.annotation.id ?? null;
+		missionLocLabel = geocodeLocationLabel(
+			g.format === 'mgrs' ? formatMGRSGroups(g.label) : g.label,
+			nearText || undefined
+		);
+		missionLocConfirmed = false;
+		onSetMissionDraftPoint?.(g.lat, g.lon);
+		flyToLocationPin(g.lat, g.lon);
+		locOpen = false;
+		locQuery = '';
+		resetW3WSuggestState();
+		const formatName = g.format === 'mgrs' ? 'MGRS ' : 'Plus Code ';
+		srMessage = `Location set to ${formatName}${missionLocLabel}. Shown on the map — confirm before creating.`;
+		queueMicrotask(() => locFieldTriggerEl?.focus());
+	}
+
+	/** Pull the "near X" fragment out of a "<code> · near X" stored location
+	 * string — same separator as w3wSuffix, generalized for the mission-card
+	 * geocode treatment since Plus Code/MGRS labels don't start with '///'. */
+	function geocodeNearSuffix(location: string): string | null {
+		const marker = ' · near ';
+		const idx = location.indexOf(marker);
+		if (idx === -1) return null;
+		const suffix = location.slice(idx + marker.length).trim();
+		return suffix || null;
 	}
 
 	// Lazily resolve the ///words for whatever location is currently chosen,
@@ -1242,10 +1326,26 @@
 		return () => { cancelled = true; };
 	});
 
+	// Plus Code / MGRS reverse tokens — synchronous, no effect, no loading
+	// state: the whole point of #94 is that these never touch the network.
+	// Self-suppressed against the current source, same rule as the w3w leg.
+	let reversePlusCode = $derived.by(() => {
+		if (missionLocSource === 'pluscode' || missionLocLat == null || missionLocLon == null) return null;
+		return formatPlusCode(missionLocLat, missionLocLon, currentRefPoint());
+	});
+	let reverseMGRS = $derived.by(() => {
+		if (missionLocSource === 'mgrs' || missionLocLat == null || missionLocLon == null) return '';
+		return formatMGRS(missionLocLat, missionLocLon, 4);
+	});
+
 	function commitLocRow(i: number) {
 		if (i === 0) {
-			// Enter on a fully-typed address commits it directly instead of
+			// Enter on a complete code/address commits it directly instead of
 			// requiring an arrow-down into the suggestion list first.
+			if (locGeocode && !isGeocodeError(locGeocode)) {
+				useGeocode(locGeocode);
+				return;
+			}
 			if ($w3wConfigured && locIsFullAddress) {
 				resolveW3W(locQuery.trim());
 				return;
@@ -1253,11 +1353,15 @@
 			startMapPick();
 			return;
 		}
-		if (i >= 1 && i < 1 + w3wRowCount) {
-			resolveW3W(w3wSuggestions[i - 1].words);
+		if (i === 1 && geocodeRowCount === 1 && locGeocode && !isGeocodeError(locGeocode)) {
+			useGeocode(locGeocode);
 			return;
 		}
-		const annIdx = i - 1 - w3wRowCount;
+		if (i >= 1 + geocodeRowCount && i < 1 + geocodeRowCount + w3wRowCount) {
+			resolveW3W(w3wSuggestions[i - 1 - geocodeRowCount].words);
+			return;
+		}
+		const annIdx = i - 1 - geocodeRowCount - w3wRowCount;
 		if (annIdx >= 0 && annIdx < locFiltered.length) {
 			selectLocationAnnotation(locFiltered[annIdx]);
 			return;
@@ -1268,6 +1372,17 @@
 	// Keep the highlighted row in range as the filtered list shrinks.
 	$effect(() => {
 		if (locHighlight > locRowCount - 1) locHighlight = Math.max(0, locRowCount - 1);
+	});
+
+	// Jump the highlight onto a freshly-detected geocode resolve row so Enter
+	// is unambiguous — but only on the actual 0->1 transition (tracked below),
+	// so it never fights an operator who has arrowed back to row 0 on purpose
+	// while a code is still showing.
+	let prevGeocodeRowCount = 0;
+	$effect(() => {
+		const cur = geocodeRowCount;
+		if (cur === 1 && prevGeocodeRowCount === 0 && locHighlight === 0) locHighlight = 1;
+		prevGeocodeRowCount = cur;
 	});
 
 	function onLocKeydown(e: KeyboardEvent) {
@@ -1315,12 +1430,26 @@
 	function onFormKeydown(e: KeyboardEvent) {
 		if (e.key !== 'Escape') return;
 		if (locOpen) {
+			// This form owns Escape for the location popover: closing it here
+			// must not also bubble to SidePanel.svelte's window-level listener
+			// and collapse the whole Net Control panel along with the draft.
+			e.stopPropagation();
 			locOpen = false;
 			locQuery = '';
 			queueMicrotask(() => locFieldTriggerEl?.focus());
 		} else if (pickingOnMap) {
-			// No-op — Map.svelte's own Escape handler cancels the map pick.
+			// Deliberately left unstopped: Map.svelte owns Escape for an
+			// in-progress map pick via its own window-level listener, and
+			// calls stopImmediatePropagation() itself once it cancels the
+			// pick — that is what keeps SidePanel from also closing. If we
+			// stopped propagation here instead, the event would never reach
+			// Map.svelte at all whenever focus is inside this form (e.g. the
+			// title field) while picking, leaving the pick stuck forever
+			// with no other way to cancel it.
 		} else {
+			// Same reasoning as the locOpen branch: cancelling the mission
+			// form itself must not also bubble up and close the panel.
+			e.stopPropagation();
 			cancelMissionForm();
 		}
 	}
@@ -1339,6 +1468,7 @@
 		missionLocWords = '';
 		missionLocNear = '';
 		missionLocConfirmed = false;
+		missionLocCode = '';
 		autoLinkedAnnId = null;
 		selectedAnnotationIds = [];
 		locQuery = '';
@@ -1558,8 +1688,48 @@
 			(a.shortName && a.shortName.toLowerCase().includes(q))
 		);
 	});
+	// --- offline geocode detection & rows (#94) — checked ahead of w3w's own
+	// derived block below since detectFormat's precedence already puts w3w
+	// first; pluscode/mgrs only ever come back once a w3w shape is ruled out.
+	let locFormat = $derived(detectFormat(locQuery));
+	let locGeocode = $derived.by((): GeocodeParse | null => {
+		if (locFormat === 'pluscode') return parsePlusCode(locQuery, currentRefPoint());
+		if (locFormat === 'mgrs') return parseMGRS(locQuery);
+		return null;
+	});
+	let geocodeRowCount = $derived(locGeocode && !isGeocodeError(locGeocode) ? 1 : 0);
+	let geocodeErrCode = $derived(
+		locGeocode && isGeocodeError(locGeocode) ? locGeocode.error : null
+	);
+
+	// Copy for the inline error under the Plus Code / MGRS group header —
+	// short-code-without-reference is the only one with an action in it,
+	// because it's the only one that is actually fixable from here (pan the
+	// map). The others are terminal and self-explanatory.
+	function geocodeErrorCopy(code: GeocodeErrorCode, format: GeocodeFormat | null): string {
+		if (code === 'needs_reference') {
+			return 'Short Plus Code needs a nearby reference — pan the map there first, or type the full code.';
+		}
+		if (code === 'too_coarse') {
+			return 'That Plus Code is too coarse to place a pin — include the characters after the +.';
+		}
+		return format === 'mgrs'
+			? 'Not a valid MGRS grid reference.'
+			: 'Not a valid Plus Code — check the characters after the +.';
+	}
+
+	// Announce the error once, on the transition into it — this only reruns
+	// when geocodeErrCode's *value* actually changes, not on every keystroke
+	// that leaves it unchanged (e.g. typing further into an already-invalid
+	// code).
+	$effect(() => {
+		const code = geocodeErrCode;
+		if (code) srMessage = geocodeErrorCopy(code, locFormat);
+	});
+
 	let showFreeTextRow = $derived(
 		locQuery.trim().length > 0 &&
+		geocodeRowCount === 0 &&
 		!locFiltered.some((a) => a.label.toLowerCase() === locQuery.trim().toLowerCase())
 	);
 
@@ -1583,7 +1753,16 @@
 		w3wSuggestions.length === 0 && w3wSearchedQuery === locQuery.trim()
 	);
 
-	let locRowCount = $derived(1 + w3wRowCount + locFiltered.length + (showFreeTextRow ? 1 : 0));
+	let locRowCount = $derived(
+		1 + geocodeRowCount + w3wRowCount + locFiltered.length + (showFreeTextRow ? 1 : 0)
+	);
+
+	// Whether the current selection still needs the map fly-to acknowledged
+	// before it's trustworthy — true for every resolve that skipped a human
+	// picking a point directly (w3w, Plus Code, MGRS all share the gate).
+	let locNeedsConfirm = $derived(
+		missionLocSource === 'w3w' || missionLocSource === 'pluscode' || missionLocSource === 'mgrs'
+	);
 
 	// The annotation behind the current selection, when source is 'annotation'
 	// (for its category icon/color) or 'map'/'w3w' with a near match (for its
@@ -1595,6 +1774,8 @@
 
 	let locChipPrimary = $derived.by(() => {
 		if (missionLocSource === 'w3w') return formatWords(missionLocWords);
+		if (missionLocSource === 'mgrs') return formatMGRSGroups(missionLocCode);
+		if (missionLocSource === 'pluscode') return missionLocCode;
 		if (missionLocSource === 'map') return missionLocLabel || 'Dropped pin';
 		if (missionLocSource === 'coords' && !missionLocLabel && missionLocLat != null && missionLocLon != null) {
 			return formatCoord(missionLocLat, missionLocLon);
@@ -1605,6 +1786,9 @@
 		if (missionLocLat == null || missionLocLon == null) return '';
 		const coords = formatCoord(missionLocLat, missionLocLon);
 		if (missionLocSource === 'w3w') return missionLocNear ? `near ${missionLocNear} · ${coords}` : coords;
+		if (missionLocSource === 'pluscode' || missionLocSource === 'mgrs') {
+			return missionLocNear ? `near ${missionLocNear} · ${coords}` : coords;
+		}
 		if (missionLocSource === 'map') return missionLocLabel ? `near · ${coords}` : coords;
 		if (missionLocSource === 'coords') return missionLocLabel ? coords : '';
 		return coords;
@@ -2536,13 +2720,18 @@
 									<svg class="chev" width="10" height="10" viewBox="0 0 16 16" fill="none" aria-hidden="true"><path d="M4 6l4 4 4-4" stroke="currentColor" stroke-width="1.5" fill="none" stroke-linecap="round" stroke-linejoin="round"/></svg>
 								</button>
 							{:else}
-								<div class="loc-chip" class:unconfirmed={missionLocSource === 'w3w' && !missionLocConfirmed} role="group" aria-label="Mission location">
+								<div class="loc-chip" class:unconfirmed={locNeedsConfirm && !missionLocConfirmed} role="group" aria-label="Mission location">
 									<button
 										type="button"
 										class="loc-chip-main"
 										bind:this={locFieldTriggerEl}
 										onclick={openLocPopover}
-										aria-label={missionLocSource === 'w3w' ? `what3words location ${missionLocWords.split('.').join(' dot ')}` : undefined}
+										aria-label={
+											missionLocSource === 'w3w' ? `what3words location ${missionLocWords.split('.').join(' dot ')}` :
+											missionLocSource === 'pluscode' ? `Plus Code ${missionLocCode}` :
+											missionLocSource === 'mgrs' ? `MGRS grid reference ${formatMGRSGroups(missionLocCode)}` :
+											undefined
+										}
 									>
 										{#if missionLocAnn}
 											<span class="loc-chip-icon" style="--loc-cat-color: {categoryMeta[missionLocAnn.category]?.defaultColor ?? '#6b7280'}">
@@ -2558,17 +2747,19 @@
 												<span class="loc-chip-label loc-chip-label-w3w" aria-hidden="true">
 													<span class="w3w-slashes">///</span>{missionLocWords}
 												</span>
+											{:else if missionLocSource === 'pluscode' || missionLocSource === 'mgrs'}
+												<span class="loc-chip-label loc-chip-label-code" aria-hidden="true">{locChipPrimary}</span>
 											{:else}
 												<span class="loc-chip-label">{locChipPrimary}</span>
 											{/if}
 											{#if locChipSecondary}<span class="loc-chip-coords">{locChipSecondary}</span>{/if}
 										</span>
 									</button>
-									{#if missionLocSource === 'w3w'}
+									{#if locNeedsConfirm}
 										{#if missionLocConfirmed}
 											<span class="loc-chip-confirmed">✓ Confirmed</span>
 										{:else}
-											<button type="button" class="loc-chip-confirm" onclick={confirmW3WLocation}>Confirm on map</button>
+											<button type="button" class="loc-chip-confirm" onclick={confirmLocation}>Confirm on map</button>
 										{/if}
 									{/if}
 									<button type="button" class="loc-chip-map" title="Pick on map" aria-label="Pick on map" onclick={startMapPick}>
@@ -2576,12 +2767,36 @@
 									</button>
 									<button type="button" class="loc-chip-clear" title="Clear location" aria-label="Clear location" onclick={clearLocation}>✕</button>
 								</div>
-								{#if reverseWords && missionLocSource !== 'w3w'}
-									<div class="loc-reverse-line">
-										<span class="loc-reverse-words">{formatWords(reverseWords)}</span>
-										<button type="button" class="loc-reverse-copy" aria-label="Copy three-word address" onclick={copyReverseWords}>
-											{reverseCopied ? 'Copied' : '⧉'}
-										</button>
+								{#if missionLocLat != null && missionLocLon != null}
+									<div class="loc-reverse" aria-label="This location in other formats">
+										{#if reverseMGRS}
+											<div class="loc-reverse-token">
+												<span class="loc-reverse-kind">MGRS</span>
+												<span class="loc-reverse-value">{formatMGRSGroups(reverseMGRS)}</span>
+												<button type="button" class="loc-reverse-copy" aria-label="Copy MGRS grid reference {formatMGRSGroups(reverseMGRS)}" onclick={() => copyToken('mgrs', formatMGRSGroups(reverseMGRS))}>
+													{reverseCopied === 'mgrs' ? 'Copied' : '⧉'}
+												</button>
+											</div>
+										{/if}
+										{#if reversePlusCode}
+											{@const rpc = reversePlusCode}
+											<div class="loc-reverse-token">
+												<span class="loc-reverse-kind">Plus</span>
+												<span class="loc-reverse-value" title={rpc.short !== rpc.full ? rpc.full : undefined}>{rpc.short}</span>
+												<button type="button" class="loc-reverse-copy" aria-label="Copy full Plus Code {rpc.full}" onclick={() => copyToken('plus', rpc.full)}>
+													{reverseCopied === 'plus' ? 'Copied' : '⧉'}
+												</button>
+											</div>
+										{/if}
+										{#if $w3wConfigured && reverseWords && missionLocSource !== 'w3w'}
+											<div class="loc-reverse-token">
+												<span class="loc-reverse-kind">///</span>
+												<span class="loc-reverse-value loc-reverse-value-w3w">{formatWords(reverseWords)}</span>
+												<button type="button" class="loc-reverse-copy" aria-label="Copy three-word address {formatWords(reverseWords)}" onclick={() => copyToken('w3w', formatWords(reverseWords))}>
+													{reverseCopied === 'w3w' ? 'Copied' : '⧉'}
+												</button>
+											</div>
+										{/if}
 									</div>
 								{/if}
 							{/if}
@@ -2621,6 +2836,37 @@
 											📍 Choose on map
 										</button>
 
+										{#if geocodeRowCount === 1 && locGeocode && !isGeocodeError(locGeocode)}
+											{@const g = locGeocode}
+											<div class="loc-group-header" role="presentation">{g.format === 'mgrs' ? 'MGRS' : 'Plus Code'}</div>
+											<button
+												type="button"
+												id="mission-loc-opt-1"
+												role="option"
+												aria-selected={locHighlight === 1}
+												class="loc-opt loc-opt-geocode"
+												class:highlight={locHighlight === 1}
+												onmousedown={() => useGeocode(g)}
+											>
+												<span class="loc-opt-geocode-icon" aria-hidden="true">
+													<svg width="14" height="14" viewBox="0 0 16 16" fill="none"><path d="M2 2h4v4H2V2zM10 2h4v4h-4V2zM2 10h4v4H2v-4zM10 10h4v4h-4v-4z" stroke="currentColor" stroke-width="1.3" fill="none" stroke-linejoin="round"/></svg>
+												</span>
+												<span class="loc-opt-geocode-text">
+													<span class="loc-opt-geocode-line1">
+														Use {g.format === 'mgrs' ? 'MGRS' : 'Plus Code'}
+														<span class="loc-opt-geocode-code">{g.format === 'mgrs' ? formatMGRSGroups(g.label) : g.label}</span>
+													</span>
+													<span class="loc-opt-geocode-line2">
+														{#if g.recoveredFrom}{g.recoveredFrom} · {/if}±{g.precisionM} m
+													</span>
+												</span>
+												<span class="loc-opt-geocode-coords">{formatCoord(g.lat, g.lon)}</span>
+											</button>
+										{:else if geocodeErrCode}
+											<div class="loc-group-header" role="presentation">{locFormat === 'mgrs' ? 'MGRS' : 'Plus Code'}</div>
+											<p class="loc-status loc-status-error" role="presentation">{geocodeErrorCopy(geocodeErrCode, locFormat)}</p>
+										{/if}
+
 										{#if $w3wConfigured && w3wGateOk}
 											<div class="loc-group-header" role="presentation">what3words</div>
 											{#if w3wLoading}
@@ -2629,7 +2875,7 @@
 												<p class="loc-w3w-status loc-w3w-error" role="presentation">{w3wError}</p>
 											{:else if w3wSuggestions.length > 0}
 												{#each w3wSuggestions as sug, i (sug.words)}
-													{@const rowIdx = 1 + i}
+													{@const rowIdx = 1 + geocodeRowCount + i}
 													<button
 														type="button"
 														id={'mission-loc-opt-' + rowIdx}
@@ -2663,7 +2909,7 @@
 										{/if}
 
 										{#each locFiltered as ann, i (ann.id)}
-											{@const rowIdx = 1 + w3wRowCount + i}
+											{@const rowIdx = 1 + geocodeRowCount + w3wRowCount + i}
 											<button
 												type="button"
 												id={'mission-loc-opt-' + rowIdx}
@@ -2681,7 +2927,7 @@
 											</button>
 										{/each}
 										{#if showFreeTextRow}
-											{@const freeIdx = 1 + w3wRowCount + locFiltered.length}
+											{@const freeIdx = 1 + geocodeRowCount + w3wRowCount + locFiltered.length}
 											<button
 												type="button"
 												id={'mission-loc-opt-' + freeIdx}
@@ -2833,7 +3079,16 @@
 											<span class="w3w-mark" aria-hidden="true">///</span><span class="w3w-words" aria-hidden="true">{words}</span>{#if suffix}<span class="w3w-near" aria-hidden="true"> · {suffix}</span>{/if}
 										</div>
 									{:else}
-										<div class="mission-location">📍 {m.location || formatCoord(m.lat ?? 0, m.lon ?? 0)}</div>
+										{@const geo = extractGeocode(m.location)}
+										{#if geo}
+											{@const suffix = geocodeNearSuffix(m.location)}
+											{@const geoLabel = geo.format === 'mgrs' ? formatMGRSGroups(geo.code) : geo.code}
+											<div class="mission-location" aria-label={`${geo.format === 'mgrs' ? 'MGRS grid reference' : 'Plus Code'} ${geoLabel}`}>
+												📍 <span class="geocode-code" aria-hidden="true">{geoLabel}</span>{#if suffix}<span class="w3w-near" aria-hidden="true"> · near {suffix}</span>{/if}
+											</div>
+										{:else}
+											<div class="mission-location">📍 {m.location || formatCoord(m.lat ?? 0, m.lon ?? 0)}</div>
+										{/if}
 									{/if}
 								{/if}
 
@@ -4344,6 +4599,12 @@
 		color: var(--color-text);
 	}
 	.w3w-slashes { color: var(--color-text-muted); }
+	/* Plus Code / MGRS chip label (#94) — same treatment as the w3w mono
+	   label so all three resolved-location sources read consistently. */
+	.loc-chip-label-code {
+		font-family: var(--w3w-mono); font-size: 0.85rem; font-weight: 600;
+		letter-spacing: 0.02em; color: var(--color-text);
+	}
 	.loc-chip-coords {
 		font-family: 'SF Mono','Fira Code',monospace; font-size: 0.7rem;
 		color: var(--color-text-muted);
@@ -4367,14 +4628,24 @@
 	}
 	.loc-chip-map:hover, .loc-chip-clear:hover { color: var(--color-text); background: rgba(255,255,255,0.06); }
 
-	/* ---- Reverse (coords -> ///words) line under any chosen location ---- */
-	.loc-reverse-line {
-		display: flex; align-items: center; gap: 6px;
-		padding: 2px 2px 0 10px; font-size: 0.72rem;
+	/* ---- Reverse row (coords -> Plus Code / MGRS / ///words) under any
+	   chosen location (#94 §4) — up to three compact tokens, one per format,
+	   self-suppressing the token matching the current source. ---- */
+	.loc-reverse {
+		display: flex; flex-wrap: wrap; align-items: center;
+		gap: 4px var(--space-md); padding: 2px 2px 0 10px;
 	}
-	.loc-reverse-words {
-		font-family: var(--w3w-mono); color: var(--color-text-muted);
+	.loc-reverse-token { display: inline-flex; align-items: center; gap: 4px; min-width: 0; }
+	.loc-reverse-kind {
+		font-size: 0.62rem; letter-spacing: 0.06em; text-transform: uppercase;
+		color: var(--color-text-muted); flex: none;
 	}
+	.loc-reverse-value {
+		font-family: 'SF Mono','Fira Code',monospace; font-size: 0.72rem;
+		color: var(--color-text-muted);
+		overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+	}
+	.loc-reverse-value-w3w { font-family: var(--w3w-mono); }
 	.loc-reverse-copy {
 		display: inline-flex; align-items: center; justify-content: center;
 		min-width: 28px; min-height: 28px; padding: 2px 6px;
@@ -4430,6 +4701,28 @@
 		padding: 8px 10px; font-size: 0.78rem; color: var(--color-text-muted);
 	}
 	.loc-w3w-error { color: var(--color-warning); }
+
+	/* ---- Offline geocode resolve row + error (#94) ---- */
+	.loc-opt-geocode { align-items: center; gap: var(--space-sm); min-height: 44px; }
+	.loc-opt-geocode-icon { flex: 0 0 14px; color: var(--color-accent); }
+	.loc-opt-geocode-text { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 1px; }
+	.loc-opt-geocode-line1 {
+		font-size: 0.8rem; color: var(--color-text);
+		white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+	}
+	.loc-opt-geocode-code {
+		font-family: 'SF Mono','Fira Code',monospace; font-weight: 600;
+		letter-spacing: 0.02em; margin-left: 4px;
+	}
+	.loc-opt-geocode-line2 { font-size: 0.7rem; color: var(--color-text-muted); }
+	.loc-opt-geocode-coords {
+		flex: 0 0 auto; font-family: 'SF Mono','Fira Code',monospace; font-size: 0.68rem;
+		color: var(--color-text-muted); font-variant-numeric: tabular-nums;
+	}
+	.loc-status {
+		padding: 8px 10px; font-size: 0.78rem; color: var(--color-text-muted); line-height: 1.4;
+	}
+	.loc-status-error { color: var(--color-warning); }
 	.loc-w3w-hint {
 		padding: var(--space-sm) 10px; border-bottom: 1px solid var(--color-primary);
 		font-size: 0.76rem; color: var(--color-text-muted); line-height: 1.4;
@@ -4684,6 +4977,13 @@
 	.w3w-mark { color: var(--color-accent); font-family: var(--w3w-mono); }
 	.w3w-words { font-family: var(--w3w-mono); color: var(--color-text); }
 	.w3w-near { color: var(--color-text-muted); font-size: 0.75rem; }
+	/* Offline-geocode (Plus Code / MGRS) mission card treatment (#94) —
+	   matching visual weight to the w3w treatment above, minus the accent
+	   colour (that stays w3w's one place to appear). */
+	.geocode-code {
+		font-family: 'SF Mono','Fira Code',monospace; color: var(--color-text);
+		letter-spacing: 0.02em;
+	}
 
 	/* Assigned operators on mission card */
 	.mission-operators {

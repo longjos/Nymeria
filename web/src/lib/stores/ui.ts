@@ -134,6 +134,8 @@ export interface MissionDraftSnapshot {
 	locWords: string;
 	locNear: string;
 	locConfirmed: boolean;
+	/** Normalized Plus Code / MGRS string (#94) — '' for every other source. */
+	locCode: string;
 	selectedAnnotationIds: string[];
 }
 export const missionDraftBackup = writable<MissionDraftSnapshot | null>(null);

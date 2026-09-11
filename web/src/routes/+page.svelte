@@ -230,11 +230,12 @@
 		flyToTarget = { lat, lon, zoom: zoom ?? 15 };
 	}
 
-	// The what3words draft pin: place it on the map without touching the
-	// existing missionMapCoords path — that path (see handleMissionLocationPlaced)
-	// flows back into NetControlPanel's own effect, which overwrites the
-	// location label with a nearby annotation's label. A w3w resolve must
-	// never lose the words that way, so it only ever sets the marker.
+	// A resolved-geocode draft pin (what3words, Plus Code, or MGRS — #93/#94):
+	// place it on the map without touching the existing missionMapCoords path
+	// — that path (see handleMissionLocationPlaced) flows back into
+	// NetControlPanel's own effect, which overwrites the location label with
+	// a nearby annotation's label. A resolve must never lose the words/code
+	// that way, so it only ever sets the marker.
 	function handleSetMissionDraftPoint(lat: number, lon: number) {
 		missionDraftPoint = { lat, lon };
 	}
