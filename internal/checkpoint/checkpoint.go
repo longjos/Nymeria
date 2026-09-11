@@ -303,6 +303,15 @@ func (m *Manager) GetProgress(netID string) (*CheckpointProgress, error) {
 	}, nil
 }
 
+// MetaForAnnotation returns the checkpoint metadata for an annotation, if any.
+func (m *Manager) MetaForAnnotation(annotationID string) (store.CheckpointMeta, bool) {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+
+	meta, ok := m.metas[annotationID]
+	return meta, ok
+}
+
 // DeleteMetaForAnnotation removes checkpoint metadata for an annotation.
 func (m *Manager) DeleteMetaForAnnotation(annotationID string) error {
 	if err := m.store.DeleteCheckpointMeta(annotationID); err != nil {

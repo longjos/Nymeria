@@ -369,9 +369,13 @@ func (s *Server) bridgeObjectEvents() {
 // and syncs status changes to linked net missions.
 func (s *Server) bridgeAnnotationEvents() {
 	for evt := range s.annMgr.Events() {
+		var payload any = evt.Data
+		if evt.Batch != nil {
+			payload = evt.Batch
+		}
 		msg := map[string]any{
 			"type": evt.Type,
-			"data": evt.Data,
+			"data": payload,
 		}
 		data, err := json.Marshal(msg)
 		if err != nil {

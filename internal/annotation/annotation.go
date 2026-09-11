@@ -2,7 +2,9 @@ package annotation
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
+	"log"
 	"sort"
 	"strings"
 	"sync"
@@ -52,7 +54,72 @@ const (
 	EventAnnotationUpdated       = "annotation_updated"
 	EventAnnotationDeleted       = "annotation_deleted"
 	EventAnnotationStatusChanged = "annotation_status_changed"
+
+	// Aggregate (batch) events — one frame replaces N single-item frames.
+	EventAnnotationsImported     = "annotations_imported"
+	EventAnnotationsBatchDeleted = "annotations_batch_deleted"
+	EventAnnotationsBatchUpdated = "annotations_batch_updated"
 )
+
+// maxBatchLabelRunes clamps a batch label to a sane display length.
+const maxBatchLabelRunes = 120
+
+// undoTTL is how long a bulk delete can be undone for.
+const undoTTL = 60 * time.Second
+
+// maxUndoEntries is how many bulk deletes are retained for undo.
+const maxUndoEntries = 5
+
+// ErrNoItems is returned when an import is asked to create nothing.
+var ErrNoItems = errors.New("no items to import")
+
+// ErrUndoExpired is returned when an undo token is unknown, consumed or stale.
+var ErrUndoExpired = errors.New("undo window expired")
+
+// ErrBatchNotFound is returned when a batch id matches no annotations.
+type ErrBatchNotFound struct {
+	ID     string
+	Scoped bool
+}
+
+func (e *ErrBatchNotFound) Error() string {
+	if e.Scoped {
+		return fmt.Sprintf("batch %q not found in this scope", e.ID)
+	}
+	return fmt.Sprintf("batch %q not found", e.ID)
+}
+
+// ErrTransmittingMembers is returned when a delete would remove annotations
+// that are live APRS objects and the caller did not request stopTransmit.
+type ErrTransmittingMembers struct {
+	IDs []string
+}
+
+func (e *ErrTransmittingMembers) Error() string {
+	return fmt.Sprintf("%d annotations are transmitting as APRS objects", len(e.IDs))
+}
+
+// ErrKillFailed is returned when stopping an annotation's APRS object fails
+// mid-delete; nothing further is removed.
+type ErrKillFailed struct {
+	AnnotationID string
+	Err          error
+}
+
+func (e *ErrKillFailed) Error() string {
+	return fmt.Sprintf("kill APRS object for annotation %q: %v", e.AnnotationID, e.Err)
+}
+
+func (e *ErrKillFailed) Unwrap() error { return e.Err }
+
+// clampLabel trims a batch label to maxBatchLabelRunes runes.
+func clampLabel(s string) string {
+	r := []rune(s)
+	if len(r) > maxBatchLabelRunes {
+		return string(r[:maxBatchLabelRunes])
+	}
+	return s
+}
 
 // validCategories is the set of allowed category values.
 var validCategories = map[string]bool{
@@ -158,8 +225,53 @@ type Style struct {
 
 // Event represents an annotation event for WebSocket broadcast.
 type Event struct {
-	Type string          `json:"type"`
+	Type string           `json:"type"`
 	Data store.Annotation `json:"data"`
+	// Batch, when non-nil, marks this as an aggregate event; the WebSocket
+	// bridge broadcasts Batch instead of Data.
+	Batch *BatchEvent `json:"-"`
+}
+
+// BatchEvent is the aggregate payload for import / bulk-delete / rename events.
+type BatchEvent struct {
+	BatchID     string             `json:"batchId,omitempty"`
+	BatchLabel  string             `json:"batchLabel,omitempty"`
+	NetID       string             `json:"netId,omitempty"`
+	Count       int                `json:"count"`
+	IDs         []string           `json:"ids,omitempty"`
+	Annotations []store.Annotation `json:"annotations,omitempty"`
+}
+
+// BatchResult is the API envelope for a bulk create (import, copy, undo).
+type BatchResult struct {
+	BatchID     string             `json:"batchId"`
+	BatchLabel  string             `json:"batchLabel"`
+	NetID       string             `json:"netId,omitempty"`
+	Count       int                `json:"count"`
+	Annotations []store.Annotation `json:"annotations"`
+}
+
+// DeleteResult is the API envelope for a bulk delete.
+type DeleteResult struct {
+	BatchID              string     `json:"batchId,omitempty"`
+	BatchLabel           string     `json:"batchLabel,omitempty"`
+	Deleted              []string   `json:"deleted"`
+	DeletedCount         int        `json:"deletedCount"`
+	SkippedMissionLinked []string   `json:"skippedMissionLinked"`
+	KilledObjects        int        `json:"killedObjects"`
+	UndoToken            string     `json:"undoToken,omitempty"`
+	UndoExpiresAt        *time.Time `json:"undoExpiresAt,omitempty"`
+}
+
+// undoEntry is a snapshot of one bulk delete, retained for undoTTL.
+type undoEntry struct {
+	token      string
+	batchID    string
+	batchLabel string
+	netID      string
+	anns       []store.Annotation
+	metas      []store.CheckpointMeta
+	deletedAt  time.Time
 }
 
 // Manager manages annotations with persistence and events.
@@ -172,6 +284,12 @@ type Manager struct {
 	syncing      map[string]bool // loop guard for mission↔annotation status sync
 	objMgr       *object.Manager
 	transmitting map[string]string // annID → objID
+
+	beforeDelete func(store.Annotation)                          // cleanup hook (checkpoint meta)
+	cpSnapshot   func(annotationID string) (store.CheckpointMeta, bool) // undo capture
+	cpRestore    func(store.CheckpointMeta) (*store.CheckpointMeta, error)
+	now          func() time.Time
+	undoBuf      []undoEntry
 }
 
 // NewManager creates a new annotation Manager backed by the given store.
@@ -180,10 +298,49 @@ func NewManager(s store.Store) *Manager {
 		store:        s,
 		annotations:  make(map[string]Annotation),
 		operations:   make(map[string]store.Operation),
-		events:       make(chan Event, 64),
+		events:       make(chan Event, 256),
 		syncing:      make(map[string]bool),
 		transmitting: make(map[string]string),
+		now:          time.Now,
 	}
+}
+
+// SetBeforeDelete registers a cleanup hook invoked immediately before an
+// annotation row is removed, on BOTH the single and batch delete paths.
+func (m *Manager) SetBeforeDelete(fn func(store.Annotation)) {
+	m.mu.Lock()
+	m.beforeDelete = fn
+	m.mu.Unlock()
+}
+
+// SetCheckpointSnapshot registers the read/write pair used to capture and
+// restore checkpoint metadata across a bulk delete + undo.
+func (m *Manager) SetCheckpointSnapshot(
+	get func(annotationID string) (store.CheckpointMeta, bool),
+	set func(store.CheckpointMeta) (*store.CheckpointMeta, error),
+) {
+	m.mu.Lock()
+	m.cpSnapshot = get
+	m.cpRestore = set
+	m.mu.Unlock()
+}
+
+// SetClock injects a time source (defaults to time.Now) so the undo TTL is
+// testable without sleeping.
+func (m *Manager) SetClock(now func() time.Time) {
+	m.mu.Lock()
+	m.now = now
+	m.mu.Unlock()
+}
+
+func (m *Manager) clock() time.Time {
+	m.mu.RLock()
+	fn := m.now
+	m.mu.RUnlock()
+	if fn == nil {
+		return time.Now()
+	}
+	return fn()
 }
 
 // Load loads annotations and operations from the store into the in-memory cache.
@@ -211,6 +368,16 @@ func (m *Manager) Load() error {
 
 // Create creates a new annotation, validates it, persists it, and emits an event.
 func (m *Manager) Create(ann Annotation) (*Annotation, error) {
+	created, err := m.createSilent(ann)
+	if err != nil {
+		return nil, err
+	}
+	m.emit(Event{Type: EventAnnotationCreated, Data: *created})
+	return created, nil
+}
+
+// createSilent is Create minus the per-item event emission.
+func (m *Manager) createSilent(ann Annotation) (*Annotation, error) {
 	// Apply defaults for category/status/priority.
 	if ann.Category == "" {
 		ann.Category = CategoryGeneral
@@ -243,9 +410,21 @@ func (m *Manager) Create(ann Annotation) (*Annotation, error) {
 	m.annotations[ann.ID] = ann
 	m.mu.Unlock()
 
-	m.emit(Event{Type: EventAnnotationCreated, Data: ann})
-
 	return &ann, nil
+}
+
+// restore re-inserts an annotation with its ORIGINAL id and timestamps.
+func (m *Manager) restore(ann Annotation) error {
+	if err := validate(ann); err != nil {
+		return err
+	}
+	if err := m.store.SaveAnnotation(ann); err != nil {
+		return fmt.Errorf("restore annotation: %w", err)
+	}
+	m.mu.Lock()
+	m.annotations[ann.ID] = ann
+	m.mu.Unlock()
+	return nil
 }
 
 // Update updates an existing annotation, persists it, and emits an event.
@@ -287,6 +466,8 @@ func (m *Manager) Delete(id string) error {
 	if !exists {
 		return fmt.Errorf("annotation %q not found", id)
 	}
+
+	m.runBeforeDelete(ann)
 
 	if err := m.store.DeleteAnnotation(id); err != nil {
 		return fmt.Errorf("delete annotation: %w", err)
@@ -372,9 +553,45 @@ type ImportItem struct {
 	GeometryJSON string // raw GeoJSON; if set, used directly instead of Lat/Lon
 }
 
-// ImportAnnotations bulk-creates annotations from parsed GPX/KML items.
-func (m *Manager) ImportAnnotations(netID string, items []ImportItem) ([]Annotation, error) {
-	var created []Annotation
+// ImportAnnotations bulk-creates annotations from parsed GPX/KML items, stamping
+// every created row with a shared batch id and label. Passing a non-empty
+// existingBatchID appends to that batch instead of minting a new one.
+//
+// The import is atomic: if any item fails, everything created so far is removed
+// and no event is emitted.
+func (m *Manager) ImportAnnotations(netID, sourceLabel, existingBatchID string, items []ImportItem) (BatchResult, error) {
+	if len(items) == 0 {
+		return BatchResult{}, ErrNoItems
+	}
+
+	batchID := existingBatchID
+	batchLabel := clampLabel(sourceLabel)
+	sortBase := 0
+
+	if existingBatchID != "" {
+		members := m.BatchMembers(existingBatchID)
+		scoped := make([]Annotation, 0, len(members))
+		for _, a := range members {
+			if a.NetID == netID {
+				scoped = append(scoped, a)
+			}
+		}
+		if len(scoped) == 0 {
+			return BatchResult{}, &ErrBatchNotFound{ID: existingBatchID, Scoped: true}
+		}
+		batchLabel = scoped[0].BatchLabel
+		maxSort := -1
+		for _, a := range m.AllForNet(netID) {
+			if a.SortOrder > maxSort {
+				maxSort = a.SortOrder
+			}
+		}
+		sortBase = maxSort + 1
+	} else {
+		batchID = uuid.New().String()
+	}
+
+	created := make([]Annotation, 0, len(items))
 	for i, item := range items {
 		cat := item.Category
 		if cat == "" {
@@ -399,22 +616,65 @@ func (m *Manager) ImportAnnotations(netID string, items []ImportItem) ([]Annotat
 			Geometry:    geom,
 			Category:    cat,
 			NetID:       netID,
-			SortOrder:   i,
+			SortOrder:   sortBase + i,
+			BatchID:     batchID,
+			BatchLabel:  batchLabel,
 		}
-		result, err := m.Create(ann)
+		result, err := m.createSilent(ann)
 		if err != nil {
-			return created, fmt.Errorf("import item %q: %w", item.Name, err)
+			m.rollback(created)
+			return BatchResult{}, fmt.Errorf("import item %q: %w", item.Name, err)
 		}
 		created = append(created, *result)
 	}
-	return created, nil
+
+	res := BatchResult{
+		BatchID:     batchID,
+		BatchLabel:  batchLabel,
+		NetID:       netID,
+		Count:       len(created),
+		Annotations: created,
+	}
+	m.emitBatchCreated(res)
+	return res, nil
 }
 
-// CopyAnnotationsFromNet clones annotations from one net to another with new IDs.
-func (m *Manager) CopyAnnotationsFromNet(sourceNetID, targetNetID string) ([]Annotation, error) {
-	source := m.AllForNet(sourceNetID)
+// rollback removes annotations created during a failed bulk operation.
+func (m *Manager) rollback(created []Annotation) {
+	for _, a := range created {
+		m.store.DeleteAnnotation(a.ID)
+		m.mu.Lock()
+		delete(m.annotations, a.ID)
+		m.mu.Unlock()
+	}
+}
 
-	var created []Annotation
+func (m *Manager) emitBatchCreated(res BatchResult) {
+	m.emit(Event{Type: EventAnnotationsImported, Batch: &BatchEvent{
+		BatchID:     res.BatchID,
+		BatchLabel:  res.BatchLabel,
+		NetID:       res.NetID,
+		Count:       res.Count,
+		Annotations: res.Annotations,
+	}})
+}
+
+// CopyAnnotationsFromNet clones annotations from one net to another with new IDs,
+// stamping the copies with a fresh batch id. sourceLabel is the source net's
+// display name; the copy's batch label is "Copied from <sourceLabel>".
+func (m *Manager) CopyAnnotationsFromNet(sourceNetID, targetNetID, sourceLabel string) (BatchResult, error) {
+	source := m.AllForNet(sourceNetID)
+	if len(source) == 0 {
+		return BatchResult{}, ErrNoItems
+	}
+
+	if strings.TrimSpace(sourceLabel) == "" {
+		sourceLabel = "another net"
+	}
+	batchID := uuid.New().String()
+	batchLabel := clampLabel("Copied from " + sourceLabel)
+
+	created := make([]Annotation, 0, len(source))
 	for _, a := range source {
 		ann := Annotation{
 			Type:        a.Type,
@@ -427,14 +687,357 @@ func (m *Manager) CopyAnnotationsFromNet(sourceNetID, targetNetID string) ([]Ann
 			Priority:    a.Priority,
 			NetID:       targetNetID,
 			SortOrder:   a.SortOrder,
+			BatchID:     batchID,
+			BatchLabel:  batchLabel,
 		}
-		result, err := m.Create(ann)
+		result, err := m.createSilent(ann)
 		if err != nil {
-			return created, fmt.Errorf("copy annotation %q: %w", a.Label, err)
+			m.rollback(created)
+			return BatchResult{}, fmt.Errorf("copy annotation %q: %w", a.Label, err)
 		}
 		created = append(created, *result)
 	}
-	return created, nil
+
+	res := BatchResult{
+		BatchID:     batchID,
+		BatchLabel:  batchLabel,
+		NetID:       targetNetID,
+		Count:       len(created),
+		Annotations: created,
+	}
+	m.emitBatchCreated(res)
+	return res, nil
+}
+
+// BatchMembers returns every annotation carrying the given batch id, ordered by
+// SortOrder.
+func (m *Manager) BatchMembers(batchID string) []Annotation {
+	if batchID == "" {
+		return nil
+	}
+
+	m.mu.RLock()
+	var result []Annotation
+	for _, a := range m.annotations {
+		if a.BatchID == batchID {
+			result = append(result, a)
+		}
+	}
+	m.mu.RUnlock()
+
+	sort.Slice(result, func(i, j int) bool {
+		if result[i].SortOrder != result[j].SortOrder {
+			return result[i].SortOrder < result[j].SortOrder
+		}
+		return result[i].ID < result[j].ID
+	})
+	return result
+}
+
+// TransmittingIn returns the subset of ids that are live APRS objects.
+func (m *Manager) TransmittingIn(ids []string) []string {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+
+	var out []string
+	for _, id := range ids {
+		if _, ok := m.transmitting[id]; ok {
+			out = append(out, id)
+		}
+	}
+	return out
+}
+
+// DeleteBatch removes every annotation in a batch.
+func (m *Manager) DeleteBatch(batchID string, includeMissionLinked, stopTransmit bool) (DeleteResult, error) {
+	members := m.BatchMembers(batchID)
+	if len(members) == 0 {
+		return DeleteResult{}, &ErrBatchNotFound{ID: batchID}
+	}
+	return m.deleteSet(members, includeMissionLinked, stopTransmit)
+}
+
+// DeleteMany removes the given annotations by id, skipping ids that no longer exist.
+func (m *Manager) DeleteMany(ids []string, includeMissionLinked, stopTransmit bool) (DeleteResult, error) {
+	if len(ids) == 0 {
+		return DeleteResult{}, fmt.Errorf("no annotation ids provided")
+	}
+
+	seen := make(map[string]bool, len(ids))
+	var members []Annotation
+	for _, id := range ids {
+		if seen[id] {
+			continue
+		}
+		seen[id] = true
+		if a, ok := m.Get(id); ok {
+			members = append(members, *a)
+		}
+	}
+	return m.deleteSet(members, includeMissionLinked, stopTransmit)
+}
+
+// deleteSet is the shared removal path for DeleteBatch and DeleteMany.
+func (m *Manager) deleteSet(anns []Annotation, includeMissionLinked, stopTransmit bool) (DeleteResult, error) {
+	res := DeleteResult{
+		Deleted:              []string{},
+		SkippedMissionLinked: []string{},
+	}
+	if len(anns) == 0 {
+		return res, nil
+	}
+
+	// Batch identity: only when every member shares one non-empty batch.
+	batchID := anns[0].BatchID
+	batchLabel := anns[0].BatchLabel
+	netID := anns[0].NetID
+	for _, a := range anns {
+		if a.BatchID != batchID {
+			batchID, batchLabel = "", ""
+			break
+		}
+	}
+	res.BatchID = batchID
+	res.BatchLabel = batchLabel
+
+	// 1. Candidates after the mission-link filter.
+	var candidates []Annotation
+	for _, a := range anns {
+		if len(a.MissionIDs) > 0 && !includeMissionLinked {
+			res.SkippedMissionLinked = append(res.SkippedMissionLinked, a.ID)
+			continue
+		}
+		candidates = append(candidates, a)
+	}
+
+	candidateIDs := make([]string, 0, len(candidates))
+	for _, a := range candidates {
+		candidateIDs = append(candidateIDs, a.ID)
+	}
+	if tx := m.TransmittingIn(candidateIDs); len(tx) > 0 && !stopTransmit {
+		return DeleteResult{}, &ErrTransmittingMembers{IDs: tx}
+	}
+
+	// 2. Kill every live APRS object FIRST. A kill failure aborts the whole
+	// delete before any row is removed, so a failure can never leave a
+	// silently half-deleted set (objects already killed simply stop
+	// beaconing; their annotations survive and can be re-promoted).
+	for _, a := range candidates {
+		if m.IsTransmitting(a.ID) {
+			if err := m.StopTransmitting(a.ID); err != nil {
+				return DeleteResult{}, &ErrKillFailed{AnnotationID: a.ID, Err: err}
+			}
+			res.KilledObjects++
+		}
+	}
+
+	// 3. Remove the rows. A store failure rolls back everything removed in
+	// this call so the result is all-or-nothing.
+	var snapshot []Annotation
+	var metas []store.CheckpointMeta
+
+	for _, a := range candidates {
+		if meta, ok := m.snapshotCheckpointMeta(a.ID); ok {
+			metas = append(metas, meta)
+		}
+
+		m.runBeforeDelete(a)
+
+		if err := m.store.DeleteAnnotation(a.ID); err != nil {
+			m.rollbackDeleted(snapshot, metas)
+			return DeleteResult{}, fmt.Errorf("delete annotation %q: %w", a.ID, err)
+		}
+		m.mu.Lock()
+		delete(m.annotations, a.ID)
+		m.mu.Unlock()
+
+		snapshot = append(snapshot, a)
+		res.Deleted = append(res.Deleted, a.ID)
+	}
+	res.DeletedCount = len(res.Deleted)
+
+	if res.DeletedCount > 0 {
+		deletedAt := m.clock()
+		token := uuid.New().String()
+		expires := deletedAt.Add(undoTTL)
+		m.pushUndo(undoEntry{
+			token:      token,
+			batchID:    batchID,
+			batchLabel: batchLabel,
+			netID:      netID,
+			anns:       snapshot,
+			metas:      metas,
+			deletedAt:  deletedAt,
+		})
+		res.UndoToken = token
+		res.UndoExpiresAt = &expires
+
+		m.emit(Event{Type: EventAnnotationsBatchDeleted, Batch: &BatchEvent{
+			BatchID:    batchID,
+			BatchLabel: batchLabel,
+			NetID:      netID,
+			Count:      res.DeletedCount,
+			IDs:        res.Deleted,
+		}})
+	}
+
+	return res, nil
+}
+
+// rollbackDeleted restores annotations (and their checkpoint metadata) removed
+// earlier in a failed deleteSet run, keeping a bulk delete all-or-nothing.
+func (m *Manager) rollbackDeleted(anns []Annotation, metas []store.CheckpointMeta) {
+	for _, a := range anns {
+		if err := m.restore(a); err != nil {
+			log.Printf("[annotation] rollback restore %s: %v", a.ID, err)
+		}
+	}
+
+	m.mu.RLock()
+	cpRestore := m.cpRestore
+	m.mu.RUnlock()
+	if cpRestore == nil {
+		return
+	}
+	for _, meta := range metas {
+		if _, err := cpRestore(meta); err != nil {
+			log.Printf("[annotation] rollback checkpoint meta: %v", err)
+		}
+	}
+}
+
+func (m *Manager) runBeforeDelete(a Annotation) {
+	m.mu.RLock()
+	fn := m.beforeDelete
+	m.mu.RUnlock()
+	if fn != nil {
+		fn(a)
+	}
+}
+
+func (m *Manager) snapshotCheckpointMeta(id string) (store.CheckpointMeta, bool) {
+	m.mu.RLock()
+	fn := m.cpSnapshot
+	m.mu.RUnlock()
+	if fn == nil {
+		return store.CheckpointMeta{}, false
+	}
+	return fn(id)
+}
+
+// pushUndo appends an undo entry, evicting expired entries and the oldest
+// beyond maxUndoEntries.
+func (m *Manager) pushUndo(e undoEntry) {
+	now := m.clock()
+
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
+	kept := m.undoBuf[:0:0]
+	for _, existing := range m.undoBuf {
+		if now.Sub(existing.deletedAt) <= undoTTL {
+			kept = append(kept, existing)
+		}
+	}
+	kept = append(kept, e)
+	if len(kept) > maxUndoEntries {
+		kept = kept[len(kept)-maxUndoEntries:]
+	}
+	m.undoBuf = kept
+}
+
+// UndoDelete restores a bulk delete within the undo window.
+func (m *Manager) UndoDelete(token string) (BatchResult, error) {
+	now := m.clock()
+
+	m.mu.Lock()
+	var entry *undoEntry
+	kept := m.undoBuf[:0:0]
+	for _, e := range m.undoBuf {
+		if now.Sub(e.deletedAt) > undoTTL {
+			continue
+		}
+		if e.token == token && entry == nil {
+			found := e
+			entry = &found
+			continue // consume
+		}
+		kept = append(kept, e)
+	}
+	m.undoBuf = kept
+	m.mu.Unlock()
+
+	if entry == nil {
+		return BatchResult{}, ErrUndoExpired
+	}
+
+	restored := make([]Annotation, 0, len(entry.anns))
+	for _, a := range entry.anns {
+		if err := m.restore(a); err != nil {
+			return BatchResult{}, fmt.Errorf("restore annotation %q: %w", a.ID, err)
+		}
+		restored = append(restored, a)
+	}
+
+	m.mu.RLock()
+	cpRestore := m.cpRestore
+	m.mu.RUnlock()
+	if cpRestore != nil {
+		for _, meta := range entry.metas {
+			cpRestore(meta)
+		}
+	}
+
+	res := BatchResult{
+		BatchID:     entry.batchID,
+		BatchLabel:  entry.batchLabel,
+		NetID:       entry.netID,
+		Count:       len(restored),
+		Annotations: restored,
+	}
+	m.emitBatchCreated(res)
+	return res, nil
+}
+
+// RenameBatch renames every annotation in a batch and returns the row count.
+func (m *Manager) RenameBatch(batchID, label string) (int, error) {
+	label = clampLabel(strings.TrimSpace(label))
+	if label == "" {
+		return 0, fmt.Errorf("batch label is required")
+	}
+
+	members := m.BatchMembers(batchID)
+	if len(members) == 0 {
+		return 0, &ErrBatchNotFound{ID: batchID}
+	}
+
+	now := time.Now().UTC()
+	n, err := m.store.UpdateAnnotationBatchLabel(batchID, label, now)
+	if err != nil {
+		return 0, fmt.Errorf("rename batch: %w", err)
+	}
+
+	m.mu.Lock()
+	for id, a := range m.annotations {
+		if a.BatchID == batchID {
+			a.BatchLabel = label
+			a.UpdatedAt = now
+			m.annotations[id] = a
+		}
+	}
+	m.mu.Unlock()
+
+	if n == 0 {
+		n = len(members)
+	}
+
+	m.emit(Event{Type: EventAnnotationsBatchUpdated, Batch: &BatchEvent{
+		BatchID:    batchID,
+		BatchLabel: label,
+		Count:      n,
+	}})
+
+	return n, nil
 }
 
 // AllFiltered returns annotations matching the given filter from the in-memory cache.
@@ -455,6 +1058,9 @@ func (m *Manager) AllFiltered(filter store.AnnotationFilter) []Annotation {
 			continue
 		}
 		if filter.OperationID != "" && a.OperationID != filter.OperationID {
+			continue
+		}
+		if filter.BatchID != "" && a.BatchID != filter.BatchID {
 			continue
 		}
 		if !filter.IncludeExpired && a.ExpiresAt != nil && a.ExpiresAt.Before(now) {

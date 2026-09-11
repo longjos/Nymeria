@@ -261,6 +261,17 @@ func New(opts Options) (*App, error) {
 		log.Printf("warning: failed to load checkpoint data: %v", err)
 	}
 
+	// Clean up checkpoint metadata whenever a checkpoint annotation is removed,
+	// on both the single and bulk delete paths, and restore it on undo.
+	annMgr.SetBeforeDelete(func(a store.Annotation) {
+		if a.Category == annotation.CategoryCheckpoint {
+			if err := cpMgr.DeleteMetaForAnnotation(a.ID); err != nil {
+				log.Printf("[app] delete checkpoint meta for %s: %v", a.ID, err)
+			}
+		}
+	})
+	annMgr.SetCheckpointSnapshot(cpMgr.MetaForAnnotation, cpMgr.SetMeta)
+
 	// Initialize tile cache
 	var tc *tilecache.Cache
 	if cfg.TileCache.Enabled {
