@@ -12,6 +12,8 @@ import (
 type gpxFile struct {
 	XMLName   xml.Name      `xml:"gpx"`
 	Waypoints []gpxWaypoint `xml:"wpt"`
+	Tracks    []gpxTrack    `xml:"trk"`
+	Routes    []gpxRoute    `xml:"rte"`
 }
 
 type gpxWaypoint struct {
@@ -21,15 +23,51 @@ type gpxWaypoint struct {
 	Desc string  `xml:"desc"`
 }
 
-// ParseGPXWaypoints extracts waypoints from a GPX file as ImportItems.
+// gpxTrack is a <trk>: a named collection of segments. Segments are just GPS
+// dropouts in a single recorded path, so they are concatenated into one line.
+type gpxTrack struct {
+	Name     string        `xml:"name"`
+	Desc     string        `xml:"desc"`
+	Segments []gpxTrackSeg `xml:"trkseg"`
+}
+
+type gpxTrackSeg struct {
+	Points []gpxPoint `xml:"trkpt"`
+}
+
+// gpxRoute is a <rte>: the planned-path line form emitted by Garmin and others.
+type gpxRoute struct {
+	Name   string     `xml:"name"`
+	Desc   string     `xml:"desc"`
+	Points []gpxPoint `xml:"rtept"`
+}
+
+// gpxPoint is a <trkpt>/<rtept>. lat and lon are required by the GPX 1.1 XSD,
+// so they are pointers: a point missing either is malformed and must be dropped
+// rather than silently decoded as 0.0, which would splice a null-island vertex
+// into the middle of the line.
+type gpxPoint struct {
+	Lat *float64 `xml:"lat,attr"`
+	Lon *float64 `xml:"lon,attr"`
+}
+
+// ParseGPXWaypoints extracts waypoints, tracks and routes from a GPX file as
+// ImportItems. It is an alias for ParseGPX, kept for existing callers.
 func ParseGPXWaypoints(r io.Reader) ([]ImportItem, error) {
+	return ParseGPX(r)
+}
+
+// ParseGPX extracts waypoints (<wpt>), tracks (<trk>) and routes (<rte>) from a
+// GPX file as ImportItems. Each track and each route becomes a single route line
+// annotation; tracks or routes with fewer than two points are skipped.
+func ParseGPX(r io.Reader) ([]ImportItem, error) {
 	var gpx gpxFile
 	if err := xml.NewDecoder(r).Decode(&gpx); err != nil {
 		return nil, fmt.Errorf("decode GPX: %w", err)
 	}
 
 	var items []ImportItem
-	for i, wpt := range gpx.Waypoints {
+	for _, wpt := range gpx.Waypoints {
 		if wpt.Name == "" {
 			continue
 		}
@@ -41,10 +79,56 @@ func ParseGPXWaypoints(r io.Reader) ([]ImportItem, error) {
 			Category:    CategoryGeneral,
 			ShortName:   "",
 		})
-		_ = i // sort order handled by ImportAnnotations
+	}
+
+	for i, trk := range gpx.Tracks {
+		var pts []gpxPoint
+		for _, seg := range trk.Segments {
+			pts = append(pts, seg.Points...)
+		}
+		if item, ok := gpxLineItem(trk.Name, trk.Desc, pts, fmt.Sprintf("Track %d", i+1)); ok {
+			items = append(items, item)
+		}
+	}
+
+	for i, rte := range gpx.Routes {
+		if item, ok := gpxLineItem(rte.Name, rte.Desc, rte.Points, fmt.Sprintf("Route %d", i+1)); ok {
+			items = append(items, item)
+		}
 	}
 
 	return items, nil
+}
+
+// gpxLineItem builds a route line ImportItem from GPX points. It reports false
+// when there are too few points to form a line.
+func gpxLineItem(name, desc string, pts []gpxPoint, fallbackName string) (ImportItem, bool) {
+	if len(pts) < 2 {
+		return ImportItem{}, false
+	}
+
+	coords := make([][2]float64, 0, len(pts))
+	for _, p := range pts {
+		if p.Lat == nil || p.Lon == nil {
+			continue // malformed point: drop it rather than emit [0,0]
+		}
+		coords = append(coords, [2]float64{*p.Lon, *p.Lat})
+	}
+	if len(coords) < 2 {
+		return ImportItem{}, false
+	}
+
+	if name == "" {
+		name = fallbackName
+	}
+
+	return ImportItem{
+		Name:         name,
+		Description:  desc,
+		Category:     CategoryRoute,
+		ItemType:     TypeLine,
+		GeometryJSON: buildLineStringGeoJSON(coords),
+	}, true
 }
 
 // kmlFile represents the top-level KML structure.
