@@ -17,7 +17,7 @@ import (
 	_ "modernc.org/sqlite"
 )
 
-const currentSchemaVersion = 21
+const currentSchemaVersion = 22
 
 // SQLiteStore implements Store using modernc.org/sqlite.
 type SQLiteStore struct {
@@ -200,6 +200,12 @@ func (s *SQLiteStore) migrate() error {
 	if version < 21 {
 		if err := s.migrateV21(); err != nil {
 			return err
+		}
+	}
+
+	if version < 22 {
+		if err := s.migrateV22(); err != nil {
+			return fmt.Errorf("migrate v22: %w", err)
 		}
 	}
 
@@ -719,13 +725,13 @@ func (s *SQLiteStore) SaveAnnotation(a Annotation) error {
 			(id, type, label, description, geometry, style, created_by, created_by_name,
 			 created_at, updated_at, category, status, priority, operation_id, mission_ids,
 			 resources, reported_by, reported_at, resolved_at, expires_at,
-			 net_id, short_name, sort_order)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+			 net_id, short_name, sort_order, batch_id, batch_label)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
 		a.ID, a.Type, a.Label, a.Description, a.Geometry, a.Style,
 		a.CreatedBy, a.CreatedByName, a.CreatedAt.UTC(), a.UpdatedAt.UTC(),
 		a.Category, a.Status, a.Priority, a.OperationID, string(missionIDsJSON),
 		a.Resources, a.ReportedBy, reportedAt, resolvedAt, expiresAt,
-		a.NetID, a.ShortName, a.SortOrder,
+		a.NetID, a.ShortName, a.SortOrder, a.BatchID, a.BatchLabel,
 	)
 	if err != nil {
 		return fmt.Errorf("save annotation: %w", err)
@@ -739,7 +745,7 @@ func (s *SQLiteStore) LoadAnnotations() ([]Annotation, error) {
 		       created_by, created_by_name, created_at, updated_at,
 		       category, status, priority, operation_id, mission_ids,
 		       resources, reported_by, reported_at, resolved_at, expires_at,
-		       net_id, short_name, sort_order
+		       net_id, short_name, sort_order, batch_id, batch_label
 		FROM annotations
 		ORDER BY created_at ASC`)
 }
@@ -776,12 +782,15 @@ func (s *SQLiteStore) LoadAnnotationsFiltered(filter AnnotationFilter) ([]Annota
 	if filter.NetID != "" {
 		addFilter("net_id = ?", filter.NetID)
 	}
+	if filter.BatchID != "" {
+		addFilter("batch_id = ?", filter.BatchID)
+	}
 
 	query := `SELECT id, type, label, description, geometry, style,
 		       created_by, created_by_name, created_at, updated_at,
 		       category, status, priority, operation_id, mission_ids,
 		       resources, reported_by, reported_at, resolved_at, expires_at,
-		       net_id, short_name, sort_order
+		       net_id, short_name, sort_order, batch_id, batch_label
 		FROM annotations` + where + ` ORDER BY created_at ASC`
 
 	return s.loadAnnotationsQueryArgs(query, args...)
@@ -815,7 +824,7 @@ func (s *SQLiteStore) loadAnnotationsQueryArgs(query string, args ...interface{}
 			&createdAt, &updatedAt,
 			&category, &status, &priority, &operationID, &missionIDsJSON,
 			&resources, &reportedBy, &reportedAt, &resolvedAt, &expiresAt,
-			&netID, &shortName, &a.SortOrder,
+			&netID, &shortName, &a.SortOrder, &a.BatchID, &a.BatchLabel,
 		); err != nil {
 			return nil, fmt.Errorf("scan annotation: %w", err)
 		}
@@ -904,6 +913,24 @@ func (s *SQLiteStore) DeleteAnnotation(id string) error {
 		return fmt.Errorf("delete annotation: %w", err)
 	}
 	return nil
+}
+
+// UpdateAnnotationBatchLabel renames every annotation in a batch in a single
+// UPDATE (SetMaxOpenConns(1) means N round-trips per member is not an option).
+// Returns the number of rows affected.
+func (s *SQLiteStore) UpdateAnnotationBatchLabel(batchID, label string, updatedAt time.Time) (int, error) {
+	res, err := s.db.Exec(
+		"UPDATE annotations SET batch_label = ?, updated_at = ? WHERE batch_id = ?",
+		label, updatedAt.UTC(), batchID,
+	)
+	if err != nil {
+		return 0, fmt.Errorf("update annotation batch label: %w", err)
+	}
+	affected, err := res.RowsAffected()
+	if err != nil {
+		return 0, fmt.Errorf("update annotation batch label rows affected: %w", err)
+	}
+	return int(affected), nil
 }
 
 func (s *SQLiteStore) UpdateMessageClaim(messageID string, claimedBy string, claimedAt *time.Time) error {
@@ -2624,6 +2651,46 @@ CREATE TABLE IF NOT EXISTS conversation_reads (
 		return fmt.Errorf("set schema_version: %w", err)
 	}
 
+	return nil
+}
+
+// migrateV22 stamps annotations with a provenance batch id/label so a bulk
+// import (or copy, or template apply) can be identified and removed as a
+// group later. See #89.
+//
+// The annotations table has existed since v2, so a real database always has
+// it by the time it reaches v22. The presence check below only matters for
+// narrow migration-test fixtures (e.g. the v19/v20/v21 tests in
+// sqlite_test.go) that hand-build just the tables their own migration
+// touches and seed a schema_version past v2 — mirroring the same
+// present-table guard backfillConversationReads uses for "messages".
+func (s *SQLiteStore) migrateV22() error {
+	var present int
+	if err := s.db.QueryRow(
+		`SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name='annotations'`,
+	).Scan(&present); err != nil {
+		return fmt.Errorf("migrate v22 check annotations table: %w", err)
+	}
+	if present == 1 {
+		for _, stmt := range []string{
+			`ALTER TABLE annotations ADD COLUMN batch_id TEXT NOT NULL DEFAULT ''`,
+			`ALTER TABLE annotations ADD COLUMN batch_label TEXT NOT NULL DEFAULT ''`,
+		} {
+			if _, err := s.db.Exec(stmt); err != nil && !isDuplicateColumnError(err) {
+				return fmt.Errorf("add annotation batch column: %w", err)
+			}
+		}
+		if _, err := s.db.Exec(
+			`CREATE INDEX IF NOT EXISTS idx_annotations_batch_id ON annotations(batch_id)`); err != nil {
+			return fmt.Errorf("index annotations batch_id: %w", err)
+		}
+	}
+	if _, err := s.db.Exec(`DELETE FROM schema_version`); err != nil {
+		return fmt.Errorf("clear schema version: %w", err)
+	}
+	if _, err := s.db.Exec(`INSERT INTO schema_version (version) VALUES (?)`, 22); err != nil {
+		return fmt.Errorf("set schema version: %w", err)
+	}
 	return nil
 }
 

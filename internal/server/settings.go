@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"log"
 	"net/http"
+	"os"
 	"runtime"
 	"time"
 
@@ -36,9 +37,32 @@ type serverDTO struct {
 }
 
 type beaconDTO struct {
-	Enabled  bool   `json:"enabled"`
-	Interval string `json:"interval"`
-	Comment  string `json:"comment"`
+	Enabled     bool            `json:"enabled"`
+	Interval    string          `json:"interval"`
+	Comment     string          `json:"comment"`
+	SmartBeacon *smartBeaconDTO `json:"smartBeacon,omitempty"`
+}
+
+type smartBeaconDTO struct {
+	Enabled   bool    `json:"enabled"`
+	FastSpeed float64 `json:"fastSpeed"`
+	SlowSpeed float64 `json:"slowSpeed"`
+	FastRate  string  `json:"fastRate"`
+	SlowRate  string  `json:"slowRate"`
+	TurnAngle float64 `json:"turnAngle"`
+	TurnSlope float64 `json:"turnSlope"`
+}
+
+type gpsDTO struct {
+	Enabled      bool   `json:"enabled"`
+	Type         string `json:"type"`
+	Host         string `json:"host"`
+	Port         int    `json:"port"`
+	Device       string `json:"device"`
+	Baud         int    `json:"baud"`
+	MinInterval  string `json:"minInterval"` // Go duration string, e.g. "1s"
+	StaleAfter   string `json:"staleAfter"`
+	UseForBeacon bool   `json:"useForBeacon"`
 }
 
 type sessionDTO struct {
@@ -74,6 +98,15 @@ type storeDTO struct {
 	Path string `json:"path"`
 }
 
+type what3wordsDTO struct {
+	Enabled          bool   `json:"enabled"`
+	APIKeyConfigured bool   `json:"apiKeyConfigured"`
+	APIKeySource     string `json:"apiKeySource"`     // "env" | "config" | "none"
+	APIKey           string `json:"apiKey,omitempty"` // write-only; never populated on GET
+	BaseURL          string `json:"baseUrl"`
+	Results          int    `json:"results"`
+}
+
 type weatherDTO struct {
 	RetentionDays int                                     `json:"retentionDays"`
 	Alerts        map[string]config.WeatherAlertThreshold `json:"alerts,omitempty"`
@@ -90,6 +123,8 @@ type settingsResponse struct {
 	TileCache  tileCacheDTO   `json:"tileCache"`
 	Weather    weatherDTO     `json:"weather"`
 	Store      storeDTO       `json:"store"`
+	GPS        gpsDTO         `json:"gps"`
+	What3Words what3wordsDTO  `json:"what3words"`
 }
 
 type updateResponse struct {
@@ -157,11 +192,24 @@ func fromStationDTO(d stationDTO) (config.StationConfig, error) {
 }
 
 func toBeaconDTO(c config.BeaconConfig) beaconDTO {
-	return beaconDTO{
+	d := beaconDTO{
 		Enabled:  c.Enabled,
 		Interval: c.Interval.String(),
 		Comment:  c.Comment,
 	}
+	if c.SmartBeacon != nil {
+		sb := c.SmartBeacon
+		d.SmartBeacon = &smartBeaconDTO{
+			Enabled:   sb.Enabled,
+			FastSpeed: sb.FastSpeed,
+			SlowSpeed: sb.SlowSpeed,
+			FastRate:  sb.FastRate.String(),
+			SlowRate:  sb.SlowRate.String(),
+			TurnAngle: sb.TurnAngle,
+			TurnSlope: sb.TurnSlope,
+		}
+	}
+	return d
 }
 
 func fromBeaconDTO(d beaconDTO) (config.BeaconConfig, error) {
@@ -169,10 +217,70 @@ func fromBeaconDTO(d beaconDTO) (config.BeaconConfig, error) {
 	if err != nil && d.Interval != "" {
 		return config.BeaconConfig{}, err
 	}
-	return config.BeaconConfig{
+	cfg := config.BeaconConfig{
 		Enabled:  d.Enabled,
 		Interval: interval,
 		Comment:  d.Comment,
+	}
+	if d.SmartBeacon != nil {
+		fastRate, err := time.ParseDuration(d.SmartBeacon.FastRate)
+		if err != nil && d.SmartBeacon.FastRate != "" {
+			return config.BeaconConfig{}, err
+		}
+		slowRate, err := time.ParseDuration(d.SmartBeacon.SlowRate)
+		if err != nil && d.SmartBeacon.SlowRate != "" {
+			return config.BeaconConfig{}, err
+		}
+		cfg.SmartBeacon = &config.SmartBeaconConfig{
+			Enabled:   d.SmartBeacon.Enabled,
+			FastSpeed: d.SmartBeacon.FastSpeed,
+			SlowSpeed: d.SmartBeacon.SlowSpeed,
+			FastRate:  fastRate,
+			SlowRate:  slowRate,
+			TurnAngle: d.SmartBeacon.TurnAngle,
+			TurnSlope: d.SmartBeacon.TurnSlope,
+		}
+	}
+	return cfg, nil
+}
+
+func toGPSDTO(c config.GPSConfig) gpsDTO {
+	return gpsDTO{
+		Enabled:      c.Enabled,
+		Type:         c.Type,
+		Host:         c.Host,
+		Port:         c.Port,
+		Device:       c.Device,
+		Baud:         c.Baud,
+		MinInterval:  c.MinInterval.String(),
+		StaleAfter:   c.StaleAfter.String(),
+		UseForBeacon: c.UseForBeacon,
+	}
+}
+
+func fromGPSDTO(d gpsDTO) (config.GPSConfig, error) {
+	var minInterval, staleAfter time.Duration
+	var err error
+	if d.MinInterval != "" {
+		if minInterval, err = time.ParseDuration(d.MinInterval); err != nil {
+			return config.GPSConfig{}, err
+		}
+	}
+	if d.StaleAfter != "" {
+		if staleAfter, err = time.ParseDuration(d.StaleAfter); err != nil {
+			return config.GPSConfig{}, err
+		}
+	}
+	return config.GPSConfig{
+		Enabled:      d.Enabled,
+		Type:         d.Type,
+		Host:         d.Host,
+		Port:         d.Port,
+		Device:       d.Device,
+		Baud:         d.Baud,
+		MinInterval:  minInterval,
+		StaleAfter:   staleAfter,
+		UseForBeacon: d.UseForBeacon,
 	}, nil
 }
 
@@ -278,6 +386,41 @@ func fromWeatherDTO(d weatherDTO) config.WeatherConfig {
 	}
 }
 
+func toWhat3WordsDTO(c config.What3WordsConfig) what3wordsDTO {
+	src := "none"
+	switch {
+	case os.Getenv("NYMERIA_W3W_API_KEY") != "":
+		src = "env"
+	case c.APIKey != "":
+		src = "config"
+	}
+	return what3wordsDTO{
+		Enabled:          c.Enabled,
+		APIKeyConfigured: c.APIKey != "",
+		APIKeySource:     src,
+		BaseURL:          c.BaseURL,
+		Results:          c.Results,
+		// APIKey deliberately left zero — omitempty drops it from the response.
+	}
+}
+
+func fromWhat3WordsDTO(d what3wordsDTO, existing config.What3WordsConfig) config.What3WordsConfig {
+	key := d.APIKey
+	// Preserve existing key if client sends empty or masked value (same rule
+	// as fromSessionDTO's PIN and fromTransportDTOs' passcode).
+	if key == "" || key == "***" {
+		key = existing.APIKey
+	}
+	out := existing
+	out.Enabled = d.Enabled
+	out.APIKey = key
+	out.BaseURL = d.BaseURL
+	if d.Results > 0 {
+		out.Results = d.Results
+	}
+	return out
+}
+
 // classifyRestart returns true if the section requires a server restart.
 func classifyRestart(section string) bool {
 	switch section {
@@ -307,6 +450,8 @@ func (s *Server) handleGetSettings(w http.ResponseWriter, _ *http.Request) {
 		TileCache:  toTileCacheDTO(cfg.TileCache),
 		Weather:    toWeatherDTO(cfg.Weather),
 		Store:      storeDTO{Path: cfg.Store.Path},
+		GPS:        toGPSDTO(cfg.GPS),
+		What3Words: toWhat3WordsDTO(cfg.What3Words),
 	}
 
 	writeJSON(w, http.StatusOK, resp)
@@ -441,6 +586,13 @@ func (s *Server) handleUpdateBeacon(w http.ResponseWriter, r *http.Request) {
 	}
 
 	cfg := s.configMgr.Get()
+	// The frontend has no UI for SmartBeacon yet, so an ordinary save omits
+	// it entirely (dto.SmartBeacon == nil). Preserve whatever is already
+	// configured rather than silently wiping it — same convention as the
+	// masked-passcode/PIN preservation below.
+	if dto.SmartBeacon == nil {
+		bcnCfg.SmartBeacon = cfg.Beacon.SmartBeacon
+	}
 	cfg.Beacon = bcnCfg
 	if err := s.configMgr.Update(cfg); err != nil {
 		writeJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
@@ -448,6 +600,41 @@ func (s *Server) handleUpdateBeacon(w http.ResponseWriter, r *http.Request) {
 	}
 
 	writeJSON(w, http.StatusOK, updateResponse{RestartRequired: false})
+}
+
+// handleUpdateGPS follows handleUpdateBeacon, except restartRequired
+// reflects only whether the enabled/disabled toggle flipped: an already
+// -running GPS manager hot-reloads target/thresholds via cfgMgr.OnChange,
+// but enabling GPS from off has no manager instance to reload (app.go only
+// constructs one at startup when gps.enabled starts true), so it needs a
+// restart.
+func (s *Server) handleUpdateGPS(w http.ResponseWriter, r *http.Request) {
+	if s.configMgr == nil {
+		writeJSON(w, http.StatusServiceUnavailable, map[string]string{"error": "config manager not available"})
+		return
+	}
+
+	var dto gpsDTO
+	if err := json.NewDecoder(r.Body).Decode(&dto); err != nil {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid request body"})
+		return
+	}
+
+	gpsCfg, err := fromGPSDTO(dto)
+	if err != nil {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
+		return
+	}
+
+	cfg := s.configMgr.Get()
+	wasEnabled := cfg.GPS.Enabled
+	cfg.GPS = gpsCfg
+	if err := s.configMgr.Update(cfg); err != nil {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
+		return
+	}
+
+	writeJSON(w, http.StatusOK, updateResponse{RestartRequired: wasEnabled != gpsCfg.Enabled})
 }
 
 func (s *Server) handleUpdateSession(w http.ResponseWriter, r *http.Request) {
@@ -547,4 +734,59 @@ func (s *Server) handleUpdateTileCache(w http.ResponseWriter, r *http.Request) {
 	}
 
 	writeJSON(w, http.StatusOK, updateResponse{RestartRequired: true})
+}
+
+// handleUpdateWhat3Words follows handleUpdateSession, not handleUpdateTileCache:
+// an API key paste mid-event must be live-effective with no restart, so this
+// applies the new key to the already-running w3w client directly rather than
+// hardcoding RestartRequired: true.
+func (s *Server) handleUpdateWhat3Words(w http.ResponseWriter, r *http.Request) {
+	if s.configMgr == nil {
+		writeJSON(w, http.StatusServiceUnavailable, map[string]string{"error": "config manager not available"})
+		return
+	}
+
+	var dto what3wordsDTO
+	if err := json.NewDecoder(r.Body).Decode(&dto); err != nil {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid request body"})
+		return
+	}
+
+	cfg := s.configMgr.Get()
+	w3wCfg := fromWhat3WordsDTO(dto, cfg.What3Words)
+	cfg.What3Words = w3wCfg
+	if err := s.configMgr.Update(cfg); err != nil {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
+		return
+	}
+
+	if c := s.w3wClient(); c != nil {
+		c.SetAPIKey(w3wCfg.APIKey)
+		c.SetEnabled(w3wCfg.Enabled)
+	}
+
+	writeJSON(w, http.StatusOK, updateResponse{RestartRequired: false})
+}
+
+// handleDeleteWhat3WordsKey clears the stored API key. A dedicated endpoint
+// rather than a sentinel string in the DTO — explicit, un-spoofable, and it
+// keeps the empty-means-preserve rule on PUT /settings/what3words intact.
+func (s *Server) handleDeleteWhat3WordsKey(w http.ResponseWriter, r *http.Request) {
+	if s.configMgr == nil {
+		writeJSON(w, http.StatusServiceUnavailable, map[string]string{"error": "config manager not available"})
+		return
+	}
+
+	cfg := s.configMgr.Get()
+	cfg.What3Words.APIKey = ""
+	if err := s.configMgr.Update(cfg); err != nil {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
+		return
+	}
+
+	if c := s.w3wClient(); c != nil {
+		c.SetAPIKey("")
+	}
+
+	writeJSON(w, http.StatusOK, updateResponse{RestartRequired: false})
 }

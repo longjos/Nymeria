@@ -33,6 +33,7 @@
 	--z-sheet: 300;
 	--z-overlay: 400;
 	--z-command-palette: 500;
+	--z-toast: calc(var(--z-overlay) + 1);
 
 	/* Animation */
 	--ease-out: cubic-bezier(0.16, 1, 0.3, 1);

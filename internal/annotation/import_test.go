@@ -1,6 +1,7 @@
 package annotation
 
 import (
+	"encoding/json"
 	"strings"
 	"testing"
 )
@@ -283,5 +284,287 @@ func TestParseKMLCoordinates(t *testing.T) {
 		if lon != tt.wantLon {
 			t.Errorf("parseKMLCoordinates(%q): lon = %f, want %f", tt.input, lon, tt.wantLon)
 		}
+	}
+}
+
+const testGPXTrack = `<?xml version="1.0" encoding="UTF-8"?>
+<gpx version="1.1" creator="ridewithgps.com" xmlns="http://www.topografix.com/GPX/1/1" xmlns:gpxdata="http://www.cluetrust.com/XML/GPXDATA/1/0">
+  <trk>
+    <name>Day 1 Course</name>
+    <desc>48 mile out and back</desc>
+    <trkseg>
+      <trkpt lat="35.732921" lon="-87.626103"><ele>169.6</ele></trkpt>
+      <trkpt lat="35.732791" lon="-87.626173"><ele>169.5</ele></trkpt>
+      <trkpt lat="35.732608" lon="-87.626275"><ele>169.5</ele></trkpt>
+    </trkseg>
+  </trk>
+</gpx>`
+
+const testGPXTrackTwoSegments = `<?xml version="1.0" encoding="UTF-8"?>
+<gpx version="1.1" creator="test">
+  <trk>
+    <name>Split Track</name>
+    <trkseg>
+      <trkpt lat="35.1" lon="-87.1"></trkpt>
+      <trkpt lat="35.2" lon="-87.2"></trkpt>
+    </trkseg>
+    <trkseg>
+      <trkpt lat="35.3" lon="-87.3"></trkpt>
+      <trkpt lat="35.4" lon="-87.4"></trkpt>
+    </trkseg>
+  </trk>
+</gpx>`
+
+const testGPXMixed = `<?xml version="1.0" encoding="UTF-8"?>
+<gpx version="1.1" creator="test">
+  <wpt lat="34.0522" lon="-118.2437">
+    <name>Command Post</name>
+    <desc>Main command post</desc>
+  </wpt>
+  <trk>
+    <name>Course</name>
+    <trkseg>
+      <trkpt lat="35.1" lon="-87.1"></trkpt>
+      <trkpt lat="35.2" lon="-87.2"></trkpt>
+    </trkseg>
+  </trk>
+</gpx>`
+
+const testGPXRoute = `<?xml version="1.0" encoding="UTF-8"?>
+<gpx version="1.1" creator="test">
+  <rte>
+    <name>Planned Route</name>
+    <desc>Garmin style route</desc>
+    <rtept lat="35.5" lon="-87.5"></rtept>
+    <rtept lat="35.6" lon="-87.6"></rtept>
+    <rtept lat="35.7" lon="-87.7"></rtept>
+  </rte>
+</gpx>`
+
+const testGPXShortTrack = `<?xml version="1.0" encoding="UTF-8"?>
+<gpx version="1.1" creator="test">
+  <trk>
+    <name>Too Short</name>
+    <trkseg>
+      <trkpt lat="35.1" lon="-87.1"></trkpt>
+    </trkseg>
+  </trk>
+  <rte>
+    <name>Short Route</name>
+    <rtept lat="35.5" lon="-87.5"></rtept>
+  </rte>
+</gpx>`
+
+const testGPXUnnamedTrack = `<?xml version="1.0" encoding="UTF-8"?>
+<gpx version="1.1" creator="test">
+  <trk>
+    <trkseg>
+      <trkpt lat="35.1" lon="-87.1"></trkpt>
+      <trkpt lat="35.2" lon="-87.2"></trkpt>
+    </trkseg>
+  </trk>
+  <rte>
+    <rtept lat="35.5" lon="-87.5"></rtept>
+    <rtept lat="35.6" lon="-87.6"></rtept>
+  </rte>
+</gpx>`
+
+// decodeLineString decodes a GeoJSON LineString geometry into its coordinates.
+func decodeLineString(t *testing.T, geometryJSON string) [][2]float64 {
+	t.Helper()
+	var geom struct {
+		Type        string       `json:"type"`
+		Coordinates [][2]float64 `json:"coordinates"`
+	}
+	if err := json.Unmarshal([]byte(geometryJSON), &geom); err != nil {
+		t.Fatalf("unmarshal GeometryJSON %q: %v", geometryJSON, err)
+	}
+	if geom.Type != "LineString" {
+		t.Errorf("geometry type = %q, want LineString", geom.Type)
+	}
+	return geom.Coordinates
+}
+
+func TestParseGPXLines(t *testing.T) {
+	tests := []struct {
+		name      string
+		input     string
+		wantItems int
+		// index of the line item to inspect within the returned items.
+		lineIndex   int
+		wantName    string
+		wantDesc    string
+		wantCoords  [][2]float64
+		skipIfEmpty bool
+	}{
+		{
+			name:       "track only",
+			input:      testGPXTrack,
+			wantItems:  1,
+			lineIndex:  0,
+			wantName:   "Day 1 Course",
+			wantDesc:   "48 mile out and back",
+			wantCoords: [][2]float64{{-87.626103, 35.732921}, {-87.626173, 35.732791}, {-87.626275, 35.732608}},
+		},
+		{
+			name:       "track with two segments concatenated",
+			input:      testGPXTrackTwoSegments,
+			wantItems:  1,
+			lineIndex:  0,
+			wantName:   "Split Track",
+			wantCoords: [][2]float64{{-87.1, 35.1}, {-87.2, 35.2}, {-87.3, 35.3}, {-87.4, 35.4}},
+		},
+		{
+			name:       "mixed waypoint and track",
+			input:      testGPXMixed,
+			wantItems:  2,
+			lineIndex:  1,
+			wantName:   "Course",
+			wantCoords: [][2]float64{{-87.1, 35.1}, {-87.2, 35.2}},
+		},
+		{
+			name:       "route becomes one line",
+			input:      testGPXRoute,
+			wantItems:  1,
+			lineIndex:  0,
+			wantName:   "Planned Route",
+			wantDesc:   "Garmin style route",
+			wantCoords: [][2]float64{{-87.5, 35.5}, {-87.6, 35.6}, {-87.7, 35.7}},
+		},
+		{
+			name:      "track and route with fewer than two points are skipped",
+			input:     testGPXShortTrack,
+			wantItems: 0,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			items, err := ParseGPXWaypoints(strings.NewReader(tt.input))
+			if err != nil {
+				t.Fatalf("ParseGPXWaypoints: %v", err)
+			}
+			if len(items) != tt.wantItems {
+				t.Fatalf("got %d items, want %d: %+v", len(items), tt.wantItems, items)
+			}
+			if tt.wantItems == 0 {
+				return
+			}
+
+			line := items[tt.lineIndex]
+			if line.Name != tt.wantName {
+				t.Errorf("name = %q, want %q", line.Name, tt.wantName)
+			}
+			if line.Description != tt.wantDesc {
+				t.Errorf("desc = %q, want %q", line.Description, tt.wantDesc)
+			}
+			if line.ItemType != TypeLine {
+				t.Errorf("type = %q, want %q", line.ItemType, TypeLine)
+			}
+			if line.Category != CategoryRoute {
+				t.Errorf("category = %q, want %q", line.Category, CategoryRoute)
+			}
+
+			coords := decodeLineString(t, line.GeometryJSON)
+			if len(coords) != len(tt.wantCoords) {
+				t.Fatalf("got %d coords, want %d: %v", len(coords), len(tt.wantCoords), coords)
+			}
+			for i, c := range coords {
+				if c != tt.wantCoords[i] {
+					t.Errorf("coords[%d] = %v, want %v", i, c, tt.wantCoords[i])
+				}
+			}
+		})
+	}
+}
+
+func TestParseGPXUnnamedLineFallback(t *testing.T) {
+	items, err := ParseGPXWaypoints(strings.NewReader(testGPXUnnamedTrack))
+	if err != nil {
+		t.Fatalf("ParseGPXWaypoints: %v", err)
+	}
+	if len(items) != 2 {
+		t.Fatalf("got %d items, want 2: %+v", len(items), items)
+	}
+	if items[0].Name != "Track 1" {
+		t.Errorf("items[0].Name = %q, want Track 1", items[0].Name)
+	}
+	if items[1].Name != "Route 1" {
+		t.Errorf("items[1].Name = %q, want Route 1", items[1].Name)
+	}
+	for i, it := range items {
+		if it.ItemType != TypeLine {
+			t.Errorf("items[%d].ItemType = %q, want %q", i, it.ItemType, TypeLine)
+		}
+		if it.Category != CategoryRoute {
+			t.Errorf("items[%d].Category = %q, want %q", i, it.Category, CategoryRoute)
+		}
+	}
+}
+
+func TestParseGPXAlias(t *testing.T) {
+	viaAlias, err := ParseGPXWaypoints(strings.NewReader(testGPXMixed))
+	if err != nil {
+		t.Fatalf("ParseGPXWaypoints: %v", err)
+	}
+	direct, err := ParseGPX(strings.NewReader(testGPXMixed))
+	if err != nil {
+		t.Fatalf("ParseGPX: %v", err)
+	}
+	if len(viaAlias) != len(direct) {
+		t.Fatalf("alias returned %d items, ParseGPX returned %d", len(viaAlias), len(direct))
+	}
+	for i := range direct {
+		if viaAlias[i] != direct[i] {
+			t.Errorf("item %d differs: %+v vs %+v", i, viaAlias[i], direct[i])
+		}
+	}
+}
+
+const testGPXMissingCoords = `<?xml version="1.0"?>
+<gpx version="1.1">
+  <trk>
+    <name>Partial Track</name>
+    <trkseg>
+      <trkpt lat="1.0" lon="2.0"/>
+      <trkpt lon="4.0"/>
+      <trkpt><extensions><foo>bar</foo></extensions></trkpt>
+      <trkpt lat="5.0"/>
+      <trkpt lat="6.0" lon="7.0"/>
+    </trkseg>
+  </trk>
+  <rte>
+    <name>Partial Route</name>
+    <rtept lat="10.0" lon="20.0"/>
+    <rtept lon="40.0"/>
+    <rtept lat="60.0" lon="70.0"/>
+  </rte>
+  <trk>
+    <name>Degenerate Track</name>
+    <trkseg>
+      <trkpt lat="1.0" lon="2.0"/>
+      <trkpt lon="4.0"/>
+    </trkseg>
+  </trk>
+</gpx>`
+
+// Points missing a required lat or lon attribute must be dropped, not decoded
+// as 0.0 — a null-island vertex would corrupt the whole line's shape.
+func TestParseGPXSkipsPointsMissingCoords(t *testing.T) {
+	items, err := ParseGPX(strings.NewReader(testGPXMissingCoords))
+	if err != nil {
+		t.Fatalf("ParseGPX: %v", err)
+	}
+	if len(items) != 2 {
+		t.Fatalf("got %d items, want 2 (degenerate track dropped): %+v", len(items), items)
+	}
+	if got, want := items[0].GeometryJSON, `{"type":"LineString","coordinates":[[2,1],[7,6]]}`; got != want {
+		t.Errorf("track geometry = %s, want %s", got, want)
+	}
+	if got, want := items[1].GeometryJSON, `{"type":"LineString","coordinates":[[20,10],[70,60]]}`; got != want {
+		t.Errorf("route geometry = %s, want %s", got, want)
+	}
+	if items[0].Name != "Partial Track" || items[1].Name != "Partial Route" {
+		t.Errorf("names = %q, %q", items[0].Name, items[1].Name)
 	}
 }

@@ -9,6 +9,7 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
@@ -345,6 +346,47 @@ func TestUpdateSessionPreservesExistingPIN(t *testing.T) {
 	}
 	if got.Session.InactivityTimeout != 45*time.Minute {
 		t.Errorf("timeout = %v, want %v", got.Session.InactivityTimeout, 45*time.Minute)
+	}
+}
+
+func TestUpdateBeaconPreservesExistingSmartBeacon(t *testing.T) {
+	srv, sessMgr, cfgMgr, _ := newTestSettingsServer(t)
+	token := adminToken(sessMgr)
+
+	// Simulate an operator who hand-edited nymeria.yaml to enable smart
+	// beaconing — there is no frontend UI for it yet, so the only way a
+	// SmartBeacon config exists is via the config file directly.
+	cfg := cfgMgr.Get()
+	cfg.Beacon.SmartBeacon = &config.SmartBeaconConfig{
+		Enabled:   true,
+		FastSpeed: 60,
+		SlowSpeed: 5,
+		FastRate:  60 * time.Second,
+		SlowRate:  30 * time.Minute,
+		TurnAngle: 28,
+		TurnSlope: 26,
+	}
+	if err := cfgMgr.Update(cfg); err != nil {
+		t.Fatalf("seed SmartBeacon: %v", err)
+	}
+
+	// An ordinary beacon settings save from the real frontend, which has no
+	// smartBeacon field at all — dto.SmartBeacon is nil.
+	dto := beaconDTO{Enabled: true, Interval: "15m0s", Comment: "hello"}
+	w := doRequest(srv, "PUT", "/api/settings/beacon", dto, token)
+	if w.Code != http.StatusOK {
+		t.Fatalf("PUT beacon: %d %s", w.Code, w.Body.String())
+	}
+
+	got := cfgMgr.Get()
+	if got.Beacon.SmartBeacon == nil {
+		t.Fatal("SmartBeacon was wiped by an ordinary beacon settings save")
+	}
+	if !got.Beacon.SmartBeacon.Enabled || got.Beacon.SmartBeacon.FastSpeed != 60 {
+		t.Errorf("SmartBeacon = %+v, want preserved original", got.Beacon.SmartBeacon)
+	}
+	if got.Beacon.Comment != "hello" || got.Beacon.Interval != 15*time.Minute {
+		t.Errorf("ordinary beacon fields not applied: %+v", got.Beacon)
 	}
 }
 
@@ -699,6 +741,104 @@ func TestUpdateTileCache(t *testing.T) {
 	cfg := cfgMgr.Get()
 	if cfg.TileCache.MaxZoom != 18 {
 		t.Errorf("maxZoom = %d, want %d", cfg.TileCache.MaxZoom, 18)
+	}
+}
+
+func TestGetSettingsIncludesGPS(t *testing.T) {
+	srv, sessMgr, _, _ := newTestSettingsServer(t)
+	token := adminToken(sessMgr)
+
+	w := doRequest(srv, "GET", "/api/settings", nil, token)
+	if w.Code != http.StatusOK {
+		t.Fatalf("GET settings: %d", w.Code)
+	}
+
+	var resp settingsResponse
+	json.Unmarshal(w.Body.Bytes(), &resp)
+
+	if resp.GPS.MinInterval != "1s" {
+		t.Errorf("gps.minInterval = %q, want %q", resp.GPS.MinInterval, "1s")
+	}
+	if resp.GPS.StaleAfter != "30s" {
+		t.Errorf("gps.staleAfter = %q, want %q", resp.GPS.StaleAfter, "30s")
+	}
+}
+
+func TestUpdateGPSRoundTrip(t *testing.T) {
+	srv, sessMgr, cfgMgr, cfgPath := newTestSettingsServer(t)
+	token := adminToken(sessMgr)
+
+	dto := gpsDTO{
+		Enabled: false, Type: "gpsd", Host: "192.168.1.50", Port: 2947,
+		MinInterval: "2s", StaleAfter: "45s", UseForBeacon: true,
+	}
+	w := doRequest(srv, "PUT", "/api/settings/gps", dto, token)
+	if w.Code != http.StatusOK {
+		t.Fatalf("PUT gps: %d %s", w.Code, w.Body.String())
+	}
+	var resp updateResponse
+	json.Unmarshal(w.Body.Bytes(), &resp)
+	if resp.RestartRequired {
+		t.Error("gps update with enabled unchanged (false->false) should NOT require restart")
+	}
+
+	got := cfgMgr.Get()
+	if got.GPS.Host != "192.168.1.50" {
+		t.Errorf("host = %q, want 192.168.1.50", got.GPS.Host)
+	}
+	if got.GPS.MinInterval != 2*time.Second {
+		t.Errorf("minInterval = %v, want 2s", got.GPS.MinInterval)
+	}
+
+	// Flipping enabled requires a restart.
+	dto.Enabled = true
+	w = doRequest(srv, "PUT", "/api/settings/gps", dto, token)
+	if w.Code != http.StatusOK {
+		t.Fatalf("PUT gps (enable): %d %s", w.Code, w.Body.String())
+	}
+	json.Unmarshal(w.Body.Bytes(), &resp)
+	if !resp.RestartRequired {
+		t.Error("flipping gps.enabled should require restart")
+	}
+
+	data, err := os.ReadFile(cfgPath)
+	if err != nil {
+		t.Fatalf("read config file: %v", err)
+	}
+	if !strings.Contains(string(data), "192.168.1.50") {
+		t.Errorf("config file missing updated host, got:\n%s", data)
+	}
+}
+
+func TestUpdateGPSRejectsInvalid(t *testing.T) {
+	srv, sessMgr, cfgMgr, _ := newTestSettingsServer(t)
+	token := adminToken(sessMgr)
+
+	dto := gpsDTO{Enabled: true, Type: "gpsd", Host: ""}
+	w := doRequest(srv, "PUT", "/api/settings/gps", dto, token)
+	if w.Code != http.StatusBadRequest {
+		t.Fatalf("PUT invalid gps: got %d, want %d", w.Code, http.StatusBadRequest)
+	}
+
+	var body map[string]string
+	json.Unmarshal(w.Body.Bytes(), &body)
+	if !strings.Contains(body["error"], "gps.host is required for gpsd") {
+		t.Errorf("error = %q, want containing %q", body["error"], "gps.host is required for gpsd")
+	}
+
+	if cfgMgr.Get().GPS.Enabled {
+		t.Error("config should be unchanged after rejected update")
+	}
+}
+
+func TestUpdateGPSBadDuration(t *testing.T) {
+	srv, sessMgr, _, _ := newTestSettingsServer(t)
+	token := adminToken(sessMgr)
+
+	dto := gpsDTO{Enabled: true, Type: "gpsd", Host: "127.0.0.1", Port: 2947, MinInterval: "1 second"}
+	w := doRequest(srv, "PUT", "/api/settings/gps", dto, token)
+	if w.Code != http.StatusBadRequest {
+		t.Errorf("PUT bad duration: got %d, want %d", w.Code, http.StatusBadRequest)
 	}
 }
 

@@ -3,8 +3,12 @@ package server
 import (
 	"context"
 	"encoding/json"
+	"errors"
+	"fmt"
 	"log"
 	"net/http"
+	"path/filepath"
+	"regexp"
 	"strconv"
 	"strings"
 	"time"
@@ -44,6 +48,7 @@ func (s *Server) routes() {
 			r.Get("/messages/{callsign}", s.handleGetMessagesForCallsign)
 			r.Post("/messages/{callsign}/read", s.handleMarkConversationRead)
 			r.Get("/transports", s.handleGetTransports)
+			r.Get("/gps", s.handleGetGPS)
 			r.Get("/objects", s.handleGetObjects)
 			r.Get("/items", s.handleGetItems)
 			r.Get("/annotations", s.handleGetAnnotations)
@@ -85,6 +90,9 @@ func (s *Server) routes() {
 			r.Put("/annotations/{id}", s.handleUpdateAnnotation)
 			r.Delete("/annotations/{id}", s.handleDeleteAnnotation)
 			r.Post("/annotations/import", s.handleImportAnnotations)
+			r.Post("/annotations/bulk-delete", s.handleBulkDeleteAnnotations)
+			r.Post("/annotations/undo-delete", s.handleUndoDeleteAnnotations)
+			r.Patch("/annotations/batch-label", s.handleRenameAnnotationBatch)
 			r.Post("/annotations/{id}/status", s.handleChangeAnnotationStatus)
 			r.Post("/annotations/{id}/promote", s.handlePromoteAnnotationToMission)
 			r.Post("/annotations/{id}/link", s.handleLinkAnnotation)
@@ -165,6 +173,21 @@ func (s *Server) routes() {
 			r.Post("/tiles/estimate", s.handleTileEstimate)
 		})
 
+		// what3words proxy — operator+ (the role that creates missions)
+		r.Group(func(r chi.Router) {
+			r.Use(RequireRole(session.RoleOperator))
+			r.Get("/w3w/resolve", s.handleW3WResolve)
+			r.Get("/w3w/suggest", s.handleW3WSuggest)
+			r.Get("/w3w/reverse", s.handleW3WReverse)
+		})
+
+		// what3words status — observer+ so a read-only panel can hide the
+		// affordance correctly.
+		r.Group(func(r chi.Router) {
+			r.Use(RequireRole(session.RoleObserver))
+			r.Get("/w3w/status", s.handleW3WStatus)
+		})
+
 		// Admin endpoints — user management
 		r.Group(func(r chi.Router) {
 			r.Use(RequireRole(session.RoleAdmin))
@@ -185,10 +208,13 @@ func (s *Server) routes() {
 			r.Put("/settings/server", s.handleUpdateServer)
 			r.Put("/settings/transports", s.handleUpdateTransports)
 			r.Put("/settings/beacon", s.handleUpdateBeacon)
+			r.Put("/settings/gps", s.handleUpdateGPS)
 			r.Put("/settings/session", s.handleUpdateSession)
 			r.Put("/settings/logging", s.handleUpdateLogging)
 			r.Put("/settings/weather", s.handleUpdateWeather)
 			r.Put("/settings/tilecache", s.handleUpdateTileCache)
+			r.Put("/settings/what3words", s.handleUpdateWhat3Words)
+			r.Delete("/settings/what3words/key", s.handleDeleteWhat3WordsKey)
 		})
 	})
 
@@ -952,11 +978,12 @@ func (s *Server) handleGetAnnotations(w http.ResponseWriter, r *http.Request) {
 		Status:         q.Get("status"),
 		Priority:       q.Get("priority"),
 		OperationID:    q.Get("operationId"),
+		BatchID:        q.Get("batchId"),
 		IncludeExpired: q.Get("includeExpired") == "true",
 	}
 
 	// Use filtered query if any filter param is set.
-	if filter.Category != "" || filter.Status != "" || filter.Priority != "" || filter.OperationID != "" || filter.IncludeExpired {
+	if filter.Category != "" || filter.Status != "" || filter.Priority != "" || filter.OperationID != "" || filter.BatchID != "" || filter.IncludeExpired {
 		writeJSON(w, http.StatusOK, s.addTransmitState(s.annMgr.AllFiltered(filter)))
 		return
 	}
@@ -975,6 +1002,12 @@ func (s *Server) handleCreateAnnotation(w http.ResponseWriter, r *http.Request) 
 		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid request body"})
 		return
 	}
+
+	if req.BatchID != "" && !validBatchID.MatchString(req.BatchID) {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid batchId"})
+		return
+	}
+	req.BatchLabel = clampBatchLabel(req.BatchLabel)
 
 	// Set creator attribution from session
 	if user, ok := UserFromContext(r.Context()); ok {
@@ -1023,6 +1056,10 @@ func (s *Server) handleUpdateAnnotation(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 	updated.ID = id // ensure ID cannot be changed
+	// Batch membership is immutable — it is set at creation and changed only by
+	// the dedicated rename endpoint.
+	updated.BatchID = existing.BatchID
+	updated.BatchLabel = existing.BatchLabel
 
 	ann, err := s.annMgr.Update(updated)
 	if err != nil {
@@ -2461,6 +2498,87 @@ func (s *Server) handleGetNetAnnotations(w http.ResponseWriter, r *http.Request)
 	writeJSON(w, http.StatusOK, anns)
 }
 
+// validBatchID constrains client-supplied batch ids (template apply).
+var validBatchID = regexp.MustCompile(`^[A-Za-z0-9_-]{1,64}$`)
+
+// maxBatchLabelRunes clamps a batch label to a sane display length.
+const maxBatchLabelRunes = 120
+
+func clampBatchLabel(s string) string {
+	r := []rune(s)
+	if len(r) > maxBatchLabelRunes {
+		return string(r[:maxBatchLabelRunes])
+	}
+	return s
+}
+
+// parseImportUpload reads the multipart upload and returns the parsed items,
+// the source label (the uploaded filename) and the optional existing batch id.
+// It writes the error response itself and returns ok=false on failure.
+func (s *Server) parseImportUpload(w http.ResponseWriter, r *http.Request) (items []annotation.ImportItem, sourceLabel, batchID string, ok bool) {
+	if err := r.ParseMultipartForm(10 << 20); err != nil {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid multipart form"})
+		return nil, "", "", false
+	}
+
+	file, header, err := r.FormFile("file")
+	if err != nil {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "file is required"})
+		return nil, "", "", false
+	}
+	defer file.Close()
+
+	filename := strings.ToLower(header.Filename)
+	switch {
+	case strings.HasSuffix(filename, ".gpx"):
+		items, err = annotation.ParseGPXWaypoints(file)
+	case strings.HasSuffix(filename, ".kml"):
+		items, err = annotation.ParseKMLPlacemarks(file)
+	default:
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "unsupported file type, use .gpx or .kml"})
+		return nil, "", "", false
+	}
+
+	if err != nil {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
+		return nil, "", "", false
+	}
+	if len(items) == 0 {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "no waypoints or routes found in file"})
+		return nil, "", "", false
+	}
+
+	return items, filepath.Base(header.Filename), r.FormValue("batchId"), true
+}
+
+// writeImportError maps ImportAnnotations errors onto status codes.
+func writeImportError(w http.ResponseWriter, err error) {
+	var notFound *annotation.ErrBatchNotFound
+	switch {
+	case errors.As(err, &notFound):
+		writeJSON(w, http.StatusNotFound, map[string]string{"error": err.Error()})
+	case errors.Is(err, annotation.ErrNoItems):
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "no waypoints or routes found in file"})
+	default:
+		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
+	}
+}
+
+func (s *Server) logBatchActivity(r *http.Request, action activity.Action, target, details string) {
+	if s.actLogger == nil {
+		return
+	}
+	user, _ := UserFromContext(r.Context())
+	s.actLogger.Log(activity.Entry{
+		Timestamp: time.Now(),
+		UserID:    user.ID,
+		UserName:  user.Name,
+		Action:    action,
+		Target:    target,
+		Details:   details,
+	})
+}
+
 func (s *Server) handleImportNetAnnotations(w http.ResponseWriter, r *http.Request) {
 	if s.annMgr == nil {
 		writeJSON(w, http.StatusServiceUnavailable, map[string]string{"error": "annotation manager not available"})
@@ -2469,42 +2587,19 @@ func (s *Server) handleImportNetAnnotations(w http.ResponseWriter, r *http.Reque
 
 	id := chi.URLParam(r, "id")
 
-	if err := r.ParseMultipartForm(10 << 20); err != nil {
-		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid multipart form"})
+	items, sourceLabel, batchID, ok := s.parseImportUpload(w, r)
+	if !ok {
 		return
 	}
 
-	file, header, err := r.FormFile("file")
+	res, err := s.annMgr.ImportAnnotations(id, sourceLabel, batchID, items)
 	if err != nil {
-		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "file is required"})
-		return
-	}
-	defer file.Close()
-
-	filename := strings.ToLower(header.Filename)
-	var items []annotation.ImportItem
-
-	if strings.HasSuffix(filename, ".gpx") {
-		items, err = annotation.ParseGPXWaypoints(file)
-	} else if strings.HasSuffix(filename, ".kml") {
-		items, err = annotation.ParseKMLPlacemarks(file)
-	} else {
-		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "unsupported file type, use .gpx or .kml"})
+		writeImportError(w, err)
 		return
 	}
 
-	if err != nil {
-		writeJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
-		return
-	}
-
-	imported, err := s.annMgr.ImportAnnotations(id, items)
-	if err != nil {
-		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
-		return
-	}
-
-	writeJSON(w, http.StatusCreated, imported)
+	writeJSON(w, http.StatusCreated, res)
+	s.logBatchActivity(r, activity.ActionAnnotationsImported, res.BatchLabel, fmt.Sprintf("%d items", res.Count))
 }
 
 func (s *Server) handleImportAnnotations(w http.ResponseWriter, r *http.Request) {
@@ -2513,42 +2608,19 @@ func (s *Server) handleImportAnnotations(w http.ResponseWriter, r *http.Request)
 		return
 	}
 
-	if err := r.ParseMultipartForm(10 << 20); err != nil {
-		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid multipart form"})
+	items, sourceLabel, batchID, ok := s.parseImportUpload(w, r)
+	if !ok {
 		return
 	}
 
-	file, header, err := r.FormFile("file")
+	res, err := s.annMgr.ImportAnnotations("", sourceLabel, batchID, items)
 	if err != nil {
-		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "file is required"})
-		return
-	}
-	defer file.Close()
-
-	filename := strings.ToLower(header.Filename)
-	var items []annotation.ImportItem
-
-	if strings.HasSuffix(filename, ".gpx") {
-		items, err = annotation.ParseGPXWaypoints(file)
-	} else if strings.HasSuffix(filename, ".kml") {
-		items, err = annotation.ParseKMLPlacemarks(file)
-	} else {
-		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "unsupported file type, use .gpx or .kml"})
+		writeImportError(w, err)
 		return
 	}
 
-	if err != nil {
-		writeJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
-		return
-	}
-
-	imported, err := s.annMgr.ImportAnnotations("", items)
-	if err != nil {
-		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
-		return
-	}
-
-	writeJSON(w, http.StatusCreated, imported)
+	writeJSON(w, http.StatusCreated, res)
+	s.logBatchActivity(r, activity.ActionAnnotationsImported, res.BatchLabel, fmt.Sprintf("%d items", res.Count))
 }
 
 func (s *Server) handleCopyNetAnnotations(w http.ResponseWriter, r *http.Request) {
@@ -2560,13 +2632,203 @@ func (s *Server) handleCopyNetAnnotations(w http.ResponseWriter, r *http.Request
 	id := chi.URLParam(r, "id")
 	sourceNetId := chi.URLParam(r, "sourceNetId")
 
-	copied, err := s.annMgr.CopyAnnotationsFromNet(sourceNetId, id)
+	sourceName := "another net"
+	if s.netMgr != nil {
+		if net, ok := s.netMgr.GetNet(sourceNetId); ok && net.Name != "" {
+			sourceName = net.Name
+		}
+	}
+
+	res, err := s.annMgr.CopyAnnotationsFromNet(sourceNetId, id, sourceName)
 	if err != nil {
 		writeJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
 		return
 	}
 
-	writeJSON(w, http.StatusCreated, copied)
+	writeJSON(w, http.StatusCreated, res)
+	s.logBatchActivity(r, activity.ActionAnnotationsImported, res.BatchLabel, fmt.Sprintf("%d items", res.Count))
+}
+
+// --- Imported annotation sets: bulk delete, undo, rename ---
+
+type bulkDeleteRequest struct {
+	BatchID              string   `json:"batchId"`
+	IDs                  []string `json:"ids"`
+	IncludeMissionLinked bool     `json:"includeMissionLinked"`
+	StopTransmit         bool     `json:"stopTransmit"`
+}
+
+const maxBulkDeleteIDs = 500
+
+func (s *Server) handleBulkDeleteAnnotations(w http.ResponseWriter, r *http.Request) {
+	if s.annMgr == nil {
+		writeJSON(w, http.StatusServiceUnavailable, map[string]string{"error": "annotations not available"})
+		return
+	}
+
+	var req bulkDeleteRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid request body"})
+		return
+	}
+
+	byBatch := strings.TrimSpace(req.BatchID) != ""
+	byIDs := len(req.IDs) > 0
+	if byBatch == byIDs {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "provide exactly one of batchId or ids"})
+		return
+	}
+	if len(req.IDs) > maxBulkDeleteIDs {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "too many ids (max 500)"})
+		return
+	}
+
+	// Killing live APRS objects is an operator action even though ordinary
+	// deletes are open to plotters.
+	if req.StopTransmit {
+		user, ok := UserFromContext(r.Context())
+		if !ok || session.RoleLevel(user.Role) < session.RoleLevel(session.RoleOperator) {
+			writeJSON(w, http.StatusForbidden, map[string]string{"error": "operator role required to stop APRS transmission"})
+			return
+		}
+	}
+
+	var res annotation.DeleteResult
+	var err error
+	if byBatch {
+		res, err = s.annMgr.DeleteBatch(strings.TrimSpace(req.BatchID), req.IncludeMissionLinked, req.StopTransmit)
+	} else {
+		res, err = s.annMgr.DeleteMany(req.IDs, req.IncludeMissionLinked, req.StopTransmit)
+	}
+
+	if err != nil {
+		var notFound *annotation.ErrBatchNotFound
+		var transmitting *annotation.ErrTransmittingMembers
+		var killFailed *annotation.ErrKillFailed
+		switch {
+		case errors.As(err, &notFound):
+			writeJSON(w, http.StatusNotFound, map[string]string{"error": err.Error()})
+		case errors.As(err, &transmitting):
+			writeJSON(w, http.StatusConflict, map[string]any{
+				"error":        "annotations are transmitting as APRS objects",
+				"transmitting": s.transmittingSummary(transmitting.IDs),
+			})
+		case errors.As(err, &killFailed):
+			writeJSON(w, http.StatusBadGateway, map[string]any{
+				"error":        "failed to kill APRS object",
+				"annotationId": killFailed.AnnotationID,
+			})
+		default:
+			writeJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
+		}
+		return
+	}
+
+	writeJSON(w, http.StatusOK, res)
+
+	target := res.BatchLabel
+	if target == "" {
+		target = "selection"
+	}
+	details := fmt.Sprintf("removed %d items", res.DeletedCount)
+	if n := len(res.SkippedMissionLinked); n > 0 {
+		details += fmt.Sprintf("; %d kept (mission-linked)", n)
+	}
+	if res.KilledObjects > 0 {
+		details += fmt.Sprintf("; %d APRS objects killed", res.KilledObjects)
+	}
+	s.logBatchActivity(r, activity.ActionAnnotationsBatchDeleted, target, details)
+}
+
+// transmittingSummary maps transmitting annotation ids to {id,label} pairs.
+func (s *Server) transmittingSummary(ids []string) []map[string]string {
+	out := make([]map[string]string, 0, len(ids))
+	for _, id := range ids {
+		label := id
+		if ann, ok := s.annMgr.Get(id); ok {
+			label = ann.Label
+		}
+		out = append(out, map[string]string{"id": id, "label": label})
+	}
+	return out
+}
+
+func (s *Server) handleUndoDeleteAnnotations(w http.ResponseWriter, r *http.Request) {
+	if s.annMgr == nil {
+		writeJSON(w, http.StatusServiceUnavailable, map[string]string{"error": "annotations not available"})
+		return
+	}
+
+	var req struct {
+		UndoToken string `json:"undoToken"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid request body"})
+		return
+	}
+	if strings.TrimSpace(req.UndoToken) == "" {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "undoToken is required"})
+		return
+	}
+
+	res, err := s.annMgr.UndoDelete(strings.TrimSpace(req.UndoToken))
+	if err != nil {
+		if errors.Is(err, annotation.ErrUndoExpired) {
+			writeJSON(w, http.StatusGone, map[string]string{"error": "undo window expired"})
+			return
+		}
+		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
+		return
+	}
+
+	writeJSON(w, http.StatusOK, res)
+	s.logBatchActivity(r, activity.ActionAnnotationsBatchRestored, res.BatchLabel, fmt.Sprintf("%d items restored", res.Count))
+}
+
+func (s *Server) handleRenameAnnotationBatch(w http.ResponseWriter, r *http.Request) {
+	if s.annMgr == nil {
+		writeJSON(w, http.StatusServiceUnavailable, map[string]string{"error": "annotations not available"})
+		return
+	}
+
+	var req struct {
+		BatchID    string `json:"batchId"`
+		BatchLabel string `json:"batchLabel"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid request body"})
+		return
+	}
+	if strings.TrimSpace(req.BatchID) == "" {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "batchId is required"})
+		return
+	}
+	label := strings.TrimSpace(req.BatchLabel)
+	if label == "" {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "batchLabel is required"})
+		return
+	}
+	if len([]rune(label)) > maxBatchLabelRunes {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "batchLabel too long"})
+		return
+	}
+
+	updated, err := s.annMgr.RenameBatch(strings.TrimSpace(req.BatchID), label)
+	if err != nil {
+		var notFound *annotation.ErrBatchNotFound
+		if errors.As(err, &notFound) {
+			writeJSON(w, http.StatusNotFound, map[string]string{"error": err.Error()})
+			return
+		}
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
+		return
+	}
+
+	writeJSON(w, http.StatusOK, map[string]any{
+		"batchId":    strings.TrimSpace(req.BatchID),
+		"batchLabel": label,
+		"updated":    updated,
+	})
 }
 
 func (s *Server) handleExportRosterCSV(w http.ResponseWriter, r *http.Request) {

@@ -240,6 +240,55 @@ export interface Annotation {
 	netId?: string;
 	shortName?: string;
 	sortOrder?: number;
+	batchId?: string;
+	batchLabel?: string;
+}
+
+/** Envelope returned by GPX/KML import, cross-net copy, and undo-delete. */
+export interface ImportResult {
+	batchId: string;
+	batchLabel: string;
+	netId?: string;
+	count: number;
+	annotations: Annotation[];
+}
+
+/** Result of POST /annotations/bulk-delete. */
+export interface BulkDeleteResult {
+	batchId?: string;
+	batchLabel?: string;
+	deleted: string[];
+	deletedCount: number;
+	skippedMissionLinked: string[];
+	killedObjects: number;
+	undoToken?: string;
+	undoExpiresAt?: string;
+}
+
+/** Result of PATCH /annotations/batch-label. */
+export interface RenameBatchResult {
+	batchId: string;
+	batchLabel: string;
+	updated: number;
+}
+
+/** One annotation in a 409 "still transmitting" response. */
+export interface TransmittingMember {
+	id: string;
+	label: string;
+}
+
+/** A set of annotations created by one bulk operation, derived client-side. */
+export interface AnnotationBatch {
+	id: string;
+	label: string;
+	netId?: string;
+	count: number;
+	/** Earliest createdAt among members. */
+	createdAt: string;
+	items: Annotation[];
+	missionLinkedCount: number;
+	checkpointCount: number;
 }
 
 export interface ActivityEntry {
@@ -485,6 +534,39 @@ export interface TilePreloadProgress {
 	skipped: number;
 }
 
+// --- Live GPS (own position) ---
+// Mirrors internal/gps.Fix / gps.Status and the server's GET /api/gps +
+// "own_position" WS frame byte-for-byte. See internal/server/gps.go.
+
+export type GpsFixMode = 0 | 1 | 2 | 3;
+
+export interface GpsFix {
+	mode: GpsFixMode;
+	lat: number;
+	lon: number;
+	altitude?: number; // meters MSL
+	hasAltitude: boolean;
+	speedKnots: number;
+	course: number;
+	hasCourse: boolean;
+	satellites?: number;
+	hdop?: number;
+	accuracy?: number; // meters, 0/undefined = unknown
+	time?: string;
+	receivedAt: string;
+}
+
+export interface GpsStatus {
+	enabled: boolean;
+	type?: 'gpsd' | 'nmea';
+	target?: string;
+	connected: boolean;
+	error?: string;
+	fix: GpsFix | null;
+	ageMillis: number | null;
+	stale: boolean;
+}
+
 // --- Settings ---
 
 export interface SettingsResponse {
@@ -497,6 +579,8 @@ export interface SettingsResponse {
 	tileCache: TileCacheSettings;
 	weather: WeatherSettings;
 	store: StoreSettings;
+	gps: GpsSettings;
+	what3words: What3WordsSettings;
 }
 
 export interface StationSettings {
@@ -669,8 +753,58 @@ export interface StoreSettings {
 	path: string;
 }
 
+export interface GpsSettings {
+	enabled: boolean;
+	type: 'gpsd' | 'nmea';
+	host: string;
+	port: number;
+	device: string;
+	baud: number;
+	minInterval: string;
+	staleAfter: string;
+	useForBeacon: boolean;
+}
+
 export interface SettingsUpdateResponse {
 	restartRequired: boolean;
+}
+
+// --- what3words ---
+
+export interface W3WStatus {
+	configured: boolean;
+	enabled: boolean;
+}
+
+export interface W3WResult {
+	words: string;
+	lat: number;
+	lon: number;
+	nearestPlace: string;
+	country: string;
+	language: string;
+}
+
+export interface W3WSuggestion {
+	words: string;
+	nearestPlace: string;
+	country: string;
+	distanceToFocusKm: number;
+	rank: number;
+}
+
+export interface W3WSuggestResponse {
+	suggestions: W3WSuggestion[];
+}
+
+export interface What3WordsSettings {
+	enabled: boolean;
+	apiKeyConfigured: boolean;
+	apiKeySource: 'env' | 'config' | 'none';
+	/** Write-only; never populated on GET. */
+	apiKey?: string;
+	baseUrl: string;
+	results: number;
 }
 
 // --- Packet Inspector ---

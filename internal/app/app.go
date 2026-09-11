@@ -15,6 +15,8 @@ import (
 	"github.com/narvel/nymeria/internal/beacon"
 	"github.com/narvel/nymeria/internal/checkpoint"
 	"github.com/narvel/nymeria/internal/config"
+	"github.com/narvel/nymeria/internal/geocode/w3w"
+	"github.com/narvel/nymeria/internal/gps"
 	"github.com/narvel/nymeria/internal/message"
 	"github.com/narvel/nymeria/internal/netcontrol"
 	"github.com/narvel/nymeria/internal/object"
@@ -185,12 +187,27 @@ func New(opts Options) (*App, error) {
 		log.Printf("warning: transport connect failed: %v", err)
 	}
 
+	// Create live GPS manager (host position source for the own-position
+	// marker and GPS-driven smart beaconing). Nil when disabled — enabling
+	// it from false->true requires a restart (see cfgMgr.OnChange below).
+	var gpsMgr *gps.Manager
+	if cfg.GPS.Enabled {
+		gpsMgr = gps.NewManager(toGPSConfig(cfg.GPS))
+		if err := gpsMgr.Start(ctx); err != nil {
+			log.Printf("warning: gps start failed: %v", err)
+		} else {
+			log.Printf("gps enabled (%s %s)", cfg.GPS.Type, gpsMgr.Status().Target)
+		}
+	}
+
 	// Create beacon manager
 	bcnCfg := beacon.Config{
-		Enabled:  cfg.Beacon.Enabled,
-		Interval: cfg.Beacon.Interval,
-		Comment:  cfg.Beacon.Comment,
-		Path:     stationPath(cfg.Station.BeaconPath),
+		Enabled:     cfg.Beacon.Enabled,
+		Interval:    cfg.Beacon.Interval,
+		Comment:     cfg.Beacon.Comment,
+		Path:        stationPath(cfg.Station.BeaconPath),
+		LiveMaxAge:  cfg.GPS.StaleAfter,
+		SmartBeacon: toSmartConfig(cfg.Beacon.SmartBeacon),
 	}
 	if bcnCfg.Interval == 0 {
 		bcnCfg.Interval = 10 * time.Minute
@@ -208,6 +225,19 @@ func New(opts Options) (*App, error) {
 	}, func(f aprs.APRSFrame) error {
 		return tm.Send(f)
 	})
+	if gpsMgr != nil && cfg.GPS.UseForBeacon {
+		bcn.SetPositionSource(func() (beacon.LiveFix, bool) {
+			fix, ok := gpsMgr.Current()
+			if !ok || !fix.HasPosition() {
+				return beacon.LiveFix{}, false
+			}
+			return beacon.LiveFix{
+				Lat: fix.Lat, Lon: fix.Lon,
+				SpeedKnots: fix.SpeedKnots, Course: fix.Course,
+				HasCourse: fix.HasCourse, Age: fix.Age(time.Now()),
+			}, true
+		})
+	}
 	if bcnCfg.Enabled {
 		bcn.Start(ctx)
 		log.Printf("beaconing enabled (interval %s)", bcnCfg.Interval)
@@ -261,6 +291,17 @@ func New(opts Options) (*App, error) {
 		log.Printf("warning: failed to load checkpoint data: %v", err)
 	}
 
+	// Clean up checkpoint metadata whenever a checkpoint annotation is removed,
+	// on both the single and bulk delete paths, and restore it on undo.
+	annMgr.SetBeforeDelete(func(a store.Annotation) {
+		if a.Category == annotation.CategoryCheckpoint {
+			if err := cpMgr.DeleteMetaForAnnotation(a.ID); err != nil {
+				log.Printf("[app] delete checkpoint meta for %s: %v", a.ID, err)
+			}
+		}
+	})
+	annMgr.SetCheckpointSnapshot(cpMgr.MetaForAnnotation, cpMgr.SetMeta)
+
 	// Initialize tile cache
 	var tc *tilecache.Cache
 	if cfg.TileCache.Enabled {
@@ -281,6 +322,24 @@ func New(opts Options) (*App, error) {
 		}
 	}
 
+	// Initialize the what3words proxy client. Always constructed — even
+	// with an empty key, even with what3words.enabled: false at boot — so
+	// that both an API key pasted in Settings and an Enabled toggle
+	// flipped in Settings take effect live, with no restart. Configured()
+	// (and therefore every proxy handler's guard) reflects the live
+	// enabled+key state on every call, not just the state at boot.
+	w3wClient, err := w3w.New(w3w.Config{
+		APIKey:     cfg.What3Words.APIKey,
+		BaseURL:    cfg.What3Words.BaseURL,
+		ForwardTTL: cfg.What3Words.ForwardTTL,
+		SuggestTTL: cfg.What3Words.SuggestTTL,
+	})
+	if err != nil {
+		cancel()
+		return nil, fmt.Errorf("what3words: %w", err)
+	}
+	w3wClient.SetEnabled(cfg.What3Words.Enabled)
+
 	// Create config manager for settings API
 	cfgMgr := config.NewManager(opts.ConfigPath, cfg)
 
@@ -288,10 +347,12 @@ func New(opts Options) (*App, error) {
 	cfgMgr.OnChange(func(old, newCfg config.Config) {
 		// Beacon: update config and restart if needed
 		bcn.UpdateConfig(beacon.Config{
-			Enabled:  newCfg.Beacon.Enabled,
-			Interval: newCfg.Beacon.Interval,
-			Comment:  newCfg.Beacon.Comment,
-			Path:     stationPath(newCfg.Station.BeaconPath),
+			Enabled:     newCfg.Beacon.Enabled,
+			Interval:    newCfg.Beacon.Interval,
+			Comment:     newCfg.Beacon.Comment,
+			Path:        stationPath(newCfg.Station.BeaconPath),
+			LiveMaxAge:  newCfg.GPS.StaleAfter,
+			SmartBeacon: toSmartConfig(newCfg.Beacon.SmartBeacon),
 		})
 		if newCfg.Beacon.Enabled && !bcn.IsRunning() {
 			bcn.Start(ctx)
@@ -347,6 +408,16 @@ func New(opts Options) (*App, error) {
 		if old.Logging.Level != newCfg.Logging.Level {
 			log.Printf("[config] log level changed: %s → %s", old.Logging.Level, newCfg.Logging.Level)
 		}
+
+		// GPS: hot-reload thresholds/target on an already-running manager.
+		// Enabling GPS from false->true has no manager to reload (gpsMgr is
+		// nil in that case) — the settings handler flags that as needing a
+		// restart.
+		if gpsMgr != nil {
+			gpsMgr.UpdateConfig(toGPSConfig(newCfg.GPS))
+		} else if newCfg.GPS.Enabled && !old.GPS.Enabled {
+			log.Println("[config] gps.enabled turned on but no GPS manager is running; restart required")
+		}
 	})
 
 	// Create and start server
@@ -365,6 +436,10 @@ func New(opts Options) (*App, error) {
 	if tc != nil {
 		serverOpts = append(serverOpts, server.WithTileCache(tc))
 	}
+	if gpsMgr != nil {
+		serverOpts = append(serverOpts, server.WithGPSManager(gpsMgr))
+	}
+	serverOpts = append(serverOpts, server.WithWhat3Words(w3wClient))
 	srv := server.New(tracker, tm, msgEngine, db, serverOpts...)
 
 	fanoutDone := make(chan struct{})
@@ -451,6 +526,62 @@ func (a *App) Shutdown(ctx context.Context) error {
 		}
 	})
 	return err
+}
+
+// toGPSConfig adapts config.GPSConfig (YAML/JSON settings) to gps.Config
+// (the internal/gps package's own, dependency-free config shape).
+func toGPSConfig(c config.GPSConfig) gps.Config {
+	return gps.Config{
+		Enabled:      c.Enabled,
+		Type:         c.Type,
+		Host:         c.Host,
+		Port:         c.Port,
+		Device:       c.Device,
+		Baud:         c.Baud,
+		MinInterval:  c.MinInterval,
+		StaleAfter:   c.StaleAfter,
+		UseForBeacon: c.UseForBeacon,
+	}
+}
+
+// toSmartConfig adapts config.SmartBeaconConfig to beacon.SmartConfig (the
+// beacon package deliberately has no config-package dependency). An
+// enabled-but-unconfigured smart beacon (all-zero speeds/rates) is filled
+// with sane defaults so flipping the toggle on alone is enough to use it.
+func toSmartConfig(c *config.SmartBeaconConfig) *beacon.SmartConfig {
+	if c == nil {
+		return nil
+	}
+	sb := &beacon.SmartConfig{
+		Enabled:   c.Enabled,
+		FastSpeed: c.FastSpeed,
+		SlowSpeed: c.SlowSpeed,
+		FastRate:  c.FastRate,
+		SlowRate:  c.SlowRate,
+		TurnAngle: c.TurnAngle,
+		TurnSlope: c.TurnSlope,
+	}
+	if sb.Enabled {
+		if sb.FastSpeed == 0 {
+			sb.FastSpeed = 60
+		}
+		if sb.SlowSpeed == 0 {
+			sb.SlowSpeed = 5
+		}
+		if sb.FastRate == 0 {
+			sb.FastRate = 60 * time.Second
+		}
+		if sb.SlowRate == 0 {
+			sb.SlowRate = 30 * time.Minute
+		}
+		if sb.TurnAngle == 0 {
+			sb.TurnAngle = 28
+		}
+		if sb.TurnSlope == 0 {
+			sb.TurnSlope = 26
+		}
+	}
+	return sb
 }
 
 // stationPath parses a configured TNC2 path. Invalid values fall back to WIDE1-1,WIDE2-1

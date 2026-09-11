@@ -1,18 +1,24 @@
 <script lang="ts">
+	import { untrack } from 'svelte';
 	import { api } from '$lib/api';
 	import { canPlot, canOperate } from '$lib/stores/session';
 	import { beaconPath } from '$lib/stores/paths';
 	import { formatPathDisplay } from '$lib/aprsPath';
 	import PathHint from './PathHint.svelte';
-	import { annotationList, operations, activeOperationId } from '$lib/stores/annotations';
+	import { annotationList, annotationBatches } from '$lib/stores/annotations';
+	import { showToast } from '$lib/stores/toast';
+	import BatchRemoveDialog from './BatchRemoveDialog.svelte';
 	import { missions as netMissions, activeNet } from '$lib/stores/netcontrol';
 	import { timeAgo } from '$lib/utils';
-	import type { Annotation, AnnotationCategory, AnnotationPriority, AnnotationTemplate } from '$lib/types';
+	import type {
+		Annotation, AnnotationBatch, AnnotationCategory, AnnotationPriority, AnnotationTemplate,
+	} from '$lib/types';
 	import {
 		categoryMeta, statusMeta, priorityMeta, allCategories,
 		statusLabelToValue, statusValueToLabel, statusColor, isTerminalStatus,
 		geometryMeta, canTransmitViaAPRS, categoryCanTransmitViaAPRS,
 	} from '$lib/annotationMeta';
+	import { planFocusReveal, revealAnnotation, type RevealDeps } from '$lib/annotationFocus';
 
 	let {
 		onFlyToAnnotation,
@@ -52,28 +58,180 @@
 
 	// Filter state
 	let filterCategory = $state<AnnotationCategory | ''>('');
+	let filterBatchId = $state('');
 	let filterExpanded = $state(false);
 
-	// Focused annotation highlight
-	let highlightedId = $state<string | null>(null);
-	let highlightTimer: ReturnType<typeof setTimeout> | null = null;
+	// Imported sets (batches)
+	/** Collapsed set ids. Session-only — collapse is a reading aid, not a preference. */
+	let collapsedBatches = $state(new Set<string>());
+	/** Sets already auto-collapsed once, so re-expanding is never undone. */
+	let autoCollapsed = new Set<string>();
+	let highlightBatchId = $state<string | null>(null);
+	let highlightBatchTimer: ReturnType<typeof setTimeout> | null = null;
+	let removeTarget = $state<AnnotationBatch | null>(null);
+	let renamingBatchId = $state<string | null>(null);
+	let renameValue = $state('');
+	let importBtnEl = $state<HTMLButtonElement | null>(null);
+
+	/** A big import should not drown the panel — open it as a single row. */
+	const AUTO_COLLAPSE_THRESHOLD = 25;
 
 	$effect(() => {
-		if (!focusedAnnotationId) return;
-		// Use a microtask to allow the DOM to render the entries first
-		const id = focusedAnnotationId;
-		onFocusConsumed?.();
-		requestAnimationFrame(() => {
-			const el = document.querySelector(`[data-annotation-id="${id}"]`) as HTMLElement | null;
-			if (el) {
-				el.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
-				highlightedId = id;
-				if (highlightTimer) clearTimeout(highlightTimer);
-				highlightTimer = setTimeout(() => {
-					highlightedId = null;
-				}, 2000);
+		for (const batch of $annotationBatches) {
+			if (autoCollapsed.has(batch.id)) continue;
+			autoCollapsed.add(batch.id);
+			if (batch.count > AUTO_COLLAPSE_THRESHOLD) {
+				collapsedBatches = new Set([...collapsedBatches, batch.id]);
 			}
+		}
+	});
+
+	function toggleBatch(id: string) {
+		const next = new Set(collapsedBatches);
+		if (next.has(id)) next.delete(id); else next.add(id);
+		collapsedBatches = next;
+	}
+
+	function flashBatch(id: string) {
+		highlightBatchId = id;
+		if (highlightBatchTimer) clearTimeout(highlightBatchTimer);
+		highlightBatchTimer = setTimeout(() => (highlightBatchId = null), 4000);
+	}
+
+	function startRename(batch: AnnotationBatch) {
+		renamingBatchId = batch.id;
+		renameValue = batch.label;
+	}
+
+	async function commitRename(batch: AnnotationBatch) {
+		const label = renameValue.trim();
+		renamingBatchId = null;
+		if (!label || label === batch.label) return;
+		try {
+			await api.renameAnnotationBatch(batch.id, label);
+		} catch (err: any) {
+			showToast(err?.message || 'Rename failed', 'error');
+		}
+	}
+
+	type BatchRow =
+		| { kind: 'header'; key: string; batch: AnnotationBatch }
+		| { kind: 'item'; key: string; ann: Annotation };
+
+	/**
+	 * Interleave set headers into the flat annotation list. The list is sorted
+	 * createdAt-descending, so the members of one bulk import are contiguous: a
+	 * header is emitted the first time a batch id appears, and only ever
+	 * immediately before a member that survived the filters — so a category
+	 * filter that hides every member hides its header too.
+	 */
+	function buildRows(
+		list: Annotation[],
+		batches: AnnotationBatch[],
+		collapsed: Set<string>
+	): BatchRow[] {
+		const byId = new Map(batches.map((b) => [b.id, b]));
+		const rows: BatchRow[] = [];
+		let prevBatchId = '';
+		for (const ann of list) {
+			const bid = ann.batchId || '';
+			if (bid && bid !== prevBatchId) {
+				const batch = byId.get(bid);
+				if (batch) rows.push({ kind: 'header', key: `h:${bid}`, batch });
+			}
+			prevBatchId = bid;
+			if (bid && collapsed.has(bid)) continue;
+			rows.push({ kind: 'item', key: ann.id, ann });
+		}
+		return rows;
+	}
+
+	// Focused annotation highlight — see $lib/annotationFocus for the shared
+	// reveal/hold contract this and LocationManager both implement.
+	let highlightedId = $state<string | null>(null);
+	let holdTimer: ReturnType<typeof setTimeout> | null = null;
+	let focusGen = 0;
+	let entriesEl = $state<HTMLElement | null>(null);
+
+	function startReveal(id: string, gen: number): () => void {
+		const ann = $annotationList.find((a) => a.id === id);
+		if (!ann) {
+			onFocusConsumed?.();
+			showToast('That annotation is no longer in the list', 'error');
+			return () => {};
+		}
+
+		const plan = planFocusReveal(ann, {
+			collapsedBatchIds: collapsedBatches,
+			filterCategory,
+			filterBatchId,
 		});
+
+		if (plan.expandBatchId) {
+			const next = new Set(collapsedBatches);
+			next.delete(plan.expandBatchId);
+			collapsedBatches = next;
+			autoCollapsed.add(plan.expandBatchId);
+		}
+		if (plan.clearCategoryFilter) filterCategory = '';
+		if (plan.clearBatchFilter) filterBatchId = '';
+		if (plan.overrode) {
+			showToast('Cleared filters to show this annotation', 'info');
+		}
+
+		// A new reveal sequence supersedes whatever hold timer the previous
+		// one armed — the gen-check on setHighlight already guards against a
+		// stale timer blanking a fresher highlight, this just tidies up.
+		if (holdTimer) {
+			clearTimeout(holdTimer);
+			holdTimer = null;
+		}
+
+		let focusedOnce = false;
+		const deps: RevealDeps = {
+			find: (x) =>
+				(entriesEl ?? document).querySelector(`[data-annotation-id="${CSS.escape(x)}"]`),
+			nextFrame: (cb) => requestAnimationFrame(cb),
+			cancelFrame: (h) => cancelAnimationFrame(h),
+			reducedMotion: window.matchMedia('(prefers-reduced-motion: reduce)').matches,
+			scrollTo: (el, smooth) => {
+				el.scrollIntoView({ behavior: smooth ? 'smooth' : 'auto', block: 'center' });
+				if (!focusedOnce) {
+					focusedOnce = true;
+					el.focus({ preventScroll: true });
+				}
+			},
+			setHighlight: (v) => {
+				if (gen === focusGen) highlightedId = v;
+			},
+			setTimer: (cb, ms) => {
+				const h = setTimeout(cb, ms);
+				holdTimer = h;
+				// RevealDeps declares a numeric handle so it stays testable
+				// without a DOM/Node timer; the real handle is round-tripped
+				// through clearTimer regardless of what type it actually is.
+				return h as unknown as number;
+			},
+			clearTimer: (h) => clearTimeout(h),
+			done: (found) => {
+				onFocusConsumed?.();
+				if (!found) showToast(`Could not scroll to "${ann.label}"`, 'error');
+			},
+		};
+
+		return revealAnnotation(id, deps);
+	}
+
+	$effect(() => {
+		const id = focusedAnnotationId;
+		if (!id) return;
+		const gen = ++focusGen;
+		// Everything startReveal reads (collapsedBatches, the filters,
+		// $annotationList) is read untracked so applying the plan below
+		// cannot re-trigger this effect — it must depend on focusedAnnotationId
+		// alone, or the writes create an infinite loop.
+		const cancel = untrack(() => startReveal(id, gen));
+		return cancel;
 	});
 
 	// Status dropdown
@@ -81,12 +239,16 @@
 
 	const COLORS = ['#e63946', '#457b9d', '#2a9d8f', '#e9c46a', '#f4a261', '#264653', '#a8dadc', '#d62828'];
 
-	// Filtered annotation list
+	// Filtered annotation list — batch and category filters compose.
 	let filteredList = $derived(
-		filterCategory
-			? $annotationList.filter((a) => a.category === filterCategory)
-			: $annotationList
+		$annotationList.filter(
+			(a) =>
+				(!filterCategory || a.category === filterCategory) &&
+				(!filterBatchId || a.batchId === filterBatchId)
+		)
 	);
+
+	let displayRows = $derived(buildRows(filteredList, $annotationBatches, collapsedBatches));
 
 	export function setGeometry(geometry: string) {
 		if (geometry) {
@@ -299,9 +461,11 @@
 		if (!file) return;
 		importing = true;
 		try {
-			await api.importAnnotations(file);
+			const res = await api.importAnnotations(file);
+			showToast(`Imported ${res.count} items from ${res.batchLabel}`, 'success');
+			flashBatch(res.batchId);
 		} catch (err: any) {
-			console.error('Import failed:', err.message);
+			showToast(`Import failed: ${err?.message ?? 'unknown error'}`, 'error');
 		} finally {
 			importing = false;
 			input.value = '';
@@ -360,6 +524,8 @@
 					class="import-btn"
 					title="Import GPX/KML file"
 					disabled={importing}
+					aria-busy={importing}
+					bind:this={importBtnEl}
 					onclick={() => importInput.click()}
 				>
 					<svg width="14" height="14" viewBox="0 0 16 16" fill="none">
@@ -419,6 +585,23 @@
 				</button>
 			{/each}
 		</div>
+		{#if $annotationBatches.length > 0}
+			<div class="filter-bar batch-filter-bar" aria-label="Filter by imported set">
+				<button
+					class="filter-chip"
+					class:active={filterBatchId === ''}
+					onclick={() => (filterBatchId = '')}
+				>All sets</button>
+				{#each $annotationBatches as batch (batch.id)}
+					<button
+						class="filter-chip"
+						class:active={filterBatchId === batch.id}
+						title={batch.label}
+						onclick={() => (filterBatchId = filterBatchId === batch.id ? '' : batch.id)}
+					>{batch.label} ({batch.count})</button>
+				{/each}
+			</div>
+		{/if}
 	{/if}
 
 	{#if creating}
@@ -588,10 +771,12 @@
 		</div>
 	{/if}
 
-	<div class="entries">
+	<div class="entries" bind:this={entriesEl}>
 		{#if filteredList.length === 0 && !creating}
 			<div class="empty">
-				{#if filterCategory}
+				{#if filterBatchId}
+					<p>No annotations match this imported set and filter.</p>
+				{:else if filterCategory}
 					<p>No {categoryMeta[filterCategory].label.toLowerCase()} annotations.</p>
 				{:else}
 					<p>No annotations yet.</p>
@@ -599,240 +784,315 @@
 				{/if}
 			</div>
 		{:else}
-			{#each filteredList as ann (ann.id)}
-				{@const cat = ann.category || 'general'}
-				{@const meta = categoryMeta[cat]}
-				{@const sColor = statusColor(cat, ann.status)}
-				{@const pMeta = priorityMeta[ann.priority || 'routine']}
-				<div
-					class="entry"
-					class:terminal={isTerminalStatus(ann.status)}
-					class:focused={highlightedId === ann.id}
-					style="--pri-accent: {pMeta.color}"
-					role="button"
-					tabindex="0"
-					data-annotation-id={ann.id}
-					onclick={() => handleClick(ann)}
-					onkeydown={(e) => e.key === 'Enter' && handleClick(ann)}
-				>
-					<!-- Category icon with status ring -->
-					<div class="entry-icon" style="--icon-color: {getAnnotationColor(ann)}; --status-color: {sColor}">
-						<svg width="16" height="16" viewBox="0 0 16 16" fill="none">
-							<path d={meta.icon} stroke="currentColor" stroke-width="1.2" fill="none" stroke-linecap="round" stroke-linejoin="round"/>
-						</svg>
-					</div>
-					<div class="entry-info">
-						<div class="entry-top">
-							<span class="entry-label">{ann.label}</span>
-							<span class="status-badge" style="background: {sColor}">
-								{statusValueToLabel(cat, ann.status)}
-							</span>
-						</div>
-						{#if ann.description}
-							<span class="entry-desc">{ann.description}</span>
-						{/if}
-						<span class="entry-meta">
-							<span class="cat-tag">{meta.label}</span>
-							<span class="geo-tag">{geometryMeta[ann.type]?.label ?? ann.type}</span>
-							{#if canTransmitViaAPRS(ann.type)}
-								<span
-									class="aprs-tx-badge"
-									class:live={ann.transmitting}
-									title={ann.transmitting
-										? 'Currently transmitting as an APRS object'
-										: geometryMeta.point.aprsNote}
-								>APRS</span>
-							{/if}
-							{#if ann.priority && ann.priority !== 'routine'}
-								<span class="pri-tag" style="color: {pMeta.color}">{pMeta.label}</span>
-							{/if}
-							{#if ann.createdByName}
-								&middot; {ann.createdByName}
-							{/if}
-							&middot; {timeAgo(ann.createdAt)}
-						</span>
-						{#if ann.missionIds?.length > 0}
-							<div class="mission-chips">
-								{#each ann.missionIds as mid}
-									{@const linkedMission = $netMissions.find((m) => m.id === mid)}
-									{#if linkedMission}
-										<span class="mission-chip">
-											<span class="mission-chip-dot" style="background: {trafficColors[linkedMission.priority] ?? '#6b7280'}"></span>
-											<span class="mission-chip-title">{linkedMission.title}</span>
-											{#if $canPlot}
-												<button class="mission-chip-remove" onclick={(e) => handleUnlinkSpecific(ann, mid, e)}>×</button>
-											{/if}
-										</span>
-									{:else}
-										<span class="mission-chip mission-chip-unknown">
-											<span class="mission-chip-title">Mission</span>
-											{#if $canPlot}
-												<button class="mission-chip-remove" onclick={(e) => handleUnlinkSpecific(ann, mid, e)}>×</button>
-											{/if}
-										</span>
-									{/if}
-								{/each}
-								{#if $canPlot && $activeNet && !isTerminalStatus(ann.status)}
-									{@const availableMissions = $netMissions.filter((m) => m.status !== 'complete' && !ann.missionIds?.includes(m.id))}
-									{#if availableMissions.length > 0}
-										<button class="add-mission-btn" onclick={(e) => toggleAddMissionPicker(ann.id, e)}>+ Mission</button>
-									{/if}
-								{/if}
-							</div>
+			{#each displayRows as row (row.key)}
+				{#if row.kind === 'header'}
+					{@const batch = row.batch}
+					{@const collapsed = collapsedBatches.has(batch.id)}
+					<div
+						class="batch-header"
+						class:highlight={highlightBatchId === batch.id}
+						role="group"
+						aria-label={`Imported set ${batch.label}, ${batch.count} items`}
+					>
+						<button
+							class="batch-collapse"
+							class:collapsed
+							aria-expanded={!collapsed}
+							aria-label={collapsed ? `Expand ${batch.label}` : `Collapse ${batch.label}`}
+							onclick={() => toggleBatch(batch.id)}
+						>
+							<svg width="10" height="10" viewBox="0 0 16 16" fill="none" aria-hidden="true">
+								<path d="M6 3l5 5-5 5" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/>
+							</svg>
+						</button>
+						{#if renamingBatchId === batch.id}
+							<!-- svelte-ignore a11y_autofocus -->
+							<input
+								class="batch-rename-input"
+								bind:value={renameValue}
+								maxlength="120"
+								autofocus
+								aria-label={`Rename set ${batch.label}`}
+								onkeydown={(e) => {
+									if (e.key === 'Enter') { e.preventDefault(); commitRename(batch); }
+									else if (e.key === 'Escape') { e.preventDefault(); renamingBatchId = null; }
+								}}
+								onblur={() => commitRename(batch)}
+							/>
 						{:else}
-							<div class="mission-chips">
-								{#if $canPlot && ann.type === 'point' && !isTerminalStatus(ann.status)}
-									<button class="promote-btn" onclick={(e) => handlePromoteToMission(ann, e)}>
-										<svg width="10" height="10" viewBox="0 0 16 16" fill="none"><path d="M4 2h8v12H4zM7 5h2M7 8h2" stroke="currentColor" stroke-width="1.2" fill="none" stroke-linecap="round"/></svg>
-										Create Mission
-									</button>
-								{/if}
-								{#if $canPlot && $activeNet && !isTerminalStatus(ann.status)}
-									{@const availableMissions = $netMissions.filter((m) => m.status !== 'complete')}
-									{#if availableMissions.length > 0}
-										<button class="add-mission-btn" onclick={(e) => toggleAddMissionPicker(ann.id, e)}>+ Add to mission</button>
-									{/if}
-								{/if}
-							</div>
+							<span class="batch-label" title={batch.label}>{batch.label}</span>
+							<span class="batch-count">{batch.count}</span>
+							<span class="batch-time">{timeAgo(batch.createdAt)}</span>
 						{/if}
-						{#if addMissionPickerId === ann.id}
-							<!-- svelte-ignore a11y_no_static_element_interactions -->
-							<!-- svelte-ignore a11y_click_events_have_key_events -->
-							<div class="add-mission-picker" onclick={(e) => e.stopPropagation()}>
-								{#each $netMissions.filter((m) => m.status !== 'complete' && !ann.missionIds?.includes(m.id)) as m}
-									<button class="add-mission-option" onclick={(e) => handleAddToMission(ann, m.id, e)}>
-										<span class="mission-chip-dot" style="background: {trafficColors[m.priority] ?? '#6b7280'}"></span>
-										<span class="add-mission-title">{m.title}</span>
-										<span class="add-mission-status">{m.status}</span>
-									</button>
-								{/each}
-								{#if $netMissions.filter((m) => m.status !== 'complete' && !ann.missionIds?.includes(m.id)).length === 0}
-									<span class="add-mission-empty">No available missions</span>
-								{/if}
-							</div>
-						{/if}
-						{#if $canOperate && ann.type === 'point' && !isTerminalStatus(ann.status)}
-							<div class="transmit-row">
-								{#if ann.transmitting}
-									<button
-										class="transmit-btn active"
-										title="Stop APRS object transmission via {formatPathDisplay($beaconPath)}"
-										onclick={(e) => handleStopTransmit(ann, e)}
-									>
-										<svg width="10" height="10" viewBox="0 0 16 16" fill="none"><path d="M8 2v12M4 6l4-4 4 4M3 10a5 5 0 0 0 10 0" stroke="currentColor" stroke-width="1.2" fill="none" stroke-linecap="round"/></svg>
-										Stop TX
-									</button>
-								{:else}
-									<button
-										class="transmit-btn"
-										title="Transmit as APRS object via {formatPathDisplay($beaconPath)}"
-										onclick={(e) => handleTransmit(ann, e)}
-									>
-										<svg width="10" height="10" viewBox="0 0 16 16" fill="none"><path d="M8 2v12M4 6l4-4 4 4M3 10a5 5 0 0 0 10 0" stroke="currentColor" stroke-width="1.2" fill="none" stroke-linecap="round"/></svg>
-										Transmit
-									</button>
-								{/if}
-								<PathHint kind="beacon" />
-							</div>
-						{/if}
-						{#if colorEditId === ann.id}
-							<!-- svelte-ignore a11y_no_static_element_interactions -->
-							<!-- svelte-ignore a11y_click_events_have_key_events -->
-							<div class="inline-swatches" onclick={(e) => e.stopPropagation()}>
-								{#each COLORS as c}
-									<button
-										class="swatch"
-										class:selected={getAnnotationColor(ann) === c}
-										style="background: {c}"
-										onclick={() => handleColorChange(ann, c)}
-										aria-label="Color {c}"
-									></button>
-								{/each}
-							</div>
-						{/if}
-						{#if statusDropdownId === ann.id}
-							<!-- svelte-ignore a11y_no_static_element_interactions -->
-							<!-- svelte-ignore a11y_click_events_have_key_events -->
-							<div class="status-dropdown" onclick={(e) => e.stopPropagation()}>
-								{#each getStatusesForCategory(cat) as s}
-									<button
-										class="status-option"
-										class:current={s.value === ann.status}
-										onclick={() => handleStatusChange(ann, s.value)}
-									>
-										<span class="status-dot" style="background: {s.color}"></span>
-										{s.label}
-									</button>
-								{/each}
-							</div>
+						{#if $canPlot && renamingBatchId !== batch.id}
+							<button
+								class="batch-rename"
+								aria-label={`Rename set ${batch.label}`}
+								onclick={() => startRename(batch)}
+							>
+								<svg width="12" height="12" viewBox="0 0 16 16" fill="none" aria-hidden="true">
+									<path d="M11.5 1.5l3 3L5 14H2v-3L11.5 1.5z" stroke="currentColor" stroke-width="1.4" stroke-linejoin="round"/>
+								</svg>
+							</button>
+							<button
+								class="batch-remove"
+								aria-label={`Remove all ${batch.count} items in ${batch.label}`}
+								onclick={() => (removeTarget = batch)}
+							>
+								<svg class="batch-remove-icon" width="14" height="14" viewBox="0 0 16 16" fill="none" aria-hidden="true">
+									<path d="M2 4h12M5 4V2h6v2M6 7v5M10 7v5M3 4l1 10h8l1-10" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round"/>
+								</svg>
+								<span class="batch-remove-text">Remove all</span>
+							</button>
 						{/if}
 					</div>
-					{#if $canPlot}
-						{#if editingId === ann.id}
-							<div class="entry-actions">
+				{:else}
+					{@const ann = row.ann}
+					{@const cat = ann.category || 'general'}
+					{@const meta = categoryMeta[cat]}
+					{@const sColor = statusColor(cat, ann.status)}
+					{@const pMeta = priorityMeta[ann.priority || 'routine']}
+					<div
+						class="entry"
+						class:in-batch={!!ann.batchId}
+						class:batch-flash={!!highlightBatchId && ann.batchId === highlightBatchId}
+						class:terminal={isTerminalStatus(ann.status)}
+						class:focused={highlightedId === ann.id}
+						style="--pri-accent: {pMeta.color}"
+						role="button"
+						tabindex="0"
+						data-annotation-id={ann.id}
+						aria-current={highlightedId === ann.id ? 'true' : undefined}
+						onclick={() => handleClick(ann)}
+						onkeydown={(e) => e.key === 'Enter' && handleClick(ann)}
+					>
+						<!-- Category icon with status ring -->
+						<div class="entry-icon" style="--icon-color: {getAnnotationColor(ann)}; --status-color: {sColor}">
+							<svg width="16" height="16" viewBox="0 0 16 16" fill="none">
+								<path d={meta.icon} stroke="currentColor" stroke-width="1.2" fill="none" stroke-linecap="round" stroke-linejoin="round"/>
+							</svg>
+						</div>
+						<div class="entry-info">
+							<div class="entry-top">
+								<span class="entry-label">{ann.label}</span>
+								<span class="status-badge" style="background: {sColor}">
+									{statusValueToLabel(cat, ann.status)}
+								</span>
+							</div>
+							{#if ann.description}
+								<span class="entry-desc">{ann.description}</span>
+							{/if}
+							<span class="entry-meta">
+								<span class="cat-tag">{meta.label}</span>
+								<span class="geo-tag">{geometryMeta[ann.type]?.label ?? ann.type}</span>
+								{#if canTransmitViaAPRS(ann.type)}
+									<span
+										class="aprs-tx-badge"
+										class:live={ann.transmitting}
+										title={ann.transmitting
+											? 'Currently transmitting as an APRS object'
+											: geometryMeta.point.aprsNote}
+									>APRS</span>
+								{/if}
+								{#if ann.priority && ann.priority !== 'routine'}
+									<span class="pri-tag" style="color: {pMeta.color}">{pMeta.label}</span>
+								{/if}
+								{#if ann.createdByName}
+									&middot; {ann.createdByName}
+								{/if}
+								&middot; {timeAgo(ann.createdAt)}
+							</span>
+							{#if ann.missionIds?.length > 0}
+								<div class="mission-chips">
+									{#each ann.missionIds as mid}
+										{@const linkedMission = $netMissions.find((m) => m.id === mid)}
+										{#if linkedMission}
+											<span class="mission-chip">
+												<span class="mission-chip-dot" style="background: {trafficColors[linkedMission.priority] ?? '#6b7280'}"></span>
+												<span class="mission-chip-title">{linkedMission.title}</span>
+												{#if $canPlot}
+													<button class="mission-chip-remove" onclick={(e) => handleUnlinkSpecific(ann, mid, e)}>×</button>
+												{/if}
+											</span>
+										{:else}
+											<span class="mission-chip mission-chip-unknown">
+												<span class="mission-chip-title">Mission</span>
+												{#if $canPlot}
+													<button class="mission-chip-remove" onclick={(e) => handleUnlinkSpecific(ann, mid, e)}>×</button>
+												{/if}
+											</span>
+										{/if}
+									{/each}
+									{#if $canPlot && $activeNet && !isTerminalStatus(ann.status)}
+										{@const availableMissions = $netMissions.filter((m) => m.status !== 'complete' && !ann.missionIds?.includes(m.id))}
+										{#if availableMissions.length > 0}
+											<button class="add-mission-btn" onclick={(e) => toggleAddMissionPicker(ann.id, e)}>+ Mission</button>
+										{/if}
+									{/if}
+								</div>
+							{:else}
+								<div class="mission-chips">
+									{#if $canPlot && ann.type === 'point' && !isTerminalStatus(ann.status)}
+										<button class="promote-btn" onclick={(e) => handlePromoteToMission(ann, e)}>
+											<svg width="10" height="10" viewBox="0 0 16 16" fill="none"><path d="M4 2h8v12H4zM7 5h2M7 8h2" stroke="currentColor" stroke-width="1.2" fill="none" stroke-linecap="round"/></svg>
+											Create Mission
+										</button>
+									{/if}
+									{#if $canPlot && $activeNet && !isTerminalStatus(ann.status)}
+										{@const availableMissions = $netMissions.filter((m) => m.status !== 'complete')}
+										{#if availableMissions.length > 0}
+											<button class="add-mission-btn" onclick={(e) => toggleAddMissionPicker(ann.id, e)}>+ Add to mission</button>
+										{/if}
+									{/if}
+								</div>
+							{/if}
+							{#if addMissionPickerId === ann.id}
+								<!-- svelte-ignore a11y_no_static_element_interactions -->
+								<!-- svelte-ignore a11y_click_events_have_key_events -->
+								<div class="add-mission-picker" onclick={(e) => e.stopPropagation()}>
+									{#each $netMissions.filter((m) => m.status !== 'complete' && !ann.missionIds?.includes(m.id)) as m}
+										<button class="add-mission-option" onclick={(e) => handleAddToMission(ann, m.id, e)}>
+											<span class="mission-chip-dot" style="background: {trafficColors[m.priority] ?? '#6b7280'}"></span>
+											<span class="add-mission-title">{m.title}</span>
+											<span class="add-mission-status">{m.status}</span>
+										</button>
+									{/each}
+									{#if $netMissions.filter((m) => m.status !== 'complete' && !ann.missionIds?.includes(m.id)).length === 0}
+										<span class="add-mission-empty">No available missions</span>
+									{/if}
+								</div>
+							{/if}
+							{#if $canOperate && ann.type === 'point' && !isTerminalStatus(ann.status)}
+								<div class="transmit-row">
+									{#if ann.transmitting}
+										<button
+											class="transmit-btn active"
+											title="Stop APRS object transmission via {formatPathDisplay($beaconPath)}"
+											onclick={(e) => handleStopTransmit(ann, e)}
+										>
+											<svg width="10" height="10" viewBox="0 0 16 16" fill="none"><path d="M8 2v12M4 6l4-4 4 4M3 10a5 5 0 0 0 10 0" stroke="currentColor" stroke-width="1.2" fill="none" stroke-linecap="round"/></svg>
+											Stop TX
+										</button>
+									{:else}
+										<button
+											class="transmit-btn"
+											title="Transmit as APRS object via {formatPathDisplay($beaconPath)}"
+											onclick={(e) => handleTransmit(ann, e)}
+										>
+											<svg width="10" height="10" viewBox="0 0 16 16" fill="none"><path d="M8 2v12M4 6l4-4 4 4M3 10a5 5 0 0 0 10 0" stroke="currentColor" stroke-width="1.2" fill="none" stroke-linecap="round"/></svg>
+											Transmit
+										</button>
+									{/if}
+									<PathHint kind="beacon" />
+								</div>
+							{/if}
+							{#if colorEditId === ann.id}
+								<!-- svelte-ignore a11y_no_static_element_interactions -->
+								<!-- svelte-ignore a11y_click_events_have_key_events -->
+								<div class="inline-swatches" onclick={(e) => e.stopPropagation()}>
+									{#each COLORS as c}
+										<button
+											class="swatch"
+											class:selected={getAnnotationColor(ann) === c}
+											style="background: {c}"
+											onclick={() => handleColorChange(ann, c)}
+											aria-label="Color {c}"
+										></button>
+									{/each}
+								</div>
+							{/if}
+							{#if statusDropdownId === ann.id}
+								<!-- svelte-ignore a11y_no_static_element_interactions -->
+								<!-- svelte-ignore a11y_click_events_have_key_events -->
+								<div class="status-dropdown" onclick={(e) => e.stopPropagation()}>
+									{#each getStatusesForCategory(cat) as s}
+										<button
+											class="status-option"
+											class:current={s.value === ann.status}
+											onclick={() => handleStatusChange(ann, s.value)}
+										>
+											<span class="status-dot" style="background: {s.color}"></span>
+											{s.label}
+										</button>
+									{/each}
+								</div>
+							{/if}
+						</div>
+						{#if $canPlot}
+							{#if editingId === ann.id}
+								<div class="entry-actions">
+									<button
+										class="action-btn save-edit-btn"
+										title="Save changes"
+										disabled={!editGeometry}
+										onclick={(e) => { e.stopPropagation(); handleSaveEdit(); }}
+									>
+										<svg width="14" height="14" viewBox="0 0 16 16" fill="none">
+											<path d="M3 8l4 4 6-8" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/>
+										</svg>
+									</button>
+									<button
+										class="action-btn cancel-edit-btn"
+										title="Cancel editing"
+										onclick={(e) => { e.stopPropagation(); handleCancelEdit(); }}
+									>
+										<svg width="14" height="14" viewBox="0 0 16 16" fill="none">
+											<path d="M4 4l8 8M12 4l-8 8" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/>
+										</svg>
+									</button>
+								</div>
+							{:else}
 								<button
-									class="action-btn save-edit-btn"
-									title="Save changes"
-									disabled={!editGeometry}
-									onclick={(e) => { e.stopPropagation(); handleSaveEdit(); }}
+									class="action-btn status-btn"
+									title="Change status"
+									onclick={(e) => toggleStatusDropdown(ann.id, e)}
 								>
 									<svg width="14" height="14" viewBox="0 0 16 16" fill="none">
-										<path d="M3 8l4 4 6-8" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/>
+										<circle cx="8" cy="8" r="5" stroke="currentColor" stroke-width="1.2" fill="none"/>
+										<path d="M8 5v3l2 2" stroke="currentColor" stroke-width="1.2" stroke-linecap="round" stroke-linejoin="round"/>
 									</svg>
 								</button>
 								<button
-									class="action-btn cancel-edit-btn"
-									title="Cancel editing"
-									onclick={(e) => { e.stopPropagation(); handleCancelEdit(); }}
+									class="action-btn color-btn"
+									title="Change color"
+									onclick={(e) => { e.stopPropagation(); toggleColorEdit(ann.id); }}
+								>
+									<div class="color-dot-mini" style="background: {getAnnotationColor(ann)}"></div>
+								</button>
+								<button
+									class="action-btn edit-btn"
+									title="Edit vertices"
+									onclick={(e) => { e.stopPropagation(); handleStartEdit(ann); }}
+								>
+									<svg width="14" height="14" viewBox="0 0 16 16" fill="none">
+										<path d="M12 2l2 2-8 8H4v-2l8-8z" stroke="currentColor" stroke-width="1.2" stroke-linecap="round" stroke-linejoin="round"/>
+									</svg>
+								</button>
+								<button
+									class="action-btn delete-btn"
+									title="Delete"
+									onclick={(e) => { e.stopPropagation(); handleDelete(ann.id); }}
 								>
 									<svg width="14" height="14" viewBox="0 0 16 16" fill="none">
 										<path d="M4 4l8 8M12 4l-8 8" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/>
 									</svg>
 								</button>
-							</div>
-						{:else}
-							<button
-								class="action-btn status-btn"
-								title="Change status"
-								onclick={(e) => toggleStatusDropdown(ann.id, e)}
-							>
-								<svg width="14" height="14" viewBox="0 0 16 16" fill="none">
-									<circle cx="8" cy="8" r="5" stroke="currentColor" stroke-width="1.2" fill="none"/>
-									<path d="M8 5v3l2 2" stroke="currentColor" stroke-width="1.2" stroke-linecap="round" stroke-linejoin="round"/>
-								</svg>
-							</button>
-							<button
-								class="action-btn color-btn"
-								title="Change color"
-								onclick={(e) => { e.stopPropagation(); toggleColorEdit(ann.id); }}
-							>
-								<div class="color-dot-mini" style="background: {getAnnotationColor(ann)}"></div>
-							</button>
-							<button
-								class="action-btn edit-btn"
-								title="Edit vertices"
-								onclick={(e) => { e.stopPropagation(); handleStartEdit(ann); }}
-							>
-								<svg width="14" height="14" viewBox="0 0 16 16" fill="none">
-									<path d="M12 2l2 2-8 8H4v-2l8-8z" stroke="currentColor" stroke-width="1.2" stroke-linecap="round" stroke-linejoin="round"/>
-								</svg>
-							</button>
-							<button
-								class="action-btn delete-btn"
-								title="Delete"
-								onclick={(e) => { e.stopPropagation(); handleDelete(ann.id); }}
-							>
-								<svg width="14" height="14" viewBox="0 0 16 16" fill="none">
-									<path d="M4 4l8 8M12 4l-8 8" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/>
-								</svg>
-							</button>
+							{/if}
 						{/if}
-					{/if}
-				</div>
+					</div>
+				{/if}
 			{/each}
 		{/if}
 	</div>
 </div>
+
+{#if removeTarget}
+	<BatchRemoveDialog
+		batch={removeTarget}
+		returnFocusOnSuccess={importBtnEl}
+		onClose={() => (removeTarget = null)}
+	/>
+{/if}
 
 <style>
 	.annotation-panel {
@@ -1354,15 +1614,26 @@
 		border-bottom: 1px solid var(--color-primary);
 		border-left: 3px solid transparent;
 		cursor: pointer;
-		transition: background var(--duration-fast);
+		transition: background var(--duration-fast), box-shadow var(--duration-fast);
 	}
 
 	.entry:hover {
 		background: var(--color-primary);
 	}
 
+	/*
+	 * Transition-driven, not a keyframe animation: it holds at full strength
+	 * for as long as JS keeps the .focused class applied (HIGHLIGHT_HOLD_MS in
+	 * annotationFocus.ts) instead of decaying from frame 0, and a re-render
+	 * that re-applies the same class can't restart a decay that was never
+	 * running. The global prefers-reduced-motion rule collapses the 200ms
+	 * fade to near-instant, which is exactly the desired reduced-motion
+	 * behaviour — the held state itself stays fully visible either way.
+	 */
 	.entry.focused {
-		animation: annotation-focus-flash 2s ease-out;
+		background: color-mix(in srgb, var(--color-accent) 22%, transparent);
+		box-shadow: inset 0 0 0 2px var(--color-accent);
+		transition: background 200ms ease-out, box-shadow 200ms ease-out;
 	}
 
 	@keyframes annotation-focus-flash {
@@ -1382,6 +1653,155 @@
 
 	.entry.terminal {
 		opacity: 0.55;
+	}
+
+	/* --- Imported sets --- */
+
+	/*
+	 * The header is deliberately quieter than an annotation row: no icon, no
+	 * colour, smaller type. It is scaffolding, not content.
+	 */
+	.batch-header {
+		position: sticky;
+		top: 0;
+		z-index: 1;
+		display: flex;
+		align-items: center;
+		gap: var(--space-xs);
+		height: 28px;
+		padding: 0 var(--space-sm);
+		background: var(--color-surface);
+		border-bottom: 1px solid rgba(255, 255, 255, 0.06);
+	}
+
+	.batch-collapse {
+		flex-shrink: 0;
+		display: flex;
+		align-items: center;
+		justify-content: center;
+		width: 20px;
+		height: 20px;
+		background: none;
+		border: none;
+		border-radius: var(--radius-sm);
+		color: var(--color-text-muted);
+		cursor: pointer;
+	}
+
+	.batch-collapse svg {
+		transform: rotate(90deg);
+		transition: transform var(--duration-fast);
+	}
+
+	.batch-collapse.collapsed svg {
+		transform: rotate(0deg);
+	}
+
+	.batch-collapse:hover {
+		color: var(--color-text);
+	}
+
+	.batch-label {
+		flex: 1;
+		min-width: 0;
+		font-size: 0.75rem;
+		font-weight: 600;
+		color: var(--color-text);
+		overflow: hidden;
+		text-overflow: ellipsis;
+		white-space: nowrap;
+	}
+
+	.batch-rename-input {
+		flex: 1;
+		min-width: 0;
+		padding: 2px 6px;
+		font-family: inherit;
+		font-size: 0.75rem;
+		font-weight: 600;
+		background: var(--color-bg);
+		border: 1px solid var(--color-accent);
+		border-radius: var(--radius-sm);
+		color: var(--color-text);
+		outline: none;
+	}
+
+	.batch-count {
+		flex-shrink: 0;
+		padding: 0 6px;
+		font-size: 0.625rem;
+		font-weight: 700;
+		line-height: 16px;
+		background: rgba(255, 255, 255, 0.08);
+		border-radius: var(--radius-full);
+		color: var(--color-text-muted);
+	}
+
+	.batch-time {
+		flex-shrink: 0;
+		font-size: 0.6875rem;
+		color: var(--color-text-muted);
+	}
+
+	.batch-rename,
+	.batch-remove {
+		flex-shrink: 0;
+		display: flex;
+		align-items: center;
+		gap: 4px;
+		background: none;
+		border: 1px solid transparent;
+		border-radius: var(--radius-sm);
+		color: var(--color-text-muted);
+		font-family: inherit;
+		font-size: 0.6875rem;
+		cursor: pointer;
+		transition: color var(--duration-fast), border-color var(--duration-fast);
+	}
+
+	.batch-rename {
+		width: 20px;
+		height: 20px;
+		justify-content: center;
+	}
+
+	.batch-remove {
+		padding: 2px 6px;
+		min-height: 20px;
+	}
+
+	.batch-remove-icon {
+		display: none;
+	}
+
+	.batch-rename:hover,
+	.batch-rename:focus-visible {
+		color: var(--color-text);
+	}
+
+	.batch-remove:hover,
+	.batch-remove:focus-visible {
+		color: var(--color-error);
+		border-color: var(--color-error);
+	}
+
+	/* Members read as one block via a hairline rail rather than a box. */
+	.entry.in-batch {
+		border-left: 2px solid rgba(255, 255, 255, 0.08);
+		padding-left: calc(var(--space-md) - 2px);
+	}
+
+	@media (prefers-reduced-motion: no-preference) {
+		.batch-header.highlight,
+		.entry.batch-flash {
+			animation: annotation-focus-flash 1.2s ease-out;
+		}
+	}
+
+	.batch-filter-bar {
+		flex-wrap: wrap;
+		max-height: 64px;
+		overflow-y: auto;
 	}
 
 	/* Priority accent on left border — only for non-routine */
@@ -1854,5 +2274,54 @@
 
 	.template-item:hover {
 		background: var(--color-primary);
+	}
+
+	/* Mobile: bigger sticky headers and icon-only remove inside the bottom sheet. */
+	@media (max-width: 768px) {
+		.batch-header {
+			height: 40px;
+		}
+
+		.batch-time {
+			display: none;
+		}
+
+		.batch-collapse {
+			width: 40px;
+			height: 40px;
+		}
+
+		.batch-rename {
+			width: 40px;
+			height: 40px;
+			margin-left: var(--space-xs);
+		}
+
+		.batch-remove {
+			width: 40px;
+			height: 40px;
+			padding: 0;
+			justify-content: center;
+			margin-left: var(--space-xs);
+		}
+
+		.batch-remove-icon {
+			display: block;
+		}
+
+		.batch-remove-text {
+			position: absolute;
+			width: 1px;
+			height: 1px;
+			overflow: hidden;
+			clip-path: inset(50%);
+			white-space: nowrap;
+		}
+	}
+
+	@media (max-width: 380px) {
+		.batch-time {
+			display: none;
+		}
 	}
 </style>

@@ -18,6 +18,8 @@ import (
 	"github.com/narvel/nymeria/internal/beacon"
 	"github.com/narvel/nymeria/internal/checkpoint"
 	"github.com/narvel/nymeria/internal/config"
+	"github.com/narvel/nymeria/internal/geocode/w3w"
+	"github.com/narvel/nymeria/internal/gps"
 	"github.com/narvel/nymeria/internal/message"
 	"github.com/narvel/nymeria/internal/netcontrol"
 	"github.com/narvel/nymeria/internal/object"
@@ -46,10 +48,13 @@ type Server struct {
 	netMgr     *netcontrol.Manager
 	cpMgr      *checkpoint.Manager
 	tileCache  *tilecache.Cache
+	gpsMgr     *gps.Manager
 	configMgr  *config.Manager
 	stationCfg config.StationConfig
 	weatherMu  sync.RWMutex
 	weatherCfg config.WeatherConfig
+	w3w        *w3w.Client
+	w3wMu      sync.RWMutex
 }
 
 // New creates a new Server.
@@ -108,6 +113,9 @@ func New(tracker station.Tracker, tm *transport.Manager, eng message.Engine, db 
 	if s.sessions != nil {
 		go s.bridgeSessionEvents()
 	}
+	if s.gpsMgr != nil {
+		go s.bridgeGPS()
+	}
 
 	return s
 }
@@ -164,6 +172,13 @@ func WithCheckpointManager(mgr *checkpoint.Manager) Option {
 	}
 }
 
+// WithGPSManager sets the live GPS manager on the server.
+func WithGPSManager(mgr *gps.Manager) Option {
+	return func(s *Server) {
+		s.gpsMgr = mgr
+	}
+}
+
 // WithTileCache sets the tile cache on the server.
 func WithTileCache(tc *tilecache.Cache) Option {
 	return func(s *Server) {
@@ -189,6 +204,16 @@ func WithWeatherConfig(cfg config.WeatherConfig) Option {
 func WithConfigManager(mgr *config.Manager) Option {
 	return func(s *Server) {
 		s.configMgr = mgr
+	}
+}
+
+// WithWhat3Words sets the what3words client on the server. Pass a client
+// even when unconfigured (empty API key) — Configured() reporting false is
+// what drives the 503 "not configured" response, and it's what makes a key
+// entered later through Settings live-effective with no restart.
+func WithWhat3Words(c *w3w.Client) Option {
+	return func(s *Server) {
+		s.w3w = c
 	}
 }
 
@@ -369,9 +394,13 @@ func (s *Server) bridgeObjectEvents() {
 // and syncs status changes to linked net missions.
 func (s *Server) bridgeAnnotationEvents() {
 	for evt := range s.annMgr.Events() {
+		var payload any = evt.Data
+		if evt.Batch != nil {
+			payload = evt.Batch
+		}
 		msg := map[string]any{
 			"type": evt.Type,
-			"data": evt.Data,
+			"data": payload,
 		}
 		data, err := json.Marshal(msg)
 		if err != nil {

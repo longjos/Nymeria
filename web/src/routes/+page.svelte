@@ -1,5 +1,6 @@
 <script lang="ts">
 	import { onMount } from 'svelte';
+	import { get } from 'svelte/store';
 	import { browser } from '$app/environment';
 	import Map from '$lib/components/Map.svelte';
 	import Toolbar from '$lib/components/Toolbar.svelte';
@@ -25,9 +26,13 @@
 	import LoginOverlay from '$lib/components/LoginOverlay.svelte';
 	import SetupWizard from '$lib/components/SetupWizard.svelte';
 	import CommandPalette from '$lib/components/CommandPalette.svelte';
+	import GpsFollowControl from '$lib/components/GpsFollowControl.svelte';
+	import GpsStatusPill from '$lib/components/GpsStatusPill.svelte';
 	import { stations, stationList, initStationStore, wsClient, connectWS } from '$lib/stores/stations';
 	import { initMessageStore, conversationList } from '$lib/stores/messages';
 	import { initTransportStore } from '$lib/stores/transports';
+	import { gpsStatus, gpsFollow, initGpsStore } from '$lib/stores/gps';
+	import { showToast } from '$lib/stores/toast';
 	import { annotationList, initAnnotationStore } from '$lib/stores/annotations';
 	import { api } from '$lib/api';
 	import {
@@ -40,6 +45,7 @@
 	import { initBulletinStore } from '$lib/stores/bulletins';
 	import { initWeatherStore, weatherStations, selectedWeatherStation } from '$lib/stores/weather';
 	import { dfStations } from '$lib/stores/df';
+	import { loadW3WStatus } from '$lib/stores/w3w';
 	import { initPacketStore } from '$lib/stores/packets';
 	import { initPathStore } from '$lib/stores/paths';
 	import { isLoggedIn, needsSetup, isApproved, isPending, isDenied, initSession, handleSessionEvent, currentUser, loadPendingRequests, canAdmin } from '$lib/stores/session';
@@ -68,6 +74,10 @@
 	let placingOperator = $state<{ id: string; callsign: string } | null>(null);
 	let placingAnnotation = $state<{ id: string | null; name: string; mode: 'update' | 'form' } | null>(null);
 	let annotationMapCoords = $state<{ lat: number; lon: number } | null>(null);
+	let placingMissionLocation = $state<{ label: string } | null>(null);
+	let missionDraftPoint = $state<{ lat: number; lon: number } | null>(null);
+	let missionMapCoords = $state<{ lat: number; lon: number } | null>(null);
+	let sheetBeforePick: SheetState | null = null;
 
 	let netCallsigns = $derived(
 		new Set($activeCheckIns.map((ci) => ci.callsign))
@@ -119,12 +129,14 @@
 			initPathStore();
 			initMessageStore();
 			initTransportStore();
+			initGpsStore();
 			initAnnotationStore();
 			initNetControlStore();
 			initTacticalStore();
 			initBulletinStore();
 			initWeatherStore();
 			initPacketStore();
+			loadW3WStatus();
 			if ($canAdmin) {
 				loadPendingRequests();
 			}
@@ -194,7 +206,15 @@
 	}
 
 	function handleAnnotationClick(id: string) {
-		openAnnotations();
+		const ann = $annotationList.find((a) => a.id === id);
+		const inActiveNet = !!ann && !!$activeNet && ann.netId === $activeNet.id;
+		// Only stay in Net Control when the user is already there — never
+		// hijack the default annotation flow.
+		if (inActiveNet && $panelMode === 'netcontrol') {
+			sheetState.set('half');
+		} else {
+			openAnnotations();
+		}
 		focusedAnnotationId = id;
 	}
 
@@ -206,8 +226,22 @@
 		openNetControl();
 	}
 
-	function handleNetFlyTo(lat: number, lon: number) {
-		flyToTarget = { lat, lon, zoom: 15 };
+	function handleNetFlyTo(lat: number, lon: number, zoom?: number) {
+		flyToTarget = { lat, lon, zoom: zoom ?? 15 };
+	}
+
+	// A resolved-geocode draft pin (what3words, Plus Code, or MGRS — #93/#94):
+	// place it on the map without touching the existing missionMapCoords path
+	// — that path (see handleMissionLocationPlaced) flows back into
+	// NetControlPanel's own effect, which overwrites the location label with
+	// a nearby annotation's label. A resolve must never lose the words/code
+	// that way, so it only ever sets the marker.
+	function handleSetMissionDraftPoint(lat: number, lon: number) {
+		missionDraftPoint = { lat, lon };
+	}
+
+	function handleGetMapCenter(): { lat: number; lon: number; zoom: number } | null {
+		return mapRef?.getViewport() ?? null;
 	}
 
 	function handleFlyToBounds(coords: Array<{ lat: number; lon: number }>) {
@@ -232,9 +266,17 @@
 		}
 	}
 
+	function handleGpsFollowBreak() {
+		if (get(gpsFollow)) {
+			gpsFollow.set(false);
+			showToast('Follow off', 'info', 2000);
+		}
+	}
+
 	function handlePlaceOperator(ciId: string, callsign: string) {
 		drawingMode = null;
 		placingAnnotation = null;
+		placingMissionLocation = null;
 		placingOperator = { id: ciId, callsign };
 	}
 
@@ -255,7 +297,44 @@
 	function handlePlaceAnnotation(id: string | null, name: string, mode: 'update' | 'form') {
 		drawingMode = null;
 		placingOperator = null;
+		placingMissionLocation = null;
 		placingAnnotation = { id, name, mode };
+	}
+
+	function handlePlaceMissionLocation(label: string) {
+		drawingMode = null;
+		placingOperator = null;
+		placingAnnotation = null;
+		placingMissionLocation = { label };
+		if (!isDesktop) {
+			sheetBeforePick = get(sheetState);
+			sheetState.set('peek');
+		}
+	}
+
+	function restoreSheetAfterPick() {
+		if (sheetBeforePick && get(sheetState) === 'peek') sheetState.set(sheetBeforePick);
+		sheetBeforePick = null;
+	}
+
+	function handleMissionLocationPlaced(lat: number, lon: number) {
+		missionDraftPoint = { lat, lon };
+		missionMapCoords = { lat, lon };
+		placingMissionLocation = null;
+		restoreSheetAfterPick();
+	}
+
+	function handleMissionLocationPlaceCancelled() {
+		placingMissionLocation = null;
+		restoreSheetAfterPick();
+	}
+
+	function handleMissionMapCoordsConsumed() {
+		missionMapCoords = null;
+	}
+
+	function handleClearMissionDraft() {
+		missionDraftPoint = null;
 	}
 
 	async function handleAnnotationPlaced(lat: number, lon: number) {
@@ -307,6 +386,7 @@
 	function handleStartDraw(mode: 'point' | 'line' | 'area') {
 		placingOperator = null;
 		placingAnnotation = null;
+		placingMissionLocation = null;
 		drawingMode = mode;
 	}
 
@@ -421,6 +501,14 @@
 			placingAnnotation={placingAnnotation}
 			onAnnotationPlaced={handleAnnotationPlaced}
 			onAnnotationPlaceCancelled={handleAnnotationPlaceCancelled}
+			{placingMissionLocation}
+			{missionDraftPoint}
+			onMissionLocationPlaced={handleMissionLocationPlaced}
+			onMissionLocationPlaceCancelled={handleMissionLocationPlaceCancelled}
+			ownPosition={$gpsStatus.fix}
+			ownPositionStale={$gpsStatus.stale}
+			follow={$gpsFollow}
+			onFollowBreak={handleGpsFollowBreak}
 		/>
 	</div>
 
@@ -429,6 +517,10 @@
 		filteredCount={stationsWithPosition.length}
 		totalCount={allStationsWithPosition.length}
 	/>
+
+	<!-- Live GPS follow toggle + status -->
+	<GpsFollowControl oncenter={() => mapRef?.centerOnOwnPosition()} />
+	<GpsStatusPill />
 
 	<!-- Floating Ops View restore button -->
 	{#if $opsView && $activeNet}
@@ -528,6 +620,15 @@
 					onPlaceAnnotation={handlePlaceAnnotation}
 					{annotationMapCoords}
 					onMapCoordsConsumed={handleMapCoordsConsumed}
+					{focusedAnnotationId}
+					onFocusConsumed={handleAnnotationFocusConsumed}
+					onPlaceMissionLocation={handlePlaceMissionLocation}
+					{missionMapCoords}
+					onMissionMapCoordsConsumed={handleMissionMapCoordsConsumed}
+					onClearMissionDraft={handleClearMissionDraft}
+					missionPickActive={placingMissionLocation != null}
+					onSetMissionDraftPoint={handleSetMissionDraftPoint}
+					getMapCenter={handleGetMapCenter}
 				/>
 			{:else if $panelMode === 'weather'}
 				<WeatherPanel onFlyTo={handleFlyTo} />
@@ -613,6 +714,15 @@
 					onPlaceAnnotation={handlePlaceAnnotation}
 					{annotationMapCoords}
 					onMapCoordsConsumed={handleMapCoordsConsumed}
+					{focusedAnnotationId}
+					onFocusConsumed={handleAnnotationFocusConsumed}
+					onPlaceMissionLocation={handlePlaceMissionLocation}
+					{missionMapCoords}
+					onMissionMapCoordsConsumed={handleMissionMapCoordsConsumed}
+					onClearMissionDraft={handleClearMissionDraft}
+					missionPickActive={placingMissionLocation != null}
+					onSetMissionDraftPoint={handleSetMissionDraftPoint}
+					getMapCenter={handleGetMapCenter}
 				/>
 			{:else if $panelMode === 'weather'}
 				<WeatherPanel onFlyTo={handleFlyTo} />

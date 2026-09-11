@@ -28,6 +28,9 @@ const (
 	ActionAnnotationStatusChanged  Action = "annotation_status_changed"
 	ActionAnnotationTransmitted    Action = "annotation_transmitted"
 	ActionAnnotationStopTransmit   Action = "annotation_stop_transmit"
+	ActionAnnotationsImported      Action = "annotations_imported"
+	ActionAnnotationsBatchDeleted  Action = "annotations_batch_deleted"
+	ActionAnnotationsBatchRestored Action = "annotations_batch_restored"
 )
 
 // Entry represents a single activity log entry.

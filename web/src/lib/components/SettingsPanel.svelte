@@ -1,8 +1,10 @@
 <script lang="ts">
 	import { onMount } from 'svelte';
+	import { get } from 'svelte/store';
 	import { api } from '$lib/api';
-	import { closePanel } from '$lib/stores/ui';
+	import { closePanel, settingsOpenSection } from '$lib/stores/ui';
 	import { weatherConfig } from '$lib/stores/weather';
+	import { loadW3WStatus } from '$lib/stores/w3w';
 	import FilterBuilder from './FilterBuilder.svelte';
 	import PathSelect from './PathSelect.svelte';
 	import PendingApprovals from './PendingApprovals.svelte';
@@ -16,7 +18,7 @@
 	import type {
 		SettingsResponse, StationSettings, ServerSettings, BeaconSettings,
 		SessionSettings, LoggingSettings, TransportSettings, TileCacheSettings,
-		WeatherSettings, SerialPortInfo, SerialProfile, KissTncInfo
+		WeatherSettings, SerialPortInfo, SerialProfile, KissTncInfo, GpsSettings
 	} from '$lib/types';
 
 	let loading = $state(true);
@@ -28,11 +30,13 @@
 	let openSections = $state<Record<string, boolean>>({
 		station: true,
 		transports: false,
+		gps: false,
 		beacon: false,
 		session: false,
 		logging: false,
 		weather: false,
 		tilecache: false,
+		what3words: false,
 		server: false,
 		database: false
 	});
@@ -57,6 +61,7 @@
 			if (settings.station.beaconPath == null) {
 				settings.station.beaconPath = 'WIDE1-1,WIDE2-1';
 			}
+			gpsNmeaMode = settings.gps.device ? 'serial' : 'network';
 		} catch (e: any) {
 			error = e.message || 'Failed to load settings';
 		} finally {
@@ -64,7 +69,19 @@
 		}
 	}
 
-	onMount(loadSettings);
+	onMount(async () => {
+		await loadSettings();
+		// A "Settings →" hint link elsewhere (e.g. the mission location
+		// popover) can ask us to land pre-expanded on a given section.
+		const section = get(settingsOpenSection);
+		if (section) {
+			openSections[section] = true;
+			settingsOpenSection.set(null);
+			queueMicrotask(() => {
+				document.getElementById(`settings-section-${section}`)?.scrollIntoView({ block: 'start', behavior: 'smooth' });
+			});
+		}
+	});
 
 	function toggle(section: string) {
 		openSections[section] = !openSections[section];
@@ -72,7 +89,14 @@
 			loadSerialPorts();
 			loadKissTncs();
 		}
+		if (section === 'gps' && openSections.gps && !serialListLoaded && !serialPortsLoading) {
+			loadSerialPorts();
+		}
 	}
+
+	// NMEA transport choice — the config itself just has device XOR host, this
+	// is purely which fields the UI shows.
+	let gpsNmeaMode = $state<'serial' | 'network'>('serial');
 
 	let serialPorts = $state<SerialPortInfo[]>([]);
 	let serialProfiles = $state<SerialProfile[]>([]);
@@ -235,6 +259,41 @@
 		}
 	}
 
+	const DURATION_RE = /^\d+(\.\d+)?(ms|s|m|h)$/;
+
+	function setGpsNmeaMode(mode: 'serial' | 'network') {
+		if (!settings) return;
+		gpsNmeaMode = mode;
+		// The config takes device XOR host for nmea — clear the one not shown.
+		if (mode === 'serial') settings.gps.host = '';
+		else settings.gps.device = '';
+	}
+
+	async function saveGPS() {
+		if (!settings) return;
+		const gps: GpsSettings = settings.gps;
+		if (gps.enabled) {
+			if (gps.minInterval && !DURATION_RE.test(gps.minInterval)) {
+				showToast('gps', 'Min interval must look like "1s" or "500ms"', 'error');
+				return;
+			}
+			if (gps.staleAfter && !DURATION_RE.test(gps.staleAfter)) {
+				showToast('gps', 'Stale after must look like "30s" or "1m"', 'error');
+				return;
+			}
+		}
+		saving['gps'] = true;
+		try {
+			const resp = await api.updateGPS(gps);
+			if (resp.restartRequired) restartBanner = true;
+			showToast('gps', 'GPS settings saved', 'success');
+		} catch (e: any) {
+			showToast('gps', e.message || 'Save failed', 'error');
+		} finally {
+			saving['gps'] = false;
+		}
+	}
+
 	async function saveTileCache() {
 		if (!settings) return;
 		saving['tilecache'] = true;
@@ -246,6 +305,46 @@
 			showToast('tilecache', e.message || 'Save failed', 'error');
 		} finally {
 			saving['tilecache'] = false;
+		}
+	}
+
+	// Key changes take effect immediately (no restart) — SetAPIKey swaps the
+	// live client's key. We re-fetch settings after a save/delete rather than
+	// trusting the PUT/DELETE response body (which is just
+	// {restartRequired}) so apiKeyConfigured/apiKeySource — and the blanked
+	// write-only apiKey field — reflect the server's new state.
+	async function saveWhat3Words() {
+		if (!settings) return;
+		saving['what3words'] = true;
+		try {
+			const resp = await api.updateWhat3Words(settings.what3words);
+			if (resp.restartRequired) restartBanner = true;
+			const fresh = await api.getSettings();
+			settings.what3words = fresh.what3words;
+			showToast('what3words', 'what3words settings saved', 'success');
+			await loadW3WStatus();
+		} catch (e: any) {
+			showToast('what3words', e.message || 'Save failed', 'error');
+		} finally {
+			saving['what3words'] = false;
+		}
+	}
+
+	async function removeW3WKey() {
+		if (!settings) return;
+		saving['what3words'] = true;
+		try {
+			const resp = await api.deleteWhat3WordsKey();
+			if (resp.restartRequired) restartBanner = true;
+			const fresh = await api.getSettings();
+			settings.what3words = fresh.what3words;
+			confirmRemoveW3WKey = false;
+			showToast('what3words', 'API key removed', 'success');
+			await loadW3WStatus();
+		} catch (e: any) {
+			showToast('what3words', e.message || 'Remove failed', 'error');
+		} finally {
+			saving['what3words'] = false;
 		}
 	}
 
@@ -287,6 +386,12 @@
 
 	let showPIN = $state(false);
 	let addTransportType = $state<string | null>(null);
+
+	let showW3WKey = $state(false);
+	let confirmRemoveW3WKey = $state(false);
+	let w3wKeyPlaceholder = $derived(
+		settings?.what3words.apiKeyConfigured ? 'Key configured — leave blank to keep' : 'Paste your what3words API key'
+	);
 </script>
 
 <div class="settings-panel">
@@ -511,6 +616,129 @@
 				{/if}
 			</div>
 
+			<!-- Live GPS -->
+			<div class="section" class:open={openSections.gps}>
+				<button class="section-header" onclick={() => toggle('gps')}>
+					<span class="section-title">Live GPS</span>
+					<span class="section-badge live">Live</span>
+					<svg class="chevron" width="14" height="14" viewBox="0 0 16 16" fill="none">
+						<path d="M4 6l4 4 4-4" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/>
+					</svg>
+				</button>
+				{#if openSections.gps}
+					<div class="section-body">
+						<div class="field-row toggle-row">
+							<label for="gps-enabled">Enabled</label>
+							<input id="gps-enabled" type="checkbox" bind:checked={settings.gps.enabled} />
+						</div>
+						<p class="field-help">Turning this on or off requires a restart to take effect.</p>
+
+						<div class="field-row">
+							<!-- svelte-ignore a11y_label_has_associated_control -->
+							<label>Source</label>
+							<div class="unit-toggle">
+								<button
+									class="unit-option"
+									class:active={settings.gps.type !== 'nmea'}
+									disabled={!settings.gps.enabled}
+									onclick={() => { if (settings) settings.gps.type = 'gpsd'; }}
+								>gpsd</button>
+								<button
+									class="unit-option"
+									class:active={settings.gps.type === 'nmea'}
+									disabled={!settings.gps.enabled}
+									onclick={() => { if (settings) settings.gps.type = 'nmea'; }}
+								>NMEA</button>
+							</div>
+						</div>
+
+						{#if settings.gps.type === 'nmea'}
+							<div class="field-row">
+								<!-- svelte-ignore a11y_label_has_associated_control -->
+								<label>Connection</label>
+								<div class="unit-toggle">
+									<button
+										class="unit-option"
+										class:active={gpsNmeaMode === 'serial'}
+										disabled={!settings.gps.enabled}
+										onclick={() => setGpsNmeaMode('serial')}
+									>Serial</button>
+									<button
+										class="unit-option"
+										class:active={gpsNmeaMode === 'network'}
+										disabled={!settings.gps.enabled}
+										onclick={() => setGpsNmeaMode('network')}
+									>Network</button>
+								</div>
+							</div>
+
+							{#if gpsNmeaMode === 'serial'}
+								<SerialPortFields
+									idPrefix="gps"
+									bind:device={settings.gps.device}
+									bind:baud={settings.gps.baud}
+									ports={serialPorts}
+									hostOS={serialHostOS}
+									profiles={serialProfiles}
+									baudRates={serialBaudRates}
+									portsLoading={serialPortsLoading}
+									portsError={serialPortsError}
+									onrefresh={loadSerialPorts}
+									liveStatus={null}
+								/>
+							{:else}
+								<div class="field-group">
+									<div class="field-row half">
+										<label for="gps-nmea-host">Host</label>
+										<input id="gps-nmea-host" type="text" bind:value={settings.gps.host} disabled={!settings.gps.enabled} />
+									</div>
+									<div class="field-row half">
+										<label for="gps-nmea-port">Port</label>
+										<input id="gps-nmea-port" type="number" bind:value={settings.gps.port} disabled={!settings.gps.enabled} />
+									</div>
+								</div>
+							{/if}
+						{:else}
+							<div class="field-group">
+								<div class="field-row half">
+									<label for="gps-host">Host</label>
+									<input id="gps-host" type="text" bind:value={settings.gps.host} placeholder="127.0.0.1" disabled={!settings.gps.enabled} />
+								</div>
+								<div class="field-row half">
+									<label for="gps-port">Port</label>
+									<input id="gps-port" type="number" bind:value={settings.gps.port} placeholder="2947" disabled={!settings.gps.enabled} />
+								</div>
+							</div>
+						{/if}
+
+						<div class="field-group">
+							<div class="field-row half">
+								<label for="gps-min-interval">Min interval</label>
+								<input id="gps-min-interval" type="text" bind:value={settings.gps.minInterval} placeholder="1s" disabled={!settings.gps.enabled} />
+							</div>
+							<div class="field-row half">
+								<label for="gps-stale-after">Stale after</label>
+								<input id="gps-stale-after" type="text" bind:value={settings.gps.staleAfter} placeholder="30s" disabled={!settings.gps.enabled} />
+							</div>
+						</div>
+
+						<div class="field-row toggle-row">
+							<label for="gps-use-for-beacon">Use for beacon</label>
+							<input id="gps-use-for-beacon" type="checkbox" bind:checked={settings.gps.useForBeacon} disabled={!settings.gps.enabled} />
+						</div>
+						<p class="field-help">
+							Beacons use the live fix when it is fresher than "Stale after"; otherwise they fall back to the station latitude/longitude.
+						</p>
+
+						<div class="section-actions">
+							<button class="save-btn" onclick={saveGPS} disabled={saving['gps']}>
+								{saving['gps'] ? 'Saving...' : 'Save GPS'}
+							</button>
+						</div>
+					</div>
+				{/if}
+			</div>
+
 			<!-- Beacon -->
 			<div class="section" class:open={openSections.beacon}>
 				<button class="section-header" onclick={() => toggle('beacon')}>
@@ -684,6 +912,78 @@
 						<div class="section-actions">
 							<button class="save-btn" onclick={saveTileCache} disabled={saving['tilecache']}>
 								{saving['tilecache'] ? 'Saving...' : 'Save Tile Cache'}
+							</button>
+						</div>
+					</div>
+				{/if}
+			</div>
+
+			<!-- what3words -->
+			<div class="section" id="settings-section-what3words" class:open={openSections.what3words}>
+				<button class="section-header" onclick={() => toggle('what3words')}>
+					<span class="section-title">what3words</span>
+					<span class="section-badge live">Live</span>
+					<svg class="chevron" width="14" height="14" viewBox="0 0 16 16" fill="none">
+						<path d="M4 6l4 4 4-4" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/>
+					</svg>
+				</button>
+				{#if openSections.what3words}
+					<div class="section-body">
+						<p class="field-help">
+							Turn three words heard on the radio into a map pin. Get a free key at
+							<a href="https://accounts.what3words.com" target="_blank" rel="noopener noreferrer">accounts.what3words.com</a>
+							— the key stays on this server and is never sent to browsers.
+						</p>
+						<div class="field-row toggle-row">
+							<label for="w3w-enabled">Enabled</label>
+							<input id="w3w-enabled" type="checkbox" bind:checked={settings.what3words.enabled} />
+						</div>
+						<div class="field-row">
+							<!-- svelte-ignore a11y_label_has_associated_control -->
+							<label for="w3w-key">API Key</label>
+							<div class="pin-field">
+								{#if showW3WKey}
+									<input id="w3w-key" type="text" bind:value={settings.what3words.apiKey} placeholder={w3wKeyPlaceholder} disabled={settings.what3words.apiKeySource === 'env'} />
+								{:else}
+									<input id="w3w-key" type="password" bind:value={settings.what3words.apiKey} placeholder={w3wKeyPlaceholder} disabled={settings.what3words.apiKeySource === 'env'} />
+								{/if}
+								<button type="button" class="pin-toggle" onclick={() => { showW3WKey = !showW3WKey; }}>
+									{showW3WKey ? 'Hide' : 'Show'}
+								</button>
+							</div>
+							<div class="w3w-key-status">
+								{#if settings.what3words.apiKeySource === 'env'}
+									<span class="w3w-status-dot muted"></span>
+									<span class="field-help">Set by NYMERIA_W3W_API_KEY — edit the environment to change it.</span>
+								{:else if settings.what3words.apiKeyConfigured}
+									<span class="w3w-status-dot ok"></span>
+									<span class="field-help">Key configured</span>
+									{#if !confirmRemoveW3WKey}
+										<button type="button" class="btn-mini" onclick={() => { confirmRemoveW3WKey = true; }}>Remove key</button>
+									{:else}
+										<span class="w3w-remove-confirm">
+											Remove key?
+											<button type="button" class="btn-mini" onclick={removeW3WKey} disabled={saving['what3words']}>Remove</button>
+											<button type="button" class="btn-mini" onclick={() => { confirmRemoveW3WKey = false; }}>Cancel</button>
+										</span>
+									{/if}
+								{:else}
+									<span class="w3w-status-dot muted"></span>
+									<span class="field-help">No key — feature hidden</span>
+								{/if}
+							</div>
+						</div>
+						<div class="field-row">
+							<label for="w3w-baseurl">Base URL</label>
+							<input id="w3w-baseurl" type="text" bind:value={settings.what3words.baseUrl} placeholder="https://api.what3words.com/v3" />
+						</div>
+						<div class="field-row">
+							<label for="w3w-results">Autosuggest Rows</label>
+							<input id="w3w-results" type="number" min="1" max="10" bind:value={settings.what3words.results} />
+						</div>
+						<div class="section-actions">
+							<button class="save-btn" onclick={saveWhat3Words} disabled={saving['what3words']}>
+								{saving['what3words'] ? 'Saving...' : 'Save what3words'}
 							</button>
 						</div>
 					</div>
@@ -1116,6 +1416,42 @@
 
 	.pin-toggle:hover {
 		color: var(--color-text);
+	}
+
+	/* what3words key status row */
+	.w3w-key-status {
+		display: flex;
+		align-items: center;
+		gap: var(--space-xs);
+		margin-top: var(--space-xs);
+		flex-wrap: wrap;
+	}
+
+	.w3w-key-status .field-help {
+		margin: 0;
+	}
+
+	.w3w-status-dot {
+		width: 7px;
+		height: 7px;
+		border-radius: 50%;
+		flex-shrink: 0;
+	}
+
+	.w3w-status-dot.ok {
+		background: var(--color-success);
+	}
+
+	.w3w-status-dot.muted {
+		background: var(--color-text-muted);
+	}
+
+	.w3w-remove-confirm {
+		display: flex;
+		align-items: center;
+		gap: var(--space-xs);
+		font-size: 0.72rem;
+		color: var(--color-text-muted);
 	}
 
 	/* Section actions */

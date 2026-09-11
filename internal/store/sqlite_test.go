@@ -605,8 +605,8 @@ func TestV2SchemaVersion(t *testing.T) {
 	if err != nil {
 		t.Fatalf("query schema_version: %v", err)
 	}
-	if version != 21 {
-		t.Errorf("expected schema version 21, got %d", version)
+	if version != 22 {
+		t.Errorf("expected schema version 22, got %d", version)
 	}
 }
 
@@ -1105,8 +1105,8 @@ func TestV3SchemaVersion(t *testing.T) {
 	if err != nil {
 		t.Fatalf("query schema_version: %v", err)
 	}
-	if version != 21 {
-		t.Errorf("expected schema version 21, got %d", version)
+	if version != 22 {
+		t.Errorf("expected schema version 22, got %d", version)
 	}
 }
 
@@ -1727,8 +1727,8 @@ func TestV5MigrationAddsTrackedStationsColumn(t *testing.T) {
 
 	var version int
 	s.db.QueryRow("SELECT version FROM schema_version LIMIT 1").Scan(&version)
-	if version != 21 {
-		t.Errorf("expected schema version 21, got %d", version)
+	if version != 22 {
+		t.Errorf("expected schema version 22, got %d", version)
 	}
 }
 
@@ -1834,8 +1834,8 @@ func TestV6MigrationCreatesTacticalAliasesTable(t *testing.T) {
 
 	var version int
 	s.db.QueryRow("SELECT version FROM schema_version LIMIT 1").Scan(&version)
-	if version != 21 {
-		t.Errorf("expected schema version 21, got %d", version)
+	if version != 22 {
+		t.Errorf("expected schema version 22, got %d", version)
 	}
 }
 
@@ -2002,8 +2002,8 @@ func TestV7MigrationAddsAnnotationColumns(t *testing.T) {
 
 	var version int
 	s.db.QueryRow("SELECT version FROM schema_version LIMIT 1").Scan(&version)
-	if version != 21 {
-		t.Errorf("expected schema version 21, got %d", version)
+	if version != 22 {
+		t.Errorf("expected schema version 22, got %d", version)
 	}
 }
 
@@ -2305,8 +2305,8 @@ func TestMigrateV8CreatesOperationsTable(t *testing.T) {
 
 	var version int
 	s.db.QueryRow("SELECT version FROM schema_version LIMIT 1").Scan(&version)
-	if version != 21 {
-		t.Errorf("expected schema version 21, got %d", version)
+	if version != 22 {
+		t.Errorf("expected schema version 22, got %d", version)
 	}
 
 	// Verify operations table exists by doing a query.
@@ -2325,8 +2325,8 @@ func TestMigrateV11AddsOpsViewColumns(t *testing.T) {
 
 	var version int
 	s.db.QueryRow("SELECT version FROM schema_version LIMIT 1").Scan(&version)
-	if version != 21 {
-		t.Errorf("expected schema version 21, got %d", version)
+	if version != 22 {
+		t.Errorf("expected schema version 22, got %d", version)
 	}
 
 	// Verify ops_view columns exist.
@@ -2715,8 +2715,8 @@ func TestMigrateV13CreatesTelemetryReadingsTable(t *testing.T) {
 
 	var version int
 	s.db.QueryRow("SELECT version FROM schema_version LIMIT 1").Scan(&version)
-	if version != 21 {
-		t.Errorf("expected schema version 21, got %d", version)
+	if version != 22 {
+		t.Errorf("expected schema version 22, got %d", version)
 	}
 }
 
@@ -2959,8 +2959,8 @@ func TestMigrateV16(t *testing.T) {
 	if err != nil {
 		t.Fatalf("query schema_version: %v", err)
 	}
-	if version != 21 {
-		t.Errorf("expected schema version 21, got %d", version)
+	if version != 22 {
+		t.Errorf("expected schema version 22, got %d", version)
 	}
 }
 
@@ -3240,8 +3240,8 @@ func TestMigrateV19CreatesCheckpointTables(t *testing.T) {
 	if err := s.db.QueryRow("SELECT version FROM schema_version LIMIT 1").Scan(&version); err != nil {
 		t.Fatalf("read schema_version: %v", err)
 	}
-	if version != 21 {
-		t.Errorf("expected schema version 21, got %d", version)
+	if version != 22 {
+		t.Errorf("expected schema version 22, got %d", version)
 	}
 
 	// Verify tables exist.
@@ -3353,8 +3353,8 @@ func TestMigrateV20NormalizesLegacySources(t *testing.T) {
 	if err := s.db.QueryRow("SELECT version FROM schema_version LIMIT 1").Scan(&version); err != nil {
 		t.Fatalf("read schema_version: %v", err)
 	}
-	if version != 21 {
-		t.Errorf("expected schema version 21, got %d", version)
+	if version != 22 {
+		t.Errorf("expected schema version 22, got %d", version)
 	}
 
 	// sources column must exist.
@@ -3526,8 +3526,8 @@ func TestMigrateV21CreatesConversationReadsTable(t *testing.T) {
 	if err := s.db.QueryRow("SELECT version FROM schema_version LIMIT 1").Scan(&version); err != nil {
 		t.Fatalf("read schema_version: %v", err)
 	}
-	if version != 21 {
-		t.Errorf("expected schema version 21, got %d", version)
+	if version != 22 {
+		t.Errorf("expected schema version 22, got %d", version)
 	}
 
 	var count int
@@ -3711,5 +3711,348 @@ func TestMigrateV21BackfillReadsDriverWrittenTimestamps(t *testing.T) {
 	}
 	if got.Before(newest) {
 		t.Errorf("marker = %v, want >= newest inbound %v", got, newest)
+	}
+}
+
+// TestMigrateV22AddsAnnotationBatchColumns verifies the v21 -> v22 migration
+// adds batch_id/batch_label to an existing annotations table, creates the
+// supporting index, and leaves pre-migration ("legacy") rows readable with
+// empty batch fields — see #89 (removable imported annotation sets).
+func TestMigrateV22AddsAnnotationBatchColumns(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "pre-v22.db")
+
+	db, err := sql.Open("sqlite", path)
+	if err != nil {
+		t.Fatalf("open raw db: %v", err)
+	}
+	for _, stmt := range []string{
+		`CREATE TABLE schema_version (version INTEGER NOT NULL)`,
+		`INSERT INTO schema_version (version) VALUES (21)`,
+		`CREATE TABLE annotations (
+			id TEXT PRIMARY KEY,
+			type TEXT NOT NULL,
+			label TEXT NOT NULL DEFAULT '',
+			description TEXT NOT NULL DEFAULT '',
+			geometry TEXT NOT NULL,
+			style TEXT NOT NULL DEFAULT '{}',
+			created_by TEXT,
+			created_by_name TEXT,
+			created_at DATETIME NOT NULL,
+			updated_at DATETIME NOT NULL,
+			category TEXT NOT NULL DEFAULT 'general',
+			status TEXT NOT NULL DEFAULT 'active',
+			priority TEXT NOT NULL DEFAULT 'routine',
+			operation_id TEXT DEFAULT '',
+			mission_ids TEXT NOT NULL DEFAULT '[]',
+			resources TEXT DEFAULT '[]',
+			reported_by TEXT DEFAULT '',
+			reported_at DATETIME,
+			resolved_at DATETIME,
+			expires_at DATETIME,
+			net_id TEXT NOT NULL DEFAULT '',
+			short_name TEXT NOT NULL DEFAULT '',
+			sort_order INTEGER NOT NULL DEFAULT 0
+		)`,
+		`INSERT INTO annotations (id, type, label, geometry, created_at, updated_at)
+			VALUES ('legacy-1', 'point', 'Legacy Marker', '{}', '2024-01-01T00:00:00Z', '2024-01-01T00:00:00Z')`,
+	} {
+		if _, err := db.Exec(stmt); err != nil {
+			db.Close()
+			t.Fatalf("setup stmt %q: %v", stmt, err)
+		}
+	}
+	if err := db.Close(); err != nil {
+		t.Fatalf("close raw db: %v", err)
+	}
+
+	s := NewSQLiteStore(path)
+	if err := s.Init(); err != nil {
+		t.Fatalf("Init failed: %v", err)
+	}
+	defer s.Close()
+
+	var version int
+	if err := s.db.QueryRow("SELECT version FROM schema_version LIMIT 1").Scan(&version); err != nil {
+		t.Fatalf("read schema_version: %v", err)
+	}
+	if version != 22 {
+		t.Errorf("expected schema version 22, got %d", version)
+	}
+
+	cols := map[string]bool{}
+	rows, err := s.db.Query(`SELECT name FROM pragma_table_info('annotations')`)
+	if err != nil {
+		t.Fatalf("pragma_table_info(annotations): %v", err)
+	}
+	for rows.Next() {
+		var name string
+		if err := rows.Scan(&name); err != nil {
+			rows.Close()
+			t.Fatalf("scan column name: %v", err)
+		}
+		cols[name] = true
+	}
+	rows.Close()
+	if !cols["batch_id"] {
+		t.Error("annotations table missing batch_id column after migrateV22")
+	}
+	if !cols["batch_label"] {
+		t.Error("annotations table missing batch_label column after migrateV22")
+	}
+
+	var idxCount int
+	if err := s.db.QueryRow(
+		`SELECT COUNT(*) FROM sqlite_master WHERE type='index' AND name='idx_annotations_batch_id'`,
+	).Scan(&idxCount); err != nil {
+		t.Fatalf("query sqlite_master for index: %v", err)
+	}
+	if idxCount != 1 {
+		t.Errorf("idx_annotations_batch_id count = %d, want 1", idxCount)
+	}
+
+	loaded, err := s.LoadAnnotations()
+	if err != nil {
+		t.Fatalf("LoadAnnotations on upgraded db: %v", err)
+	}
+	if len(loaded) != 1 {
+		t.Fatalf("expected 1 legacy annotation, got %d", len(loaded))
+	}
+	if loaded[0].BatchID != "" {
+		t.Errorf("legacy row BatchID = %q, want empty", loaded[0].BatchID)
+	}
+	if loaded[0].BatchLabel != "" {
+		t.Errorf("legacy row BatchLabel = %q, want empty", loaded[0].BatchLabel)
+	}
+}
+
+// TestMigrateV22Idempotent confirms the ADD COLUMN statements in migrateV22
+// tolerate being run again against a database that already has the columns
+// (the duplicate-column guard shared with every other migrateVN).
+func TestMigrateV22Idempotent(t *testing.T) {
+	s, _ := newTestStore(t)
+	defer s.Close()
+
+	if err := s.migrateV22(); err != nil {
+		t.Fatalf("first rerun of migrateV22 failed: %v", err)
+	}
+	if err := s.migrateV22(); err != nil {
+		t.Fatalf("second rerun of migrateV22 failed: %v", err)
+	}
+
+	var version int
+	if err := s.db.QueryRow("SELECT version FROM schema_version LIMIT 1").Scan(&version); err != nil {
+		t.Fatalf("read schema_version: %v", err)
+	}
+	if version != 22 {
+		t.Errorf("expected schema version 22, got %d", version)
+	}
+}
+
+// TestSaveLoadAnnotationBatchFields round-trips BatchID/BatchLabel through
+// SaveAnnotation -> LoadAnnotations.
+func TestSaveLoadAnnotationBatchFields(t *testing.T) {
+	s, _ := newTestStore(t)
+	defer s.Close()
+
+	now := time.Now().Truncate(time.Second).UTC()
+	ann := Annotation{
+		ID:         "ann-batch-1",
+		Type:       "point",
+		Label:      "Water Stop 1",
+		Geometry:   `{"type":"Point","coordinates":[-118.24,34.05]}`,
+		CreatedAt:  now,
+		UpdatedAt:  now,
+		Category:   "resource",
+		Status:     "active",
+		BatchID:    "batch-abc-123",
+		BatchLabel: "Day_1_48M_Jack_and_Back.gpx",
+	}
+
+	if err := s.SaveAnnotation(ann); err != nil {
+		t.Fatalf("SaveAnnotation failed: %v", err)
+	}
+
+	loaded, err := s.LoadAnnotations()
+	if err != nil {
+		t.Fatalf("LoadAnnotations failed: %v", err)
+	}
+	if len(loaded) != 1 {
+		t.Fatalf("expected 1 annotation, got %d", len(loaded))
+	}
+	got := loaded[0]
+	if got.BatchID != "batch-abc-123" {
+		t.Errorf("batchId: got %q, want %q", got.BatchID, "batch-abc-123")
+	}
+	if got.BatchLabel != "Day_1_48M_Jack_and_Back.gpx" {
+		t.Errorf("batchLabel: got %q, want %q", got.BatchLabel, "Day_1_48M_Jack_and_Back.gpx")
+	}
+
+	// An annotation created without batch fields round-trips to empty strings,
+	// not NULL — every pre-migration and hand-created row must render as
+	// "ungrouped" rather than error.
+	if err := s.SaveAnnotation(Annotation{
+		ID: "ann-nobatch", Type: "point", Label: "Hand Placed", Geometry: "{}",
+		CreatedAt: now, UpdatedAt: now,
+	}); err != nil {
+		t.Fatalf("SaveAnnotation (no batch) failed: %v", err)
+	}
+	all, err := s.LoadAnnotations()
+	if err != nil {
+		t.Fatalf("LoadAnnotations failed: %v", err)
+	}
+	var found bool
+	for _, a := range all {
+		if a.ID == "ann-nobatch" {
+			found = true
+			if a.BatchID != "" || a.BatchLabel != "" {
+				t.Errorf("ungrouped annotation got batch fields: id=%q label=%q", a.BatchID, a.BatchLabel)
+			}
+		}
+	}
+	if !found {
+		t.Fatal("ann-nobatch not found in LoadAnnotations")
+	}
+}
+
+// TestLoadAnnotationsFilteredByBatchID is table-driven over the batch/net
+// composition rules from plan §6.1.
+func TestLoadAnnotationsFilteredByBatchID(t *testing.T) {
+	s, _ := newTestStore(t)
+	defer s.Close()
+
+	now := time.Now().Truncate(time.Second).UTC()
+	seed := []Annotation{
+		{ID: "b1-n1-a", Type: "point", Label: "A", Geometry: "{}", CreatedAt: now, UpdatedAt: now, BatchID: "batch-1", NetID: "net-1"},
+		{ID: "b1-n1-b", Type: "point", Label: "B", Geometry: "{}", CreatedAt: now, UpdatedAt: now, BatchID: "batch-1", NetID: "net-1"},
+		{ID: "b2-n1-c", Type: "point", Label: "C", Geometry: "{}", CreatedAt: now, UpdatedAt: now, BatchID: "batch-2", NetID: "net-1"},
+		{ID: "b1-n2-d", Type: "point", Label: "D", Geometry: "{}", CreatedAt: now, UpdatedAt: now, BatchID: "batch-1", NetID: "net-2"},
+		{ID: "nobatch-e", Type: "point", Label: "E", Geometry: "{}", CreatedAt: now, UpdatedAt: now, NetID: "net-1"},
+	}
+	for _, a := range seed {
+		if err := s.SaveAnnotation(a); err != nil {
+			t.Fatalf("SaveAnnotation(%s) failed: %v", a.ID, err)
+		}
+	}
+
+	tests := []struct {
+		name    string
+		filter  AnnotationFilter
+		wantIDs []string
+	}{
+		{
+			name:    "matching batch returns only its members",
+			filter:  AnnotationFilter{BatchID: "batch-2"},
+			wantIDs: []string{"b2-n1-c"},
+		},
+		{
+			name:    "unknown batch returns empty",
+			filter:  AnnotationFilter{BatchID: "no-such-batch"},
+			wantIDs: nil,
+		},
+		{
+			name:    "empty BatchID returns everything",
+			filter:  AnnotationFilter{},
+			wantIDs: []string{"b1-n1-a", "b1-n1-b", "b2-n1-c", "b1-n2-d", "nobatch-e"},
+		},
+		{
+			name:    "BatchID composed with NetID narrows correctly",
+			filter:  AnnotationFilter{BatchID: "batch-1", NetID: "net-1"},
+			wantIDs: []string{"b1-n1-a", "b1-n1-b"},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			results, err := s.LoadAnnotationsFiltered(tt.filter)
+			if err != nil {
+				t.Fatalf("LoadAnnotationsFiltered failed: %v", err)
+			}
+			gotIDs := make([]string, 0, len(results))
+			for _, a := range results {
+				gotIDs = append(gotIDs, a.ID)
+			}
+			if len(gotIDs) != len(tt.wantIDs) {
+				t.Fatalf("got %d results %v, want %d %v", len(gotIDs), gotIDs, len(tt.wantIDs), tt.wantIDs)
+			}
+			want := map[string]bool{}
+			for _, id := range tt.wantIDs {
+				want[id] = true
+			}
+			for _, id := range gotIDs {
+				if !want[id] {
+					t.Errorf("unexpected id %q in results %v", id, gotIDs)
+				}
+			}
+		})
+	}
+}
+
+// TestUpdateAnnotationBatchLabel renames every member of a batch in one call,
+// leaves other batches and ungrouped rows untouched, and bumps updated_at.
+func TestUpdateAnnotationBatchLabel(t *testing.T) {
+	s, _ := newTestStore(t)
+	defer s.Close()
+
+	created := time.Now().Truncate(time.Second).UTC().Add(-time.Hour)
+	seed := []Annotation{
+		{ID: "rn-1", Type: "point", Label: "A", Geometry: "{}", CreatedAt: created, UpdatedAt: created, BatchID: "batch-rename", BatchLabel: "Old Label"},
+		{ID: "rn-2", Type: "point", Label: "B", Geometry: "{}", CreatedAt: created, UpdatedAt: created, BatchID: "batch-rename", BatchLabel: "Old Label"},
+		{ID: "rn-other", Type: "point", Label: "C", Geometry: "{}", CreatedAt: created, UpdatedAt: created, BatchID: "batch-other", BatchLabel: "Untouched Batch"},
+		{ID: "rn-none", Type: "point", Label: "D", Geometry: "{}", CreatedAt: created, UpdatedAt: created},
+	}
+	for _, a := range seed {
+		if err := s.SaveAnnotation(a); err != nil {
+			t.Fatalf("SaveAnnotation(%s) failed: %v", a.ID, err)
+		}
+	}
+
+	updatedAt := time.Now().Truncate(time.Second).UTC()
+	count, err := s.UpdateAnnotationBatchLabel("batch-rename", "Day 1 — Jack and Back", updatedAt)
+	if err != nil {
+		t.Fatalf("UpdateAnnotationBatchLabel failed: %v", err)
+	}
+	if count != 2 {
+		t.Errorf("rows affected = %d, want 2", count)
+	}
+
+	all, err := s.LoadAnnotations()
+	if err != nil {
+		t.Fatalf("LoadAnnotations failed: %v", err)
+	}
+	byID := map[string]Annotation{}
+	for _, a := range all {
+		byID[a.ID] = a
+	}
+
+	for _, id := range []string{"rn-1", "rn-2"} {
+		a, ok := byID[id]
+		if !ok {
+			t.Fatalf("annotation %s missing after rename", id)
+		}
+		if a.BatchLabel != "Day 1 — Jack and Back" {
+			t.Errorf("%s BatchLabel = %q, want %q", id, a.BatchLabel, "Day 1 — Jack and Back")
+		}
+		if !a.UpdatedAt.Equal(updatedAt) {
+			t.Errorf("%s UpdatedAt = %v, want %v", id, a.UpdatedAt, updatedAt)
+		}
+	}
+
+	if other := byID["rn-other"]; other.BatchLabel != "Untouched Batch" {
+		t.Errorf("other batch label changed: got %q", other.BatchLabel)
+	}
+	if other := byID["rn-other"]; !other.UpdatedAt.Equal(created) {
+		t.Errorf("other batch updated_at changed: got %v, want %v", other.UpdatedAt, created)
+	}
+	if none := byID["rn-none"]; none.BatchLabel != "" {
+		t.Errorf("ungrouped row got a batch label: %q", none.BatchLabel)
+	}
+
+	// Renaming an unknown batch affects nothing and returns count 0.
+	count, err = s.UpdateAnnotationBatchLabel("no-such-batch", "Whatever", updatedAt)
+	if err != nil {
+		t.Fatalf("UpdateAnnotationBatchLabel(unknown) failed: %v", err)
+	}
+	if count != 0 {
+		t.Errorf("rows affected for unknown batch = %d, want 0", count)
 	}
 }

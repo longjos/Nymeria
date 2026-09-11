@@ -56,3 +56,51 @@ store:
 # Logging
 logging:
   level: "info"  # debug, info, warn, error
+
+# Live GPS — tracks the host machine's position.
+# Disabled by default; everything GPS-related is hidden in the UI when off.
+gps:
+  enabled: false
+  # gpsd (recommended on Linux/RPi) or nmea (direct serial/TCP NMEA-0183)
+  type: gpsd
+  # gpsd, or NMEA-over-TCP:
+  host: 127.0.0.1
+  port: 2947
+  # NMEA over serial (leave host empty and set these instead):
+  # type: nmea
+  # device: /dev/ttyACM0
+  # baud: 9600
+  # Ignore fixes arriving faster than this.
+  min_interval: 1s
+  # A fix older than this is "stale": beacon falls back to station.lat/lon
+  # and the UI dims the own-position marker.
+  stale_after: 30s
+  # Use a fresh live fix for beacons instead of station.lat/lon.
+  use_for_beacon: true
+
+beacon:
+  enabled: false
+  interval: 10m
+  comment: ""
+  # Smart beaconing needs a live GPS (speed/course). Ignored without one.
+  # smart_beacon:
+  #   enabled: true
+  #   fast_speed: 60      # mph
+  #   slow_speed: 5       # mph
+  #   fast_rate: 60s
+  #   slow_rate: 30m
+  #   turn_angle: 28      # degrees
+  #   turn_slope: 26
+
+# what3words — resolve three-word addresses heard on the radio into map pins.
+# Get a free key at https://accounts.what3words.com (Developer plan).
+# The key stays on the server; the browser only ever sees resolved coordinates.
+# Enabled but inert until a key exists — paste one in Settings → what3words
+# and it works live, no restart.
+what3words:
+  enabled: true
+  api_key: ""                                # or NYMERIA_W3W_API_KEY
+  base_url: "https://api.what3words.com/v3"  # override to point at a mock/proxy (or NYMERIA_W3W_BASE_URL)
+  results: 5          # autosuggest rows (1-10)
+  forward_ttl: 24h    # cache for words->coords and coords->words
+  suggest_ttl: 5m     # cache for autosuggest

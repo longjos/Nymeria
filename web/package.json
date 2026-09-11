@@ -29,6 +29,8 @@
     ]
   },
   "dependencies": {
-    "leaflet": "^1.9.4"
+    "leaflet": "^1.9.4",
+    "mgrs": "^2.2.0",
+    "open-location-code": "^1.0.3"
   }
 }

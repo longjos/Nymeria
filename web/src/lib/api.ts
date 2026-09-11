@@ -7,7 +7,9 @@ import type {
 	SettingsResponse, SettingsUpdateResponse, SerialPortsResponse, KissTncsResponse,
 	StationSettings, ServerSettings, TransportSettings, BeaconSettings,
 	SessionSettings, LoggingSettings, WeatherSettings, TileCacheSettings,
-	CheckpointWithPassages, CheckpointMeta, CheckpointPassage, CheckpointProgress
+	CheckpointWithPassages, CheckpointMeta, CheckpointPassage, CheckpointProgress,
+	ImportResult, BulkDeleteResult, RenameBatchResult, GpsStatus, GpsSettings,
+	W3WStatus, W3WResult, W3WSuggestResponse, What3WordsSettings
 } from './types';
 
 const BASE = '/api';
@@ -45,9 +47,41 @@ function headers(): Record<string, string> {
 	return h;
 }
 
+/**
+ * An HTTP failure from the API. `status` and `body` let callers branch on
+ * documented status codes (403 / 404 / 409 / 410) and read structured details
+ * such as the `transmitting` array on a 409.
+ */
+export class ApiError extends Error {
+	status: number;
+	body: Record<string, unknown>;
+
+	constructor(status: number, message: string, body: Record<string, unknown>) {
+		super(message);
+		this.name = 'ApiError';
+		this.status = status;
+		this.body = body;
+	}
+}
+
+/** Build an ApiError from a non-2xx response, preferring the server's `error` field. */
+async function failure(res: Response): Promise<ApiError> {
+	let body: Record<string, unknown> = {};
+	try {
+		const parsed = await res.json();
+		if (parsed && typeof parsed === 'object') body = parsed as Record<string, unknown>;
+	} catch {
+		// Non-JSON error body (proxy error page, empty 502) — fall back to the status.
+	}
+	const message = typeof body.error === 'string' && body.error
+		? body.error
+		: `API error: ${res.status}`;
+	return new ApiError(res.status, message, body);
+}
+
 async function get<T>(path: string): Promise<T> {
 	const res = await fetch(`${BASE}${path}`, { headers: headers() });
-	if (!res.ok) throw new Error(`API error: ${res.status}`);
+	if (!res.ok) throw await failure(res);
 	return res.json();
 }
 
@@ -57,7 +91,7 @@ async function post<T>(path: string, body: unknown): Promise<T> {
 		headers: headers(),
 		body: JSON.stringify(body)
 	});
-	if (!res.ok) throw new Error(`API error: ${res.status}`);
+	if (!res.ok) throw await failure(res);
 	return res.json();
 }
 
@@ -67,16 +101,17 @@ async function put<T>(path: string, body: unknown): Promise<T> {
 		headers: headers(),
 		body: JSON.stringify(body)
 	});
-	if (!res.ok) throw new Error(`API error: ${res.status}`);
+	if (!res.ok) throw await failure(res);
 	return res.json();
 }
 
-async function patch<T>(path: string): Promise<T> {
+async function patch<T>(path: string, body?: unknown): Promise<T> {
 	const res = await fetch(`${BASE}${path}`, {
 		method: 'PATCH',
-		headers: headers()
+		headers: headers(),
+		...(body === undefined ? {} : { body: JSON.stringify(body) })
 	});
-	if (!res.ok) throw new Error(`API error: ${res.status}`);
+	if (!res.ok) throw await failure(res);
 	return res.json();
 }
 
@@ -85,7 +120,7 @@ async function del<T>(path: string): Promise<T> {
 		method: 'DELETE',
 		headers: headers()
 	});
-	if (!res.ok) throw new Error(`API error: ${res.status}`);
+	if (!res.ok) throw await failure(res);
 	return res.json();
 }
 
@@ -97,7 +132,7 @@ async function uploadForm<T>(path: string, form: FormData): Promise<T> {
 		headers: h,
 		body: form
 	});
-	if (!res.ok) throw new Error(`API error: ${res.status}`);
+	if (!res.ok) throw await failure(res);
 	return res.json();
 }
 
@@ -149,6 +184,9 @@ export const api = {
 
 	// Transports
 	transports: () => get<TransportStatus[]>('/transports'),
+
+	// Live GPS
+	gps: () => get<GpsStatus>('/gps'),
 
 	// Annotations
 	annotations: (params?: Record<string, string>) => {
@@ -237,17 +275,32 @@ export const api = {
 
 	// Net-scoped annotations
 	netAnnotations: (netId: string) => get<Annotation[]>(`/nets/${netId}/annotations`),
-	importAnnotations: async (file: File) => {
+	importAnnotations: async (file: File, batchId?: string): Promise<ImportResult> => {
 		const form = new FormData();
 		form.append('file', file);
-		return uploadForm<Annotation[]>(`/annotations/import`, form);
+		if (batchId) form.append('batchId', batchId);
+		return uploadForm<ImportResult>(`/annotations/import`, form);
 	},
-	importNetAnnotations: async (netId: string, file: File) => {
+	importNetAnnotations: async (netId: string, file: File, batchId?: string): Promise<ImportResult> => {
 		const form = new FormData();
 		form.append('file', file);
-		return uploadForm<Annotation[]>(`/nets/${netId}/annotations/import`, form);
+		if (batchId) form.append('batchId', batchId);
+		return uploadForm<ImportResult>(`/nets/${netId}/annotations/import`, form);
 	},
-	copyNetAnnotations: (netId: string, sourceNetId: string) => post<Annotation[]>(`/nets/${netId}/annotations/copy/${sourceNetId}`, {}),
+	copyNetAnnotations: (netId: string, sourceNetId: string) =>
+		post<ImportResult>(`/nets/${netId}/annotations/copy/${sourceNetId}`, {}),
+
+	// Imported annotation sets (batches)
+	bulkDeleteAnnotations: (payload: {
+		batchId?: string;
+		ids?: string[];
+		includeMissionLinked?: boolean;
+		stopTransmit?: boolean;
+	}) => post<BulkDeleteResult>('/annotations/bulk-delete', payload),
+	undoDeleteAnnotations: (undoToken: string) =>
+		post<ImportResult>('/annotations/undo-delete', { undoToken }),
+	renameAnnotationBatch: (batchId: string, batchLabel: string) =>
+		patch<RenameBatchResult>('/annotations/batch-label', { batchId, batchLabel }),
 
 	// Tactical Aliases
 	tacticalAliases: () => get<TacticalAlias[]>('/tactical'),
@@ -299,5 +352,23 @@ export const api = {
 	updateSession: (data: SessionSettings) => put<SettingsUpdateResponse>('/settings/session', data),
 	updateLogging: (data: LoggingSettings) => put<SettingsUpdateResponse>('/settings/logging', data),
 	updateWeather: (data: WeatherSettings) => put<SettingsUpdateResponse>('/settings/weather', data),
-	updateTileCache: (data: TileCacheSettings) => put<SettingsUpdateResponse>('/settings/tilecache', data)
+	updateTileCache: (data: TileCacheSettings) => put<SettingsUpdateResponse>('/settings/tilecache', data),
+	updateGPS: (data: GpsSettings) => put<SettingsUpdateResponse>('/settings/gps', data),
+	updateWhat3Words: (data: What3WordsSettings) => put<SettingsUpdateResponse>('/settings/what3words', data),
+	deleteWhat3WordsKey: () => del<SettingsUpdateResponse>('/settings/what3words/key'),
+
+	// what3words proxy (operator+; status is observer+)
+	w3wStatus: () => get<W3WStatus>('/w3w/status'),
+	w3wResolve: (words: string) => get<W3WResult>(`/w3w/resolve?words=${encodeURIComponent(words)}`),
+	w3wSuggest: (input: string, focus?: { lat: number; lon: number }, n?: number) => {
+		const params = new URLSearchParams({ input });
+		if (focus) {
+			params.set('lat', String(focus.lat));
+			params.set('lon', String(focus.lon));
+		}
+		if (n) params.set('n', String(n));
+		return get<W3WSuggestResponse>(`/w3w/suggest?${params.toString()}`);
+	},
+	w3wReverse: (lat: number, lon: number) =>
+		get<W3WResult>(`/w3w/reverse?lat=${encodeURIComponent(String(lat))}&lon=${encodeURIComponent(String(lon))}`)
 };

@@ -1,9 +1,11 @@
 <script lang="ts">
 	import { onMount } from 'svelte';
-	import { api } from '$lib/api';
+	import { api, ApiError } from '$lib/api';
 	import { timeAgo } from '$lib/utils';
-	import { openICS309 } from '$lib/stores/ui';
-	import type { Net, NetCheckIn, NetMission, NetEvent, NetNote, OperatorStatus, TrafficType, Annotation, NoteCategory, NoteSeverity, StationCategory } from '$lib/types';
+	import { openICS309, openSettings, missionDraftBackup } from '$lib/stores/ui';
+	import { get } from 'svelte/store';
+	import { canAdmin } from '$lib/stores/session';
+	import type { Net, NetCheckIn, NetMission, NetEvent, NetNote, OperatorStatus, TrafficType, Annotation, NoteCategory, NoteSeverity, StationCategory, W3WSuggestion } from '$lib/types';
 	import {
 		activeNet, checkIns, missions, timeline, notes,
 		sortedCheckIns, activeCheckIns,
@@ -14,7 +16,7 @@
 		opsView,
 		hoveredMissionId, highlightedCheckIns,
 		hoveredCheckInId,
-		netAnnotations, annotationsByName,
+		netAnnotations, annotationsByName, netLocationAnnotations,
 		orderedCheckpoints
 	} from '$lib/stores/netcontrol';
 	import { annotationList } from '$lib/stores/annotations';
@@ -22,6 +24,20 @@
 	import { stationCategoryMeta } from '$lib/stationCategoryMeta';
 	import { parseCommand, getModeIndicator, getAutocompleteContext, type ParsedCommand, type AutocompleteContext } from '$lib/commandParser';
 	import { showToast } from '$lib/stores/toast';
+	import { formatCoord } from '$lib/utils';
+	import { nearestAnnotation, annotationCentroid } from '$lib/geo';
+	import {
+		isFullAddress, looksLikePartial, formatWords, w3wLocationLabel,
+		isW3WLocation, extractWords, w3wSuffix, cachedReverse, putReverse
+	} from '$lib/w3w';
+	import { w3wConfigured } from '$lib/stores/w3w';
+	import {
+		detectFormat, parsePlusCode, parseMGRS, isGeocodeError,
+		formatMGRSGroups, formatPlusCode, formatMGRS,
+		geocodeLocationLabel, extractGeocode,
+		type GeocodeParse, type GeocodeResult, type GeocodeErrorCode, type GeocodeFormat, type RefPoint
+	} from '$lib/geocodes';
+	import { gpsStatus } from '$lib/stores/gps';
 	import LocationManager from './LocationManager.svelte';
 	import SituationBoard from './SituationBoard.svelte';
 
@@ -34,8 +50,17 @@
 		onPlaceAnnotation,
 		annotationMapCoords = null,
 		onMapCoordsConsumed,
+		focusedAnnotationId = null,
+		onFocusConsumed,
+		onPlaceMissionLocation,
+		missionMapCoords = null,
+		onMissionMapCoordsConsumed,
+		onClearMissionDraft,
+		missionPickActive = false,
+		onSetMissionDraftPoint,
+		getMapCenter,
 	}: {
-		onFlyTo?: (lat: number, lon: number) => void;
+		onFlyTo?: (lat: number, lon: number, zoom?: number) => void;
 		onFlyToBounds?: (coords: Array<{ lat: number; lon: number }>) => void;
 		onSetOpsView?: () => void;
 		onGoToOpsView?: () => void;
@@ -43,10 +68,33 @@
 		onPlaceAnnotation?: (id: string | null, name: string, mode: 'update' | 'form') => void;
 		annotationMapCoords?: { lat: number; lon: number } | null;
 		onMapCoordsConsumed?: () => void;
+		focusedAnnotationId?: string | null;
+		onFocusConsumed?: () => void;
+		onPlaceMissionLocation?: (label: string) => void;
+		missionMapCoords?: { lat: number; lon: number } | null;
+		onMissionMapCoordsConsumed?: () => void;
+		onClearMissionDraft?: () => void;
+		missionPickActive?: boolean;
+		/** Places the draggable draft pin on the map without routing through
+		 * missionMapCoords — that path overwrites the location label with a
+		 * nearby annotation's label, which a what3words resolve must never do
+		 * to the words the NCS is about to read back on air. */
+		onSetMissionDraftPoint?: (lat: number, lon: number) => void;
+		/** Current map viewport centre, used to focus what3words autosuggest
+		 * on the area the NCS is actually looking at. */
+		getMapCenter?: () => { lat: number; lon: number; zoom: number } | null;
 	} = $props();
 
 	type Tab = 'situation' | 'roster' | 'missions' | 'locations' | 'timeline';
 	let currentTab = $state<Tab>('situation');
+
+	// A net-location marker click routes here (see +page.svelte
+	// handleAnnotationClick) only while Net Control is already the open
+	// panel; jump straight to the Locations tab so the reveal in
+	// LocationManager has somewhere to scroll.
+	$effect(() => {
+		if (focusedAnnotationId) currentTab = 'locations';
+	});
 
 	// Metrics bar filter — clicking a metric filters the roster
 	type MetricsFilter = null | 'available' | 'assigned' | 'missing' | 'stale';
@@ -84,13 +132,60 @@
 	let newMissionDesc = $state('');
 	let newMissionPriority = $state('routine');
 	let newMissionAssign = $state('');
-	let newMissionLocation = $state('');
-	let newMissionLat = $state('');
-	let newMissionLon = $state('');
+	let titleEl = $state<HTMLInputElement>();
 
-	// Mission location autocomplete
-	let missionLocSuggestions = $state<import('$lib/types').Annotation[]>([]);
-	let showMissionLocDropdown = $state(false);
+	// Mission location — one source of truth (design doc task #92 §3).
+	// 'w3w'/'pluscode'/'mgrs' are distinct from 'map': the missionMapCoords
+	// effect below overwrites the label with a nearby annotation's label,
+	// which would destroy the exact words/code a resolve needs to preserve so
+	// the NCS can read them back on air.
+	type MissionLocSource = 'none' | 'annotation' | 'map' | 'typed' | 'coords' | 'w3w' | 'pluscode' | 'mgrs';
+	let missionLocLabel = $state('');
+	let missionLocLat = $state<number | null>(null);
+	let missionLocLon = $state<number | null>(null);
+	let missionLocSource = $state<MissionLocSource>('none');
+	let missionLocNearId = $state<string | null>(null);
+	let autoLinkedAnnId = $state<string | null>(null);
+
+	// what3words — resolved words and the confirm-on-map safety gate.
+	let missionLocWords = $state('');
+	let missionLocNear = $state('');
+	let missionLocConfirmed = $state(false);
+	// Offline geocodes (#94) — normalized Plus Code / MGRS string, '' for
+	// every other source. Shares missionLocConfirmed's gate with w3w.
+	let missionLocCode = $state('');
+	let w3wSuggestions = $state<W3WSuggestion[]>([]);
+	let w3wLoading = $state(false);
+	let w3wError = $state('');
+	let w3wSearchedQuery = $state('');
+	let w3wDebounce: ReturnType<typeof setTimeout> | null = null;
+	let w3wSeq = 0;
+	// Lazy reverse (coords -> ///words) shown under any chosen location.
+	let reverseWords = $state('');
+	let reverseCopied = $state<'plus' | 'mgrs' | 'w3w' | null>(null);
+
+	let locOpen = $state(false);
+	let locQuery = $state('');
+	let locHighlight = $state(0);
+	let locCoordLat = $state('');
+	let locCoordLon = $state('');
+	let locCoordError = $state('');
+	let detailsOpen = $state(false);
+	let missionSubmitting = $state(false);
+	let formError = $state('');
+	let srMessage = $state('');
+	let pickingOnMap = $state(false);
+	let locFieldTriggerEl = $state<HTMLButtonElement>();
+	let locSearchEl = $state<HTMLInputElement>();
+	let locPopoverEl = $state<HTMLDivElement>();
+	const missionPriorities = ['routine', 'priority', 'welfare', 'emergency'] as const;
+	const missionPriorityLabels: Record<(typeof missionPriorities)[number], string> = {
+		routine: 'Routine',
+		priority: 'Priority',
+		welfare: 'Welfare',
+		emergency: 'Emergency',
+	};
+	let priorityRefs: (HTMLButtonElement | undefined)[] = [];
 
 	// Mission brief in create form
 	let newNetMissionBrief = $state('');
@@ -198,6 +293,34 @@
 	};
 
 	onMount(() => {
+		// Restore a mission draft saved by openW3WSettings before Settings
+		// unmounted this component (see missionDraftBackup) — scoped to the
+		// net it was captured in so a draft never leaks onto a different
+		// net's form. Consumed unconditionally: a mismatched or stray
+		// backup (e.g. the NCS switched nets while in Settings) is dropped
+		// rather than left to surprise a later mount.
+		const backup = get(missionDraftBackup);
+		if (backup) {
+			if ($activeNet && backup.netId === $activeNet.id) {
+				showMissionForm = true;
+				newMissionTitle = backup.title;
+				newMissionDesc = backup.desc;
+				newMissionPriority = backup.priority;
+				newMissionAssign = backup.assign;
+				missionLocLabel = backup.locLabel;
+				missionLocLat = backup.locLat;
+				missionLocLon = backup.locLon;
+				missionLocSource = backup.locSource as MissionLocSource;
+				missionLocNearId = backup.locNearId;
+				missionLocWords = backup.locWords;
+				missionLocNear = backup.locNear;
+				missionLocConfirmed = backup.locConfirmed;
+				missionLocCode = backup.locCode;
+				selectedAnnotationIds = backup.selectedAnnotationIds;
+			}
+			missionDraftBackup.set(null);
+		}
+
 		initNetControlStore();
 
 		timerInterval = setInterval(() => {
@@ -752,71 +875,675 @@
 		}
 	}
 
+	// Open the form — focuses the title input once it mounts.
+	$effect(() => {
+		if (showMissionForm) {
+			queueMicrotask(() => titleEl?.focus());
+		}
+	});
+
+	// Consume map-clicked coordinates into the location field (mirrors
+	// LocationManager's mapClickedCoords effect).
+	$effect(() => {
+		if (!missionMapCoords) return;
+		const { lat, lon } = missionMapCoords;
+		const near = nearestAnnotation(lat, lon, locOptions, 100);
+		unlinkStaleAutoLink();
+		missionLocLat = lat;
+		missionLocLon = lon;
+		missionLocSource = 'map';
+		missionLocNearId = near?.annotation.id ?? null;
+		missionLocLabel = near?.annotation.label ?? '';
+		// Dragging (or re-clicking) away from a what3words square / geocode
+		// cell means the NCS is overriding it — the words/code are gone
+		// because the pin is no longer in that square, which is correct and
+		// honest.
+		missionLocWords = '';
+		missionLocNear = '';
+		missionLocConfirmed = false;
+		missionLocCode = '';
+		srMessage = near ? `Location set near ${near.annotation.label}` : `Location set to ${formatCoord(lat, lon)}`;
+		pickingOnMap = false;
+		onMissionMapCoordsConsumed?.();
+	});
+
+	// The map side cancelled (Esc) without ever sending coordinates back —
+	// drop the panel's "picking" state so the trigger reverts.
+	$effect(() => {
+		if (!missionPickActive && pickingOnMap) {
+			pickingOnMap = false;
+		}
+	});
+
+	// Removes whatever annotation was auto-linked by a *previous* location
+	// selection before a new selection overwrites autoLinkedAnnId — otherwise
+	// switching location twice leaves the first pick's annotation linked to
+	// the mission forever, invisibly (it no longer matches the location
+	// chip, so nothing in the UI hints it's still selected).
+	function unlinkStaleAutoLink() {
+		if (autoLinkedAnnId && selectedAnnotationIds.includes(autoLinkedAnnId)) {
+			selectedAnnotationIds = selectedAnnotationIds.filter((id) => id !== autoLinkedAnnId);
+		}
+		autoLinkedAnnId = null;
+	}
+
+	function selectLocationAnnotation(a: Annotation) {
+		unlinkStaleAutoLink();
+		try {
+			const geo = typeof a.geometry === 'string' ? JSON.parse(a.geometry) : a.geometry;
+			if (geo?.type === 'Point' && Array.isArray(geo.coordinates)) {
+				missionLocLon = geo.coordinates[0];
+				missionLocLat = geo.coordinates[1];
+			}
+		} catch { /* ignore parse errors */ }
+		missionLocLabel = a.label;
+		missionLocSource = 'annotation';
+		missionLocNearId = a.id;
+		if (!selectedAnnotationIds.includes(a.id)) {
+			selectedAnnotationIds = [...selectedAnnotationIds, a.id];
+		}
+		autoLinkedAnnId = a.id;
+		locOpen = false;
+		locQuery = '';
+		srMessage = `Location set to ${a.label}`;
+		queueMicrotask(() => locFieldTriggerEl?.focus());
+	}
+
+	function useTypedLocation() {
+		const q = locQuery.trim();
+		if (!q) return;
+		unlinkStaleAutoLink();
+		missionLocLabel = q;
+		missionLocLat = null;
+		missionLocLon = null;
+		missionLocSource = 'typed';
+		missionLocNearId = null;
+		locOpen = false;
+		locQuery = '';
+		srMessage = `Location set to ${q}`;
+		queueMicrotask(() => locFieldTriggerEl?.focus());
+	}
+
+	function useTypedCoords() {
+		const lat = parseFloat(locCoordLat);
+		const lon = parseFloat(locCoordLon);
+		if (isNaN(lat) || lat < -90 || lat > 90) {
+			locCoordError = 'Latitude must be −90 to 90';
+			return;
+		}
+		if (isNaN(lon) || lon < -180 || lon > 180) {
+			locCoordError = 'Longitude must be −180 to 180';
+			return;
+		}
+		locCoordError = '';
+		unlinkStaleAutoLink();
+		missionLocLat = lat;
+		missionLocLon = lon;
+		missionLocSource = 'coords';
+		missionLocNearId = null;
+		locOpen = false;
+		locCoordLat = '';
+		locCoordLon = '';
+		srMessage = missionLocLabel ? `Location set to ${missionLocLabel}` : `Location set to ${formatCoord(lat, lon)}`;
+		queueMicrotask(() => locFieldTriggerEl?.focus());
+	}
+
+	function clearLocation() {
+		missionLocLabel = '';
+		missionLocLat = null;
+		missionLocLon = null;
+		missionLocSource = 'none';
+		missionLocNearId = null;
+		missionLocWords = '';
+		missionLocNear = '';
+		missionLocConfirmed = false;
+		missionLocCode = '';
+		unlinkStaleAutoLink();
+		onClearMissionDraft?.();
+		srMessage = 'Location cleared.';
+		queueMicrotask(() => locFieldTriggerEl?.focus());
+	}
+
+	function startMapPick() {
+		locOpen = false;
+		locQuery = '';
+		pickingOnMap = true;
+		srMessage = 'Picking location on the map. Press Escape to cancel.';
+		onPlaceMissionLocation?.(newMissionTitle.trim() || 'Mission location');
+	}
+
+	function onLocTriggerClick() {
+		if (pickingOnMap) return;
+		openLocPopover();
+	}
+
+	function openLocPopover() {
+		// Clicking the chip body is forgiving for an unconfirmed resolve
+		// (w3w/Plus Code/MGRS) — it re-flies to the pin (the confirmation
+		// check) without auto-confirming.
+		if (locNeedsConfirm && missionLocLat != null && missionLocLon != null) {
+			flyToLocationPin(missionLocLat, missionLocLon);
+		}
+		locOpen = true;
+		locQuery = missionLocSource !== 'none' ? missionLocLabel : '';
+		locHighlight = 0;
+		resetW3WSuggestState();
+		queueMicrotask(() => {
+			locSearchEl?.focus();
+			locSearchEl?.select();
+		});
+	}
+
+	// Closing on blur must not fire while focus is only moving to another
+	// control inside the same popover (e.g. into the Coordinates fields).
+	function onLocSearchBlur(e: FocusEvent) {
+		const next = e.relatedTarget as Node | null;
+		if (next && locPopoverEl?.contains(next)) return;
+		setTimeout(() => { locOpen = false; }, 150);
+	}
+
+	// --- what3words -------------------------------------------------------
+
+	function isMobileViewport(): boolean {
+		return typeof window !== 'undefined' && window.matchMedia('(max-width: 768px)').matches;
+	}
+
+	// The panel lives in the bottom sheet on mobile — flying straight to the
+	// pin's coordinates would centre it right where the sheet covers it.
+	// Nudge the fly-to target north so the pin lands in the upper third of
+	// the visible map instead (design §6.11's "ship this first" 5-liner).
+	function latOffsetForSheet(lat: number, zoom: number): number {
+		const metersPerPixel = (156543.03392 * Math.cos((lat * Math.PI) / 180)) / Math.pow(2, zoom);
+		const pixelShift = 140;
+		return (metersPerPixel * pixelShift) / 111320;
+	}
+
+	function flyToLocationPin(lat: number, lon: number) {
+		const zoom = 16;
+		const flyLat = isMobileViewport() ? lat + latOffsetForSheet(lat, zoom) : lat;
+		onFlyTo?.(flyLat, lon, zoom);
+	}
+
+	function copyForW3WError(e: unknown): string {
+		const code = e instanceof ApiError ? (e.body?.code as string | undefined) : undefined;
+		switch (code) {
+			case 'bad_words':
+			case 'bad_request':
+				return 'That isn’t a valid three-word address — check the spelling.';
+			case 'quota_exceeded':
+			case 'rate_limited':
+				return 'what3words quota reached. Try again later, or use coordinates.';
+			case 'invalid_key':
+				return 'what3words rejected the API key. Check it in Settings.';
+			case 'not_configured':
+				return 'what3words isn’t configured. Add an API key in Settings.';
+			default:
+				return 'Couldn’t reach what3words. Check the connection, or use coordinates.';
+		}
+	}
+
+	function resetW3WSuggestState() {
+		if (w3wDebounce) {
+			clearTimeout(w3wDebounce);
+			w3wDebounce = null;
+		}
+		w3wSeq++;
+		w3wSuggestions = [];
+		w3wError = '';
+		w3wSearchedQuery = '';
+		w3wLoading = false;
+	}
+
+	// Fires on every keystroke while the query is what3words-shaped. Local
+	// regex gate first (§9's quota guard) — a syntactically invalid or
+	// too-short partial never reaches the network.
+	function scheduleW3WSuggest() {
+		if (w3wDebounce) {
+			clearTimeout(w3wDebounce);
+			w3wDebounce = null;
+		}
+		w3wSeq++;
+		w3wSuggestions = [];
+		w3wError = '';
+		w3wSearchedQuery = '';
+		if (!$w3wConfigured) {
+			w3wLoading = false;
+			return;
+		}
+		const q = locQuery.trim();
+		if (!looksLikePartial(q) && !isFullAddress(q)) {
+			w3wLoading = false;
+			return;
+		}
+		const dotIdx = q.indexOf('.');
+		if (dotIdx === -1 || q.slice(dotIdx + 1).length < 2) {
+			w3wLoading = false;
+			return;
+		}
+		w3wLoading = true; // optimistic — covers the debounce window too
+		const seq = w3wSeq;
+		w3wDebounce = setTimeout(() => { void runW3WSuggest(q, seq); }, 250);
+	}
+
+	async function runW3WSuggest(q: string, seq: number) {
+		try {
+			const center = getMapCenter?.() ?? null;
+			const centroid = center ? null : annotationCentroid(locOptions);
+			const focus = center ? { lat: center.lat, lon: center.lon } : (centroid ?? undefined);
+			const resp = await api.w3wSuggest(q, focus);
+			if (seq !== w3wSeq) return; // stale — a later keystroke has already superseded this
+			w3wSuggestions = resp.suggestions ?? [];
+			w3wSearchedQuery = q;
+		} catch (e) {
+			if (seq !== w3wSeq) return;
+			w3wSuggestions = [];
+			w3wError = copyForW3WError(e);
+		} finally {
+			if (seq === w3wSeq) w3wLoading = false;
+		}
+	}
+
+	// The heart of the feature: resolve → draft pin → fly-to → unconfirmed
+	// chip. The map fly-to is the safety check, not a nicety — a mis-heard
+	// word lands you in another country, and this is how the NCS catches it.
+	//
+	// Guarded by the same w3wSeq generation counter runW3WSuggest uses: two
+	// resolves can race (e.g. two suggestion rows triggered before either
+	// response returns, or Enter on one address followed by Enter on a
+	// retyped one before the first replies) and network order is not call
+	// order, so an older response must never clobber a newer selection —
+	// that would silently move the pin without the NCS asking for it.
+	async function resolveW3W(words: string) {
+		w3wLoading = true;
+		w3wError = '';
+		const seq = ++w3wSeq;
+		try {
+			const r = await api.w3wResolve(words);
+			if (seq !== w3wSeq) return; // stale — a newer resolve/query has superseded this
+			unlinkStaleAutoLink();
+			const near = nearestAnnotation(r.lat, r.lon, locOptions, 100);
+			const nearText = near?.annotation.label ?? r.nearestPlace ?? '';
+			missionLocLat = r.lat;
+			missionLocLon = r.lon;
+			missionLocWords = r.words;
+			missionLocNear = nearText;
+			missionLocSource = 'w3w';
+			missionLocCode = ''; // not a geocode selection
+			missionLocNearId = near?.annotation.id ?? null;
+			missionLocLabel = w3wLocationLabel(r.words, nearText || undefined);
+			missionLocConfirmed = false;
+			putReverse(r.lat, r.lon, r.words); // seed the reverse cache — free
+			onSetMissionDraftPoint?.(r.lat, r.lon);
+			flyToLocationPin(r.lat, r.lon);
+			locOpen = false;
+			locQuery = '';
+			resetW3WSuggestState();
+			srMessage = `Location set to ${formatWords(r.words)}${nearText ? `, near ${nearText}` : ''}. Shown on the map — confirm before creating.`;
+			queueMicrotask(() => locFieldTriggerEl?.focus());
+		} catch (e) {
+			if (seq !== w3wSeq) return;
+			w3wError = copyForW3WError(e);
+		} finally {
+			if (seq === w3wSeq) w3wLoading = false;
+		}
+	}
+
+	function confirmLocation() {
+		if (missionLocLat == null || missionLocLon == null) return;
+		flyToLocationPin(missionLocLat, missionLocLon);
+		missionLocConfirmed = true;
+		srMessage = `Confirmed ${locChipPrimary} on the map.`;
+	}
+
+	function openW3WSettings() {
+		// Settings and Net Control are mutually exclusive panels — opening
+		// Settings unmounts this component and, with it, every mission-draft
+		// field below (plain $state, no other persistence). Snapshot the
+		// draft so onMount can restore it when the NCS comes back instead of
+		// losing their in-progress mission over an API key paste.
+		if (showMissionForm && $activeNet) {
+			missionDraftBackup.set({
+				netId: $activeNet.id,
+				title: newMissionTitle,
+				desc: newMissionDesc,
+				priority: newMissionPriority,
+				assign: newMissionAssign,
+				locLabel: missionLocLabel,
+				locLat: missionLocLat,
+				locLon: missionLocLon,
+				locSource: missionLocSource,
+				locNearId: missionLocNearId,
+				locWords: missionLocWords,
+				locNear: missionLocNear,
+				locConfirmed: missionLocConfirmed,
+				locCode: missionLocCode,
+				selectedAnnotationIds: [...selectedAnnotationIds],
+			});
+		}
+		openSettings('what3words');
+	}
+
+	/** Shared copy handler for the reverse-formats row (§4) — one clipboard
+	 * path for Plus Code / MGRS / what3words, "Copied" feedback keyed by
+	 * which token was copied. Clipboard may be unavailable (permissions,
+	 * insecure context) — this is a convenience, not worth an error row. */
+	async function copyToken(kind: 'plus' | 'mgrs' | 'w3w', text: string) {
+		if (!text) return;
+		try {
+			await navigator.clipboard?.writeText(text);
+			reverseCopied = kind;
+			setTimeout(() => { if (reverseCopied === kind) reverseCopied = null; }, 1500);
+		} catch {
+			// silent — see comment above
+		}
+	}
+
+	// --- Offline geocodes (Plus Code / MGRS) — #94 -------------------------
+
+	// Reference point for recovering a short Plus Code, and for shortening
+	// the Plus Code shown in the reverse row — same order both places so the
+	// code an operator reads out matches the code they'd type back in.
+	// Captured fresh on every call; never stored, so a resolved code is
+	// always a fixed lat/lon regardless of where the map pans afterward.
+	function currentRefPoint(): RefPoint | null {
+		// 1. Map centre — what the NCS is actually looking at. Same source the
+		//    w3w autosuggest focus already uses.
+		const c = getMapCenter?.();
+		if (c) return { lat: c.lat, lon: c.lon };
+		// 2. Net location centroid — the event's own footprint.
+		const centroid = annotationCentroid(locOptions);
+		if (centroid) return centroid;
+		// 3. Our own GPS fix, when it's a real, non-stale one.
+		const status = get(gpsStatus);
+		if (status.fix && status.fix.mode >= 2 && !status.stale) {
+			return { lat: status.fix.lat, lon: status.fix.lon };
+		}
+		return null;
+	}
+
+	// resolveW3W's success branch with the await removed — offline codes
+	// resolve synchronously, but everything downstream (draft pin, fly-to,
+	// unconfirmed chip, srMessage) is identical so the NCS gets the same
+	// safety check regardless of which format they typed.
+	function useGeocode(g: GeocodeResult) {
+		unlinkStaleAutoLink();
+		const near = nearestAnnotation(g.lat, g.lon, locOptions, 100);
+		const nearText = near?.annotation.label ?? '';
+		missionLocLat = g.lat;
+		missionLocLon = g.lon;
+		missionLocCode = g.label;
+		missionLocWords = ''; // not a w3w selection
+		missionLocNear = nearText;
+		missionLocSource = g.format;
+		missionLocNearId = near?.annotation.id ?? null;
+		missionLocLabel = geocodeLocationLabel(
+			g.format === 'mgrs' ? formatMGRSGroups(g.label) : g.label,
+			nearText || undefined
+		);
+		missionLocConfirmed = false;
+		onSetMissionDraftPoint?.(g.lat, g.lon);
+		flyToLocationPin(g.lat, g.lon);
+		locOpen = false;
+		locQuery = '';
+		resetW3WSuggestState();
+		const formatName = g.format === 'mgrs' ? 'MGRS ' : 'Plus Code ';
+		srMessage = `Location set to ${formatName}${missionLocLabel}. Shown on the map — confirm before creating.`;
+		queueMicrotask(() => locFieldTriggerEl?.focus());
+	}
+
+	/** Pull the "near X" fragment out of a "<code> · near X" stored location
+	 * string — same separator as w3wSuffix, generalized for the mission-card
+	 * geocode treatment since Plus Code/MGRS labels don't start with '///'. */
+	function geocodeNearSuffix(location: string): string | null {
+		const marker = ' · near ';
+		const idx = location.indexOf(marker);
+		if (idx === -1) return null;
+		const suffix = location.slice(idx + marker.length).trim();
+		return suffix || null;
+	}
+
+	// Lazily resolve the ///words for whatever location is currently chosen,
+	// module cache first. Silent on failure — a reverse lookup is a
+	// convenience; failing loudly would be noise during an incident.
+	$effect(() => {
+		const lat = missionLocLat;
+		const lon = missionLocLon;
+		reverseWords = '';
+		if (!$w3wConfigured || lat == null || lon == null) return;
+		// Already showing the words as the primary label — no duplicate line.
+		if (missionLocSource === 'w3w') return;
+		const cached = cachedReverse(lat, lon);
+		if (cached) {
+			reverseWords = cached;
+			return;
+		}
+		let cancelled = false;
+		api.w3wReverse(lat, lon).then((r) => {
+			if (cancelled) return;
+			putReverse(lat, lon, r.words);
+			reverseWords = r.words;
+		}).catch(() => { /* silent — see comment above */ });
+		return () => { cancelled = true; };
+	});
+
+	// Plus Code / MGRS reverse tokens — synchronous, no effect, no loading
+	// state: the whole point of #94 is that these never touch the network.
+	// Self-suppressed against the current source, same rule as the w3w leg.
+	let reversePlusCode = $derived.by(() => {
+		if (missionLocSource === 'pluscode' || missionLocLat == null || missionLocLon == null) return null;
+		return formatPlusCode(missionLocLat, missionLocLon, currentRefPoint());
+	});
+	let reverseMGRS = $derived.by(() => {
+		if (missionLocSource === 'mgrs' || missionLocLat == null || missionLocLon == null) return '';
+		return formatMGRS(missionLocLat, missionLocLon, 4);
+	});
+
+	function commitLocRow(i: number) {
+		if (i === 0) {
+			// Enter on a complete code/address commits it directly instead of
+			// requiring an arrow-down into the suggestion list first.
+			if (locGeocode && !isGeocodeError(locGeocode)) {
+				useGeocode(locGeocode);
+				return;
+			}
+			if ($w3wConfigured && locIsFullAddress) {
+				resolveW3W(locQuery.trim());
+				return;
+			}
+			startMapPick();
+			return;
+		}
+		if (i === 1 && geocodeRowCount === 1 && locGeocode && !isGeocodeError(locGeocode)) {
+			useGeocode(locGeocode);
+			return;
+		}
+		if (i >= 1 + geocodeRowCount && i < 1 + geocodeRowCount + w3wRowCount) {
+			resolveW3W(w3wSuggestions[i - 1 - geocodeRowCount].words);
+			return;
+		}
+		const annIdx = i - 1 - geocodeRowCount - w3wRowCount;
+		if (annIdx >= 0 && annIdx < locFiltered.length) {
+			selectLocationAnnotation(locFiltered[annIdx]);
+			return;
+		}
+		if (showFreeTextRow) useTypedLocation();
+	}
+
+	// Keep the highlighted row in range as the filtered list shrinks.
+	$effect(() => {
+		if (locHighlight > locRowCount - 1) locHighlight = Math.max(0, locRowCount - 1);
+	});
+
+	// Jump the highlight onto a freshly-detected geocode resolve row so Enter
+	// is unambiguous — but only on the actual 0->1 transition (tracked below),
+	// so it never fights an operator who has arrowed back to row 0 on purpose
+	// while a code is still showing.
+	let prevGeocodeRowCount = 0;
+	$effect(() => {
+		const cur = geocodeRowCount;
+		if (cur === 1 && prevGeocodeRowCount === 0 && locHighlight === 0) locHighlight = 1;
+		prevGeocodeRowCount = cur;
+	});
+
+	function onLocKeydown(e: KeyboardEvent) {
+		if (e.key === 'ArrowDown') {
+			e.preventDefault();
+			locHighlight = (locHighlight + 1) % locRowCount;
+		} else if (e.key === 'ArrowUp') {
+			e.preventDefault();
+			locHighlight = (locHighlight - 1 + locRowCount) % locRowCount;
+		} else if (e.key === 'Home') {
+			e.preventDefault();
+			locHighlight = 0;
+		} else if (e.key === 'End') {
+			e.preventDefault();
+			locHighlight = locRowCount - 1;
+		} else if (e.key === 'Enter') {
+			e.preventDefault();
+			commitLocRow(locHighlight);
+		} else if (e.key === 'Tab') {
+			locOpen = false;
+		}
+		// Escape is intentionally left unhandled here — it bubbles to
+		// onFormKeydown, which owns the whole form's Escape priority chain.
+	}
+
+	function selectPriorityAt(i: number) {
+		newMissionPriority = missionPriorities[i];
+		queueMicrotask(() => priorityRefs[i]?.focus());
+	}
+
+	function onPriorityKeydown(e: KeyboardEvent, i: number) {
+		if (e.key === 'ArrowRight' || e.key === 'ArrowDown') {
+			e.preventDefault();
+			selectPriorityAt((i + 1) % missionPriorities.length);
+		} else if (e.key === 'ArrowLeft' || e.key === 'ArrowUp') {
+			e.preventDefault();
+			selectPriorityAt((i - 1 + missionPriorities.length) % missionPriorities.length);
+		} else if (e.key === 'Enter') {
+			e.preventDefault();
+			handleCreateMission();
+		}
+		// Space is left to native button activation, which selects this chip.
+	}
+
+	function onFormKeydown(e: KeyboardEvent) {
+		if (e.key !== 'Escape') return;
+		if (locOpen) {
+			// This form owns Escape for the location popover: closing it here
+			// must not also bubble to SidePanel.svelte's window-level listener
+			// and collapse the whole Net Control panel along with the draft.
+			e.stopPropagation();
+			locOpen = false;
+			locQuery = '';
+			queueMicrotask(() => locFieldTriggerEl?.focus());
+		} else if (pickingOnMap) {
+			// Deliberately left unstopped: Map.svelte owns Escape for an
+			// in-progress map pick via its own window-level listener, and
+			// calls stopImmediatePropagation() itself once it cancels the
+			// pick — that is what keeps SidePanel from also closing. If we
+			// stopped propagation here instead, the event would never reach
+			// Map.svelte at all whenever focus is inside this form (e.g. the
+			// title field) while picking, leaving the pick stuck forever
+			// with no other way to cancel it.
+		} else {
+			// Same reasoning as the locOpen branch: cancelling the mission
+			// form itself must not also bubble up and close the panel.
+			e.stopPropagation();
+			cancelMissionForm();
+		}
+	}
+
+	function resetMissionForm() {
+		showMissionForm = false;
+		newMissionTitle = '';
+		newMissionDesc = '';
+		newMissionPriority = 'routine';
+		newMissionAssign = '';
+		missionLocLabel = '';
+		missionLocLat = null;
+		missionLocLon = null;
+		missionLocSource = 'none';
+		missionLocNearId = null;
+		missionLocWords = '';
+		missionLocNear = '';
+		missionLocConfirmed = false;
+		missionLocCode = '';
+		autoLinkedAnnId = null;
+		selectedAnnotationIds = [];
+		locQuery = '';
+		locOpen = false;
+		locCoordLat = '';
+		locCoordLon = '';
+		locCoordError = '';
+		detailsOpen = false;
+		formError = '';
+		pickingOnMap = false;
+		resetW3WSuggestState();
+	}
+
+	function cancelMissionForm() {
+		resetMissionForm();
+		onClearMissionDraft?.();
+	}
+
 	async function handleCreateMission() {
-		if (!$activeNet || !newMissionTitle.trim()) return;
+		if (!$activeNet) return;
+		if (!newMissionTitle.trim()) {
+			formError = 'Mission title is required';
+			titleEl?.focus();
+			return;
+		}
+		formError = '';
+		missionSubmitting = true;
 		try {
 			const data: Partial<NetMission> = {
 				title: newMissionTitle.trim(),
 				description: newMissionDesc.trim(),
 				priority: newMissionPriority,
 				assignedTo: newMissionAssign,
-				location: newMissionLocation.trim()
+				location: missionLocLabel.trim(),
 			};
-			const lat = parseFloat(newMissionLat);
-			const lon = parseFloat(newMissionLon);
-			if (!isNaN(lat) && !isNaN(lon)) {
-				data.lat = lat;
-				data.lon = lon;
+			if (missionLocLat != null && missionLocLon != null) {
+				data.lat = missionLocLat;
+				data.lon = missionLocLon;
 			}
+			// handleCreateMission never blocks on w3w confirmation — an NCS
+			// under pressure must never be gated by a ceremony button. Instead,
+			// an unconfirmed w3w mission gets the words in the success toast
+			// one more time, in a place the NCS will see. Capture this before
+			// resetMissionForm() clears the location state.
+			const w3wToastWords =
+				missionLocSource === 'w3w' && !missionLocConfirmed ? missionLocWords : '';
 			const mission = await api.createMission($activeNet.id, data);
-			// Link selected annotations to the new mission.
+			let failed = 0;
 			for (const annId of selectedAnnotationIds) {
 				try {
 					await api.linkAnnotation(annId, mission.id);
 				} catch (err) {
+					failed++;
 					console.error('Link annotation failed:', err);
 				}
 			}
-			showMissionForm = false;
-			newMissionTitle = '';
-			newMissionDesc = '';
-			newMissionPriority = 'routine';
-			newMissionAssign = '';
-			newMissionLocation = '';
-			newMissionLat = '';
-			newMissionLon = '';
-			selectedAnnotationIds = [];
+			resetMissionForm();
+			onClearMissionDraft?.();
+			showToast(
+				w3wToastWords ? `Mission created at ${formatWords(w3wToastWords)}` : `Mission created: ${mission.title}`,
+				'success'
+			);
+			if (failed > 0) {
+				showToast(`Mission created — ${failed} annotation link(s) failed`, 'error', 5000);
+			}
+			if (recentlyChangedTimer) clearTimeout(recentlyChangedTimer);
+			recentlyChangedMissionId = mission.id;
+			recentlyChangedTimer = setTimeout(() => { recentlyChangedMissionId = null; }, 2000);
 		} catch (e) {
 			console.error('Create mission failed:', e);
+			formError = 'Could not create mission — check the connection and try again';
+			showToast('Create mission failed', 'error', 5000);
+		} finally {
+			missionSubmitting = false;
 		}
-	}
-
-	function handleMissionLocationInput() {
-		const q = newMissionLocation.trim().toLowerCase();
-		if (!q) {
-			missionLocSuggestions = [];
-			showMissionLocDropdown = false;
-			return;
-		}
-		missionLocSuggestions = $netAnnotations.filter(a =>
-			a.label.toLowerCase().includes(q) ||
-			(a.shortName && a.shortName.toLowerCase().includes(q))
-		);
-		showMissionLocDropdown = missionLocSuggestions.length > 0;
-	}
-
-	function selectMissionAnnotation(a: import('$lib/types').Annotation) {
-		newMissionLocation = a.label;
-		// Extract lat/lon from GeoJSON Point geometry.
-		try {
-			const geo = typeof a.geometry === 'string' ? JSON.parse(a.geometry) : a.geometry;
-			if (geo?.type === 'Point' && geo.coordinates) {
-				newMissionLon = String(geo.coordinates[0]);
-				newMissionLat = String(geo.coordinates[1]);
-			}
-		} catch { /* ignore parse errors */ }
-		showMissionLocDropdown = false;
-		missionLocSuggestions = [];
 	}
 
 	async function handleMissionStatusChange(m: NetMission, status: string) {
@@ -947,6 +1674,125 @@
 	let linkableAnnotations = $derived(
 		$annotationList.filter((a) => !isTerminalStatus(a.status))
 	);
+
+	// Mission location picker — net-scoped point annotations only (not
+	// linkableAnnotations, which is not net-scoped and would leak other nets').
+	let locOptions = $derived(
+		$netLocationAnnotations.filter((a) => !isTerminalStatus(a.status))
+	);
+	let locFiltered = $derived.by(() => {
+		const q = locQuery.trim().toLowerCase();
+		if (!q) return locOptions;
+		return locOptions.filter((a) =>
+			a.label.toLowerCase().includes(q) ||
+			(a.shortName && a.shortName.toLowerCase().includes(q))
+		);
+	});
+	// --- offline geocode detection & rows (#94) — checked ahead of w3w's own
+	// derived block below since detectFormat's precedence already puts w3w
+	// first; pluscode/mgrs only ever come back once a w3w shape is ruled out.
+	let locFormat = $derived(detectFormat(locQuery));
+	let locGeocode = $derived.by((): GeocodeParse | null => {
+		if (locFormat === 'pluscode') return parsePlusCode(locQuery, currentRefPoint());
+		if (locFormat === 'mgrs') return parseMGRS(locQuery);
+		return null;
+	});
+	let geocodeRowCount = $derived(locGeocode && !isGeocodeError(locGeocode) ? 1 : 0);
+	let geocodeErrCode = $derived(
+		locGeocode && isGeocodeError(locGeocode) ? locGeocode.error : null
+	);
+
+	// Copy for the inline error under the Plus Code / MGRS group header —
+	// short-code-without-reference is the only one with an action in it,
+	// because it's the only one that is actually fixable from here (pan the
+	// map). The others are terminal and self-explanatory.
+	function geocodeErrorCopy(code: GeocodeErrorCode, format: GeocodeFormat | null): string {
+		if (code === 'needs_reference') {
+			return 'Short Plus Code needs a nearby reference — pan the map there first, or type the full code.';
+		}
+		if (code === 'too_coarse') {
+			return 'That Plus Code is too coarse to place a pin — include the characters after the +.';
+		}
+		return format === 'mgrs'
+			? 'Not a valid MGRS grid reference.'
+			: 'Not a valid Plus Code — check the characters after the +.';
+	}
+
+	// Announce the error once, on the transition into it — this only reruns
+	// when geocodeErrCode's *value* actually changes, not on every keystroke
+	// that leaves it unchanged (e.g. typing further into an already-invalid
+	// code).
+	$effect(() => {
+		const code = geocodeErrCode;
+		if (code) srMessage = geocodeErrorCopy(code, locFormat);
+	});
+
+	let showFreeTextRow = $derived(
+		locQuery.trim().length > 0 &&
+		geocodeRowCount === 0 &&
+		!locFiltered.some((a) => a.label.toLowerCase() === locQuery.trim().toLowerCase())
+	);
+
+	// --- what3words detection & rows ---
+	let locIsFullAddress = $derived(isFullAddress(locQuery));
+	let locW3WShaped = $derived(locIsFullAddress || looksLikePartial(locQuery));
+	// Stricter than locW3WShaped: also requires the ≥2-chars-after-first-dot
+	// quota guard, so the "what3words" group (and any network call) only
+	// appears once there's something worth searching for.
+	let w3wGateOk = $derived.by(() => {
+		if (!locW3WShaped) return false;
+		const q = locQuery.trim();
+		const dotIdx = q.indexOf('.');
+		return dotIdx !== -1 && q.slice(dotIdx + 1).length >= 2;
+	});
+	let w3wRowCount = $derived(
+		$w3wConfigured && w3wGateOk && !w3wLoading && !w3wError ? w3wSuggestions.length : 0
+	);
+	let w3wNoResults = $derived(
+		$w3wConfigured && w3wGateOk && !w3wLoading && !w3wError &&
+		w3wSuggestions.length === 0 && w3wSearchedQuery === locQuery.trim()
+	);
+
+	let locRowCount = $derived(
+		1 + geocodeRowCount + w3wRowCount + locFiltered.length + (showFreeTextRow ? 1 : 0)
+	);
+
+	// Whether the current selection still needs the map fly-to acknowledged
+	// before it's trustworthy — true for every resolve that skipped a human
+	// picking a point directly (w3w, Plus Code, MGRS all share the gate).
+	let locNeedsConfirm = $derived(
+		missionLocSource === 'w3w' || missionLocSource === 'pluscode' || missionLocSource === 'mgrs'
+	);
+
+	// The annotation behind the current selection, when source is 'annotation'
+	// (for its category icon/color) or 'map'/'w3w' with a near match (for its
+	// label) — a what3words resolve that lands near a net location still
+	// picks up that location's icon/colour without losing the words.
+	let missionLocAnn = $derived(
+		missionLocNearId ? ($netLocationAnnotations.find((a) => a.id === missionLocNearId) ?? null) : null
+	);
+
+	let locChipPrimary = $derived.by(() => {
+		if (missionLocSource === 'w3w') return formatWords(missionLocWords);
+		if (missionLocSource === 'mgrs') return formatMGRSGroups(missionLocCode);
+		if (missionLocSource === 'pluscode') return missionLocCode;
+		if (missionLocSource === 'map') return missionLocLabel || 'Dropped pin';
+		if (missionLocSource === 'coords' && !missionLocLabel && missionLocLat != null && missionLocLon != null) {
+			return formatCoord(missionLocLat, missionLocLon);
+		}
+		return missionLocLabel;
+	});
+	let locChipSecondary = $derived.by(() => {
+		if (missionLocLat == null || missionLocLon == null) return '';
+		const coords = formatCoord(missionLocLat, missionLocLon);
+		if (missionLocSource === 'w3w') return missionLocNear ? `near ${missionLocNear} · ${coords}` : coords;
+		if (missionLocSource === 'pluscode' || missionLocSource === 'mgrs') {
+			return missionLocNear ? `near ${missionLocNear} · ${coords}` : coords;
+		}
+		if (missionLocSource === 'map') return missionLocLabel ? `near · ${coords}` : coords;
+		if (missionLocSource === 'coords') return missionLocLabel ? coords : '';
+		return coords;
+	});
 
 	let activeMissionCount = $derived($missions.filter((m) => m.status !== 'complete').length);
 	let completeMissionCount = $derived($missions.filter((m) => m.status === 'complete').length);
@@ -1372,21 +2218,25 @@
 		{/if}
 
 		<!-- Tabs -->
-		<div class="tabs">
-			<button class="tab" class:active={currentTab === 'situation'} onclick={() => { currentTab = 'situation'; metricsFilter = null; }}>
-				SitBoard {#if $attentionItems.length > 0}<span class="tab-count tab-count-alert">{$attentionItems.length}</span>{/if}
+		<div class="tabs" role="tablist" aria-label="Net control sections">
+			<button class="tab" role="tab" aria-selected={currentTab === 'situation'} class:active={currentTab === 'situation'} onclick={() => { currentTab = 'situation'; metricsFilter = null; }}>
+				<span class="tab-label">SitBoard</span>
+				{#if $attentionItems.length > 0}<span class="tab-count tab-count-alert" aria-label="{$attentionItems.length} items need attention">{$attentionItems.length}</span>{/if}
 			</button>
-			<button class="tab" class:active={currentTab === 'roster'} onclick={() => { currentTab = 'roster'; metricsFilter = null; }}>
-				Roster <span class="tab-count">{$activeCheckIns.length}</span>
+			<button class="tab" role="tab" aria-selected={currentTab === 'roster'} class:active={currentTab === 'roster'} onclick={() => { currentTab = 'roster'; metricsFilter = null; }}>
+				<span class="tab-label">Roster</span>
+				<span class="tab-count">{$activeCheckIns.length}</span>
 			</button>
-			<button class="tab" class:active={currentTab === 'missions'} onclick={() => { currentTab = 'missions'; metricsFilter = null; }}>
-				Missions {#if activeMissionCount > 0}<span class="tab-count">{activeMissionCount}</span>{/if}
+			<button class="tab" role="tab" aria-selected={currentTab === 'missions'} class:active={currentTab === 'missions'} onclick={() => { currentTab = 'missions'; metricsFilter = null; }}>
+				<span class="tab-label">Missions</span>
+				{#if activeMissionCount > 0}<span class="tab-count">{activeMissionCount}</span>{/if}
 			</button>
-			<button class="tab" class:active={currentTab === 'locations'} onclick={() => { currentTab = 'locations'; metricsFilter = null; }}>
-				Locations {#if $netAnnotations.length > 0}<span class="tab-count">{$netAnnotations.length}</span>{/if}
+			<button class="tab" role="tab" aria-selected={currentTab === 'locations'} class:active={currentTab === 'locations'} onclick={() => { currentTab = 'locations'; metricsFilter = null; }}>
+				<span class="tab-label">Locations</span>
+				{#if $netAnnotations.length > 0}<span class="tab-count">{$netAnnotations.length}</span>{/if}
 			</button>
-			<button class="tab" class:active={currentTab === 'timeline'} onclick={() => { currentTab = 'timeline'; metricsFilter = null; }}>
-				Timeline
+			<button class="tab" role="tab" aria-selected={currentTab === 'timeline'} class:active={currentTab === 'timeline'} onclick={() => { currentTab = 'timeline'; metricsFilter = null; }}>
+				<span class="tab-label">Timeline</span>
 			</button>
 		</div>
 
@@ -1825,7 +2675,7 @@
 				<!-- Mission toolbar -->
 				<div class="mission-toolbar">
 					{#if !showMissionForm}
-						<button class="btn-secondary btn-sm" onclick={() => (showMissionForm = true)}>+ New</button>
+						<button class="btn-secondary btn-sm" onclick={() => (showMissionForm = true)}>+ Mission</button>
 					{/if}
 					<div class="mission-filter-chips">
 						<button class="filter-chip" class:active={missionFilter === 'all'} onclick={() => (missionFilter = 'all')}>All {$missions.length}</button>
@@ -1837,66 +2687,351 @@
 				</div>
 
 				{#if showMissionForm}
-					<div class="mission-form">
-						<input type="text" bind:value={newMissionTitle} placeholder="Mission title" />
-						<textarea bind:value={newMissionDesc} rows="2" placeholder="Description (optional)"></textarea>
-						<div class="form-row">
-							<select bind:value={newMissionPriority}>
-								<option value="routine">Routine</option>
-								<option value="priority">Priority</option>
-								<option value="welfare">Welfare</option>
-								<option value="emergency">Emergency</option>
-							</select>
-							<select bind:value={newMissionAssign}>
-								<option value="">Unassigned</option>
-								{#each $activeCheckIns as ci}
-									<option value={ci.callsign}>{ci.callsign}</option>
-								{/each}
-							</select>
-						</div>
-						<div class="mission-loc-wrap">
-							<input type="text" bind:value={newMissionLocation} placeholder="Location (e.g., Main & 5th St)" oninput={handleMissionLocationInput} onfocus={handleMissionLocationInput} onblur={() => { setTimeout(() => { showMissionLocDropdown = false; }, 150); }} />
-							{#if showMissionLocDropdown && missionLocSuggestions.length > 0}
-								<div class="mission-loc-dropdown">
-									{#each missionLocSuggestions.slice(0, 6) as sug}
-										<button class="mission-loc-item" onmousedown={() => selectMissionAnnotation(sug)}>
-											<span class="mission-loc-name">{sug.label}</span>
-											{#if sug.shortName}
-												<span class="mission-loc-short">{sug.shortName}</span>
+					<!-- svelte-ignore a11y_no_static_element_interactions -->
+					<div class="mission-form" onkeydown={onFormKeydown}>
+						<input
+							type="text"
+							class="mission-title-input"
+							bind:value={newMissionTitle}
+							bind:this={titleEl}
+							placeholder="Mission title"
+							aria-label="Mission title"
+							onkeydown={(e) => { if (e.key === 'Enter') { e.preventDefault(); handleCreateMission(); } }}
+						/>
+
+						<div class="mission-loc-field">
+							{#if pickingOnMap}
+								<button type="button" class="loc-trigger picking" bind:this={locFieldTriggerEl} onclick={onLocTriggerClick}>
+									<svg width="14" height="14" viewBox="0 0 16 16" fill="none" aria-hidden="true"><path d="M8 1C5.24 1 3 3.24 3 6c0 3.75 5 9 5 9s5-5.25 5-9c0-2.76-2.24-5-5-5zm0 7a2 2 0 110-4 2 2 0 010 4z" fill="currentColor"/></svg>
+									Picking on map… <kbd>Esc</kbd>
+								</button>
+							{:else if missionLocSource === 'none'}
+								<button
+									type="button"
+									class="loc-trigger"
+									bind:this={locFieldTriggerEl}
+									aria-haspopup="listbox"
+									aria-expanded={locOpen}
+									onclick={onLocTriggerClick}
+									onkeydown={(e) => { if (e.key === 'ArrowDown') { e.preventDefault(); openLocPopover(); } }}
+								>
+									<svg width="14" height="14" viewBox="0 0 16 16" fill="none" aria-hidden="true"><path d="M8 1C5.24 1 3 3.24 3 6c0 3.75 5 9 5 9s5-5.25 5-9c0-2.76-2.24-5-5-5zm0 7a2 2 0 110-4 2 2 0 010 4z" fill="currentColor"/></svg>
+									Add location
+									<svg class="chev" width="10" height="10" viewBox="0 0 16 16" fill="none" aria-hidden="true"><path d="M4 6l4 4 4-4" stroke="currentColor" stroke-width="1.5" fill="none" stroke-linecap="round" stroke-linejoin="round"/></svg>
+								</button>
+							{:else}
+								<div class="loc-chip" class:unconfirmed={locNeedsConfirm && !missionLocConfirmed} role="group" aria-label="Mission location">
+									<button
+										type="button"
+										class="loc-chip-main"
+										bind:this={locFieldTriggerEl}
+										onclick={openLocPopover}
+										aria-label={
+											missionLocSource === 'w3w' ? `what3words location ${missionLocWords.split('.').join(' dot ')}` :
+											missionLocSource === 'pluscode' ? `Plus Code ${missionLocCode}` :
+											missionLocSource === 'mgrs' ? `MGRS grid reference ${formatMGRSGroups(missionLocCode)}` :
+											undefined
+										}
+									>
+										{#if missionLocAnn}
+											<span class="loc-chip-icon" style="--loc-cat-color: {categoryMeta[missionLocAnn.category]?.defaultColor ?? '#6b7280'}">
+												<svg width="16" height="16" viewBox="0 0 16 16"><path d={categoryMeta[missionLocAnn.category]?.icon} stroke="currentColor" stroke-width="1.2" fill="none" stroke-linecap="round" stroke-linejoin="round"/></svg>
+											</span>
+										{:else}
+											<span class="loc-chip-icon" style="--loc-cat-color: #6b7280">
+												<svg width="16" height="16" viewBox="0 0 16 16" fill="none"><path d="M8 1C5.24 1 3 3.24 3 6c0 3.75 5 9 5 9s5-5.25 5-9c0-2.76-2.24-5-5-5zm0 7a2 2 0 110-4 2 2 0 010 4z" fill="currentColor"/></svg>
+											</span>
+										{/if}
+										<span class="loc-chip-text">
+											{#if missionLocSource === 'w3w'}
+												<span class="loc-chip-label loc-chip-label-w3w" aria-hidden="true">
+													<span class="w3w-slashes">///</span>{missionLocWords}
+												</span>
+											{:else if missionLocSource === 'pluscode' || missionLocSource === 'mgrs'}
+												<span class="loc-chip-label loc-chip-label-code" aria-hidden="true">{locChipPrimary}</span>
+											{:else}
+												<span class="loc-chip-label">{locChipPrimary}</span>
 											{/if}
+											{#if locChipSecondary}<span class="loc-chip-coords">{locChipSecondary}</span>{/if}
+										</span>
+									</button>
+									{#if locNeedsConfirm}
+										{#if missionLocConfirmed}
+											<span class="loc-chip-confirmed">✓ Confirmed</span>
+										{:else}
+											<button type="button" class="loc-chip-confirm" onclick={confirmLocation}>Confirm on map</button>
+										{/if}
+									{/if}
+									<button type="button" class="loc-chip-map" title="Pick on map" aria-label="Pick on map" onclick={startMapPick}>
+										<svg width="14" height="14" viewBox="0 0 16 16" fill="none" aria-hidden="true"><path d="M8 1C5.24 1 3 3.24 3 6c0 3.75 5 9 5 9s5-5.25 5-9c0-2.76-2.24-5-5-5zm0 7a2 2 0 110-4 2 2 0 010 4z" fill="currentColor"/></svg>
+									</button>
+									<button type="button" class="loc-chip-clear" title="Clear location" aria-label="Clear location" onclick={clearLocation}>✕</button>
+								</div>
+								{#if missionLocLat != null && missionLocLon != null}
+									<div class="loc-reverse" aria-label="This location in other formats">
+										{#if reverseMGRS}
+											<div class="loc-reverse-token">
+												<span class="loc-reverse-kind">MGRS</span>
+												<span class="loc-reverse-value">{formatMGRSGroups(reverseMGRS)}</span>
+												<button type="button" class="loc-reverse-copy" aria-label="Copy MGRS grid reference {formatMGRSGroups(reverseMGRS)}" onclick={() => copyToken('mgrs', formatMGRSGroups(reverseMGRS))}>
+													{reverseCopied === 'mgrs' ? 'Copied' : '⧉'}
+												</button>
+											</div>
+										{/if}
+										{#if reversePlusCode}
+											{@const rpc = reversePlusCode}
+											<div class="loc-reverse-token">
+												<span class="loc-reverse-kind">Plus</span>
+												<span class="loc-reverse-value" title={rpc.short !== rpc.full ? rpc.full : undefined}>{rpc.short}</span>
+												<button type="button" class="loc-reverse-copy" aria-label="Copy full Plus Code {rpc.full}" onclick={() => copyToken('plus', rpc.full)}>
+													{reverseCopied === 'plus' ? 'Copied' : '⧉'}
+												</button>
+											</div>
+										{/if}
+										{#if $w3wConfigured && reverseWords && missionLocSource !== 'w3w'}
+											<div class="loc-reverse-token">
+												<span class="loc-reverse-kind">///</span>
+												<span class="loc-reverse-value loc-reverse-value-w3w">{formatWords(reverseWords)}</span>
+												<button type="button" class="loc-reverse-copy" aria-label="Copy three-word address {formatWords(reverseWords)}" onclick={() => copyToken('w3w', formatWords(reverseWords))}>
+													{reverseCopied === 'w3w' ? 'Copied' : '⧉'}
+												</button>
+											</div>
+										{/if}
+									</div>
+								{/if}
+							{/if}
+
+							{#if locOpen}
+								<div class="loc-popover" bind:this={locPopoverEl}>
+									<input
+										type="text"
+										class="loc-search"
+										role="combobox"
+										autocomplete="off"
+										bind:value={locQuery}
+										bind:this={locSearchEl}
+										placeholder="Search locations or type a name"
+										aria-expanded="true"
+										aria-controls="mission-loc-list"
+										aria-autocomplete="list"
+										aria-activedescendant={'mission-loc-opt-' + locHighlight}
+										oninput={() => { locHighlight = 0; scheduleW3WSuggest(); }}
+										onkeydown={onLocKeydown}
+										onblur={onLocSearchBlur}
+										inputmode="text"
+										autocapitalize="none"
+										autocorrect="off"
+										spellcheck="false"
+									/>
+									<div class="loc-list" role="listbox" id="mission-loc-list">
+										<button
+											type="button"
+											id="mission-loc-opt-0"
+											role="option"
+											aria-selected={locHighlight === 0}
+											class="loc-opt loc-opt-map"
+											class:highlight={locHighlight === 0}
+											onmousedown={() => startMapPick()}
+										>
+											📍 Choose on map
 										</button>
-									{/each}
+
+										{#if geocodeRowCount === 1 && locGeocode && !isGeocodeError(locGeocode)}
+											{@const g = locGeocode}
+											<div class="loc-group-header" role="presentation">{g.format === 'mgrs' ? 'MGRS' : 'Plus Code'}</div>
+											<button
+												type="button"
+												id="mission-loc-opt-1"
+												role="option"
+												aria-selected={locHighlight === 1}
+												class="loc-opt loc-opt-geocode"
+												class:highlight={locHighlight === 1}
+												onmousedown={() => useGeocode(g)}
+											>
+												<span class="loc-opt-geocode-icon" aria-hidden="true">
+													<svg width="14" height="14" viewBox="0 0 16 16" fill="none"><path d="M2 2h4v4H2V2zM10 2h4v4h-4V2zM2 10h4v4H2v-4zM10 10h4v4h-4v-4z" stroke="currentColor" stroke-width="1.3" fill="none" stroke-linejoin="round"/></svg>
+												</span>
+												<span class="loc-opt-geocode-text">
+													<span class="loc-opt-geocode-line1">
+														Use {g.format === 'mgrs' ? 'MGRS' : 'Plus Code'}
+														<span class="loc-opt-geocode-code">{g.format === 'mgrs' ? formatMGRSGroups(g.label) : g.label}</span>
+													</span>
+													<span class="loc-opt-geocode-line2">
+														{#if g.recoveredFrom}{g.recoveredFrom} · {/if}±{g.precisionM} m
+													</span>
+												</span>
+												<span class="loc-opt-geocode-coords">{formatCoord(g.lat, g.lon)}</span>
+											</button>
+										{:else if geocodeErrCode}
+											<div class="loc-group-header" role="presentation">{locFormat === 'mgrs' ? 'MGRS' : 'Plus Code'}</div>
+											<p class="loc-status loc-status-error" role="presentation">{geocodeErrorCopy(geocodeErrCode, locFormat)}</p>
+										{/if}
+
+										{#if $w3wConfigured && w3wGateOk}
+											<div class="loc-group-header" role="presentation">what3words</div>
+											{#if w3wLoading}
+												<p class="loc-w3w-status" role="presentation">Looking up three-word addresses…</p>
+											{:else if w3wError}
+												<p class="loc-w3w-status loc-w3w-error" role="presentation">{w3wError}</p>
+											{:else if w3wSuggestions.length > 0}
+												{#each w3wSuggestions as sug, i (sug.words)}
+													{@const rowIdx = 1 + geocodeRowCount + i}
+													<button
+														type="button"
+														id={'mission-loc-opt-' + rowIdx}
+														role="option"
+														aria-selected={locHighlight === rowIdx}
+														class="loc-opt loc-opt-w3w"
+														class:highlight={locHighlight === rowIdx}
+														onmousedown={() => resolveW3W(sug.words)}
+													>
+														<span class="loc-opt-w3w-words">{formatWords(sug.words)}</span>
+														<span class="loc-opt-w3w-meta">
+															{sug.nearestPlace}{#if sug.nearestPlace && sug.distanceToFocusKm}<span> · </span>{/if}{#if sug.distanceToFocusKm}{sug.distanceToFocusKm.toFixed(1)} km{/if}
+														</span>
+													</button>
+												{/each}
+											{:else if w3wNoResults}
+												<p class="loc-w3w-status" role="presentation">No what3words matches for “{locQuery.trim()}”</p>
+											{/if}
+										{:else if !$w3wConfigured && locW3WShaped}
+											<div class="loc-w3w-hint" role="presentation">
+												<p class="loc-w3w-hint-title">That looks like a what3words address.</p>
+												{#if $canAdmin}
+													<p>
+														Add a free API key in Settings → what3words to turn three words into a map pin.
+														<button type="button" class="loc-w3w-hint-link" onmousedown={(e) => { e.preventDefault(); openW3WSettings(); }}>Settings →</button>
+													</p>
+												{:else}
+													<p>Ask an admin to add a what3words API key.</p>
+												{/if}
+											</div>
+										{/if}
+
+										{#each locFiltered as ann, i (ann.id)}
+											{@const rowIdx = 1 + geocodeRowCount + w3wRowCount + i}
+											<button
+												type="button"
+												id={'mission-loc-opt-' + rowIdx}
+												role="option"
+												aria-selected={locHighlight === rowIdx}
+												class="loc-opt"
+												class:highlight={locHighlight === rowIdx}
+												onmousedown={() => selectLocationAnnotation(ann)}
+											>
+												<span class="loc-opt-icon" style="--loc-cat-color: {categoryMeta[ann.category]?.defaultColor ?? '#6b7280'}">
+													<svg width="16" height="16" viewBox="0 0 16 16"><path d={categoryMeta[ann.category]?.icon} stroke="currentColor" stroke-width="1.2" fill="none" stroke-linecap="round" stroke-linejoin="round"/></svg>
+												</span>
+												<span class="loc-opt-label">{ann.label}</span>
+												{#if ann.shortName}<span class="loc-opt-short">{ann.shortName}</span>{/if}
+											</button>
+										{/each}
+										{#if showFreeTextRow}
+											{@const freeIdx = 1 + geocodeRowCount + w3wRowCount + locFiltered.length}
+											<button
+												type="button"
+												id={'mission-loc-opt-' + freeIdx}
+												role="option"
+												aria-selected={locHighlight === freeIdx}
+												class="loc-opt loc-opt-free"
+												class:highlight={locHighlight === freeIdx}
+												onmousedown={() => useTypedLocation()}
+											>
+												Use “{locQuery.trim()}”
+											</button>
+										{/if}
+										{#if locFiltered.length === 0 && !locQuery.trim()}
+											<p class="loc-empty">No net locations yet — choose on map or type a name</p>
+										{/if}
+									</div>
+									<details class="loc-coords">
+										<summary>Coordinates</summary>
+										<div class="form-row">
+											<input type="text" bind:value={locCoordLat} placeholder="Lat" inputmode="decimal" aria-label="Latitude" />
+											<input type="text" bind:value={locCoordLon} placeholder="Lon" inputmode="decimal" aria-label="Longitude" />
+											<button type="button" class="btn-mini" onclick={useTypedCoords}>Use</button>
+										</div>
+										{#if locCoordError}<div class="form-error" role="alert">{locCoordError}</div>{/if}
+									</details>
 								</div>
 							{/if}
 						</div>
-						<div class="form-row">
-							<input type="text" bind:value={newMissionLat} placeholder="Lat" inputmode="decimal" />
-							<input type="text" bind:value={newMissionLon} placeholder="Lon" inputmode="decimal" />
+
+						<div class="mission-priority-group" role="radiogroup" aria-label="Priority">
+							{#each missionPriorities as p, i}
+								<button
+									type="button"
+									class="priority-chip priority-{p}"
+									role="radio"
+									aria-checked={newMissionPriority === p}
+									tabindex={newMissionPriority === p ? 0 : -1}
+									bind:this={priorityRefs[i]}
+									onclick={() => (newMissionPriority = p)}
+									onkeydown={(e) => onPriorityKeydown(e, i)}
+								>
+									{missionPriorityLabels[p]}
+								</button>
+							{/each}
 						</div>
-						{#if linkableAnnotations.length > 0}
-							<div class="annotation-link-section">
-								<span class="field-label-sm">Link Annotations {#if selectedAnnotationIds.length > 0}<span class="link-count">({selectedAnnotationIds.length})</span>{/if}</span>
-								<div class="annotation-chips-wrap">
-									{#each linkableAnnotations as ann}
-										{@const cat = ann.category || 'general'}
-										{@const selected = selectedAnnotationIds.includes(ann.id)}
-										<button
-											class="annotation-chip"
-											class:selected
-											onclick={() => toggleAnnotationSelector(ann.id)}
-										>
-											<svg width="10" height="10" viewBox="0 0 16 16" fill="none">
-												<path d={categoryMeta[cat].icon} stroke="currentColor" stroke-width="1.2" fill="none" stroke-linecap="round" stroke-linejoin="round"/>
-											</svg>
-											{ann.label}
-										</button>
-									{/each}
-								</div>
+
+						<select
+							class="mission-assign-select"
+							bind:value={newMissionAssign}
+							aria-label="Assign to"
+							onkeydown={(e) => { if (e.key === 'Enter') { e.preventDefault(); handleCreateMission(); } }}
+						>
+							<option value="">Unassigned</option>
+							{#each $activeCheckIns as ci}
+								<option value={ci.callsign}>{ci.callsign}</option>
+							{/each}
+						</select>
+
+						<button type="button" class="details-toggle" onclick={() => (detailsOpen = !detailsOpen)} aria-expanded={detailsOpen}>
+							<span aria-hidden="true">{detailsOpen ? '▾' : '▸'}</span>
+							Details & links
+							{#if newMissionDesc.trim() || selectedAnnotationIds.length > 0}
+								<span class="details-badge">
+									{[newMissionDesc.trim() ? 'note' : null, selectedAnnotationIds.length > 0 ? `${selectedAnnotationIds.length} linked` : null].filter(Boolean).join(' · ')}
+								</span>
+							{/if}
+						</button>
+
+						{#if detailsOpen}
+							<div class="mission-details">
+								<textarea bind:value={newMissionDesc} rows="2" placeholder="Description (optional)"></textarea>
+								{#if linkableAnnotations.length > 0}
+									<div class="annotation-link-section">
+										<span class="field-label-sm">Link Annotations {#if selectedAnnotationIds.length > 0}<span class="link-count">({selectedAnnotationIds.length})</span>{/if}</span>
+										<div class="annotation-chips-wrap">
+											{#each linkableAnnotations as ann}
+												{@const cat = ann.category || 'general'}
+												{@const selected = selectedAnnotationIds.includes(ann.id)}
+												<button
+													class="annotation-chip"
+													class:selected
+													onclick={() => toggleAnnotationSelector(ann.id)}
+												>
+													<svg width="10" height="10" viewBox="0 0 16 16" fill="none">
+														<path d={categoryMeta[cat].icon} stroke="currentColor" stroke-width="1.2" fill="none" stroke-linecap="round" stroke-linejoin="round"/>
+													</svg>
+													{ann.label}
+												</button>
+											{/each}
+										</div>
+									</div>
+								{/if}
 							</div>
 						{/if}
-						<div class="form-actions">
-							<button class="btn-secondary" onclick={() => { showMissionForm = false; selectedAnnotationIds = []; }}>Cancel</button>
-							<button class="btn-primary" onclick={handleCreateMission} disabled={!newMissionTitle.trim()}>Create</button>
+
+						{#if formError}
+							<div class="form-error" role="alert">{formError}</div>
+						{/if}
+
+						<div class="sr-live" aria-live="polite">{srMessage}</div>
+
+						<div class="form-actions" class:submitting={missionSubmitting}>
+							<button type="button" class="btn-secondary" disabled={missionSubmitting} onclick={cancelMissionForm}>Cancel</button>
+							<button type="button" class="btn-primary" onclick={handleCreateMission} disabled={missionSubmitting || !newMissionTitle.trim()} aria-busy={missionSubmitting}>{missionSubmitting ? 'Creating…' : 'Create mission'}</button>
 						</div>
 					</div>
 				{/if}
@@ -1936,8 +3071,25 @@
 								{#if m.description}
 									<p class="mission-desc">{m.description}</p>
 								{/if}
-								{#if m.location}
-									<div class="mission-location">📍 {m.location}</div>
+								{#if m.location || (m.lat != null && m.lon != null)}
+									{#if isW3WLocation(m.location)}
+										{@const words = extractWords(m.location)}
+										{@const suffix = w3wSuffix(m.location)}
+										<div class="mission-location" aria-label={words ? `what3words location ${words.split('.').join(' dot ')}` : undefined}>
+											<span class="w3w-mark" aria-hidden="true">///</span><span class="w3w-words" aria-hidden="true">{words}</span>{#if suffix}<span class="w3w-near" aria-hidden="true"> · {suffix}</span>{/if}
+										</div>
+									{:else}
+										{@const geo = extractGeocode(m.location)}
+										{#if geo}
+											{@const suffix = geocodeNearSuffix(m.location)}
+											{@const geoLabel = geo.format === 'mgrs' ? formatMGRSGroups(geo.code) : geo.code}
+											<div class="mission-location" aria-label={`${geo.format === 'mgrs' ? 'MGRS grid reference' : 'Plus Code'} ${geoLabel}`}>
+												📍 <span class="geocode-code" aria-hidden="true">{geoLabel}</span>{#if suffix}<span class="w3w-near" aria-hidden="true"> · near {suffix}</span>{/if}
+											</div>
+										{:else}
+											<div class="mission-location">📍 {m.location || formatCoord(m.lat ?? 0, m.lon ?? 0)}</div>
+										{/if}
+									{/if}
 								{/if}
 
 								<!-- Assigned operators -->
@@ -2131,6 +3283,8 @@
 						onPlaceOnMap={onPlaceAnnotation}
 						mapClickedCoords={annotationMapCoords}
 						{onMapCoordsConsumed}
+						{focusedAnnotationId}
+						{onFocusConsumed}
 					/>
 				{:else}
 					<p class="empty">Open a net to manage locations.</p>
@@ -2230,6 +3384,10 @@
 		flex-direction: column;
 		height: 100%;
 		overflow-x: hidden;
+		/* what3words display font — used by the location chip, the reverse
+		   line, and the mission card's ///words. Promote to app.css if a
+		   second component ever needs it. */
+		--w3w-mono: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
 	}
 
 	.panel-header {
@@ -2349,43 +3507,93 @@
 		color: var(--color-accent);
 	}
 
-	/* Tabs */
+	/* Tabs — one row, never wraps. Tabs share the width when it fits and
+	   scroll horizontally when the panel is narrower. */
 	.tabs {
 		display: flex;
+		align-items: stretch;
+		gap: 2px;
+		padding: 0 var(--space-xs);
 		border-bottom: 1px solid var(--color-primary);
 		flex-shrink: 0;
+		overflow-x: auto;
+		overflow-y: hidden;
+		scrollbar-width: none;
+		-webkit-overflow-scrolling: touch;
+		scroll-snap-type: x proximity;
 	}
+	.tabs::-webkit-scrollbar { display: none; }
 
 	.tab {
-		flex: 1;
-		padding: 12px var(--space-sm);
+		flex: 1 0 auto;
+		display: inline-flex;
+		align-items: center;
+		justify-content: center;
+		gap: 6px;
+		min-height: 44px;
+		padding: 0 var(--space-sm);
 		background: none;
 		border: none;
-		border-bottom: 3px solid transparent;
+		border-bottom: 2px solid transparent;
 		color: var(--color-text-muted);
-		font-size: 0.85rem;
+		font-size: 0.8rem;
+		font-weight: 500;
+		letter-spacing: 0.01em;
+		white-space: nowrap;
+		scroll-snap-align: start;
 		cursor: pointer;
-		transition: all var(--duration-fast);
+		transition: color var(--duration-fast), border-color var(--duration-fast);
 	}
 
 	.tab:hover { color: var(--color-text); }
+	.tab:focus-visible {
+		outline: 2px solid var(--color-accent);
+		outline-offset: -2px;
+		border-radius: var(--radius-sm);
+	}
 	.tab.active {
-		color: var(--color-accent);
+		color: var(--color-text);
 		border-bottom-color: var(--color-accent);
 	}
 
 	.tab-count {
-		font-size: 0.7rem;
+		display: inline-flex;
+		align-items: center;
+		justify-content: center;
+		min-width: 18px;
+		height: 18px;
+		padding: 0 5px;
+		border-radius: var(--radius-full);
 		background: var(--color-primary);
-		padding: 2px 6px;
-		border-radius: 8px;
-		margin-left: 4px;
+		color: var(--color-text-muted);
+		font-size: 0.68rem;
+		font-weight: 600;
+		font-variant-numeric: tabular-nums;
+		line-height: 1;
+		transition: background var(--duration-fast), color var(--duration-fast);
+	}
+	.tab.active .tab-count {
+		background: var(--color-accent);
+		color: #fff;
 	}
 
-	.tab-count-alert {
-		background: #ef4444;
+	.tab-count-alert,
+	.tab.active .tab-count-alert {
+		background: var(--color-error);
 		color: #fff;
-		animation: pulse-alert 2s ease-in-out infinite;
+		animation: tab-alert-pulse 2s ease-in-out infinite;
+	}
+	@keyframes tab-alert-pulse {
+		0%, 100% { box-shadow: 0 0 0 0 rgba(231, 76, 60, 0.55); }
+		50% { box-shadow: 0 0 0 4px rgba(231, 76, 60, 0); }
+	}
+	@media (prefers-reduced-motion: reduce) {
+		.tab-count-alert { animation: none; }
+	}
+	/* Phone widths: tighten so all five tabs fit without scrolling. */
+	@media (max-width: 480px) {
+		.tabs { gap: 0; padding: 0; }
+		.tab { padding: 0 4px; gap: 3px; font-size: 0.75rem; }
 	}
 
 	.tab-content {
@@ -3343,56 +4551,236 @@
 		color: var(--color-accent);
 	}
 
-	/* Mission location autocomplete */
-	.mission-loc-wrap {
-		position: relative;
-	}
+	/* ---- Mission location field (task #92) ---- */
+	.mission-loc-field { position: relative; display: flex; flex-direction: column; gap: var(--space-xs); }
 
-	.mission-loc-dropdown {
-		position: absolute;
-		top: 100%;
-		left: 0;
-		right: 0;
+	.loc-trigger {
+		display: flex; align-items: center; gap: var(--space-sm);
+		width: 100%; min-height: 44px; padding: 10px 12px;
+		background: var(--color-bg); border: 1px solid var(--color-primary);
+		border-radius: var(--radius-sm); color: var(--color-text-muted);
+		font-size: 0.85rem; text-align: left; cursor: pointer;
+		transition: border-color var(--duration-fast), color var(--duration-fast);
+	}
+	.loc-trigger:hover { border-color: var(--color-text-muted); color: var(--color-text); }
+	.loc-trigger .chev { margin-left: auto; opacity: 0.6; }
+	.loc-trigger.picking {
+		border-color: var(--color-accent); color: var(--color-accent);
+		animation: locPulse 1.4s ease-in-out infinite;
+	}
+	@keyframes locPulse { 0%,100% { opacity: 1 } 50% { opacity: 0.55 } }
+
+	/* ---- Selected chip ---- */
+	.loc-chip {
+		display: flex; align-items: center; gap: var(--space-sm);
+		min-height: 44px; padding: 6px 8px 6px 10px;
 		background: var(--color-bg);
-		border: 1px solid var(--color-primary);
-		border-radius: var(--radius-sm);
-		box-shadow: var(--shadow-md);
-		z-index: 10;
-		max-height: 180px;
-		overflow-y: auto;
-		margin-top: 2px;
+		border: 1px solid var(--color-accent); border-radius: var(--radius-sm);
 	}
-
-	.mission-loc-item {
-		display: flex;
-		align-items: center;
-		gap: var(--space-sm);
-		width: 100%;
-		padding: 6px 10px;
-		background: none;
-		border: none;
+	/* A what3words resolve hasn't been visually confirmed on the map yet —
+	   the map fly-to is the safety check, not a nicety, so this stays
+	   visually distinct until the NCS acknowledges it or creates the mission. */
+	.loc-chip.unconfirmed {
+		border-left: 2px solid var(--color-warning);
+	}
+	.loc-chip-main {
+		display: flex; align-items: center; gap: var(--space-sm);
+		flex: 1; min-width: 0; background: none; border: none; padding: 0;
+		color: var(--color-text); text-align: left; cursor: pointer;
+	}
+	.loc-chip-icon { flex: 0 0 16px; color: var(--loc-cat-color, #6b7280); }
+	.loc-chip-text { min-width: 0; display: flex; flex-direction: column; gap: 1px; }
+	.loc-chip-label {
+		font-size: 0.85rem; font-weight: 600; color: var(--color-text);
+		white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+	}
+	.loc-chip-label-w3w {
+		font-family: var(--w3w-mono); font-size: 0.85rem; font-weight: 600;
 		color: var(--color-text);
-		font-size: 0.8rem;
-		cursor: pointer;
-		text-align: left;
+	}
+	.w3w-slashes { color: var(--color-text-muted); }
+	/* Plus Code / MGRS chip label (#94) — same treatment as the w3w mono
+	   label so all three resolved-location sources read consistently. */
+	.loc-chip-label-code {
+		font-family: var(--w3w-mono); font-size: 0.85rem; font-weight: 600;
+		letter-spacing: 0.02em; color: var(--color-text);
+	}
+	.loc-chip-coords {
+		font-family: 'SF Mono','Fira Code',monospace; font-size: 0.7rem;
+		color: var(--color-text-muted);
+	}
+	.loc-chip-confirm, .loc-chip-confirmed {
+		flex: 0 0 auto; white-space: nowrap; font-size: 0.72rem; font-weight: 600;
+	}
+	.loc-chip-confirm {
+		padding: 5px 10px; background: none; border: 1px solid var(--color-warning);
+		border-radius: var(--radius-full); color: var(--color-warning); cursor: pointer;
 		transition: background var(--duration-fast);
 	}
-
-	.mission-loc-item:hover {
-		background: rgba(255, 255, 255, 0.06);
+	.loc-chip-confirm:hover { background: rgba(245, 158, 11, 0.12); }
+	.loc-chip-confirmed { color: var(--color-success); padding: 5px 4px; }
+	.loc-chip-map, .loc-chip-clear {
+		flex: 0 0 auto; width: 32px; height: 32px;
+		display: inline-flex; align-items: center; justify-content: center;
+		background: none; border: none; border-radius: var(--radius-sm);
+		color: var(--color-text-muted); cursor: pointer;
+		transition: color var(--duration-fast), background var(--duration-fast);
 	}
+	.loc-chip-map:hover, .loc-chip-clear:hover { color: var(--color-text); background: rgba(255,255,255,0.06); }
 
-	.mission-loc-name {
-		flex: 1;
+	/* ---- Reverse row (coords -> Plus Code / MGRS / ///words) under any
+	   chosen location (#94 §4) — up to three compact tokens, one per format,
+	   self-suppressing the token matching the current source. ---- */
+	.loc-reverse {
+		display: flex; flex-wrap: wrap; align-items: center;
+		gap: 4px var(--space-md); padding: 2px 2px 0 10px;
 	}
-
-	.mission-loc-short {
-		font-family: 'SF Mono', 'Fira Code', monospace;
-		font-size: 0.7rem;
+	.loc-reverse-token { display: inline-flex; align-items: center; gap: 4px; min-width: 0; }
+	.loc-reverse-kind {
+		font-size: 0.62rem; letter-spacing: 0.06em; text-transform: uppercase;
+		color: var(--color-text-muted); flex: none;
+	}
+	.loc-reverse-value {
+		font-family: 'SF Mono','Fira Code',monospace; font-size: 0.72rem;
 		color: var(--color-text-muted);
-		padding: 1px 5px;
-		background: rgba(255, 255, 255, 0.06);
-		border-radius: 3px;
+		overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+	}
+	.loc-reverse-value-w3w { font-family: var(--w3w-mono); }
+	.loc-reverse-copy {
+		display: inline-flex; align-items: center; justify-content: center;
+		min-width: 28px; min-height: 28px; padding: 2px 6px;
+		background: none; border: none; border-radius: var(--radius-sm);
+		color: var(--color-text-muted); cursor: pointer; font-size: 0.72rem;
+		transition: color var(--duration-fast), background var(--duration-fast);
+	}
+	.loc-reverse-copy:hover { color: var(--color-text); background: rgba(255,255,255,0.06); }
+
+	/* ---- Popover ---- */
+	.loc-popover {
+		position: absolute; top: 100%; left: 0; right: 0; margin-top: 2px;
+		z-index: 10; display: flex; flex-direction: column;
+		background: var(--color-bg); border: 1px solid var(--color-primary);
+		border-radius: var(--radius-sm); box-shadow: var(--shadow-md);
+		max-height: 260px; overflow: hidden;
+	}
+	.loc-search {
+		border: none !important; border-bottom: 1px solid var(--color-primary) !important;
+		border-radius: 0 !important; background: var(--color-surface) !important;
+	}
+	.loc-list { overflow-y: auto; flex: 1; }
+	.loc-opt {
+		display: flex; align-items: center; gap: var(--space-sm);
+		width: 100%; min-height: 40px; padding: 8px 10px;
+		background: none; border: none; color: var(--color-text);
+		font-size: 0.8rem; text-align: left; cursor: pointer;
+		transition: background var(--duration-fast);
+	}
+	.loc-opt:hover, .loc-opt.highlight { background: rgba(255,255,255,0.06); }
+	.loc-opt-map { color: var(--color-accent); font-weight: 600; border-bottom: 1px solid var(--color-primary); }
+	.loc-opt-icon { flex: 0 0 16px; color: var(--loc-cat-color, #6b7280); }
+	.loc-opt-label { flex: 1; min-width: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+	.loc-opt-short {
+		font-family: 'SF Mono','Fira Code',monospace; font-size: 0.7rem;
+		color: var(--color-text-muted); padding: 1px 5px;
+		background: rgba(255,255,255,0.06); border-radius: 3px;
+	}
+	.loc-empty { padding: var(--space-md); font-size: 0.78rem; color: var(--color-text-muted); text-align: center; }
+	.loc-coords { border-top: 1px solid var(--color-primary); padding: var(--space-sm) 10px; }
+	.loc-coords summary { font-size: 0.75rem; color: var(--color-text-muted); cursor: pointer; list-style: none; }
+	.loc-coords summary::marker { content: ''; }
+
+	/* ---- what3words group in the popover ---- */
+	.loc-group-header {
+		padding: 6px 10px 2px; font-size: 0.7rem; letter-spacing: 0.04em;
+		text-transform: uppercase; color: var(--color-text-muted);
+	}
+	.loc-opt-w3w { flex-direction: column; align-items: flex-start; gap: 2px; min-height: 44px; }
+	.loc-opt-w3w-words { font-family: var(--w3w-mono); font-size: 0.82rem; color: var(--color-text); }
+	.loc-opt-w3w-meta { font-size: 0.72rem; color: var(--color-text-muted); }
+	.loc-w3w-status {
+		padding: 8px 10px; font-size: 0.78rem; color: var(--color-text-muted);
+	}
+	.loc-w3w-error { color: var(--color-warning); }
+
+	/* ---- Offline geocode resolve row + error (#94) ---- */
+	.loc-opt-geocode { align-items: center; gap: var(--space-sm); min-height: 44px; }
+	.loc-opt-geocode-icon { flex: 0 0 14px; color: var(--color-accent); }
+	.loc-opt-geocode-text { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 1px; }
+	.loc-opt-geocode-line1 {
+		font-size: 0.8rem; color: var(--color-text);
+		white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+	}
+	.loc-opt-geocode-code {
+		font-family: 'SF Mono','Fira Code',monospace; font-weight: 600;
+		letter-spacing: 0.02em; margin-left: 4px;
+	}
+	.loc-opt-geocode-line2 { font-size: 0.7rem; color: var(--color-text-muted); }
+	.loc-opt-geocode-coords {
+		flex: 0 0 auto; font-family: 'SF Mono','Fira Code',monospace; font-size: 0.68rem;
+		color: var(--color-text-muted); font-variant-numeric: tabular-nums;
+	}
+	.loc-status {
+		padding: 8px 10px; font-size: 0.78rem; color: var(--color-text-muted); line-height: 1.4;
+	}
+	.loc-status-error { color: var(--color-warning); }
+	.loc-w3w-hint {
+		padding: var(--space-sm) 10px; border-bottom: 1px solid var(--color-primary);
+		font-size: 0.76rem; color: var(--color-text-muted); line-height: 1.4;
+	}
+	.loc-w3w-hint p { margin: 0 0 2px; }
+	.loc-w3w-hint-title { color: var(--color-text); font-weight: 600; }
+	.loc-w3w-hint-link {
+		background: none; border: none; padding: 0; color: var(--color-accent);
+		font-size: inherit; cursor: pointer; text-decoration: underline;
+	}
+
+	/* ---- Priority chips (same geometry as .annotation-chip) ---- */
+	.mission-priority-group { display: flex; gap: 6px; }
+	.priority-chip {
+		flex: 1; min-height: 40px; padding: 6px 10px;
+		background: none; border: 1px solid var(--color-primary);
+		border-radius: var(--radius-full); color: var(--color-text-muted);
+		font-size: 0.75rem; font-weight: 600; cursor: pointer;
+		transition: all var(--duration-fast);
+	}
+	.priority-chip:hover { border-color: var(--color-text-muted); color: var(--color-text); }
+	.priority-chip[aria-checked='true'] { color: var(--color-text); }
+	.priority-chip.priority-routine[aria-checked='true']   { border-color: var(--color-text-muted); background: rgba(255,255,255,0.06); }
+	.priority-chip.priority-priority[aria-checked='true']  { border-color: var(--color-warning); color: var(--color-warning); }
+	.priority-chip.priority-welfare[aria-checked='true']   { border-color: var(--color-success); color: var(--color-success); }
+	.priority-chip.priority-emergency[aria-checked='true'] { border-color: var(--color-error);   color: var(--color-error); background: rgba(233,69,96,0.08); }
+
+	/* ---- Details disclosure ---- */
+	.details-toggle {
+		display: flex; align-items: center; gap: var(--space-sm);
+		min-height: 36px; padding: 6px 2px;
+		background: none; border: none; color: var(--color-text-muted);
+		font-size: 0.75rem; cursor: pointer;
+	}
+	.details-toggle:hover { color: var(--color-text); }
+	.details-badge { color: var(--color-accent); }
+	.mission-details { display: flex; flex-direction: column; gap: var(--space-sm); }
+
+	.btn-mini {
+		flex: 0 0 auto; min-height: 32px; padding: 4px 10px;
+		background: none; border: 1px solid var(--color-primary);
+		border-radius: var(--radius-sm); color: var(--color-text-muted);
+		font-size: 0.75rem; cursor: pointer;
+		transition: all var(--duration-fast);
+	}
+	.btn-mini:hover { border-color: var(--color-accent); color: var(--color-text); }
+
+	/* ---- Feedback ---- */
+	.form-error { font-size: 0.75rem; color: var(--color-error); }
+	.sr-live { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; }
+	.form-actions.submitting { pointer-events: none; }
+
+	@media (max-width: 768px) {
+		.loc-popover { max-height: min(320px, 40vh); }
+		.loc-opt-w3w { min-height: 44px; }
+		.loc-opt-w3w-meta { font-size: 0.72rem; }
+		.mission-priority-group { flex-wrap: wrap; }
+		.priority-chip { flex: 1 1 45%; }
 	}
 
 	/* Missions */
@@ -3582,6 +4970,19 @@
 		font-size: 0.8rem;
 		color: var(--color-text-muted);
 		margin-top: 3px;
+	}
+
+	/* A w3w-sourced mission is instantly identifiable in a scrolling list —
+	   the one place the brand accent appears on the mission card. */
+	.w3w-mark { color: var(--color-accent); font-family: var(--w3w-mono); }
+	.w3w-words { font-family: var(--w3w-mono); color: var(--color-text); }
+	.w3w-near { color: var(--color-text-muted); font-size: 0.75rem; }
+	/* Offline-geocode (Plus Code / MGRS) mission card treatment (#94) —
+	   matching visual weight to the w3w treatment above, minus the accent
+	   colour (that stays w3w's one place to appear). */
+	.geocode-code {
+		font-family: 'SF Mono','Fira Code',monospace; color: var(--color-text);
+		letter-spacing: 0.02em;
 	}
 
 	/* Assigned operators on mission card */

@@ -1,11 +1,16 @@
 <script lang="ts">
+	import { untrack } from 'svelte';
 	import { api } from '$lib/api';
-	import type { Annotation, AnnotationCategory, Net } from '$lib/types';
+	import type { Annotation, AnnotationBatch, AnnotationCategory, Net } from '$lib/types';
 	import { netAnnotations, orderedCheckpoints } from '$lib/stores/netcontrol';
 	import { annotations, annotationList } from '$lib/stores/annotations';
 	import { categoryMeta } from '$lib/annotationMeta';
 	import { eventTemplates, type LocationTemplate } from '$lib/data/locationTemplates';
 	import { showToast } from '$lib/stores/toast';
+	import { timeAgo } from '$lib/utils';
+	import BatchRemoveDialog from './BatchRemoveDialog.svelte';
+	import { groupByBatch } from '$lib/annotationBatches';
+	import { planFocusReveal, revealAnnotation, type RevealDeps } from '$lib/annotationFocus';
 
 	let {
 		net,
@@ -13,12 +18,16 @@
 		onPlaceOnMap,
 		mapClickedCoords = null,
 		onMapCoordsConsumed,
+		focusedAnnotationId = null,
+		onFocusConsumed,
 	}: {
 		net: Net;
 		onFlyTo?: (lat: number, lon: number) => void;
 		onPlaceOnMap?: (id: string | null, name: string, mode: 'update' | 'form') => void;
 		mapClickedCoords?: { lat: number; lon: number } | null;
 		onMapCoordsConsumed?: () => void;
+		focusedAnnotationId?: string | null;
+		onFocusConsumed?: () => void;
 	} = $props();
 
 	// Point-only event categories for location management.
@@ -58,6 +67,44 @@
 
 	// Saving feedback
 	let saving = $state(false);
+
+	// Imported sets strip
+	let highlightBatchId = $state<string | null>(null);
+	let removeTarget = $state<AnnotationBatch | null>(null);
+	let renamingBatchId = $state<string | null>(null);
+	let renameValue = $state('');
+	let stripExpanded = $state(false);
+	let importBtnEl = $state<HTMLButtonElement | null>(null);
+
+	/**
+	 * Sets are derived from this net's own annotations. The list keeps its
+	 * sortOrder ordering untouched — reordering stays completely free, so an NCS
+	 * can interleave a hand-added checkpoint into an imported route with no
+	 * "ungroup" step. The strip answers "which ones came from that file?"
+	 * without moving a single row.
+	 */
+	let batches = $derived(groupByBatch($netAnnotations));
+	let stripCollapsible = $derived(batches.length > 2);
+
+	function toggleHighlight(id: string) {
+		highlightBatchId = highlightBatchId === id ? null : id;
+	}
+
+	function startRename(batch: AnnotationBatch) {
+		renamingBatchId = batch.id;
+		renameValue = batch.label;
+	}
+
+	async function commitRename(batch: AnnotationBatch) {
+		const label = renameValue.trim();
+		renamingBatchId = null;
+		if (!label || label === batch.label) return;
+		try {
+			await api.renameAnnotationBatch(batch.id, label);
+		} catch (e: any) {
+			showToast(e?.message || 'Rename failed', 'error');
+		}
+	}
 
 	// Link existing annotations modal
 	let showLinkModal = $state(false);
@@ -112,6 +159,78 @@
 			}
 			onMapCoordsConsumed?.();
 		}
+	});
+
+	// Focused annotation highlight — same reveal/hold contract as
+	// AnnotationPanel, via the shared $lib/annotationFocus helper. This list
+	// has no per-row collapse and no category/batch filter of its own, so the
+	// plan is always a no-op here; the call stays for structural parity with
+	// AnnotationPanel rather than because it does anything.
+	let highlightedLocId = $state<string | null>(null);
+	let locHoldTimer: ReturnType<typeof setTimeout> | null = null;
+	let locFocusGen = 0;
+	let listEl = $state<HTMLElement | null>(null);
+
+	function startLocReveal(id: string, gen: number): () => void {
+		const ann = $netAnnotations.find((a) => a.id === id);
+		if (!ann) {
+			onFocusConsumed?.();
+			showToast('That location is not in this net', 'error');
+			return () => {};
+		}
+
+		planFocusReveal(ann, {
+			collapsedBatchIds: new Set(),
+			filterCategory: '',
+			filterBatchId: '',
+		});
+
+		if (locHoldTimer) {
+			clearTimeout(locHoldTimer);
+			locHoldTimer = null;
+		}
+
+		let focusedOnce = false;
+		const deps: RevealDeps = {
+			find: (x) =>
+				(listEl ?? document).querySelector(`[data-annotation-id="${CSS.escape(x)}"]`),
+			nextFrame: (cb) => requestAnimationFrame(cb),
+			cancelFrame: (h) => cancelAnimationFrame(h),
+			reducedMotion: window.matchMedia('(prefers-reduced-motion: reduce)').matches,
+			scrollTo: (el, smooth) => {
+				el.scrollIntoView({ behavior: smooth ? 'smooth' : 'auto', block: 'center' });
+				if (!focusedOnce) {
+					focusedOnce = true;
+					el.focus({ preventScroll: true });
+				}
+			},
+			setHighlight: (v) => {
+				if (gen === locFocusGen) highlightedLocId = v;
+			},
+			setTimer: (cb, ms) => {
+				const h = setTimeout(cb, ms);
+				locHoldTimer = h;
+				// RevealDeps declares a numeric handle so it stays testable
+				// without a DOM/Node timer; the real handle is round-tripped
+				// through clearTimer regardless of what type it actually is.
+				return h as unknown as number;
+			},
+			clearTimer: (h) => clearTimeout(h),
+			done: (found) => {
+				onFocusConsumed?.();
+				if (!found) showToast(`Could not scroll to "${ann.label}"`, 'error');
+			},
+		};
+
+		return revealAnnotation(id, deps);
+	}
+
+	$effect(() => {
+		const id = focusedAnnotationId;
+		if (!id) return;
+		const gen = ++locFocusGen;
+		const cancel = untrack(() => startLocReveal(id, gen));
+		return cancel;
 	});
 
 	let sortedAnnotations = $derived(
@@ -329,9 +448,12 @@
 		if (!file) return;
 		importing = true;
 		try {
-			await api.importNetAnnotations(net.id, file);
-		} catch (err) {
-			console.error('Import failed:', err);
+			const res = await api.importNetAnnotations(net.id, file);
+			showToast(`Imported ${res.count} locations from ${res.batchLabel}`, 'success');
+			highlightBatchId = res.batchId;
+			stripExpanded = true;
+		} catch (err: any) {
+			showToast('Import failed: ' + (err?.message ?? 'unknown error'), 'error');
 		} finally {
 			importing = false;
 			input.value = '';
@@ -354,19 +476,27 @@
 	}
 
 	async function handleCopy(sourceNetId: string) {
+		const sourceName = previousNets.find((n) => n.id === sourceNetId)?.name ?? 'another net';
 		try {
-			await api.copyNetAnnotations(net.id, sourceNetId);
+			const res = await api.copyNetAnnotations(net.id, sourceNetId);
 			showCopyModal = false;
-		} catch (e) {
-			console.error('Copy failed:', e);
+			showToast(`Copied ${res.count} locations from ${sourceName}`, 'success');
+			highlightBatchId = res.batchId;
+			stripExpanded = true;
+		} catch (e: any) {
+			showToast('Copy failed: ' + (e?.message ?? 'unknown error'), 'error');
 		}
 	}
 
 	// --- Templates ---
 
-	async function applyTemplate(locations: LocationTemplate[]) {
+	async function applyTemplate(locations: LocationTemplate[], templateName: string) {
 		showTemplateModal = false;
 		saving = true;
+		// Stamp every created location with one client-minted batch id so a wrong
+		// template is a single "Remove all" instead of a dozen manual deletes.
+		const batchId = crypto.randomUUID();
+		const batchLabel = `Template: ${templateName}`;
 		try {
 			const base = $netAnnotations.length;
 			for (let i = 0; i < locations.length; i++) {
@@ -381,10 +511,15 @@
 					netId: net.id,
 					sortOrder: base + i,
 					priority: 'routine',
+					batchId,
+					batchLabel,
 				});
 			}
-		} catch (e) {
-			console.error('Apply template failed:', e);
+			showToast(`Added ${locations.length} locations from ${templateName}`, 'success');
+			highlightBatchId = batchId;
+			stripExpanded = true;
+		} catch (e: any) {
+			showToast('Apply template failed: ' + (e?.message ?? 'unknown error'), 'error');
 		} finally {
 			saving = false;
 		}
@@ -397,7 +532,7 @@
 		<button class="loc-btn loc-btn-primary" onclick={() => (showAddForm = !showAddForm)}>
 			+ Add
 		</button>
-		<button class="loc-btn" onclick={triggerImport} disabled={importing}>
+		<button class="loc-btn" bind:this={importBtnEl} onclick={triggerImport} disabled={importing}>
 			{importing ? 'Importing...' : 'Import GPX/KML'}
 		</button>
 		<button class="loc-btn" onclick={openCopyModal}>
@@ -458,8 +593,81 @@
 		</div>
 	{/if}
 
+	<!-- Imported sets strip -->
+	{#if batches.length > 0}
+		<div class="loc-strip">
+			{#if stripCollapsible && !stripExpanded}
+				<button
+					class="loc-strip-summary"
+					aria-expanded="false"
+					onclick={() => (stripExpanded = true)}
+				>
+					{batches.length} imported sets
+					<span class="loc-strip-caret" aria-hidden="true">&#9662;</span>
+				</button>
+			{:else}
+				<div class="loc-strip-head">
+					<span class="loc-strip-title">Imported sets</span>
+					{#if stripCollapsible}
+						<button
+							class="loc-strip-hide"
+							aria-expanded="true"
+							onclick={() => (stripExpanded = false)}
+						>Hide</button>
+					{/if}
+				</div>
+				{#each batches as batch (batch.id)}
+					<div class="loc-strip-row">
+						<span class="loc-strip-dot" aria-hidden="true"></span>
+						{#if renamingBatchId === batch.id}
+							<!-- svelte-ignore a11y_autofocus -->
+							<input
+								class="loc-input loc-strip-input"
+								bind:value={renameValue}
+								maxlength="120"
+								autofocus
+								aria-label={`Rename set ${batch.label}`}
+								onkeydown={(e) => {
+									if (e.key === 'Enter') { e.preventDefault(); commitRename(batch); }
+									else if (e.key === 'Escape') { e.preventDefault(); renamingBatchId = null; }
+								}}
+								onblur={() => commitRename(batch)}
+							/>
+						{:else}
+							<span class="loc-strip-label" title={batch.label}>{batch.label}</span>
+							<span class="loc-strip-meta">{batch.count} &middot; {timeAgo(batch.createdAt)}</span>
+						{/if}
+						<div class="loc-strip-actions">
+							<button
+								class="loc-btn loc-strip-btn"
+								aria-pressed={highlightBatchId === batch.id}
+								class:loc-strip-btn-on={highlightBatchId === batch.id}
+								title="Highlight this set in the list"
+								onclick={() => toggleHighlight(batch.id)}
+							>Show</button>
+							<button
+								class="loc-btn loc-strip-btn loc-strip-icon"
+								aria-label={`Rename set ${batch.label}`}
+								onclick={() => startRename(batch)}
+							>
+								<svg width="12" height="12" viewBox="0 0 16 16" fill="none" aria-hidden="true">
+									<path d="M11.5 1.5l3 3L5 14H2v-3L11.5 1.5z" stroke="currentColor" stroke-width="1.5" stroke-linejoin="round"/>
+								</svg>
+							</button>
+							<button
+								class="loc-btn loc-strip-btn loc-strip-danger"
+								aria-label={`Remove all ${batch.count} items in ${batch.label}`}
+								onclick={() => (removeTarget = batch)}
+							>Remove all</button>
+						</div>
+					</div>
+				{/each}
+			{/if}
+		</div>
+	{/if}
+
 	<!-- Location list -->
-	<div class="loc-list">
+	<div class="loc-list" bind:this={listEl}>
 		{#each sortedAnnotations as ann, i (ann.id)}
 			{@const coords = extractCoords(ann)}
 			{@const hasCoords = coords && (coords.lat !== 0 || coords.lon !== 0)}
@@ -507,7 +715,14 @@
 				</div>
 			{:else}
 				<!-- Location row -->
-				<div class="loc-row">
+				<div
+					class="loc-row"
+					class:loc-row-batch={!!highlightBatchId && ann.batchId === highlightBatchId}
+					class:focused={highlightedLocId === ann.id}
+					tabindex="-1"
+					data-annotation-id={ann.id}
+					aria-current={highlightedLocId === ann.id ? 'true' : undefined}
+				>
 					<div class="loc-order-btns">
 						<button class="loc-order-btn" onclick={() => handleMoveUp(ann, i)} disabled={i === 0} title="Move up">&#9650;</button>
 						<button class="loc-order-btn" onclick={() => handleMoveDown(ann, i)} disabled={i === sortedAnnotations.length - 1} title="Move down">&#9660;</button>
@@ -605,7 +820,7 @@
 								{/each}
 							</div>
 						</div>
-						<button class="loc-btn loc-btn-primary" onclick={() => applyTemplate(tmpl.locations)}>
+						<button class="loc-btn loc-btn-primary" onclick={() => applyTemplate(tmpl.locations, tmpl.name)}>
 							Apply
 						</button>
 					</div>
@@ -675,6 +890,16 @@
 			</div>
 		</div>
 	</div>
+{/if}
+
+{#if removeTarget}
+	<BatchRemoveDialog
+		batch={removeTarget}
+		netClosed={net.status === 'closed'}
+		netName={net.name}
+		returnFocusOnSuccess={importBtnEl}
+		onClose={() => (removeTarget = null)}
+	/>
 {/if}
 
 <style>
@@ -813,6 +1038,155 @@
 		gap: var(--space-xs);
 	}
 
+	/* Imported sets strip */
+	.loc-strip {
+		display: flex;
+		flex-direction: column;
+		gap: 2px;
+	}
+
+	.loc-strip-head {
+		display: flex;
+		align-items: center;
+		justify-content: space-between;
+		padding: 0 var(--space-xs) 2px;
+	}
+
+	.loc-strip-title {
+		font-size: 0.6875rem;
+		font-weight: 600;
+		text-transform: uppercase;
+		letter-spacing: 0.05em;
+		color: var(--color-text-muted);
+	}
+
+	.loc-strip-hide,
+	.loc-strip-summary {
+		background: none;
+		border: none;
+		color: var(--color-text-muted);
+		font-family: inherit;
+		font-size: 0.6875rem;
+		cursor: pointer;
+		padding: 4px 6px;
+		border-radius: var(--radius-sm);
+	}
+
+	.loc-strip-summary {
+		display: flex;
+		align-items: center;
+		gap: var(--space-xs);
+		min-height: 30px;
+		background: rgba(255, 255, 255, 0.03);
+		border-radius: var(--radius-sm);
+		font-size: 0.75rem;
+	}
+
+	.loc-strip-hide:hover,
+	.loc-strip-summary:hover {
+		color: var(--color-text);
+	}
+
+	.loc-strip-row {
+		display: flex;
+		align-items: center;
+		gap: var(--space-xs);
+		min-height: 30px;
+		padding: 0 var(--space-xs);
+		background: rgba(255, 255, 255, 0.03);
+		border-radius: var(--radius-sm);
+	}
+
+	.loc-strip-dot {
+		flex-shrink: 0;
+		width: 6px;
+		height: 6px;
+		border-radius: 50%;
+		background: var(--color-accent);
+	}
+
+	.loc-strip-label {
+		flex: 1;
+		min-width: 0;
+		font-size: 0.75rem;
+		font-weight: 600;
+		color: var(--color-text);
+		overflow: hidden;
+		text-overflow: ellipsis;
+		white-space: nowrap;
+	}
+
+	.loc-strip-meta {
+		flex-shrink: 0;
+		font-size: 0.6875rem;
+		color: var(--color-text-muted);
+	}
+
+	.loc-strip-input {
+		flex: 1;
+		min-width: 0;
+		font-size: 0.75rem;
+		font-weight: 600;
+	}
+
+	.loc-strip-actions {
+		display: flex;
+		align-items: center;
+		gap: var(--space-xs);
+		flex-shrink: 0;
+	}
+
+	.loc-strip-btn {
+		padding: 3px 8px;
+		font-size: 0.6875rem;
+		min-height: 24px;
+	}
+
+	.loc-strip-icon {
+		display: flex;
+		align-items: center;
+		justify-content: center;
+		width: 26px;
+		padding: 0;
+	}
+
+	.loc-strip-btn-on {
+		border-color: var(--color-accent);
+		color: var(--color-accent);
+	}
+
+	.loc-strip-danger:hover:not(:disabled) {
+		border-color: var(--color-error);
+		color: var(--color-error);
+	}
+
+	/* "Show" marks the set's members without disturbing sortOrder. */
+	.loc-row-batch {
+		border-left: 2px solid var(--color-accent);
+		padding-left: var(--space-xs);
+	}
+
+	@media (max-width: 640px) {
+		.loc-strip-row {
+			flex-wrap: wrap;
+			min-height: 56px;
+			padding: var(--space-xs);
+		}
+
+		.loc-strip-actions {
+			width: 100%;
+			justify-content: flex-end;
+		}
+
+		.loc-strip-btn {
+			min-height: 32px;
+		}
+
+		.loc-strip-icon {
+			width: 32px;
+		}
+	}
+
 	/* List */
 	.loc-list {
 		display: flex;
@@ -825,10 +1199,18 @@
 		gap: var(--space-sm);
 		padding: var(--space-xs) 0;
 		border-bottom: 1px solid rgba(255, 255, 255, 0.04);
+		transition: background 200ms ease-out, box-shadow 200ms ease-out;
 	}
 
 	.loc-row:last-child {
 		border-bottom: none;
+	}
+
+	/* Marker-click reveal hold — see the matching rule on AnnotationPanel's
+	   .entry for why this is a transition, not a keyframe animation. */
+	.loc-row.focused {
+		background: color-mix(in srgb, var(--color-accent) 22%, transparent);
+		box-shadow: inset 0 0 0 2px var(--color-accent);
 	}
 
 	.loc-order-btns {

@@ -1,6 +1,11 @@
 <script lang="ts">
-	import { toasts, dismissToast } from '$lib/stores/toast';
-	import { fly, fade } from 'svelte/transition';
+	import { toasts, dismissToast, pauseToast, resumeToast } from '$lib/stores/toast';
+	import { fly } from 'svelte/transition';
+
+	function runAction(id: string, run: () => void) {
+		dismissToast(id);
+		run();
+	}
 </script>
 
 {#if $toasts.length > 0}
@@ -8,12 +13,25 @@
 		{#each $toasts as toast (toast.id)}
 			<div
 				class="toast toast-{toast.type}"
+				class:has-action={!!toast.action}
+				role="group"
+				aria-label="Notification"
 				transition:fly={{ x: 80, duration: 250, easing: t => t < 0.5 ? 4 * t * t * t : 1 - Math.pow(-2 * t + 2, 3) / 2 }}
+				onmouseenter={() => pauseToast(toast.id)}
+				onmouseleave={() => resumeToast(toast.id)}
+				onfocusin={() => pauseToast(toast.id)}
+				onfocusout={() => resumeToast(toast.id)}
 			>
 				<span class="toast-icon">
 					{#if toast.type === 'success'}&#10003;{:else if toast.type === 'error'}&#10007;{:else}&#8505;{/if}
 				</span>
 				<span class="toast-message">{toast.message}</span>
+				{#if toast.action}
+					{@const act = toast.action}
+					<button class="toast-action" onclick={() => runAction(toast.id, act.run)}>
+						{act.label}
+					</button>
+				{/if}
 				<button
 					class="toast-dismiss"
 					onclick={() => dismissToast(toast.id)}
@@ -29,7 +47,7 @@
 		position: fixed;
 		bottom: var(--space-lg);
 		right: var(--space-lg);
-		z-index: 9999;
+		z-index: var(--z-toast);
 		display: flex;
 		flex-direction: column-reverse;
 		gap: var(--space-sm);
@@ -72,6 +90,39 @@
 		min-width: 0;
 	}
 
+	.toast-action {
+		flex-shrink: 0;
+		background: none;
+		border: 1px solid currentColor;
+		border-radius: var(--radius-sm);
+		color: inherit;
+		font: inherit;
+		font-size: 0.8125rem;
+		font-weight: 600;
+		padding: 4px 10px;
+		min-height: 28px;
+		cursor: pointer;
+		transition: background var(--duration-fast), color var(--duration-fast);
+	}
+
+	.toast-success .toast-action { color: #22c55e; }
+	.toast-error   .toast-action { color: #ef4444; }
+	.toast-info    .toast-action { color: #3b82f6; }
+
+	.toast-action:hover {
+		background: rgba(255, 255, 255, 0.1);
+	}
+
+	/* A toast carrying an action holds more words — give it room to wrap. */
+	.toast.has-action {
+		align-items: flex-start;
+		flex-wrap: wrap;
+	}
+
+	.toast.has-action .toast-message {
+		flex: 1 1 60%;
+	}
+
 	.toast-dismiss {
 		flex-shrink: 0;
 		background: none;
@@ -93,8 +144,14 @@
 		.toast-container {
 			right: var(--space-md);
 			left: var(--space-md);
-			bottom: calc(var(--sheet-peek) + var(--space-md));
+			bottom: calc(var(--sheet-peek) + var(--space-md) + env(safe-area-inset-bottom));
 			max-width: none;
+		}
+
+		/* Undo must be a comfortable thumb target above the bottom sheet. */
+		.toast-action {
+			min-height: 44px;
+			padding: 0 var(--space-md);
 		}
 	}
 </style>
