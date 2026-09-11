@@ -240,6 +240,55 @@ export interface Annotation {
 	netId?: string;
 	shortName?: string;
 	sortOrder?: number;
+	batchId?: string;
+	batchLabel?: string;
+}
+
+/** Envelope returned by GPX/KML import, cross-net copy, and undo-delete. */
+export interface ImportResult {
+	batchId: string;
+	batchLabel: string;
+	netId?: string;
+	count: number;
+	annotations: Annotation[];
+}
+
+/** Result of POST /annotations/bulk-delete. */
+export interface BulkDeleteResult {
+	batchId?: string;
+	batchLabel?: string;
+	deleted: string[];
+	deletedCount: number;
+	skippedMissionLinked: string[];
+	killedObjects: number;
+	undoToken?: string;
+	undoExpiresAt?: string;
+}
+
+/** Result of PATCH /annotations/batch-label. */
+export interface RenameBatchResult {
+	batchId: string;
+	batchLabel: string;
+	updated: number;
+}
+
+/** One annotation in a 409 "still transmitting" response. */
+export interface TransmittingMember {
+	id: string;
+	label: string;
+}
+
+/** A set of annotations created by one bulk operation, derived client-side. */
+export interface AnnotationBatch {
+	id: string;
+	label: string;
+	netId?: string;
+	count: number;
+	/** Earliest createdAt among members. */
+	createdAt: string;
+	items: Annotation[];
+	missionLinkedCount: number;
+	checkpointCount: number;
 }
 
 export interface ActivityEntry {
