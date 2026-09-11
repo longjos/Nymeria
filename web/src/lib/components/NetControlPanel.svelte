@@ -1372,21 +1372,25 @@
 		{/if}
 
 		<!-- Tabs -->
-		<div class="tabs">
-			<button class="tab" class:active={currentTab === 'situation'} onclick={() => { currentTab = 'situation'; metricsFilter = null; }}>
-				SitBoard {#if $attentionItems.length > 0}<span class="tab-count tab-count-alert">{$attentionItems.length}</span>{/if}
+		<div class="tabs" role="tablist" aria-label="Net control sections">
+			<button class="tab" role="tab" aria-selected={currentTab === 'situation'} class:active={currentTab === 'situation'} onclick={() => { currentTab = 'situation'; metricsFilter = null; }}>
+				<span class="tab-label">SitBoard</span>
+				{#if $attentionItems.length > 0}<span class="tab-count tab-count-alert" aria-label="{$attentionItems.length} items need attention">{$attentionItems.length}</span>{/if}
 			</button>
-			<button class="tab" class:active={currentTab === 'roster'} onclick={() => { currentTab = 'roster'; metricsFilter = null; }}>
-				Roster <span class="tab-count">{$activeCheckIns.length}</span>
+			<button class="tab" role="tab" aria-selected={currentTab === 'roster'} class:active={currentTab === 'roster'} onclick={() => { currentTab = 'roster'; metricsFilter = null; }}>
+				<span class="tab-label">Roster</span>
+				<span class="tab-count">{$activeCheckIns.length}</span>
 			</button>
-			<button class="tab" class:active={currentTab === 'missions'} onclick={() => { currentTab = 'missions'; metricsFilter = null; }}>
-				Missions {#if activeMissionCount > 0}<span class="tab-count">{activeMissionCount}</span>{/if}
+			<button class="tab" role="tab" aria-selected={currentTab === 'missions'} class:active={currentTab === 'missions'} onclick={() => { currentTab = 'missions'; metricsFilter = null; }}>
+				<span class="tab-label">Missions</span>
+				{#if activeMissionCount > 0}<span class="tab-count">{activeMissionCount}</span>{/if}
 			</button>
-			<button class="tab" class:active={currentTab === 'locations'} onclick={() => { currentTab = 'locations'; metricsFilter = null; }}>
-				Locations {#if $netAnnotations.length > 0}<span class="tab-count">{$netAnnotations.length}</span>{/if}
+			<button class="tab" role="tab" aria-selected={currentTab === 'locations'} class:active={currentTab === 'locations'} onclick={() => { currentTab = 'locations'; metricsFilter = null; }}>
+				<span class="tab-label">Locations</span>
+				{#if $netAnnotations.length > 0}<span class="tab-count">{$netAnnotations.length}</span>{/if}
 			</button>
-			<button class="tab" class:active={currentTab === 'timeline'} onclick={() => { currentTab = 'timeline'; metricsFilter = null; }}>
-				Timeline
+			<button class="tab" role="tab" aria-selected={currentTab === 'timeline'} class:active={currentTab === 'timeline'} onclick={() => { currentTab = 'timeline'; metricsFilter = null; }}>
+				<span class="tab-label">Timeline</span>
 			</button>
 		</div>
 
@@ -2349,43 +2353,93 @@
 		color: var(--color-accent);
 	}
 
-	/* Tabs */
+	/* Tabs — one row, never wraps. Tabs share the width when it fits and
+	   scroll horizontally when the panel is narrower. */
 	.tabs {
 		display: flex;
+		align-items: stretch;
+		gap: 2px;
+		padding: 0 var(--space-xs);
 		border-bottom: 1px solid var(--color-primary);
 		flex-shrink: 0;
+		overflow-x: auto;
+		overflow-y: hidden;
+		scrollbar-width: none;
+		-webkit-overflow-scrolling: touch;
+		scroll-snap-type: x proximity;
 	}
+	.tabs::-webkit-scrollbar { display: none; }
 
 	.tab {
-		flex: 1;
-		padding: 12px var(--space-sm);
+		flex: 1 0 auto;
+		display: inline-flex;
+		align-items: center;
+		justify-content: center;
+		gap: 6px;
+		min-height: 44px;
+		padding: 0 var(--space-sm);
 		background: none;
 		border: none;
-		border-bottom: 3px solid transparent;
+		border-bottom: 2px solid transparent;
 		color: var(--color-text-muted);
-		font-size: 0.85rem;
+		font-size: 0.8rem;
+		font-weight: 500;
+		letter-spacing: 0.01em;
+		white-space: nowrap;
+		scroll-snap-align: start;
 		cursor: pointer;
-		transition: all var(--duration-fast);
+		transition: color var(--duration-fast), border-color var(--duration-fast);
 	}
 
 	.tab:hover { color: var(--color-text); }
+	.tab:focus-visible {
+		outline: 2px solid var(--color-accent);
+		outline-offset: -2px;
+		border-radius: var(--radius-sm);
+	}
 	.tab.active {
-		color: var(--color-accent);
+		color: var(--color-text);
 		border-bottom-color: var(--color-accent);
 	}
 
 	.tab-count {
-		font-size: 0.7rem;
+		display: inline-flex;
+		align-items: center;
+		justify-content: center;
+		min-width: 18px;
+		height: 18px;
+		padding: 0 5px;
+		border-radius: var(--radius-full);
 		background: var(--color-primary);
-		padding: 2px 6px;
-		border-radius: 8px;
-		margin-left: 4px;
+		color: var(--color-text-muted);
+		font-size: 0.68rem;
+		font-weight: 600;
+		font-variant-numeric: tabular-nums;
+		line-height: 1;
+		transition: background var(--duration-fast), color var(--duration-fast);
+	}
+	.tab.active .tab-count {
+		background: var(--color-accent);
+		color: #fff;
 	}
 
-	.tab-count-alert {
-		background: #ef4444;
+	.tab-count-alert,
+	.tab.active .tab-count-alert {
+		background: var(--color-error);
 		color: #fff;
-		animation: pulse-alert 2s ease-in-out infinite;
+		animation: tab-alert-pulse 2s ease-in-out infinite;
+	}
+	@keyframes tab-alert-pulse {
+		0%, 100% { box-shadow: 0 0 0 0 rgba(231, 76, 60, 0.55); }
+		50% { box-shadow: 0 0 0 4px rgba(231, 76, 60, 0); }
+	}
+	@media (prefers-reduced-motion: reduce) {
+		.tab-count-alert { animation: none; }
+	}
+	/* Phone widths: tighten so all five tabs fit without scrolling. */
+	@media (max-width: 480px) {
+		.tabs { gap: 0; padding: 0; }
+		.tab { padding: 0 4px; gap: 3px; font-size: 0.75rem; }
 	}
 
 	.tab-content {
