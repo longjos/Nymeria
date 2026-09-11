@@ -6,9 +6,24 @@
 	import { api } from '$lib/api';
 	import type { TileCacheStatus } from '$lib/types';
 	import { kissLinkState, kissLinkLabel, kissLinkHint } from '$lib/serialPorts';
+	import { gpsStatus, gpsAgeMs, formatGpsAge } from '$lib/stores/gps';
 
 	let list = $derived($transports);
 	let connectedCount = $derived(list.filter((t) => t.connected).length);
+
+	// Live GPS state
+	let gpsExpanded = $state(true);
+	let gpsFix = $derived($gpsStatus.fix);
+	let gpsSummary = $derived.by(() => {
+		const s = $gpsStatus;
+		if (!s.connected) return 'GPS offline';
+		if (!s.fix || s.fix.mode <= 1) return 'No fix';
+		const bits = [s.fix.mode === 3 ? '3D' : '2D'];
+		if (s.fix.satellites) bits.push(`${s.fix.satellites} sats`);
+		if (s.fix.accuracy) bits.push(`±${Math.round(s.fix.accuracy)} m`);
+		return bits.join(' · ');
+	});
+	let gpsAgeLabel = $derived($gpsAgeMs != null ? formatGpsAge($gpsAgeMs) : null);
 
 	// Tile cache state
 	let tileStatus = $state<TileCacheStatus | null>(null);
@@ -176,6 +191,67 @@
 					{/if}
 				</div>
 			{/each}
+		</div>
+	{/if}
+
+	<!-- Live GPS -->
+	{#if $gpsStatus.enabled}
+		<div class="tile-section gps-section">
+			<button class="tile-toggle" onclick={() => (gpsExpanded = !gpsExpanded)}>
+				<svg width="12" height="12" viewBox="0 0 16 16" fill="none" class="chevron" class:expanded={gpsExpanded}>
+					<path d="M6 4l4 4-4 4" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/>
+				</svg>
+				<span
+					class="status-dot"
+					class:connected={$gpsStatus.connected}
+					class:disconnected={!$gpsStatus.connected && !$gpsStatus.error}
+					class:errored={!!$gpsStatus.error}
+				></span>
+				<span>GPS</span>
+				<span class="tile-count">{gpsSummary}</span>
+			</button>
+
+			{#if gpsExpanded}
+				<div class="tile-content gps-content">
+					{#if $gpsStatus.type && $gpsStatus.target}
+						<div class="gps-target">{$gpsStatus.type} {$gpsStatus.target}</div>
+					{/if}
+					{#if gpsFix && gpsFix.mode >= 2}
+						<div class="gps-fields">
+							<div class="gps-field">
+								<span class="gps-field-label">Lat</span>
+								<span class="gps-field-value">{gpsFix.lat.toFixed(6)}</span>
+							</div>
+							<div class="gps-field">
+								<span class="gps-field-label">Lon</span>
+								<span class="gps-field-value">{gpsFix.lon.toFixed(6)}</span>
+							</div>
+							<div class="gps-field">
+								<span class="gps-field-label">Speed</span>
+								<span class="gps-field-value">{gpsFix.speedKnots.toFixed(1)} kt</span>
+							</div>
+							{#if gpsFix.hasCourse}
+								<div class="gps-field">
+									<span class="gps-field-label">Course</span>
+									<span class="gps-field-value">{String(Math.round(gpsFix.course)).padStart(3, '0')}°</span>
+								</div>
+							{/if}
+							{#if gpsFix.hasAltitude}
+								<div class="gps-field">
+									<span class="gps-field-label">Alt</span>
+									<span class="gps-field-value">{Math.round(gpsFix.altitude ?? 0)} m</span>
+								</div>
+							{/if}
+						</div>
+					{/if}
+					{#if gpsAgeLabel}
+						<div class="gps-updated">Updated {gpsAgeLabel} ago</div>
+					{/if}
+					{#if $gpsStatus.error}
+						<div class="error-msg">{$gpsStatus.error}</div>
+					{/if}
+				</div>
+			{/if}
 		</div>
 	{/if}
 
@@ -617,5 +693,47 @@
 		font-family: monospace;
 		color: var(--color-text-muted);
 		white-space: nowrap;
+	}
+
+	/* Live GPS section */
+	.gps-content {
+		gap: var(--space-xs);
+	}
+
+	.gps-target {
+		font-size: 0.7rem;
+		font-family: monospace;
+		color: var(--color-text-muted);
+	}
+
+	.gps-fields {
+		display: flex;
+		flex-wrap: wrap;
+		gap: var(--space-md) var(--space-md);
+	}
+
+	.gps-field {
+		display: flex;
+		flex-direction: column;
+		gap: 1px;
+	}
+
+	.gps-field-label {
+		font-size: 0.6rem;
+		text-transform: uppercase;
+		letter-spacing: 0.5px;
+		color: var(--color-text-muted);
+	}
+
+	.gps-field-value {
+		font-family: monospace;
+		font-size: 0.8rem;
+		font-weight: 600;
+		color: var(--color-text);
+	}
+
+	.gps-updated {
+		font-size: 0.7rem;
+		color: var(--color-text-muted);
 	}
 </style>

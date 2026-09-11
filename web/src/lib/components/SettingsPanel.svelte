@@ -16,7 +16,7 @@
 	import type {
 		SettingsResponse, StationSettings, ServerSettings, BeaconSettings,
 		SessionSettings, LoggingSettings, TransportSettings, TileCacheSettings,
-		WeatherSettings, SerialPortInfo, SerialProfile, KissTncInfo
+		WeatherSettings, SerialPortInfo, SerialProfile, KissTncInfo, GpsSettings
 	} from '$lib/types';
 
 	let loading = $state(true);
@@ -28,6 +28,7 @@
 	let openSections = $state<Record<string, boolean>>({
 		station: true,
 		transports: false,
+		gps: false,
 		beacon: false,
 		session: false,
 		logging: false,
@@ -57,6 +58,7 @@
 			if (settings.station.beaconPath == null) {
 				settings.station.beaconPath = 'WIDE1-1,WIDE2-1';
 			}
+			gpsNmeaMode = settings.gps.device ? 'serial' : 'network';
 		} catch (e: any) {
 			error = e.message || 'Failed to load settings';
 		} finally {
@@ -72,7 +74,14 @@
 			loadSerialPorts();
 			loadKissTncs();
 		}
+		if (section === 'gps' && openSections.gps && !serialListLoaded && !serialPortsLoading) {
+			loadSerialPorts();
+		}
 	}
+
+	// NMEA transport choice — the config itself just has device XOR host, this
+	// is purely which fields the UI shows.
+	let gpsNmeaMode = $state<'serial' | 'network'>('serial');
 
 	let serialPorts = $state<SerialPortInfo[]>([]);
 	let serialProfiles = $state<SerialProfile[]>([]);
@@ -232,6 +241,41 @@
 			showToast('weather', e.message || 'Save failed', 'error');
 		} finally {
 			saving['weather'] = false;
+		}
+	}
+
+	const DURATION_RE = /^\d+(\.\d+)?(ms|s|m|h)$/;
+
+	function setGpsNmeaMode(mode: 'serial' | 'network') {
+		if (!settings) return;
+		gpsNmeaMode = mode;
+		// The config takes device XOR host for nmea — clear the one not shown.
+		if (mode === 'serial') settings.gps.host = '';
+		else settings.gps.device = '';
+	}
+
+	async function saveGPS() {
+		if (!settings) return;
+		const gps: GpsSettings = settings.gps;
+		if (gps.enabled) {
+			if (gps.minInterval && !DURATION_RE.test(gps.minInterval)) {
+				showToast('gps', 'Min interval must look like "1s" or "500ms"', 'error');
+				return;
+			}
+			if (gps.staleAfter && !DURATION_RE.test(gps.staleAfter)) {
+				showToast('gps', 'Stale after must look like "30s" or "1m"', 'error');
+				return;
+			}
+		}
+		saving['gps'] = true;
+		try {
+			const resp = await api.updateGPS(gps);
+			if (resp.restartRequired) restartBanner = true;
+			showToast('gps', 'GPS settings saved', 'success');
+		} catch (e: any) {
+			showToast('gps', e.message || 'Save failed', 'error');
+		} finally {
+			saving['gps'] = false;
 		}
 	}
 
@@ -505,6 +549,129 @@
 						<div class="section-actions">
 							<button class="save-btn" onclick={saveTransports} disabled={saving['transports']}>
 								{saving['transports'] ? 'Saving...' : 'Save Transports'}
+							</button>
+						</div>
+					</div>
+				{/if}
+			</div>
+
+			<!-- Live GPS -->
+			<div class="section" class:open={openSections.gps}>
+				<button class="section-header" onclick={() => toggle('gps')}>
+					<span class="section-title">Live GPS</span>
+					<span class="section-badge live">Live</span>
+					<svg class="chevron" width="14" height="14" viewBox="0 0 16 16" fill="none">
+						<path d="M4 6l4 4 4-4" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/>
+					</svg>
+				</button>
+				{#if openSections.gps}
+					<div class="section-body">
+						<div class="field-row toggle-row">
+							<label for="gps-enabled">Enabled</label>
+							<input id="gps-enabled" type="checkbox" bind:checked={settings.gps.enabled} />
+						</div>
+						<p class="field-help">Turning this on or off requires a restart to take effect.</p>
+
+						<div class="field-row">
+							<!-- svelte-ignore a11y_label_has_associated_control -->
+							<label>Source</label>
+							<div class="unit-toggle">
+								<button
+									class="unit-option"
+									class:active={settings.gps.type !== 'nmea'}
+									disabled={!settings.gps.enabled}
+									onclick={() => { if (settings) settings.gps.type = 'gpsd'; }}
+								>gpsd</button>
+								<button
+									class="unit-option"
+									class:active={settings.gps.type === 'nmea'}
+									disabled={!settings.gps.enabled}
+									onclick={() => { if (settings) settings.gps.type = 'nmea'; }}
+								>NMEA</button>
+							</div>
+						</div>
+
+						{#if settings.gps.type === 'nmea'}
+							<div class="field-row">
+								<!-- svelte-ignore a11y_label_has_associated_control -->
+								<label>Connection</label>
+								<div class="unit-toggle">
+									<button
+										class="unit-option"
+										class:active={gpsNmeaMode === 'serial'}
+										disabled={!settings.gps.enabled}
+										onclick={() => setGpsNmeaMode('serial')}
+									>Serial</button>
+									<button
+										class="unit-option"
+										class:active={gpsNmeaMode === 'network'}
+										disabled={!settings.gps.enabled}
+										onclick={() => setGpsNmeaMode('network')}
+									>Network</button>
+								</div>
+							</div>
+
+							{#if gpsNmeaMode === 'serial'}
+								<SerialPortFields
+									idPrefix="gps"
+									bind:device={settings.gps.device}
+									bind:baud={settings.gps.baud}
+									ports={serialPorts}
+									hostOS={serialHostOS}
+									profiles={serialProfiles}
+									baudRates={serialBaudRates}
+									portsLoading={serialPortsLoading}
+									portsError={serialPortsError}
+									onrefresh={loadSerialPorts}
+									liveStatus={null}
+								/>
+							{:else}
+								<div class="field-group">
+									<div class="field-row half">
+										<label for="gps-nmea-host">Host</label>
+										<input id="gps-nmea-host" type="text" bind:value={settings.gps.host} disabled={!settings.gps.enabled} />
+									</div>
+									<div class="field-row half">
+										<label for="gps-nmea-port">Port</label>
+										<input id="gps-nmea-port" type="number" bind:value={settings.gps.port} disabled={!settings.gps.enabled} />
+									</div>
+								</div>
+							{/if}
+						{:else}
+							<div class="field-group">
+								<div class="field-row half">
+									<label for="gps-host">Host</label>
+									<input id="gps-host" type="text" bind:value={settings.gps.host} placeholder="127.0.0.1" disabled={!settings.gps.enabled} />
+								</div>
+								<div class="field-row half">
+									<label for="gps-port">Port</label>
+									<input id="gps-port" type="number" bind:value={settings.gps.port} placeholder="2947" disabled={!settings.gps.enabled} />
+								</div>
+							</div>
+						{/if}
+
+						<div class="field-group">
+							<div class="field-row half">
+								<label for="gps-min-interval">Min interval</label>
+								<input id="gps-min-interval" type="text" bind:value={settings.gps.minInterval} placeholder="1s" disabled={!settings.gps.enabled} />
+							</div>
+							<div class="field-row half">
+								<label for="gps-stale-after">Stale after</label>
+								<input id="gps-stale-after" type="text" bind:value={settings.gps.staleAfter} placeholder="30s" disabled={!settings.gps.enabled} />
+							</div>
+						</div>
+
+						<div class="field-row toggle-row">
+							<label for="gps-use-for-beacon">Use for beacon</label>
+							<input id="gps-use-for-beacon" type="checkbox" bind:checked={settings.gps.useForBeacon} disabled={!settings.gps.enabled} />
+						</div>
+						<p class="field-help">
+							Beacons use the live fix when it is fresher than "Stale after"; otherwise they fall back to the station latitude/longitude.
+						</p>
+
+						<div class="section-actions">
+							<button class="save-btn" onclick={saveGPS} disabled={saving['gps']}>
+								{saving['gps'] ? 'Saving...' : 'Save GPS'}
 							</button>
 						</div>
 					</div>
