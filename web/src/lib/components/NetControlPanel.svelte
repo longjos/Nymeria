@@ -14,7 +14,7 @@
 		opsView,
 		hoveredMissionId, highlightedCheckIns,
 		hoveredCheckInId,
-		netAnnotations, annotationsByName,
+		netAnnotations, annotationsByName, netLocationAnnotations,
 		orderedCheckpoints
 	} from '$lib/stores/netcontrol';
 	import { annotationList } from '$lib/stores/annotations';
@@ -22,6 +22,8 @@
 	import { stationCategoryMeta } from '$lib/stationCategoryMeta';
 	import { parseCommand, getModeIndicator, getAutocompleteContext, type ParsedCommand, type AutocompleteContext } from '$lib/commandParser';
 	import { showToast } from '$lib/stores/toast';
+	import { formatCoord } from '$lib/utils';
+	import { nearestAnnotation } from '$lib/geo';
 	import LocationManager from './LocationManager.svelte';
 	import SituationBoard from './SituationBoard.svelte';
 
@@ -34,6 +36,13 @@
 		onPlaceAnnotation,
 		annotationMapCoords = null,
 		onMapCoordsConsumed,
+		focusedAnnotationId = null,
+		onFocusConsumed,
+		onPlaceMissionLocation,
+		missionMapCoords = null,
+		onMissionMapCoordsConsumed,
+		onClearMissionDraft,
+		missionPickActive = false,
 	}: {
 		onFlyTo?: (lat: number, lon: number) => void;
 		onFlyToBounds?: (coords: Array<{ lat: number; lon: number }>) => void;
@@ -43,10 +52,25 @@
 		onPlaceAnnotation?: (id: string | null, name: string, mode: 'update' | 'form') => void;
 		annotationMapCoords?: { lat: number; lon: number } | null;
 		onMapCoordsConsumed?: () => void;
+		focusedAnnotationId?: string | null;
+		onFocusConsumed?: () => void;
+		onPlaceMissionLocation?: (label: string) => void;
+		missionMapCoords?: { lat: number; lon: number } | null;
+		onMissionMapCoordsConsumed?: () => void;
+		onClearMissionDraft?: () => void;
+		missionPickActive?: boolean;
 	} = $props();
 
 	type Tab = 'situation' | 'roster' | 'missions' | 'locations' | 'timeline';
 	let currentTab = $state<Tab>('situation');
+
+	// A net-location marker click routes here (see +page.svelte
+	// handleAnnotationClick) only while Net Control is already the open
+	// panel; jump straight to the Locations tab so the reveal in
+	// LocationManager has somewhere to scroll.
+	$effect(() => {
+		if (focusedAnnotationId) currentTab = 'locations';
+	});
 
 	// Metrics bar filter — clicking a metric filters the roster
 	type MetricsFilter = null | 'available' | 'assigned' | 'missing' | 'stale';
@@ -84,13 +108,39 @@
 	let newMissionDesc = $state('');
 	let newMissionPriority = $state('routine');
 	let newMissionAssign = $state('');
-	let newMissionLocation = $state('');
-	let newMissionLat = $state('');
-	let newMissionLon = $state('');
+	let titleEl = $state<HTMLInputElement>();
 
-	// Mission location autocomplete
-	let missionLocSuggestions = $state<import('$lib/types').Annotation[]>([]);
-	let showMissionLocDropdown = $state(false);
+	// Mission location — one source of truth (design doc task #92 §3)
+	type MissionLocSource = 'none' | 'annotation' | 'map' | 'typed' | 'coords';
+	let missionLocLabel = $state('');
+	let missionLocLat = $state<number | null>(null);
+	let missionLocLon = $state<number | null>(null);
+	let missionLocSource = $state<MissionLocSource>('none');
+	let missionLocNearId = $state<string | null>(null);
+	let autoLinkedAnnId = $state<string | null>(null);
+
+	let locOpen = $state(false);
+	let locQuery = $state('');
+	let locHighlight = $state(0);
+	let locCoordLat = $state('');
+	let locCoordLon = $state('');
+	let locCoordError = $state('');
+	let detailsOpen = $state(false);
+	let missionSubmitting = $state(false);
+	let formError = $state('');
+	let srMessage = $state('');
+	let pickingOnMap = $state(false);
+	let locFieldTriggerEl = $state<HTMLButtonElement>();
+	let locSearchEl = $state<HTMLInputElement>();
+	let locPopoverEl = $state<HTMLDivElement>();
+	const missionPriorities = ['routine', 'priority', 'welfare', 'emergency'] as const;
+	const missionPriorityLabels: Record<(typeof missionPriorities)[number], string> = {
+		routine: 'Routine',
+		priority: 'Priority',
+		welfare: 'Welfare',
+		emergency: 'Emergency',
+	};
+	let priorityRefs: (HTMLButtonElement | undefined)[] = [];
 
 	// Mission brief in create form
 	let newNetMissionBrief = $state('');
@@ -752,71 +802,302 @@
 		}
 	}
 
+	// Open the form — focuses the title input once it mounts.
+	$effect(() => {
+		if (showMissionForm) {
+			queueMicrotask(() => titleEl?.focus());
+		}
+	});
+
+	// Consume map-clicked coordinates into the location field (mirrors
+	// LocationManager's mapClickedCoords effect).
+	$effect(() => {
+		if (!missionMapCoords) return;
+		const { lat, lon } = missionMapCoords;
+		const near = nearestAnnotation(lat, lon, locOptions, 100);
+		unlinkStaleAutoLink();
+		missionLocLat = lat;
+		missionLocLon = lon;
+		missionLocSource = 'map';
+		missionLocNearId = near?.annotation.id ?? null;
+		missionLocLabel = near?.annotation.label ?? '';
+		srMessage = near ? `Location set near ${near.annotation.label}` : `Location set to ${formatCoord(lat, lon)}`;
+		pickingOnMap = false;
+		onMissionMapCoordsConsumed?.();
+	});
+
+	// The map side cancelled (Esc) without ever sending coordinates back —
+	// drop the panel's "picking" state so the trigger reverts.
+	$effect(() => {
+		if (!missionPickActive && pickingOnMap) {
+			pickingOnMap = false;
+		}
+	});
+
+	// Removes whatever annotation was auto-linked by a *previous* location
+	// selection before a new selection overwrites autoLinkedAnnId — otherwise
+	// switching location twice leaves the first pick's annotation linked to
+	// the mission forever, invisibly (it no longer matches the location
+	// chip, so nothing in the UI hints it's still selected).
+	function unlinkStaleAutoLink() {
+		if (autoLinkedAnnId && selectedAnnotationIds.includes(autoLinkedAnnId)) {
+			selectedAnnotationIds = selectedAnnotationIds.filter((id) => id !== autoLinkedAnnId);
+		}
+		autoLinkedAnnId = null;
+	}
+
+	function selectLocationAnnotation(a: Annotation) {
+		unlinkStaleAutoLink();
+		try {
+			const geo = typeof a.geometry === 'string' ? JSON.parse(a.geometry) : a.geometry;
+			if (geo?.type === 'Point' && Array.isArray(geo.coordinates)) {
+				missionLocLon = geo.coordinates[0];
+				missionLocLat = geo.coordinates[1];
+			}
+		} catch { /* ignore parse errors */ }
+		missionLocLabel = a.label;
+		missionLocSource = 'annotation';
+		missionLocNearId = a.id;
+		if (!selectedAnnotationIds.includes(a.id)) {
+			selectedAnnotationIds = [...selectedAnnotationIds, a.id];
+		}
+		autoLinkedAnnId = a.id;
+		locOpen = false;
+		locQuery = '';
+		srMessage = `Location set to ${a.label}`;
+		queueMicrotask(() => locFieldTriggerEl?.focus());
+	}
+
+	function useTypedLocation() {
+		const q = locQuery.trim();
+		if (!q) return;
+		unlinkStaleAutoLink();
+		missionLocLabel = q;
+		missionLocLat = null;
+		missionLocLon = null;
+		missionLocSource = 'typed';
+		missionLocNearId = null;
+		locOpen = false;
+		locQuery = '';
+		srMessage = `Location set to ${q}`;
+		queueMicrotask(() => locFieldTriggerEl?.focus());
+	}
+
+	function useTypedCoords() {
+		const lat = parseFloat(locCoordLat);
+		const lon = parseFloat(locCoordLon);
+		if (isNaN(lat) || lat < -90 || lat > 90) {
+			locCoordError = 'Latitude must be −90 to 90';
+			return;
+		}
+		if (isNaN(lon) || lon < -180 || lon > 180) {
+			locCoordError = 'Longitude must be −180 to 180';
+			return;
+		}
+		locCoordError = '';
+		unlinkStaleAutoLink();
+		missionLocLat = lat;
+		missionLocLon = lon;
+		missionLocSource = 'coords';
+		missionLocNearId = null;
+		locOpen = false;
+		locCoordLat = '';
+		locCoordLon = '';
+		srMessage = missionLocLabel ? `Location set to ${missionLocLabel}` : `Location set to ${formatCoord(lat, lon)}`;
+		queueMicrotask(() => locFieldTriggerEl?.focus());
+	}
+
+	function clearLocation() {
+		missionLocLabel = '';
+		missionLocLat = null;
+		missionLocLon = null;
+		missionLocSource = 'none';
+		missionLocNearId = null;
+		unlinkStaleAutoLink();
+		onClearMissionDraft?.();
+		srMessage = 'Location cleared.';
+		queueMicrotask(() => locFieldTriggerEl?.focus());
+	}
+
+	function startMapPick() {
+		locOpen = false;
+		locQuery = '';
+		pickingOnMap = true;
+		srMessage = 'Picking location on the map. Press Escape to cancel.';
+		onPlaceMissionLocation?.(newMissionTitle.trim() || 'Mission location');
+	}
+
+	function onLocTriggerClick() {
+		if (pickingOnMap) return;
+		openLocPopover();
+	}
+
+	function openLocPopover() {
+		locOpen = true;
+		locQuery = missionLocSource !== 'none' ? missionLocLabel : '';
+		locHighlight = 0;
+		queueMicrotask(() => {
+			locSearchEl?.focus();
+			locSearchEl?.select();
+		});
+	}
+
+	// Closing on blur must not fire while focus is only moving to another
+	// control inside the same popover (e.g. into the Coordinates fields).
+	function onLocSearchBlur(e: FocusEvent) {
+		const next = e.relatedTarget as Node | null;
+		if (next && locPopoverEl?.contains(next)) return;
+		setTimeout(() => { locOpen = false; }, 150);
+	}
+
+	function commitLocRow(i: number) {
+		if (i === 0) {
+			startMapPick();
+			return;
+		}
+		const annIdx = i - 1;
+		if (annIdx < locFiltered.length) {
+			selectLocationAnnotation(locFiltered[annIdx]);
+			return;
+		}
+		if (showFreeTextRow) useTypedLocation();
+	}
+
+	// Keep the highlighted row in range as the filtered list shrinks.
+	$effect(() => {
+		if (locHighlight > locRowCount - 1) locHighlight = Math.max(0, locRowCount - 1);
+	});
+
+	function onLocKeydown(e: KeyboardEvent) {
+		if (e.key === 'ArrowDown') {
+			e.preventDefault();
+			locHighlight = (locHighlight + 1) % locRowCount;
+		} else if (e.key === 'ArrowUp') {
+			e.preventDefault();
+			locHighlight = (locHighlight - 1 + locRowCount) % locRowCount;
+		} else if (e.key === 'Home') {
+			e.preventDefault();
+			locHighlight = 0;
+		} else if (e.key === 'End') {
+			e.preventDefault();
+			locHighlight = locRowCount - 1;
+		} else if (e.key === 'Enter') {
+			e.preventDefault();
+			commitLocRow(locHighlight);
+		} else if (e.key === 'Tab') {
+			locOpen = false;
+		}
+		// Escape is intentionally left unhandled here — it bubbles to
+		// onFormKeydown, which owns the whole form's Escape priority chain.
+	}
+
+	function selectPriorityAt(i: number) {
+		newMissionPriority = missionPriorities[i];
+		queueMicrotask(() => priorityRefs[i]?.focus());
+	}
+
+	function onPriorityKeydown(e: KeyboardEvent, i: number) {
+		if (e.key === 'ArrowRight' || e.key === 'ArrowDown') {
+			e.preventDefault();
+			selectPriorityAt((i + 1) % missionPriorities.length);
+		} else if (e.key === 'ArrowLeft' || e.key === 'ArrowUp') {
+			e.preventDefault();
+			selectPriorityAt((i - 1 + missionPriorities.length) % missionPriorities.length);
+		} else if (e.key === 'Enter') {
+			e.preventDefault();
+			handleCreateMission();
+		}
+		// Space is left to native button activation, which selects this chip.
+	}
+
+	function onFormKeydown(e: KeyboardEvent) {
+		if (e.key !== 'Escape') return;
+		if (locOpen) {
+			locOpen = false;
+			locQuery = '';
+			queueMicrotask(() => locFieldTriggerEl?.focus());
+		} else if (pickingOnMap) {
+			// No-op — Map.svelte's own Escape handler cancels the map pick.
+		} else {
+			cancelMissionForm();
+		}
+	}
+
+	function resetMissionForm() {
+		showMissionForm = false;
+		newMissionTitle = '';
+		newMissionDesc = '';
+		newMissionPriority = 'routine';
+		newMissionAssign = '';
+		missionLocLabel = '';
+		missionLocLat = null;
+		missionLocLon = null;
+		missionLocSource = 'none';
+		missionLocNearId = null;
+		autoLinkedAnnId = null;
+		selectedAnnotationIds = [];
+		locQuery = '';
+		locOpen = false;
+		locCoordLat = '';
+		locCoordLon = '';
+		locCoordError = '';
+		detailsOpen = false;
+		formError = '';
+		pickingOnMap = false;
+	}
+
+	function cancelMissionForm() {
+		resetMissionForm();
+		onClearMissionDraft?.();
+	}
+
 	async function handleCreateMission() {
-		if (!$activeNet || !newMissionTitle.trim()) return;
+		if (!$activeNet) return;
+		if (!newMissionTitle.trim()) {
+			formError = 'Mission title is required';
+			titleEl?.focus();
+			return;
+		}
+		formError = '';
+		missionSubmitting = true;
 		try {
 			const data: Partial<NetMission> = {
 				title: newMissionTitle.trim(),
 				description: newMissionDesc.trim(),
 				priority: newMissionPriority,
 				assignedTo: newMissionAssign,
-				location: newMissionLocation.trim()
+				location: missionLocLabel.trim(),
 			};
-			const lat = parseFloat(newMissionLat);
-			const lon = parseFloat(newMissionLon);
-			if (!isNaN(lat) && !isNaN(lon)) {
-				data.lat = lat;
-				data.lon = lon;
+			if (missionLocLat != null && missionLocLon != null) {
+				data.lat = missionLocLat;
+				data.lon = missionLocLon;
 			}
 			const mission = await api.createMission($activeNet.id, data);
-			// Link selected annotations to the new mission.
+			let failed = 0;
 			for (const annId of selectedAnnotationIds) {
 				try {
 					await api.linkAnnotation(annId, mission.id);
 				} catch (err) {
+					failed++;
 					console.error('Link annotation failed:', err);
 				}
 			}
-			showMissionForm = false;
-			newMissionTitle = '';
-			newMissionDesc = '';
-			newMissionPriority = 'routine';
-			newMissionAssign = '';
-			newMissionLocation = '';
-			newMissionLat = '';
-			newMissionLon = '';
-			selectedAnnotationIds = [];
+			resetMissionForm();
+			onClearMissionDraft?.();
+			showToast(`Mission created: ${mission.title}`, 'success');
+			if (failed > 0) {
+				showToast(`Mission created — ${failed} annotation link(s) failed`, 'error', 5000);
+			}
+			if (recentlyChangedTimer) clearTimeout(recentlyChangedTimer);
+			recentlyChangedMissionId = mission.id;
+			recentlyChangedTimer = setTimeout(() => { recentlyChangedMissionId = null; }, 2000);
 		} catch (e) {
 			console.error('Create mission failed:', e);
+			formError = 'Could not create mission — check the connection and try again';
+			showToast('Create mission failed', 'error', 5000);
+		} finally {
+			missionSubmitting = false;
 		}
-	}
-
-	function handleMissionLocationInput() {
-		const q = newMissionLocation.trim().toLowerCase();
-		if (!q) {
-			missionLocSuggestions = [];
-			showMissionLocDropdown = false;
-			return;
-		}
-		missionLocSuggestions = $netAnnotations.filter(a =>
-			a.label.toLowerCase().includes(q) ||
-			(a.shortName && a.shortName.toLowerCase().includes(q))
-		);
-		showMissionLocDropdown = missionLocSuggestions.length > 0;
-	}
-
-	function selectMissionAnnotation(a: import('$lib/types').Annotation) {
-		newMissionLocation = a.label;
-		// Extract lat/lon from GeoJSON Point geometry.
-		try {
-			const geo = typeof a.geometry === 'string' ? JSON.parse(a.geometry) : a.geometry;
-			if (geo?.type === 'Point' && geo.coordinates) {
-				newMissionLon = String(geo.coordinates[0]);
-				newMissionLat = String(geo.coordinates[1]);
-			}
-		} catch { /* ignore parse errors */ }
-		showMissionLocDropdown = false;
-		missionLocSuggestions = [];
 	}
 
 	async function handleMissionStatusChange(m: NetMission, status: string) {
@@ -947,6 +1228,46 @@
 	let linkableAnnotations = $derived(
 		$annotationList.filter((a) => !isTerminalStatus(a.status))
 	);
+
+	// Mission location picker — net-scoped point annotations only (not
+	// linkableAnnotations, which is not net-scoped and would leak other nets').
+	let locOptions = $derived(
+		$netLocationAnnotations.filter((a) => !isTerminalStatus(a.status))
+	);
+	let locFiltered = $derived.by(() => {
+		const q = locQuery.trim().toLowerCase();
+		if (!q) return locOptions;
+		return locOptions.filter((a) =>
+			a.label.toLowerCase().includes(q) ||
+			(a.shortName && a.shortName.toLowerCase().includes(q))
+		);
+	});
+	let showFreeTextRow = $derived(
+		locQuery.trim().length > 0 &&
+		!locFiltered.some((a) => a.label.toLowerCase() === locQuery.trim().toLowerCase())
+	);
+	let locRowCount = $derived(1 + locFiltered.length + (showFreeTextRow ? 1 : 0));
+
+	// The annotation behind the current selection, when source is 'annotation'
+	// (for its category icon/color) or 'map' with a near match (for its label).
+	let missionLocAnn = $derived(
+		missionLocNearId ? ($netLocationAnnotations.find((a) => a.id === missionLocNearId) ?? null) : null
+	);
+
+	let locChipPrimary = $derived.by(() => {
+		if (missionLocSource === 'map') return missionLocLabel || 'Dropped pin';
+		if (missionLocSource === 'coords' && !missionLocLabel && missionLocLat != null && missionLocLon != null) {
+			return formatCoord(missionLocLat, missionLocLon);
+		}
+		return missionLocLabel;
+	});
+	let locChipSecondary = $derived.by(() => {
+		if (missionLocLat == null || missionLocLon == null) return '';
+		const coords = formatCoord(missionLocLat, missionLocLon);
+		if (missionLocSource === 'map') return missionLocLabel ? `near · ${coords}` : coords;
+		if (missionLocSource === 'coords') return missionLocLabel ? coords : '';
+		return coords;
+	});
 
 	let activeMissionCount = $derived($missions.filter((m) => m.status !== 'complete').length);
 	let completeMissionCount = $derived($missions.filter((m) => m.status === 'complete').length);
@@ -1829,7 +2150,7 @@
 				<!-- Mission toolbar -->
 				<div class="mission-toolbar">
 					{#if !showMissionForm}
-						<button class="btn-secondary btn-sm" onclick={() => (showMissionForm = true)}>+ New</button>
+						<button class="btn-secondary btn-sm" onclick={() => (showMissionForm = true)}>+ Mission</button>
 					{/if}
 					<div class="mission-filter-chips">
 						<button class="filter-chip" class:active={missionFilter === 'all'} onclick={() => (missionFilter = 'all')}>All {$missions.length}</button>
@@ -1841,66 +2162,216 @@
 				</div>
 
 				{#if showMissionForm}
-					<div class="mission-form">
-						<input type="text" bind:value={newMissionTitle} placeholder="Mission title" />
-						<textarea bind:value={newMissionDesc} rows="2" placeholder="Description (optional)"></textarea>
-						<div class="form-row">
-							<select bind:value={newMissionPriority}>
-								<option value="routine">Routine</option>
-								<option value="priority">Priority</option>
-								<option value="welfare">Welfare</option>
-								<option value="emergency">Emergency</option>
-							</select>
-							<select bind:value={newMissionAssign}>
-								<option value="">Unassigned</option>
-								{#each $activeCheckIns as ci}
-									<option value={ci.callsign}>{ci.callsign}</option>
-								{/each}
-							</select>
-						</div>
-						<div class="mission-loc-wrap">
-							<input type="text" bind:value={newMissionLocation} placeholder="Location (e.g., Main & 5th St)" oninput={handleMissionLocationInput} onfocus={handleMissionLocationInput} onblur={() => { setTimeout(() => { showMissionLocDropdown = false; }, 150); }} />
-							{#if showMissionLocDropdown && missionLocSuggestions.length > 0}
-								<div class="mission-loc-dropdown">
-									{#each missionLocSuggestions.slice(0, 6) as sug}
-										<button class="mission-loc-item" onmousedown={() => selectMissionAnnotation(sug)}>
-											<span class="mission-loc-name">{sug.label}</span>
-											{#if sug.shortName}
-												<span class="mission-loc-short">{sug.shortName}</span>
-											{/if}
+					<!-- svelte-ignore a11y_no_static_element_interactions -->
+					<div class="mission-form" onkeydown={onFormKeydown}>
+						<input
+							type="text"
+							class="mission-title-input"
+							bind:value={newMissionTitle}
+							bind:this={titleEl}
+							placeholder="Mission title"
+							aria-label="Mission title"
+							onkeydown={(e) => { if (e.key === 'Enter') { e.preventDefault(); handleCreateMission(); } }}
+						/>
+
+						<div class="mission-loc-field">
+							{#if pickingOnMap}
+								<button type="button" class="loc-trigger picking" bind:this={locFieldTriggerEl} onclick={onLocTriggerClick}>
+									<svg width="14" height="14" viewBox="0 0 16 16" fill="none" aria-hidden="true"><path d="M8 1C5.24 1 3 3.24 3 6c0 3.75 5 9 5 9s5-5.25 5-9c0-2.76-2.24-5-5-5zm0 7a2 2 0 110-4 2 2 0 010 4z" fill="currentColor"/></svg>
+									Picking on map… <kbd>Esc</kbd>
+								</button>
+							{:else if missionLocSource === 'none'}
+								<button
+									type="button"
+									class="loc-trigger"
+									bind:this={locFieldTriggerEl}
+									aria-haspopup="listbox"
+									aria-expanded={locOpen}
+									onclick={onLocTriggerClick}
+									onkeydown={(e) => { if (e.key === 'ArrowDown') { e.preventDefault(); openLocPopover(); } }}
+								>
+									<svg width="14" height="14" viewBox="0 0 16 16" fill="none" aria-hidden="true"><path d="M8 1C5.24 1 3 3.24 3 6c0 3.75 5 9 5 9s5-5.25 5-9c0-2.76-2.24-5-5-5zm0 7a2 2 0 110-4 2 2 0 010 4z" fill="currentColor"/></svg>
+									Add location
+									<svg class="chev" width="10" height="10" viewBox="0 0 16 16" fill="none" aria-hidden="true"><path d="M4 6l4 4 4-4" stroke="currentColor" stroke-width="1.5" fill="none" stroke-linecap="round" stroke-linejoin="round"/></svg>
+								</button>
+							{:else}
+								<div class="loc-chip" role="group" aria-label="Mission location">
+									<button type="button" class="loc-chip-main" bind:this={locFieldTriggerEl} onclick={openLocPopover}>
+										{#if missionLocSource === 'annotation' && missionLocAnn}
+											<span class="loc-chip-icon" style="--loc-cat-color: {categoryMeta[missionLocAnn.category]?.defaultColor ?? '#6b7280'}">
+												<svg width="16" height="16" viewBox="0 0 16 16"><path d={categoryMeta[missionLocAnn.category]?.icon} stroke="currentColor" stroke-width="1.2" fill="none" stroke-linecap="round" stroke-linejoin="round"/></svg>
+											</span>
+										{:else}
+											<span class="loc-chip-icon" style="--loc-cat-color: #6b7280">
+												<svg width="16" height="16" viewBox="0 0 16 16" fill="none"><path d="M8 1C5.24 1 3 3.24 3 6c0 3.75 5 9 5 9s5-5.25 5-9c0-2.76-2.24-5-5-5zm0 7a2 2 0 110-4 2 2 0 010 4z" fill="currentColor"/></svg>
+											</span>
+										{/if}
+										<span class="loc-chip-text">
+											<span class="loc-chip-label">{locChipPrimary}</span>
+											{#if locChipSecondary}<span class="loc-chip-coords">{locChipSecondary}</span>{/if}
+										</span>
+									</button>
+									<button type="button" class="loc-chip-map" title="Pick on map" aria-label="Pick on map" onclick={startMapPick}>
+										<svg width="14" height="14" viewBox="0 0 16 16" fill="none" aria-hidden="true"><path d="M8 1C5.24 1 3 3.24 3 6c0 3.75 5 9 5 9s5-5.25 5-9c0-2.76-2.24-5-5-5zm0 7a2 2 0 110-4 2 2 0 010 4z" fill="currentColor"/></svg>
+									</button>
+									<button type="button" class="loc-chip-clear" title="Clear location" aria-label="Clear location" onclick={clearLocation}>✕</button>
+								</div>
+							{/if}
+
+							{#if locOpen}
+								<div class="loc-popover" bind:this={locPopoverEl}>
+									<input
+										type="text"
+										class="loc-search"
+										role="combobox"
+										autocomplete="off"
+										bind:value={locQuery}
+										bind:this={locSearchEl}
+										placeholder="Search locations or type a name"
+										aria-expanded="true"
+										aria-controls="mission-loc-list"
+										aria-autocomplete="list"
+										aria-activedescendant={'mission-loc-opt-' + locHighlight}
+										oninput={() => (locHighlight = 0)}
+										onkeydown={onLocKeydown}
+										onblur={onLocSearchBlur}
+									/>
+									<div class="loc-list" role="listbox" id="mission-loc-list">
+										<button
+											type="button"
+											id="mission-loc-opt-0"
+											role="option"
+											aria-selected={locHighlight === 0}
+											class="loc-opt loc-opt-map"
+											class:highlight={locHighlight === 0}
+											onmousedown={() => startMapPick()}
+										>
+											📍 Choose on map
 										</button>
-									{/each}
+										{#each locFiltered as ann, i (ann.id)}
+											{@const rowIdx = i + 1}
+											<button
+												type="button"
+												id={'mission-loc-opt-' + rowIdx}
+												role="option"
+												aria-selected={locHighlight === rowIdx}
+												class="loc-opt"
+												class:highlight={locHighlight === rowIdx}
+												onmousedown={() => selectLocationAnnotation(ann)}
+											>
+												<span class="loc-opt-icon" style="--loc-cat-color: {categoryMeta[ann.category]?.defaultColor ?? '#6b7280'}">
+													<svg width="16" height="16" viewBox="0 0 16 16"><path d={categoryMeta[ann.category]?.icon} stroke="currentColor" stroke-width="1.2" fill="none" stroke-linecap="round" stroke-linejoin="round"/></svg>
+												</span>
+												<span class="loc-opt-label">{ann.label}</span>
+												{#if ann.shortName}<span class="loc-opt-short">{ann.shortName}</span>{/if}
+											</button>
+										{/each}
+										{#if showFreeTextRow}
+											{@const freeIdx = locFiltered.length + 1}
+											<button
+												type="button"
+												id={'mission-loc-opt-' + freeIdx}
+												role="option"
+												aria-selected={locHighlight === freeIdx}
+												class="loc-opt loc-opt-free"
+												class:highlight={locHighlight === freeIdx}
+												onmousedown={() => useTypedLocation()}
+											>
+												Use “{locQuery.trim()}”
+											</button>
+										{/if}
+										{#if locFiltered.length === 0 && !locQuery.trim()}
+											<p class="loc-empty">No net locations yet — choose on map or type a name</p>
+										{/if}
+									</div>
+									<details class="loc-coords">
+										<summary>Coordinates</summary>
+										<div class="form-row">
+											<input type="text" bind:value={locCoordLat} placeholder="Lat" inputmode="decimal" aria-label="Latitude" />
+											<input type="text" bind:value={locCoordLon} placeholder="Lon" inputmode="decimal" aria-label="Longitude" />
+											<button type="button" class="btn-mini" onclick={useTypedCoords}>Use</button>
+										</div>
+										{#if locCoordError}<div class="form-error" role="alert">{locCoordError}</div>{/if}
+									</details>
 								</div>
 							{/if}
 						</div>
-						<div class="form-row">
-							<input type="text" bind:value={newMissionLat} placeholder="Lat" inputmode="decimal" />
-							<input type="text" bind:value={newMissionLon} placeholder="Lon" inputmode="decimal" />
+
+						<div class="mission-priority-group" role="radiogroup" aria-label="Priority">
+							{#each missionPriorities as p, i}
+								<button
+									type="button"
+									class="priority-chip priority-{p}"
+									role="radio"
+									aria-checked={newMissionPriority === p}
+									tabindex={newMissionPriority === p ? 0 : -1}
+									bind:this={priorityRefs[i]}
+									onclick={() => (newMissionPriority = p)}
+									onkeydown={(e) => onPriorityKeydown(e, i)}
+								>
+									{missionPriorityLabels[p]}
+								</button>
+							{/each}
 						</div>
-						{#if linkableAnnotations.length > 0}
-							<div class="annotation-link-section">
-								<span class="field-label-sm">Link Annotations {#if selectedAnnotationIds.length > 0}<span class="link-count">({selectedAnnotationIds.length})</span>{/if}</span>
-								<div class="annotation-chips-wrap">
-									{#each linkableAnnotations as ann}
-										{@const cat = ann.category || 'general'}
-										{@const selected = selectedAnnotationIds.includes(ann.id)}
-										<button
-											class="annotation-chip"
-											class:selected
-											onclick={() => toggleAnnotationSelector(ann.id)}
-										>
-											<svg width="10" height="10" viewBox="0 0 16 16" fill="none">
-												<path d={categoryMeta[cat].icon} stroke="currentColor" stroke-width="1.2" fill="none" stroke-linecap="round" stroke-linejoin="round"/>
-											</svg>
-											{ann.label}
-										</button>
-									{/each}
-								</div>
+
+						<select
+							class="mission-assign-select"
+							bind:value={newMissionAssign}
+							aria-label="Assign to"
+							onkeydown={(e) => { if (e.key === 'Enter') { e.preventDefault(); handleCreateMission(); } }}
+						>
+							<option value="">Unassigned</option>
+							{#each $activeCheckIns as ci}
+								<option value={ci.callsign}>{ci.callsign}</option>
+							{/each}
+						</select>
+
+						<button type="button" class="details-toggle" onclick={() => (detailsOpen = !detailsOpen)} aria-expanded={detailsOpen}>
+							<span aria-hidden="true">{detailsOpen ? '▾' : '▸'}</span>
+							Details & links
+							{#if newMissionDesc.trim() || selectedAnnotationIds.length > 0}
+								<span class="details-badge">
+									{[newMissionDesc.trim() ? 'note' : null, selectedAnnotationIds.length > 0 ? `${selectedAnnotationIds.length} linked` : null].filter(Boolean).join(' · ')}
+								</span>
+							{/if}
+						</button>
+
+						{#if detailsOpen}
+							<div class="mission-details">
+								<textarea bind:value={newMissionDesc} rows="2" placeholder="Description (optional)"></textarea>
+								{#if linkableAnnotations.length > 0}
+									<div class="annotation-link-section">
+										<span class="field-label-sm">Link Annotations {#if selectedAnnotationIds.length > 0}<span class="link-count">({selectedAnnotationIds.length})</span>{/if}</span>
+										<div class="annotation-chips-wrap">
+											{#each linkableAnnotations as ann}
+												{@const cat = ann.category || 'general'}
+												{@const selected = selectedAnnotationIds.includes(ann.id)}
+												<button
+													class="annotation-chip"
+													class:selected
+													onclick={() => toggleAnnotationSelector(ann.id)}
+												>
+													<svg width="10" height="10" viewBox="0 0 16 16" fill="none">
+														<path d={categoryMeta[cat].icon} stroke="currentColor" stroke-width="1.2" fill="none" stroke-linecap="round" stroke-linejoin="round"/>
+													</svg>
+													{ann.label}
+												</button>
+											{/each}
+										</div>
+									</div>
+								{/if}
 							</div>
 						{/if}
-						<div class="form-actions">
-							<button class="btn-secondary" onclick={() => { showMissionForm = false; selectedAnnotationIds = []; }}>Cancel</button>
-							<button class="btn-primary" onclick={handleCreateMission} disabled={!newMissionTitle.trim()}>Create</button>
+
+						{#if formError}
+							<div class="form-error" role="alert">{formError}</div>
+						{/if}
+
+						<div class="sr-live" aria-live="polite">{srMessage}</div>
+
+						<div class="form-actions" class:submitting={missionSubmitting}>
+							<button type="button" class="btn-secondary" disabled={missionSubmitting} onclick={cancelMissionForm}>Cancel</button>
+							<button type="button" class="btn-primary" onclick={handleCreateMission} disabled={missionSubmitting || !newMissionTitle.trim()} aria-busy={missionSubmitting}>{missionSubmitting ? 'Creating…' : 'Create mission'}</button>
 						</div>
 					</div>
 				{/if}
@@ -1940,8 +2411,8 @@
 								{#if m.description}
 									<p class="mission-desc">{m.description}</p>
 								{/if}
-								{#if m.location}
-									<div class="mission-location">📍 {m.location}</div>
+								{#if m.location || (m.lat != null && m.lon != null)}
+									<div class="mission-location">📍 {m.location || formatCoord(m.lat ?? 0, m.lon ?? 0)}</div>
 								{/if}
 
 								<!-- Assigned operators -->
@@ -2135,6 +2606,8 @@
 						onPlaceOnMap={onPlaceAnnotation}
 						mapClickedCoords={annotationMapCoords}
 						{onMapCoordsConsumed}
+						{focusedAnnotationId}
+						{onFocusConsumed}
 					/>
 				{:else}
 					<p class="empty">Open a net to manage locations.</p>
@@ -3397,56 +3870,135 @@
 		color: var(--color-accent);
 	}
 
-	/* Mission location autocomplete */
-	.mission-loc-wrap {
-		position: relative;
-	}
+	/* ---- Mission location field (task #92) ---- */
+	.mission-loc-field { position: relative; display: flex; flex-direction: column; gap: var(--space-xs); }
 
-	.mission-loc-dropdown {
-		position: absolute;
-		top: 100%;
-		left: 0;
-		right: 0;
+	.loc-trigger {
+		display: flex; align-items: center; gap: var(--space-sm);
+		width: 100%; min-height: 44px; padding: 10px 12px;
+		background: var(--color-bg); border: 1px solid var(--color-primary);
+		border-radius: var(--radius-sm); color: var(--color-text-muted);
+		font-size: 0.85rem; text-align: left; cursor: pointer;
+		transition: border-color var(--duration-fast), color var(--duration-fast);
+	}
+	.loc-trigger:hover { border-color: var(--color-text-muted); color: var(--color-text); }
+	.loc-trigger .chev { margin-left: auto; opacity: 0.6; }
+	.loc-trigger.picking {
+		border-color: var(--color-accent); color: var(--color-accent);
+		animation: locPulse 1.4s ease-in-out infinite;
+	}
+	@keyframes locPulse { 0%,100% { opacity: 1 } 50% { opacity: 0.55 } }
+
+	/* ---- Selected chip ---- */
+	.loc-chip {
+		display: flex; align-items: center; gap: var(--space-sm);
+		min-height: 44px; padding: 6px 8px 6px 10px;
 		background: var(--color-bg);
-		border: 1px solid var(--color-primary);
-		border-radius: var(--radius-sm);
-		box-shadow: var(--shadow-md);
-		z-index: 10;
-		max-height: 180px;
-		overflow-y: auto;
-		margin-top: 2px;
+		border: 1px solid var(--color-accent); border-radius: var(--radius-sm);
 	}
+	.loc-chip-main {
+		display: flex; align-items: center; gap: var(--space-sm);
+		flex: 1; min-width: 0; background: none; border: none; padding: 0;
+		color: var(--color-text); text-align: left; cursor: pointer;
+	}
+	.loc-chip-icon { flex: 0 0 16px; color: var(--loc-cat-color, #6b7280); }
+	.loc-chip-text { min-width: 0; display: flex; flex-direction: column; gap: 1px; }
+	.loc-chip-label {
+		font-size: 0.85rem; font-weight: 600; color: var(--color-text);
+		white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+	}
+	.loc-chip-coords {
+		font-family: 'SF Mono','Fira Code',monospace; font-size: 0.7rem;
+		color: var(--color-text-muted);
+	}
+	.loc-chip-map, .loc-chip-clear {
+		flex: 0 0 auto; width: 32px; height: 32px;
+		display: inline-flex; align-items: center; justify-content: center;
+		background: none; border: none; border-radius: var(--radius-sm);
+		color: var(--color-text-muted); cursor: pointer;
+		transition: color var(--duration-fast), background var(--duration-fast);
+	}
+	.loc-chip-map:hover, .loc-chip-clear:hover { color: var(--color-text); background: rgba(255,255,255,0.06); }
 
-	.mission-loc-item {
-		display: flex;
-		align-items: center;
-		gap: var(--space-sm);
-		width: 100%;
-		padding: 6px 10px;
-		background: none;
-		border: none;
-		color: var(--color-text);
-		font-size: 0.8rem;
-		cursor: pointer;
-		text-align: left;
+	/* ---- Popover ---- */
+	.loc-popover {
+		position: absolute; top: 100%; left: 0; right: 0; margin-top: 2px;
+		z-index: 10; display: flex; flex-direction: column;
+		background: var(--color-bg); border: 1px solid var(--color-primary);
+		border-radius: var(--radius-sm); box-shadow: var(--shadow-md);
+		max-height: 260px; overflow: hidden;
+	}
+	.loc-search {
+		border: none !important; border-bottom: 1px solid var(--color-primary) !important;
+		border-radius: 0 !important; background: var(--color-surface) !important;
+	}
+	.loc-list { overflow-y: auto; flex: 1; }
+	.loc-opt {
+		display: flex; align-items: center; gap: var(--space-sm);
+		width: 100%; min-height: 40px; padding: 8px 10px;
+		background: none; border: none; color: var(--color-text);
+		font-size: 0.8rem; text-align: left; cursor: pointer;
 		transition: background var(--duration-fast);
 	}
-
-	.mission-loc-item:hover {
-		background: rgba(255, 255, 255, 0.06);
+	.loc-opt:hover, .loc-opt.highlight { background: rgba(255,255,255,0.06); }
+	.loc-opt-map { color: var(--color-accent); font-weight: 600; border-bottom: 1px solid var(--color-primary); }
+	.loc-opt-icon { flex: 0 0 16px; color: var(--loc-cat-color, #6b7280); }
+	.loc-opt-label { flex: 1; min-width: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+	.loc-opt-short {
+		font-family: 'SF Mono','Fira Code',monospace; font-size: 0.7rem;
+		color: var(--color-text-muted); padding: 1px 5px;
+		background: rgba(255,255,255,0.06); border-radius: 3px;
 	}
+	.loc-empty { padding: var(--space-md); font-size: 0.78rem; color: var(--color-text-muted); text-align: center; }
+	.loc-coords { border-top: 1px solid var(--color-primary); padding: var(--space-sm) 10px; }
+	.loc-coords summary { font-size: 0.75rem; color: var(--color-text-muted); cursor: pointer; list-style: none; }
+	.loc-coords summary::marker { content: ''; }
 
-	.mission-loc-name {
-		flex: 1;
+	/* ---- Priority chips (same geometry as .annotation-chip) ---- */
+	.mission-priority-group { display: flex; gap: 6px; }
+	.priority-chip {
+		flex: 1; min-height: 40px; padding: 6px 10px;
+		background: none; border: 1px solid var(--color-primary);
+		border-radius: var(--radius-full); color: var(--color-text-muted);
+		font-size: 0.75rem; font-weight: 600; cursor: pointer;
+		transition: all var(--duration-fast);
 	}
+	.priority-chip:hover { border-color: var(--color-text-muted); color: var(--color-text); }
+	.priority-chip[aria-checked='true'] { color: var(--color-text); }
+	.priority-chip.priority-routine[aria-checked='true']   { border-color: var(--color-text-muted); background: rgba(255,255,255,0.06); }
+	.priority-chip.priority-priority[aria-checked='true']  { border-color: var(--color-warning); color: var(--color-warning); }
+	.priority-chip.priority-welfare[aria-checked='true']   { border-color: var(--color-success); color: var(--color-success); }
+	.priority-chip.priority-emergency[aria-checked='true'] { border-color: var(--color-error);   color: var(--color-error); background: rgba(233,69,96,0.08); }
 
-	.mission-loc-short {
-		font-family: 'SF Mono', 'Fira Code', monospace;
-		font-size: 0.7rem;
-		color: var(--color-text-muted);
-		padding: 1px 5px;
-		background: rgba(255, 255, 255, 0.06);
-		border-radius: 3px;
+	/* ---- Details disclosure ---- */
+	.details-toggle {
+		display: flex; align-items: center; gap: var(--space-sm);
+		min-height: 36px; padding: 6px 2px;
+		background: none; border: none; color: var(--color-text-muted);
+		font-size: 0.75rem; cursor: pointer;
+	}
+	.details-toggle:hover { color: var(--color-text); }
+	.details-badge { color: var(--color-accent); }
+	.mission-details { display: flex; flex-direction: column; gap: var(--space-sm); }
+
+	.btn-mini {
+		flex: 0 0 auto; min-height: 32px; padding: 4px 10px;
+		background: none; border: 1px solid var(--color-primary);
+		border-radius: var(--radius-sm); color: var(--color-text-muted);
+		font-size: 0.75rem; cursor: pointer;
+		transition: all var(--duration-fast);
+	}
+	.btn-mini:hover { border-color: var(--color-accent); color: var(--color-text); }
+
+	/* ---- Feedback ---- */
+	.form-error { font-size: 0.75rem; color: var(--color-error); }
+	.sr-live { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; }
+	.form-actions.submitting { pointer-events: none; }
+
+	@media (max-width: 768px) {
+		.loc-popover { max-height: 50vh; }
+		.mission-priority-group { flex-wrap: wrap; }
+		.priority-chip { flex: 1 1 45%; }
 	}
 
 	/* Missions */
