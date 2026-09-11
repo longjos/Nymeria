@@ -1,9 +1,11 @@
 <script lang="ts">
 	import { onMount } from 'svelte';
-	import { api } from '$lib/api';
+	import { api, ApiError } from '$lib/api';
 	import { timeAgo } from '$lib/utils';
-	import { openICS309 } from '$lib/stores/ui';
-	import type { Net, NetCheckIn, NetMission, NetEvent, NetNote, OperatorStatus, TrafficType, Annotation, NoteCategory, NoteSeverity, StationCategory } from '$lib/types';
+	import { openICS309, openSettings, missionDraftBackup } from '$lib/stores/ui';
+	import { get } from 'svelte/store';
+	import { canAdmin } from '$lib/stores/session';
+	import type { Net, NetCheckIn, NetMission, NetEvent, NetNote, OperatorStatus, TrafficType, Annotation, NoteCategory, NoteSeverity, StationCategory, W3WSuggestion } from '$lib/types';
 	import {
 		activeNet, checkIns, missions, timeline, notes,
 		sortedCheckIns, activeCheckIns,
@@ -23,7 +25,12 @@
 	import { parseCommand, getModeIndicator, getAutocompleteContext, type ParsedCommand, type AutocompleteContext } from '$lib/commandParser';
 	import { showToast } from '$lib/stores/toast';
 	import { formatCoord } from '$lib/utils';
-	import { nearestAnnotation } from '$lib/geo';
+	import { nearestAnnotation, annotationCentroid } from '$lib/geo';
+	import {
+		isFullAddress, looksLikePartial, formatWords, w3wLocationLabel,
+		isW3WLocation, extractWords, w3wSuffix, cachedReverse, putReverse
+	} from '$lib/w3w';
+	import { w3wConfigured } from '$lib/stores/w3w';
 	import LocationManager from './LocationManager.svelte';
 	import SituationBoard from './SituationBoard.svelte';
 
@@ -43,8 +50,10 @@
 		onMissionMapCoordsConsumed,
 		onClearMissionDraft,
 		missionPickActive = false,
+		onSetMissionDraftPoint,
+		getMapCenter,
 	}: {
-		onFlyTo?: (lat: number, lon: number) => void;
+		onFlyTo?: (lat: number, lon: number, zoom?: number) => void;
 		onFlyToBounds?: (coords: Array<{ lat: number; lon: number }>) => void;
 		onSetOpsView?: () => void;
 		onGoToOpsView?: () => void;
@@ -59,6 +68,14 @@
 		onMissionMapCoordsConsumed?: () => void;
 		onClearMissionDraft?: () => void;
 		missionPickActive?: boolean;
+		/** Places the draggable draft pin on the map without routing through
+		 * missionMapCoords — that path overwrites the location label with a
+		 * nearby annotation's label, which a what3words resolve must never do
+		 * to the words the NCS is about to read back on air. */
+		onSetMissionDraftPoint?: (lat: number, lon: number) => void;
+		/** Current map viewport centre, used to focus what3words autosuggest
+		 * on the area the NCS is actually looking at. */
+		getMapCenter?: () => { lat: number; lon: number; zoom: number } | null;
 	} = $props();
 
 	type Tab = 'situation' | 'roster' | 'missions' | 'locations' | 'timeline';
@@ -110,14 +127,32 @@
 	let newMissionAssign = $state('');
 	let titleEl = $state<HTMLInputElement>();
 
-	// Mission location — one source of truth (design doc task #92 §3)
-	type MissionLocSource = 'none' | 'annotation' | 'map' | 'typed' | 'coords';
+	// Mission location — one source of truth (design doc task #92 §3).
+	// 'w3w' is distinct from 'map': the missionMapCoords effect below
+	// overwrites the label with a nearby annotation's label, which would
+	// destroy the exact words a what3words resolve needs to preserve so the
+	// NCS can read them back on air.
+	type MissionLocSource = 'none' | 'annotation' | 'map' | 'typed' | 'coords' | 'w3w';
 	let missionLocLabel = $state('');
 	let missionLocLat = $state<number | null>(null);
 	let missionLocLon = $state<number | null>(null);
 	let missionLocSource = $state<MissionLocSource>('none');
 	let missionLocNearId = $state<string | null>(null);
 	let autoLinkedAnnId = $state<string | null>(null);
+
+	// what3words — resolved words and the confirm-on-map safety gate.
+	let missionLocWords = $state('');
+	let missionLocNear = $state('');
+	let missionLocConfirmed = $state(false);
+	let w3wSuggestions = $state<W3WSuggestion[]>([]);
+	let w3wLoading = $state(false);
+	let w3wError = $state('');
+	let w3wSearchedQuery = $state('');
+	let w3wDebounce: ReturnType<typeof setTimeout> | null = null;
+	let w3wSeq = 0;
+	// Lazy reverse (coords -> ///words) shown under any chosen location.
+	let reverseWords = $state('');
+	let reverseCopied = $state(false);
 
 	let locOpen = $state(false);
 	let locQuery = $state('');
@@ -248,6 +283,33 @@
 	};
 
 	onMount(() => {
+		// Restore a mission draft saved by openW3WSettings before Settings
+		// unmounted this component (see missionDraftBackup) — scoped to the
+		// net it was captured in so a draft never leaks onto a different
+		// net's form. Consumed unconditionally: a mismatched or stray
+		// backup (e.g. the NCS switched nets while in Settings) is dropped
+		// rather than left to surprise a later mount.
+		const backup = get(missionDraftBackup);
+		if (backup) {
+			if ($activeNet && backup.netId === $activeNet.id) {
+				showMissionForm = true;
+				newMissionTitle = backup.title;
+				newMissionDesc = backup.desc;
+				newMissionPriority = backup.priority;
+				newMissionAssign = backup.assign;
+				missionLocLabel = backup.locLabel;
+				missionLocLat = backup.locLat;
+				missionLocLon = backup.locLon;
+				missionLocSource = backup.locSource as MissionLocSource;
+				missionLocNearId = backup.locNearId;
+				missionLocWords = backup.locWords;
+				missionLocNear = backup.locNear;
+				missionLocConfirmed = backup.locConfirmed;
+				selectedAnnotationIds = backup.selectedAnnotationIds;
+			}
+			missionDraftBackup.set(null);
+		}
+
 		initNetControlStore();
 
 		timerInterval = setInterval(() => {
@@ -821,6 +883,12 @@
 		missionLocSource = 'map';
 		missionLocNearId = near?.annotation.id ?? null;
 		missionLocLabel = near?.annotation.label ?? '';
+		// Dragging (or re-clicking) away from a what3words square means the
+		// NCS is overriding the words — they're gone because the pin is no
+		// longer in that square, which is correct and honest.
+		missionLocWords = '';
+		missionLocNear = '';
+		missionLocConfirmed = false;
 		srMessage = near ? `Location set near ${near.annotation.label}` : `Location set to ${formatCoord(lat, lon)}`;
 		pickingOnMap = false;
 		onMissionMapCoordsConsumed?.();
@@ -913,6 +981,9 @@
 		missionLocLon = null;
 		missionLocSource = 'none';
 		missionLocNearId = null;
+		missionLocWords = '';
+		missionLocNear = '';
+		missionLocConfirmed = false;
 		unlinkStaleAutoLink();
 		onClearMissionDraft?.();
 		srMessage = 'Location cleared.';
@@ -933,9 +1004,15 @@
 	}
 
 	function openLocPopover() {
+		// Clicking the chip body is forgiving for a w3w-sourced location — it
+		// re-flies to the pin (the confirmation check) without auto-confirming.
+		if (missionLocSource === 'w3w' && missionLocLat != null && missionLocLon != null) {
+			flyToW3WPin(missionLocLat, missionLocLon);
+		}
 		locOpen = true;
 		locQuery = missionLocSource !== 'none' ? missionLocLabel : '';
 		locHighlight = 0;
+		resetW3WSuggestState();
 		queueMicrotask(() => {
 			locSearchEl?.focus();
 			locSearchEl?.select();
@@ -950,13 +1027,238 @@
 		setTimeout(() => { locOpen = false; }, 150);
 	}
 
+	// --- what3words -------------------------------------------------------
+
+	function isMobileViewport(): boolean {
+		return typeof window !== 'undefined' && window.matchMedia('(max-width: 768px)').matches;
+	}
+
+	// The panel lives in the bottom sheet on mobile — flying straight to the
+	// pin's coordinates would centre it right where the sheet covers it.
+	// Nudge the fly-to target north so the pin lands in the upper third of
+	// the visible map instead (design §6.11's "ship this first" 5-liner).
+	function latOffsetForSheet(lat: number, zoom: number): number {
+		const metersPerPixel = (156543.03392 * Math.cos((lat * Math.PI) / 180)) / Math.pow(2, zoom);
+		const pixelShift = 140;
+		return (metersPerPixel * pixelShift) / 111320;
+	}
+
+	function flyToW3WPin(lat: number, lon: number) {
+		const zoom = 16;
+		const flyLat = isMobileViewport() ? lat + latOffsetForSheet(lat, zoom) : lat;
+		onFlyTo?.(flyLat, lon, zoom);
+	}
+
+	function copyForW3WError(e: unknown): string {
+		const code = e instanceof ApiError ? (e.body?.code as string | undefined) : undefined;
+		switch (code) {
+			case 'bad_words':
+			case 'bad_request':
+				return 'That isn’t a valid three-word address — check the spelling.';
+			case 'quota_exceeded':
+			case 'rate_limited':
+				return 'what3words quota reached. Try again later, or use coordinates.';
+			case 'invalid_key':
+				return 'what3words rejected the API key. Check it in Settings.';
+			case 'not_configured':
+				return 'what3words isn’t configured. Add an API key in Settings.';
+			default:
+				return 'Couldn’t reach what3words. Check the connection, or use coordinates.';
+		}
+	}
+
+	function resetW3WSuggestState() {
+		if (w3wDebounce) {
+			clearTimeout(w3wDebounce);
+			w3wDebounce = null;
+		}
+		w3wSeq++;
+		w3wSuggestions = [];
+		w3wError = '';
+		w3wSearchedQuery = '';
+		w3wLoading = false;
+	}
+
+	// Fires on every keystroke while the query is what3words-shaped. Local
+	// regex gate first (§9's quota guard) — a syntactically invalid or
+	// too-short partial never reaches the network.
+	function scheduleW3WSuggest() {
+		if (w3wDebounce) {
+			clearTimeout(w3wDebounce);
+			w3wDebounce = null;
+		}
+		w3wSeq++;
+		w3wSuggestions = [];
+		w3wError = '';
+		w3wSearchedQuery = '';
+		if (!$w3wConfigured) {
+			w3wLoading = false;
+			return;
+		}
+		const q = locQuery.trim();
+		if (!looksLikePartial(q) && !isFullAddress(q)) {
+			w3wLoading = false;
+			return;
+		}
+		const dotIdx = q.indexOf('.');
+		if (dotIdx === -1 || q.slice(dotIdx + 1).length < 2) {
+			w3wLoading = false;
+			return;
+		}
+		w3wLoading = true; // optimistic — covers the debounce window too
+		const seq = w3wSeq;
+		w3wDebounce = setTimeout(() => { void runW3WSuggest(q, seq); }, 250);
+	}
+
+	async function runW3WSuggest(q: string, seq: number) {
+		try {
+			const center = getMapCenter?.() ?? null;
+			const centroid = center ? null : annotationCentroid(locOptions);
+			const focus = center ? { lat: center.lat, lon: center.lon } : (centroid ?? undefined);
+			const resp = await api.w3wSuggest(q, focus);
+			if (seq !== w3wSeq) return; // stale — a later keystroke has already superseded this
+			w3wSuggestions = resp.suggestions ?? [];
+			w3wSearchedQuery = q;
+		} catch (e) {
+			if (seq !== w3wSeq) return;
+			w3wSuggestions = [];
+			w3wError = copyForW3WError(e);
+		} finally {
+			if (seq === w3wSeq) w3wLoading = false;
+		}
+	}
+
+	// The heart of the feature: resolve → draft pin → fly-to → unconfirmed
+	// chip. The map fly-to is the safety check, not a nicety — a mis-heard
+	// word lands you in another country, and this is how the NCS catches it.
+	//
+	// Guarded by the same w3wSeq generation counter runW3WSuggest uses: two
+	// resolves can race (e.g. two suggestion rows triggered before either
+	// response returns, or Enter on one address followed by Enter on a
+	// retyped one before the first replies) and network order is not call
+	// order, so an older response must never clobber a newer selection —
+	// that would silently move the pin without the NCS asking for it.
+	async function resolveW3W(words: string) {
+		w3wLoading = true;
+		w3wError = '';
+		const seq = ++w3wSeq;
+		try {
+			const r = await api.w3wResolve(words);
+			if (seq !== w3wSeq) return; // stale — a newer resolve/query has superseded this
+			unlinkStaleAutoLink();
+			const near = nearestAnnotation(r.lat, r.lon, locOptions, 100);
+			const nearText = near?.annotation.label ?? r.nearestPlace ?? '';
+			missionLocLat = r.lat;
+			missionLocLon = r.lon;
+			missionLocWords = r.words;
+			missionLocNear = nearText;
+			missionLocSource = 'w3w';
+			missionLocNearId = near?.annotation.id ?? null;
+			missionLocLabel = w3wLocationLabel(r.words, nearText || undefined);
+			missionLocConfirmed = false;
+			putReverse(r.lat, r.lon, r.words); // seed the reverse cache — free
+			onSetMissionDraftPoint?.(r.lat, r.lon);
+			flyToW3WPin(r.lat, r.lon);
+			locOpen = false;
+			locQuery = '';
+			resetW3WSuggestState();
+			srMessage = `Location set to ${formatWords(r.words)}${nearText ? `, near ${nearText}` : ''}. Shown on the map — confirm before creating.`;
+			queueMicrotask(() => locFieldTriggerEl?.focus());
+		} catch (e) {
+			if (seq !== w3wSeq) return;
+			w3wError = copyForW3WError(e);
+		} finally {
+			if (seq === w3wSeq) w3wLoading = false;
+		}
+	}
+
+	function confirmW3WLocation() {
+		if (missionLocLat == null || missionLocLon == null) return;
+		flyToW3WPin(missionLocLat, missionLocLon);
+		missionLocConfirmed = true;
+		srMessage = `Confirmed ${formatWords(missionLocWords)} on the map.`;
+	}
+
+	function openW3WSettings() {
+		// Settings and Net Control are mutually exclusive panels — opening
+		// Settings unmounts this component and, with it, every mission-draft
+		// field below (plain $state, no other persistence). Snapshot the
+		// draft so onMount can restore it when the NCS comes back instead of
+		// losing their in-progress mission over an API key paste.
+		if (showMissionForm && $activeNet) {
+			missionDraftBackup.set({
+				netId: $activeNet.id,
+				title: newMissionTitle,
+				desc: newMissionDesc,
+				priority: newMissionPriority,
+				assign: newMissionAssign,
+				locLabel: missionLocLabel,
+				locLat: missionLocLat,
+				locLon: missionLocLon,
+				locSource: missionLocSource,
+				locNearId: missionLocNearId,
+				locWords: missionLocWords,
+				locNear: missionLocNear,
+				locConfirmed: missionLocConfirmed,
+				selectedAnnotationIds: [...selectedAnnotationIds],
+			});
+		}
+		openSettings('what3words');
+	}
+
+	async function copyReverseWords() {
+		if (!reverseWords) return;
+		try {
+			await navigator.clipboard?.writeText(formatWords(reverseWords));
+			reverseCopied = true;
+			setTimeout(() => { reverseCopied = false; }, 1500);
+		} catch {
+			// Clipboard may be unavailable (permissions, insecure context) —
+			// this is a convenience, not worth an error row.
+		}
+	}
+
+	// Lazily resolve the ///words for whatever location is currently chosen,
+	// module cache first. Silent on failure — a reverse lookup is a
+	// convenience; failing loudly would be noise during an incident.
+	$effect(() => {
+		const lat = missionLocLat;
+		const lon = missionLocLon;
+		reverseWords = '';
+		if (!$w3wConfigured || lat == null || lon == null) return;
+		// Already showing the words as the primary label — no duplicate line.
+		if (missionLocSource === 'w3w') return;
+		const cached = cachedReverse(lat, lon);
+		if (cached) {
+			reverseWords = cached;
+			return;
+		}
+		let cancelled = false;
+		api.w3wReverse(lat, lon).then((r) => {
+			if (cancelled) return;
+			putReverse(lat, lon, r.words);
+			reverseWords = r.words;
+		}).catch(() => { /* silent — see comment above */ });
+		return () => { cancelled = true; };
+	});
+
 	function commitLocRow(i: number) {
 		if (i === 0) {
+			// Enter on a fully-typed address commits it directly instead of
+			// requiring an arrow-down into the suggestion list first.
+			if ($w3wConfigured && locIsFullAddress) {
+				resolveW3W(locQuery.trim());
+				return;
+			}
 			startMapPick();
 			return;
 		}
-		const annIdx = i - 1;
-		if (annIdx < locFiltered.length) {
+		if (i >= 1 && i < 1 + w3wRowCount) {
+			resolveW3W(w3wSuggestions[i - 1].words);
+			return;
+		}
+		const annIdx = i - 1 - w3wRowCount;
+		if (annIdx >= 0 && annIdx < locFiltered.length) {
 			selectLocationAnnotation(locFiltered[annIdx]);
 			return;
 		}
@@ -1034,6 +1336,9 @@
 		missionLocLon = null;
 		missionLocSource = 'none';
 		missionLocNearId = null;
+		missionLocWords = '';
+		missionLocNear = '';
+		missionLocConfirmed = false;
 		autoLinkedAnnId = null;
 		selectedAnnotationIds = [];
 		locQuery = '';
@@ -1044,6 +1349,7 @@
 		detailsOpen = false;
 		formError = '';
 		pickingOnMap = false;
+		resetW3WSuggestState();
 	}
 
 	function cancelMissionForm() {
@@ -1072,6 +1378,13 @@
 				data.lat = missionLocLat;
 				data.lon = missionLocLon;
 			}
+			// handleCreateMission never blocks on w3w confirmation — an NCS
+			// under pressure must never be gated by a ceremony button. Instead,
+			// an unconfirmed w3w mission gets the words in the success toast
+			// one more time, in a place the NCS will see. Capture this before
+			// resetMissionForm() clears the location state.
+			const w3wToastWords =
+				missionLocSource === 'w3w' && !missionLocConfirmed ? missionLocWords : '';
 			const mission = await api.createMission($activeNet.id, data);
 			let failed = 0;
 			for (const annId of selectedAnnotationIds) {
@@ -1084,7 +1397,10 @@
 			}
 			resetMissionForm();
 			onClearMissionDraft?.();
-			showToast(`Mission created: ${mission.title}`, 'success');
+			showToast(
+				w3wToastWords ? `Mission created at ${formatWords(w3wToastWords)}` : `Mission created: ${mission.title}`,
+				'success'
+			);
 			if (failed > 0) {
 				showToast(`Mission created — ${failed} annotation link(s) failed`, 'error', 5000);
 			}
@@ -1246,15 +1562,39 @@
 		locQuery.trim().length > 0 &&
 		!locFiltered.some((a) => a.label.toLowerCase() === locQuery.trim().toLowerCase())
 	);
-	let locRowCount = $derived(1 + locFiltered.length + (showFreeTextRow ? 1 : 0));
+
+	// --- what3words detection & rows ---
+	let locIsFullAddress = $derived(isFullAddress(locQuery));
+	let locW3WShaped = $derived(locIsFullAddress || looksLikePartial(locQuery));
+	// Stricter than locW3WShaped: also requires the ≥2-chars-after-first-dot
+	// quota guard, so the "what3words" group (and any network call) only
+	// appears once there's something worth searching for.
+	let w3wGateOk = $derived.by(() => {
+		if (!locW3WShaped) return false;
+		const q = locQuery.trim();
+		const dotIdx = q.indexOf('.');
+		return dotIdx !== -1 && q.slice(dotIdx + 1).length >= 2;
+	});
+	let w3wRowCount = $derived(
+		$w3wConfigured && w3wGateOk && !w3wLoading && !w3wError ? w3wSuggestions.length : 0
+	);
+	let w3wNoResults = $derived(
+		$w3wConfigured && w3wGateOk && !w3wLoading && !w3wError &&
+		w3wSuggestions.length === 0 && w3wSearchedQuery === locQuery.trim()
+	);
+
+	let locRowCount = $derived(1 + w3wRowCount + locFiltered.length + (showFreeTextRow ? 1 : 0));
 
 	// The annotation behind the current selection, when source is 'annotation'
-	// (for its category icon/color) or 'map' with a near match (for its label).
+	// (for its category icon/color) or 'map'/'w3w' with a near match (for its
+	// label) — a what3words resolve that lands near a net location still
+	// picks up that location's icon/colour without losing the words.
 	let missionLocAnn = $derived(
 		missionLocNearId ? ($netLocationAnnotations.find((a) => a.id === missionLocNearId) ?? null) : null
 	);
 
 	let locChipPrimary = $derived.by(() => {
+		if (missionLocSource === 'w3w') return formatWords(missionLocWords);
 		if (missionLocSource === 'map') return missionLocLabel || 'Dropped pin';
 		if (missionLocSource === 'coords' && !missionLocLabel && missionLocLat != null && missionLocLon != null) {
 			return formatCoord(missionLocLat, missionLocLon);
@@ -1264,6 +1604,7 @@
 	let locChipSecondary = $derived.by(() => {
 		if (missionLocLat == null || missionLocLon == null) return '';
 		const coords = formatCoord(missionLocLat, missionLocLon);
+		if (missionLocSource === 'w3w') return missionLocNear ? `near ${missionLocNear} · ${coords}` : coords;
 		if (missionLocSource === 'map') return missionLocLabel ? `near · ${coords}` : coords;
 		if (missionLocSource === 'coords') return missionLocLabel ? coords : '';
 		return coords;
@@ -2195,9 +2536,15 @@
 									<svg class="chev" width="10" height="10" viewBox="0 0 16 16" fill="none" aria-hidden="true"><path d="M4 6l4 4 4-4" stroke="currentColor" stroke-width="1.5" fill="none" stroke-linecap="round" stroke-linejoin="round"/></svg>
 								</button>
 							{:else}
-								<div class="loc-chip" role="group" aria-label="Mission location">
-									<button type="button" class="loc-chip-main" bind:this={locFieldTriggerEl} onclick={openLocPopover}>
-										{#if missionLocSource === 'annotation' && missionLocAnn}
+								<div class="loc-chip" class:unconfirmed={missionLocSource === 'w3w' && !missionLocConfirmed} role="group" aria-label="Mission location">
+									<button
+										type="button"
+										class="loc-chip-main"
+										bind:this={locFieldTriggerEl}
+										onclick={openLocPopover}
+										aria-label={missionLocSource === 'w3w' ? `what3words location ${missionLocWords.split('.').join(' dot ')}` : undefined}
+									>
+										{#if missionLocAnn}
 											<span class="loc-chip-icon" style="--loc-cat-color: {categoryMeta[missionLocAnn.category]?.defaultColor ?? '#6b7280'}">
 												<svg width="16" height="16" viewBox="0 0 16 16"><path d={categoryMeta[missionLocAnn.category]?.icon} stroke="currentColor" stroke-width="1.2" fill="none" stroke-linecap="round" stroke-linejoin="round"/></svg>
 											</span>
@@ -2207,15 +2554,36 @@
 											</span>
 										{/if}
 										<span class="loc-chip-text">
-											<span class="loc-chip-label">{locChipPrimary}</span>
+											{#if missionLocSource === 'w3w'}
+												<span class="loc-chip-label loc-chip-label-w3w" aria-hidden="true">
+													<span class="w3w-slashes">///</span>{missionLocWords}
+												</span>
+											{:else}
+												<span class="loc-chip-label">{locChipPrimary}</span>
+											{/if}
 											{#if locChipSecondary}<span class="loc-chip-coords">{locChipSecondary}</span>{/if}
 										</span>
 									</button>
+									{#if missionLocSource === 'w3w'}
+										{#if missionLocConfirmed}
+											<span class="loc-chip-confirmed">✓ Confirmed</span>
+										{:else}
+											<button type="button" class="loc-chip-confirm" onclick={confirmW3WLocation}>Confirm on map</button>
+										{/if}
+									{/if}
 									<button type="button" class="loc-chip-map" title="Pick on map" aria-label="Pick on map" onclick={startMapPick}>
 										<svg width="14" height="14" viewBox="0 0 16 16" fill="none" aria-hidden="true"><path d="M8 1C5.24 1 3 3.24 3 6c0 3.75 5 9 5 9s5-5.25 5-9c0-2.76-2.24-5-5-5zm0 7a2 2 0 110-4 2 2 0 010 4z" fill="currentColor"/></svg>
 									</button>
 									<button type="button" class="loc-chip-clear" title="Clear location" aria-label="Clear location" onclick={clearLocation}>✕</button>
 								</div>
+								{#if reverseWords && missionLocSource !== 'w3w'}
+									<div class="loc-reverse-line">
+										<span class="loc-reverse-words">{formatWords(reverseWords)}</span>
+										<button type="button" class="loc-reverse-copy" aria-label="Copy three-word address" onclick={copyReverseWords}>
+											{reverseCopied ? 'Copied' : '⧉'}
+										</button>
+									</div>
+								{/if}
 							{/if}
 
 							{#if locOpen}
@@ -2232,9 +2600,13 @@
 										aria-controls="mission-loc-list"
 										aria-autocomplete="list"
 										aria-activedescendant={'mission-loc-opt-' + locHighlight}
-										oninput={() => (locHighlight = 0)}
+										oninput={() => { locHighlight = 0; scheduleW3WSuggest(); }}
 										onkeydown={onLocKeydown}
 										onblur={onLocSearchBlur}
+										inputmode="text"
+										autocapitalize="none"
+										autocorrect="off"
+										spellcheck="false"
 									/>
 									<div class="loc-list" role="listbox" id="mission-loc-list">
 										<button
@@ -2248,8 +2620,50 @@
 										>
 											📍 Choose on map
 										</button>
+
+										{#if $w3wConfigured && w3wGateOk}
+											<div class="loc-group-header" role="presentation">what3words</div>
+											{#if w3wLoading}
+												<p class="loc-w3w-status" role="presentation">Looking up three-word addresses…</p>
+											{:else if w3wError}
+												<p class="loc-w3w-status loc-w3w-error" role="presentation">{w3wError}</p>
+											{:else if w3wSuggestions.length > 0}
+												{#each w3wSuggestions as sug, i (sug.words)}
+													{@const rowIdx = 1 + i}
+													<button
+														type="button"
+														id={'mission-loc-opt-' + rowIdx}
+														role="option"
+														aria-selected={locHighlight === rowIdx}
+														class="loc-opt loc-opt-w3w"
+														class:highlight={locHighlight === rowIdx}
+														onmousedown={() => resolveW3W(sug.words)}
+													>
+														<span class="loc-opt-w3w-words">{formatWords(sug.words)}</span>
+														<span class="loc-opt-w3w-meta">
+															{sug.nearestPlace}{#if sug.nearestPlace && sug.distanceToFocusKm}<span> · </span>{/if}{#if sug.distanceToFocusKm}{sug.distanceToFocusKm.toFixed(1)} km{/if}
+														</span>
+													</button>
+												{/each}
+											{:else if w3wNoResults}
+												<p class="loc-w3w-status" role="presentation">No what3words matches for “{locQuery.trim()}”</p>
+											{/if}
+										{:else if !$w3wConfigured && locW3WShaped}
+											<div class="loc-w3w-hint" role="presentation">
+												<p class="loc-w3w-hint-title">That looks like a what3words address.</p>
+												{#if $canAdmin}
+													<p>
+														Add a free API key in Settings → what3words to turn three words into a map pin.
+														<button type="button" class="loc-w3w-hint-link" onmousedown={(e) => { e.preventDefault(); openW3WSettings(); }}>Settings →</button>
+													</p>
+												{:else}
+													<p>Ask an admin to add a what3words API key.</p>
+												{/if}
+											</div>
+										{/if}
+
 										{#each locFiltered as ann, i (ann.id)}
-											{@const rowIdx = i + 1}
+											{@const rowIdx = 1 + w3wRowCount + i}
 											<button
 												type="button"
 												id={'mission-loc-opt-' + rowIdx}
@@ -2267,7 +2681,7 @@
 											</button>
 										{/each}
 										{#if showFreeTextRow}
-											{@const freeIdx = locFiltered.length + 1}
+											{@const freeIdx = 1 + w3wRowCount + locFiltered.length}
 											<button
 												type="button"
 												id={'mission-loc-opt-' + freeIdx}
@@ -2412,7 +2826,15 @@
 									<p class="mission-desc">{m.description}</p>
 								{/if}
 								{#if m.location || (m.lat != null && m.lon != null)}
-									<div class="mission-location">📍 {m.location || formatCoord(m.lat ?? 0, m.lon ?? 0)}</div>
+									{#if isW3WLocation(m.location)}
+										{@const words = extractWords(m.location)}
+										{@const suffix = w3wSuffix(m.location)}
+										<div class="mission-location" aria-label={words ? `what3words location ${words.split('.').join(' dot ')}` : undefined}>
+											<span class="w3w-mark" aria-hidden="true">///</span><span class="w3w-words" aria-hidden="true">{words}</span>{#if suffix}<span class="w3w-near" aria-hidden="true"> · {suffix}</span>{/if}
+										</div>
+									{:else}
+										<div class="mission-location">📍 {m.location || formatCoord(m.lat ?? 0, m.lon ?? 0)}</div>
+									{/if}
 								{/if}
 
 								<!-- Assigned operators -->
@@ -2707,6 +3129,10 @@
 		flex-direction: column;
 		height: 100%;
 		overflow-x: hidden;
+		/* what3words display font — used by the location chip, the reverse
+		   line, and the mission card's ///words. Promote to app.css if a
+		   second component ever needs it. */
+		--w3w-mono: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
 	}
 
 	.panel-header {
@@ -3896,6 +4322,12 @@
 		background: var(--color-bg);
 		border: 1px solid var(--color-accent); border-radius: var(--radius-sm);
 	}
+	/* A what3words resolve hasn't been visually confirmed on the map yet —
+	   the map fly-to is the safety check, not a nicety, so this stays
+	   visually distinct until the NCS acknowledges it or creates the mission. */
+	.loc-chip.unconfirmed {
+		border-left: 2px solid var(--color-warning);
+	}
 	.loc-chip-main {
 		display: flex; align-items: center; gap: var(--space-sm);
 		flex: 1; min-width: 0; background: none; border: none; padding: 0;
@@ -3907,10 +4339,25 @@
 		font-size: 0.85rem; font-weight: 600; color: var(--color-text);
 		white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
 	}
+	.loc-chip-label-w3w {
+		font-family: var(--w3w-mono); font-size: 0.85rem; font-weight: 600;
+		color: var(--color-text);
+	}
+	.w3w-slashes { color: var(--color-text-muted); }
 	.loc-chip-coords {
 		font-family: 'SF Mono','Fira Code',monospace; font-size: 0.7rem;
 		color: var(--color-text-muted);
 	}
+	.loc-chip-confirm, .loc-chip-confirmed {
+		flex: 0 0 auto; white-space: nowrap; font-size: 0.72rem; font-weight: 600;
+	}
+	.loc-chip-confirm {
+		padding: 5px 10px; background: none; border: 1px solid var(--color-warning);
+		border-radius: var(--radius-full); color: var(--color-warning); cursor: pointer;
+		transition: background var(--duration-fast);
+	}
+	.loc-chip-confirm:hover { background: rgba(245, 158, 11, 0.12); }
+	.loc-chip-confirmed { color: var(--color-success); padding: 5px 4px; }
 	.loc-chip-map, .loc-chip-clear {
 		flex: 0 0 auto; width: 32px; height: 32px;
 		display: inline-flex; align-items: center; justify-content: center;
@@ -3919,6 +4366,23 @@
 		transition: color var(--duration-fast), background var(--duration-fast);
 	}
 	.loc-chip-map:hover, .loc-chip-clear:hover { color: var(--color-text); background: rgba(255,255,255,0.06); }
+
+	/* ---- Reverse (coords -> ///words) line under any chosen location ---- */
+	.loc-reverse-line {
+		display: flex; align-items: center; gap: 6px;
+		padding: 2px 2px 0 10px; font-size: 0.72rem;
+	}
+	.loc-reverse-words {
+		font-family: var(--w3w-mono); color: var(--color-text-muted);
+	}
+	.loc-reverse-copy {
+		display: inline-flex; align-items: center; justify-content: center;
+		min-width: 28px; min-height: 28px; padding: 2px 6px;
+		background: none; border: none; border-radius: var(--radius-sm);
+		color: var(--color-text-muted); cursor: pointer; font-size: 0.72rem;
+		transition: color var(--duration-fast), background var(--duration-fast);
+	}
+	.loc-reverse-copy:hover { color: var(--color-text); background: rgba(255,255,255,0.06); }
 
 	/* ---- Popover ---- */
 	.loc-popover {
@@ -3953,6 +4417,29 @@
 	.loc-coords { border-top: 1px solid var(--color-primary); padding: var(--space-sm) 10px; }
 	.loc-coords summary { font-size: 0.75rem; color: var(--color-text-muted); cursor: pointer; list-style: none; }
 	.loc-coords summary::marker { content: ''; }
+
+	/* ---- what3words group in the popover ---- */
+	.loc-group-header {
+		padding: 6px 10px 2px; font-size: 0.7rem; letter-spacing: 0.04em;
+		text-transform: uppercase; color: var(--color-text-muted);
+	}
+	.loc-opt-w3w { flex-direction: column; align-items: flex-start; gap: 2px; min-height: 44px; }
+	.loc-opt-w3w-words { font-family: var(--w3w-mono); font-size: 0.82rem; color: var(--color-text); }
+	.loc-opt-w3w-meta { font-size: 0.72rem; color: var(--color-text-muted); }
+	.loc-w3w-status {
+		padding: 8px 10px; font-size: 0.78rem; color: var(--color-text-muted);
+	}
+	.loc-w3w-error { color: var(--color-warning); }
+	.loc-w3w-hint {
+		padding: var(--space-sm) 10px; border-bottom: 1px solid var(--color-primary);
+		font-size: 0.76rem; color: var(--color-text-muted); line-height: 1.4;
+	}
+	.loc-w3w-hint p { margin: 0 0 2px; }
+	.loc-w3w-hint-title { color: var(--color-text); font-weight: 600; }
+	.loc-w3w-hint-link {
+		background: none; border: none; padding: 0; color: var(--color-accent);
+		font-size: inherit; cursor: pointer; text-decoration: underline;
+	}
 
 	/* ---- Priority chips (same geometry as .annotation-chip) ---- */
 	.mission-priority-group { display: flex; gap: 6px; }
@@ -3996,7 +4483,9 @@
 	.form-actions.submitting { pointer-events: none; }
 
 	@media (max-width: 768px) {
-		.loc-popover { max-height: 50vh; }
+		.loc-popover { max-height: min(320px, 40vh); }
+		.loc-opt-w3w { min-height: 44px; }
+		.loc-opt-w3w-meta { font-size: 0.72rem; }
 		.mission-priority-group { flex-wrap: wrap; }
 		.priority-chip { flex: 1 1 45%; }
 	}
@@ -4189,6 +4678,12 @@
 		color: var(--color-text-muted);
 		margin-top: 3px;
 	}
+
+	/* A w3w-sourced mission is instantly identifiable in a scrolling list —
+	   the one place the brand accent appears on the mission card. */
+	.w3w-mark { color: var(--color-accent); font-family: var(--w3w-mono); }
+	.w3w-words { font-family: var(--w3w-mono); color: var(--color-text); }
+	.w3w-near { color: var(--color-text-muted); font-size: 0.75rem; }
 
 	/* Assigned operators on mission card */
 	.mission-operators {

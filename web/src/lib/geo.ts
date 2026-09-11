@@ -35,3 +35,28 @@ export function nearestAnnotation(
 	}
 	return best;
 }
+
+/** Mean coordinate of a set of point annotations, or null when none. Used to
+ * focus what3words autosuggest on a net's location centroid when the map
+ * viewport isn't available. */
+export function annotationCentroid(anns: Annotation[]): { lat: number; lon: number } | null {
+	let sumLat = 0;
+	let sumLon = 0;
+	let count = 0;
+	for (const a of anns) {
+		let geo: { type?: string; coordinates?: unknown };
+		try {
+			geo = typeof a.geometry === 'string' ? JSON.parse(a.geometry) : a.geometry;
+		} catch {
+			continue;
+		}
+		if (geo?.type !== 'Point' || !Array.isArray(geo.coordinates)) continue;
+		const [lon, lat] = geo.coordinates as [number, number];
+		if (typeof lat !== 'number' || typeof lon !== 'number') continue;
+		sumLat += lat;
+		sumLon += lon;
+		count++;
+	}
+	if (count === 0) return null;
+	return { lat: sumLat / count, lon: sumLon / count };
+}

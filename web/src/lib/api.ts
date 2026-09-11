@@ -8,7 +8,8 @@ import type {
 	StationSettings, ServerSettings, TransportSettings, BeaconSettings,
 	SessionSettings, LoggingSettings, WeatherSettings, TileCacheSettings,
 	CheckpointWithPassages, CheckpointMeta, CheckpointPassage, CheckpointProgress,
-	ImportResult, BulkDeleteResult, RenameBatchResult, GpsStatus, GpsSettings
+	ImportResult, BulkDeleteResult, RenameBatchResult, GpsStatus, GpsSettings,
+	W3WStatus, W3WResult, W3WSuggestResponse, What3WordsSettings
 } from './types';
 
 const BASE = '/api';
@@ -352,5 +353,22 @@ export const api = {
 	updateLogging: (data: LoggingSettings) => put<SettingsUpdateResponse>('/settings/logging', data),
 	updateWeather: (data: WeatherSettings) => put<SettingsUpdateResponse>('/settings/weather', data),
 	updateTileCache: (data: TileCacheSettings) => put<SettingsUpdateResponse>('/settings/tilecache', data),
-	updateGPS: (data: GpsSettings) => put<SettingsUpdateResponse>('/settings/gps', data)
+	updateGPS: (data: GpsSettings) => put<SettingsUpdateResponse>('/settings/gps', data),
+	updateWhat3Words: (data: What3WordsSettings) => put<SettingsUpdateResponse>('/settings/what3words', data),
+	deleteWhat3WordsKey: () => del<SettingsUpdateResponse>('/settings/what3words/key'),
+
+	// what3words proxy (operator+; status is observer+)
+	w3wStatus: () => get<W3WStatus>('/w3w/status'),
+	w3wResolve: (words: string) => get<W3WResult>(`/w3w/resolve?words=${encodeURIComponent(words)}`),
+	w3wSuggest: (input: string, focus?: { lat: number; lon: number }, n?: number) => {
+		const params = new URLSearchParams({ input });
+		if (focus) {
+			params.set('lat', String(focus.lat));
+			params.set('lon', String(focus.lon));
+		}
+		if (n) params.set('n', String(n));
+		return get<W3WSuggestResponse>(`/w3w/suggest?${params.toString()}`);
+	},
+	w3wReverse: (lat: number, lon: number) =>
+		get<W3WResult>(`/w3w/reverse?lat=${encodeURIComponent(String(lat))}&lon=${encodeURIComponent(String(lon))}`)
 };

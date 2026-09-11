@@ -580,6 +580,7 @@ export interface SettingsResponse {
 	weather: WeatherSettings;
 	store: StoreSettings;
 	gps: GpsSettings;
+	what3words: What3WordsSettings;
 }
 
 export interface StationSettings {
@@ -766,6 +767,44 @@ export interface GpsSettings {
 
 export interface SettingsUpdateResponse {
 	restartRequired: boolean;
+}
+
+// --- what3words ---
+
+export interface W3WStatus {
+	configured: boolean;
+	enabled: boolean;
+}
+
+export interface W3WResult {
+	words: string;
+	lat: number;
+	lon: number;
+	nearestPlace: string;
+	country: string;
+	language: string;
+}
+
+export interface W3WSuggestion {
+	words: string;
+	nearestPlace: string;
+	country: string;
+	distanceToFocusKm: number;
+	rank: number;
+}
+
+export interface W3WSuggestResponse {
+	suggestions: W3WSuggestion[];
+}
+
+export interface What3WordsSettings {
+	enabled: boolean;
+	apiKeyConfigured: boolean;
+	apiKeySource: 'env' | 'config' | 'none';
+	/** Write-only; never populated on GET. */
+	apiKey?: string;
+	baseUrl: string;
+	results: number;
 }
 
 // --- Packet Inspector ---

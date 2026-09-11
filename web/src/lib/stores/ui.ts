@@ -103,7 +103,43 @@ export function openPackets(): void {
 	sheetState.set('half');
 }
 
-export function openSettings(): void {
+/** Section key SettingsPanel should auto-expand and scroll to on next mount
+ * (e.g. a "Settings →" hint link deep-linking into the what3words section).
+ * Consumed (reset to null) by SettingsPanel once applied. */
+export const settingsOpenSection = writable<string | null>(null);
+
+/**
+ * Snapshot of an in-progress mission draft in NetControlPanel, saved right
+ * before navigating to Settings (e.g. the what3words "Settings →" hint
+ * link). Settings and Net Control are mutually exclusive panels — opening
+ * one unmounts the other — and NetControlPanel's mission-draft fields are
+ * plain component $state with no other persistence, so without this the
+ * whole draft (title, description, priority, assignee, chosen location)
+ * would silently vanish while the NCS is just trying to add an API key.
+ * Consumed (reset to null) by NetControlPanel's onMount once restored, and
+ * scoped to the net it was captured in so it never leaks into a different
+ * net's draft.
+ */
+export interface MissionDraftSnapshot {
+	netId: string;
+	title: string;
+	desc: string;
+	priority: string;
+	assign: string;
+	locLabel: string;
+	locLat: number | null;
+	locLon: number | null;
+	locSource: string;
+	locNearId: string | null;
+	locWords: string;
+	locNear: string;
+	locConfirmed: boolean;
+	selectedAnnotationIds: string[];
+}
+export const missionDraftBackup = writable<MissionDraftSnapshot | null>(null);
+
+export function openSettings(section?: string): void {
+	settingsOpenSection.set(section ?? null);
 	panelMode.set('settings');
 	selectedStation.set(null);
 	sheetState.set('full');

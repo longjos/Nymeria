@@ -45,6 +45,7 @@
 	import { initBulletinStore } from '$lib/stores/bulletins';
 	import { initWeatherStore, weatherStations, selectedWeatherStation } from '$lib/stores/weather';
 	import { dfStations } from '$lib/stores/df';
+	import { loadW3WStatus } from '$lib/stores/w3w';
 	import { initPacketStore } from '$lib/stores/packets';
 	import { initPathStore } from '$lib/stores/paths';
 	import { isLoggedIn, needsSetup, isApproved, isPending, isDenied, initSession, handleSessionEvent, currentUser, loadPendingRequests, canAdmin } from '$lib/stores/session';
@@ -135,6 +136,7 @@
 			initBulletinStore();
 			initWeatherStore();
 			initPacketStore();
+			loadW3WStatus();
 			if ($canAdmin) {
 				loadPendingRequests();
 			}
@@ -224,8 +226,21 @@
 		openNetControl();
 	}
 
-	function handleNetFlyTo(lat: number, lon: number) {
-		flyToTarget = { lat, lon, zoom: 15 };
+	function handleNetFlyTo(lat: number, lon: number, zoom?: number) {
+		flyToTarget = { lat, lon, zoom: zoom ?? 15 };
+	}
+
+	// The what3words draft pin: place it on the map without touching the
+	// existing missionMapCoords path — that path (see handleMissionLocationPlaced)
+	// flows back into NetControlPanel's own effect, which overwrites the
+	// location label with a nearby annotation's label. A w3w resolve must
+	// never lose the words that way, so it only ever sets the marker.
+	function handleSetMissionDraftPoint(lat: number, lon: number) {
+		missionDraftPoint = { lat, lon };
+	}
+
+	function handleGetMapCenter(): { lat: number; lon: number; zoom: number } | null {
+		return mapRef?.getViewport() ?? null;
 	}
 
 	function handleFlyToBounds(coords: Array<{ lat: number; lon: number }>) {
@@ -611,6 +626,8 @@
 					onMissionMapCoordsConsumed={handleMissionMapCoordsConsumed}
 					onClearMissionDraft={handleClearMissionDraft}
 					missionPickActive={placingMissionLocation != null}
+					onSetMissionDraftPoint={handleSetMissionDraftPoint}
+					getMapCenter={handleGetMapCenter}
 				/>
 			{:else if $panelMode === 'weather'}
 				<WeatherPanel onFlyTo={handleFlyTo} />
@@ -703,6 +720,8 @@
 					onMissionMapCoordsConsumed={handleMissionMapCoordsConsumed}
 					onClearMissionDraft={handleClearMissionDraft}
 					missionPickActive={placingMissionLocation != null}
+					onSetMissionDraftPoint={handleSetMissionDraftPoint}
+					getMapCenter={handleGetMapCenter}
 				/>
 			{:else if $panelMode === 'weather'}
 				<WeatherPanel onFlyTo={handleFlyTo} />
