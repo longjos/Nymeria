@@ -173,6 +173,21 @@ func (s *Server) routes() {
 			r.Post("/tiles/estimate", s.handleTileEstimate)
 		})
 
+		// what3words proxy — operator+ (the role that creates missions)
+		r.Group(func(r chi.Router) {
+			r.Use(RequireRole(session.RoleOperator))
+			r.Get("/w3w/resolve", s.handleW3WResolve)
+			r.Get("/w3w/suggest", s.handleW3WSuggest)
+			r.Get("/w3w/reverse", s.handleW3WReverse)
+		})
+
+		// what3words status — observer+ so a read-only panel can hide the
+		// affordance correctly.
+		r.Group(func(r chi.Router) {
+			r.Use(RequireRole(session.RoleObserver))
+			r.Get("/w3w/status", s.handleW3WStatus)
+		})
+
 		// Admin endpoints — user management
 		r.Group(func(r chi.Router) {
 			r.Use(RequireRole(session.RoleAdmin))
@@ -198,6 +213,8 @@ func (s *Server) routes() {
 			r.Put("/settings/logging", s.handleUpdateLogging)
 			r.Put("/settings/weather", s.handleUpdateWeather)
 			r.Put("/settings/tilecache", s.handleUpdateTileCache)
+			r.Put("/settings/what3words", s.handleUpdateWhat3Words)
+			r.Delete("/settings/what3words/key", s.handleDeleteWhat3WordsKey)
 		})
 	})
 

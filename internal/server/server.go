@@ -18,6 +18,7 @@ import (
 	"github.com/narvel/nymeria/internal/beacon"
 	"github.com/narvel/nymeria/internal/checkpoint"
 	"github.com/narvel/nymeria/internal/config"
+	"github.com/narvel/nymeria/internal/geocode/w3w"
 	"github.com/narvel/nymeria/internal/gps"
 	"github.com/narvel/nymeria/internal/message"
 	"github.com/narvel/nymeria/internal/netcontrol"
@@ -52,6 +53,8 @@ type Server struct {
 	stationCfg config.StationConfig
 	weatherMu  sync.RWMutex
 	weatherCfg config.WeatherConfig
+	w3w        *w3w.Client
+	w3wMu      sync.RWMutex
 }
 
 // New creates a new Server.
@@ -201,6 +204,16 @@ func WithWeatherConfig(cfg config.WeatherConfig) Option {
 func WithConfigManager(mgr *config.Manager) Option {
 	return func(s *Server) {
 		s.configMgr = mgr
+	}
+}
+
+// WithWhat3Words sets the what3words client on the server. Pass a client
+// even when unconfigured (empty API key) — Configured() reporting false is
+// what drives the 503 "not configured" response, and it's what makes a key
+// entered later through Settings live-effective with no restart.
+func WithWhat3Words(c *w3w.Client) Option {
+	return func(s *Server) {
+		s.w3w = c
 	}
 }
 

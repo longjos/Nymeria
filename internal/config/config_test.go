@@ -510,3 +510,229 @@ func TestGPSYAMLRoundTrip(t *testing.T) {
 		t.Errorf("marshalled yaml missing \"stale_after: 30s\", got:\n%s", data)
 	}
 }
+
+// ── what3words config ──────────────────────────────────────────────
+
+func TestDefaultWhat3WordsConfig(t *testing.T) {
+	cfg := DefaultConfig()
+	w := cfg.What3Words
+
+	if !w.Enabled {
+		t.Error("What3Words.Enabled = false, want true (inert-until-keyed, not a second switch)")
+	}
+	if w.APIKey != "" {
+		t.Errorf("What3Words.APIKey = %q, want empty by default", w.APIKey)
+	}
+	if w.BaseURL != "https://api.what3words.com/v3" {
+		t.Errorf("What3Words.BaseURL = %q, want the public API root", w.BaseURL)
+	}
+	if w.Results != 5 {
+		t.Errorf("What3Words.Results = %d, want 5", w.Results)
+	}
+	if w.ForwardTTL != 24*time.Hour {
+		t.Errorf("What3Words.ForwardTTL = %v, want 24h", w.ForwardTTL)
+	}
+	if w.SuggestTTL != 5*time.Minute {
+		t.Errorf("What3Words.SuggestTTL = %v, want 5m", w.SuggestTTL)
+	}
+}
+
+func TestWhat3WordsYAMLRoundTrip(t *testing.T) {
+	cfg := DefaultConfig()
+	cfg.Station.Callsign = "N0CALL"
+	cfg.What3Words.APIKey = "test-key-123"
+	cfg.What3Words.BaseURL = "http://mock.example/v3"
+	cfg.What3Words.Results = 7
+	cfg.What3Words.ForwardTTL = 12 * time.Hour
+	cfg.What3Words.SuggestTTL = 90 * time.Second
+
+	data, err := yaml.Marshal(cfg)
+	if err != nil {
+		t.Fatalf("Marshal: %v", err)
+	}
+
+	var got Config
+	if err := yaml.Unmarshal(data, &got); err != nil {
+		t.Fatalf("Unmarshal: %v", err)
+	}
+
+	if got.What3Words.APIKey != "test-key-123" {
+		t.Errorf("api_key round-trip = %q, want test-key-123", got.What3Words.APIKey)
+	}
+	if got.What3Words.BaseURL != "http://mock.example/v3" {
+		t.Errorf("base_url round-trip = %q", got.What3Words.BaseURL)
+	}
+	if got.What3Words.Results != 7 {
+		t.Errorf("results round-trip = %d, want 7", got.What3Words.Results)
+	}
+	if got.What3Words.ForwardTTL != 12*time.Hour {
+		t.Errorf("forward_ttl round-trip = %v, want 12h", got.What3Words.ForwardTTL)
+	}
+	if got.What3Words.SuggestTTL != 90*time.Second {
+		t.Errorf("suggest_ttl round-trip = %v, want 90s", got.What3Words.SuggestTTL)
+	}
+	if !strings.Contains(string(data), "what3words:") {
+		t.Errorf("marshalled yaml missing \"what3words:\" section, got:\n%s", data)
+	}
+}
+
+// An empty API key must never survive a YAML marshal — Load() writing the
+// config back out (Manager.Update) must not scatter the secret into the
+// file when there isn't one.
+func TestWhat3WordsEmptyKeyOmittedFromYAML(t *testing.T) {
+	cfg := DefaultConfig()
+	cfg.Station.Callsign = "N0CALL"
+	cfg.What3Words.APIKey = ""
+
+	data, err := yaml.Marshal(cfg)
+	if err != nil {
+		t.Fatalf("Marshal: %v", err)
+	}
+	if strings.Contains(string(data), "api_key:") {
+		t.Errorf("marshalled yaml should omit an empty api_key entirely, got:\n%s", data)
+	}
+}
+
+func TestValidateWhat3Words(t *testing.T) {
+	tests := []struct {
+		name    string
+		modify  func(*Config)
+		wantErr bool
+	}{
+		{
+			name:    "default is valid (empty key)",
+			modify:  func(c *Config) {},
+			wantErr: false,
+		},
+		{
+			name:    "disabled with garbage is valid",
+			modify:  func(c *Config) { c.What3Words = What3WordsConfig{Enabled: false, BaseURL: "not-a-url", Results: 99} },
+			wantErr: false,
+		},
+		{
+			name:    "empty base_url is valid (falls back to default at New)",
+			modify:  func(c *Config) { c.What3Words.BaseURL = "" },
+			wantErr: false,
+		},
+		{
+			name:    "base_url without scheme",
+			modify:  func(c *Config) { c.What3Words.BaseURL = "api.what3words.com/v3" },
+			wantErr: true,
+		},
+		{
+			name:    "base_url with unsupported scheme",
+			modify:  func(c *Config) { c.What3Words.BaseURL = "ftp://api.what3words.com/v3" },
+			wantErr: true,
+		},
+		{
+			name:    "base_url with no host",
+			modify:  func(c *Config) { c.What3Words.BaseURL = "https://" },
+			wantErr: true,
+		},
+		{
+			name:    "results too high",
+			modify:  func(c *Config) { c.What3Words.Results = 11 },
+			wantErr: true,
+		},
+		{
+			name:    "results negative",
+			modify:  func(c *Config) { c.What3Words.Results = -1 },
+			wantErr: true,
+		},
+		{
+			name:    "results zero is valid",
+			modify:  func(c *Config) { c.What3Words.Results = 0 },
+			wantErr: false,
+		},
+		{
+			name:    "negative forward ttl",
+			modify:  func(c *Config) { c.What3Words.ForwardTTL = -time.Second },
+			wantErr: true,
+		},
+		{
+			name:    "negative suggest ttl",
+			modify:  func(c *Config) { c.What3Words.SuggestTTL = -time.Second },
+			wantErr: true,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			cfg := DefaultConfig()
+			cfg.Station.Callsign = "N0CALL"
+			tt.modify(&cfg)
+			err := cfg.Validate()
+			if (err != nil) != tt.wantErr {
+				t.Errorf("Validate() error = %v, wantErr %v", err, tt.wantErr)
+			}
+		})
+	}
+}
+
+func TestWhat3WordsEnvOverrides(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "test.yaml")
+
+	yamlData := `
+server:
+  listen: ":8080"
+station:
+  callsign: "N0CALL"
+what3words:
+  api_key: "file-key"
+  base_url: "https://file.example/v3"
+`
+	if err := os.WriteFile(path, []byte(yamlData), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	t.Setenv("NYMERIA_W3W_API_KEY", "env-key")
+	t.Setenv("NYMERIA_W3W_BASE_URL", "https://env.example/v3")
+
+	cfg, err := Load(path)
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+
+	if cfg.What3Words.APIKey != "env-key" {
+		t.Errorf("api key = %q, want env-key (env overrides file)", cfg.What3Words.APIKey)
+	}
+	if cfg.What3Words.BaseURL != "https://env.example/v3" {
+		t.Errorf("base url = %q, want https://env.example/v3", cfg.What3Words.BaseURL)
+	}
+}
+
+func TestWhat3WordsEnvOverridesEmptyDoesNotClobber(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "test.yaml")
+
+	yamlData := `
+server:
+  listen: ":8080"
+station:
+  callsign: "N0CALL"
+what3words:
+  api_key: "file-key"
+  base_url: "https://file.example/v3"
+`
+	if err := os.WriteFile(path, []byte(yamlData), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	// Explicitly unset — t.Setenv with "" still counts as "set" for os.Getenv
+	// callers that check v != "", so this just documents the no-op case.
+	os.Unsetenv("NYMERIA_W3W_API_KEY")
+	os.Unsetenv("NYMERIA_W3W_BASE_URL")
+
+	cfg, err := Load(path)
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+
+	if cfg.What3Words.APIKey != "file-key" {
+		t.Errorf("api key = %q, want file-key (no env override present)", cfg.What3Words.APIKey)
+	}
+	if cfg.What3Words.BaseURL != "https://file.example/v3" {
+		t.Errorf("base url = %q, want https://file.example/v3", cfg.What3Words.BaseURL)
+	}
+}

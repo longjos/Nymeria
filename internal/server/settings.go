@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"log"
 	"net/http"
+	"os"
 	"runtime"
 	"time"
 
@@ -97,6 +98,15 @@ type storeDTO struct {
 	Path string `json:"path"`
 }
 
+type what3wordsDTO struct {
+	Enabled          bool   `json:"enabled"`
+	APIKeyConfigured bool   `json:"apiKeyConfigured"`
+	APIKeySource     string `json:"apiKeySource"`     // "env" | "config" | "none"
+	APIKey           string `json:"apiKey,omitempty"` // write-only; never populated on GET
+	BaseURL          string `json:"baseUrl"`
+	Results          int    `json:"results"`
+}
+
 type weatherDTO struct {
 	RetentionDays int                                     `json:"retentionDays"`
 	Alerts        map[string]config.WeatherAlertThreshold `json:"alerts,omitempty"`
@@ -114,6 +124,7 @@ type settingsResponse struct {
 	Weather    weatherDTO     `json:"weather"`
 	Store      storeDTO       `json:"store"`
 	GPS        gpsDTO         `json:"gps"`
+	What3Words what3wordsDTO  `json:"what3words"`
 }
 
 type updateResponse struct {
@@ -375,6 +386,41 @@ func fromWeatherDTO(d weatherDTO) config.WeatherConfig {
 	}
 }
 
+func toWhat3WordsDTO(c config.What3WordsConfig) what3wordsDTO {
+	src := "none"
+	switch {
+	case os.Getenv("NYMERIA_W3W_API_KEY") != "":
+		src = "env"
+	case c.APIKey != "":
+		src = "config"
+	}
+	return what3wordsDTO{
+		Enabled:          c.Enabled,
+		APIKeyConfigured: c.APIKey != "",
+		APIKeySource:     src,
+		BaseURL:          c.BaseURL,
+		Results:          c.Results,
+		// APIKey deliberately left zero — omitempty drops it from the response.
+	}
+}
+
+func fromWhat3WordsDTO(d what3wordsDTO, existing config.What3WordsConfig) config.What3WordsConfig {
+	key := d.APIKey
+	// Preserve existing key if client sends empty or masked value (same rule
+	// as fromSessionDTO's PIN and fromTransportDTOs' passcode).
+	if key == "" || key == "***" {
+		key = existing.APIKey
+	}
+	out := existing
+	out.Enabled = d.Enabled
+	out.APIKey = key
+	out.BaseURL = d.BaseURL
+	if d.Results > 0 {
+		out.Results = d.Results
+	}
+	return out
+}
+
 // classifyRestart returns true if the section requires a server restart.
 func classifyRestart(section string) bool {
 	switch section {
@@ -405,6 +451,7 @@ func (s *Server) handleGetSettings(w http.ResponseWriter, _ *http.Request) {
 		Weather:    toWeatherDTO(cfg.Weather),
 		Store:      storeDTO{Path: cfg.Store.Path},
 		GPS:        toGPSDTO(cfg.GPS),
+		What3Words: toWhat3WordsDTO(cfg.What3Words),
 	}
 
 	writeJSON(w, http.StatusOK, resp)
@@ -687,4 +734,59 @@ func (s *Server) handleUpdateTileCache(w http.ResponseWriter, r *http.Request) {
 	}
 
 	writeJSON(w, http.StatusOK, updateResponse{RestartRequired: true})
+}
+
+// handleUpdateWhat3Words follows handleUpdateSession, not handleUpdateTileCache:
+// an API key paste mid-event must be live-effective with no restart, so this
+// applies the new key to the already-running w3w client directly rather than
+// hardcoding RestartRequired: true.
+func (s *Server) handleUpdateWhat3Words(w http.ResponseWriter, r *http.Request) {
+	if s.configMgr == nil {
+		writeJSON(w, http.StatusServiceUnavailable, map[string]string{"error": "config manager not available"})
+		return
+	}
+
+	var dto what3wordsDTO
+	if err := json.NewDecoder(r.Body).Decode(&dto); err != nil {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid request body"})
+		return
+	}
+
+	cfg := s.configMgr.Get()
+	w3wCfg := fromWhat3WordsDTO(dto, cfg.What3Words)
+	cfg.What3Words = w3wCfg
+	if err := s.configMgr.Update(cfg); err != nil {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
+		return
+	}
+
+	if c := s.w3wClient(); c != nil {
+		c.SetAPIKey(w3wCfg.APIKey)
+		c.SetEnabled(w3wCfg.Enabled)
+	}
+
+	writeJSON(w, http.StatusOK, updateResponse{RestartRequired: false})
+}
+
+// handleDeleteWhat3WordsKey clears the stored API key. A dedicated endpoint
+// rather than a sentinel string in the DTO — explicit, un-spoofable, and it
+// keeps the empty-means-preserve rule on PUT /settings/what3words intact.
+func (s *Server) handleDeleteWhat3WordsKey(w http.ResponseWriter, r *http.Request) {
+	if s.configMgr == nil {
+		writeJSON(w, http.StatusServiceUnavailable, map[string]string{"error": "config manager not available"})
+		return
+	}
+
+	cfg := s.configMgr.Get()
+	cfg.What3Words.APIKey = ""
+	if err := s.configMgr.Update(cfg); err != nil {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
+		return
+	}
+
+	if c := s.w3wClient(); c != nil {
+		c.SetAPIKey("")
+	}
+
+	writeJSON(w, http.StatusOK, updateResponse{RestartRequired: false})
 }

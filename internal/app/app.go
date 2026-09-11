@@ -15,6 +15,7 @@ import (
 	"github.com/narvel/nymeria/internal/beacon"
 	"github.com/narvel/nymeria/internal/checkpoint"
 	"github.com/narvel/nymeria/internal/config"
+	"github.com/narvel/nymeria/internal/geocode/w3w"
 	"github.com/narvel/nymeria/internal/gps"
 	"github.com/narvel/nymeria/internal/message"
 	"github.com/narvel/nymeria/internal/netcontrol"
@@ -321,6 +322,24 @@ func New(opts Options) (*App, error) {
 		}
 	}
 
+	// Initialize the what3words proxy client. Always constructed — even
+	// with an empty key, even with what3words.enabled: false at boot — so
+	// that both an API key pasted in Settings and an Enabled toggle
+	// flipped in Settings take effect live, with no restart. Configured()
+	// (and therefore every proxy handler's guard) reflects the live
+	// enabled+key state on every call, not just the state at boot.
+	w3wClient, err := w3w.New(w3w.Config{
+		APIKey:     cfg.What3Words.APIKey,
+		BaseURL:    cfg.What3Words.BaseURL,
+		ForwardTTL: cfg.What3Words.ForwardTTL,
+		SuggestTTL: cfg.What3Words.SuggestTTL,
+	})
+	if err != nil {
+		cancel()
+		return nil, fmt.Errorf("what3words: %w", err)
+	}
+	w3wClient.SetEnabled(cfg.What3Words.Enabled)
+
 	// Create config manager for settings API
 	cfgMgr := config.NewManager(opts.ConfigPath, cfg)
 
@@ -420,6 +439,7 @@ func New(opts Options) (*App, error) {
 	if gpsMgr != nil {
 		serverOpts = append(serverOpts, server.WithGPSManager(gpsMgr))
 	}
+	serverOpts = append(serverOpts, server.WithWhat3Words(w3wClient))
 	srv := server.New(tracker, tm, msgEngine, db, serverOpts...)
 
 	fanoutDone := make(chan struct{})

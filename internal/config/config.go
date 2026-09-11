@@ -2,6 +2,7 @@ package config
 
 import (
 	"fmt"
+	"net/url"
 	"os"
 	"strings"
 	"time"
@@ -11,6 +12,11 @@ import (
 	"github.com/narvel/nymeria/internal/aprs"
 	"github.com/narvel/nymeria/internal/transport"
 )
+
+// what3wordsDefaultBaseURL mirrors w3w.DefaultBaseURL as a literal string
+// (rather than importing internal/geocode/w3w) so this package stays a leaf
+// dependency. Keep the two in sync.
+const what3wordsDefaultBaseURL = "https://api.what3words.com/v3"
 
 // BeaconConfig holds beaconing settings.
 type BeaconConfig struct {
@@ -72,6 +78,18 @@ type WeatherConfig struct {
 	Units         string                           `yaml:"units" json:"units"`
 }
 
+// What3WordsConfig holds the what3words geocoding proxy settings. The
+// feature is active only when Enabled && APIKey != "" — a missing key is
+// not a validation error so an unconfigured install still boots.
+type What3WordsConfig struct {
+	Enabled    bool          `yaml:"enabled" json:"enabled"`
+	APIKey     string        `yaml:"api_key,omitempty" json:"apiKey,omitempty"`
+	BaseURL    string        `yaml:"base_url" json:"baseUrl"`
+	Results    int           `yaml:"results" json:"results"` // autosuggest n-results
+	ForwardTTL time.Duration `yaml:"forward_ttl" json:"forwardTtl"`
+	SuggestTTL time.Duration `yaml:"suggest_ttl" json:"suggestTtl"`
+}
+
 // Config holds the application configuration.
 type Config struct {
 	Server     ServerConfig                `yaml:"server" json:"server"`
@@ -84,6 +102,7 @@ type Config struct {
 	TileCache  TileCacheConfig             `yaml:"tile_cache" json:"tileCache"`
 	Weather    WeatherConfig               `yaml:"weather" json:"weather"`
 	GPS        GPSConfig                   `yaml:"gps" json:"gps"`
+	What3Words What3WordsConfig            `yaml:"what3words" json:"what3words"`
 }
 
 // ServerConfig holds HTTP server settings.
@@ -165,6 +184,15 @@ func DefaultConfig() Config {
 			MinInterval:  1 * time.Second,
 			StaleAfter:   30 * time.Second,
 			UseForBeacon: true,
+		},
+		What3Words: What3WordsConfig{
+			// Enabled but inert until a key exists — pasting a key in
+			// Settings is the only switch a user needs to flip.
+			Enabled:    true,
+			BaseURL:    what3wordsDefaultBaseURL,
+			Results:    5,
+			ForwardTTL: 24 * time.Hour,
+			SuggestTTL: 5 * time.Minute,
 		},
 	}
 }
@@ -299,6 +327,21 @@ func (c *Config) Validate() error {
 		}
 	}
 
+	if c.What3Words.Enabled {
+		if c.What3Words.BaseURL != "" {
+			u, err := url.Parse(c.What3Words.BaseURL)
+			if err != nil || (u.Scheme != "http" && u.Scheme != "https") || u.Host == "" {
+				return fmt.Errorf("what3words.base_url must be an absolute http(s) URL")
+			}
+		}
+		if c.What3Words.Results < 0 || c.What3Words.Results > 10 {
+			return fmt.Errorf("what3words.results must be 0-10")
+		}
+		if c.What3Words.ForwardTTL < 0 || c.What3Words.SuggestTTL < 0 {
+			return fmt.Errorf("what3words TTLs must be >= 0")
+		}
+	}
+
 	return nil
 }
 
@@ -315,5 +358,11 @@ func applyEnvOverrides(cfg *Config) {
 	}
 	if v := os.Getenv("NYMERIA_LOG_LEVEL"); v != "" {
 		cfg.Logging.Level = v
+	}
+	if v := os.Getenv("NYMERIA_W3W_API_KEY"); v != "" {
+		cfg.What3Words.APIKey = v
+	}
+	if v := os.Getenv("NYMERIA_W3W_BASE_URL"); v != "" {
+		cfg.What3Words.BaseURL = v
 	}
 }

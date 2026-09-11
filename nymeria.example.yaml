@@ -91,3 +91,16 @@ beacon:
   #   slow_rate: 30m
   #   turn_angle: 28      # degrees
   #   turn_slope: 26
+
+# what3words — resolve three-word addresses heard on the radio into map pins.
+# Get a free key at https://accounts.what3words.com (Developer plan).
+# The key stays on the server; the browser only ever sees resolved coordinates.
+# Enabled but inert until a key exists — paste one in Settings → what3words
+# and it works live, no restart.
+what3words:
+  enabled: true
+  api_key: ""                                # or NYMERIA_W3W_API_KEY
+  base_url: "https://api.what3words.com/v3"  # override to point at a mock/proxy (or NYMERIA_W3W_BASE_URL)
+  results: 5          # autosuggest rows (1-10)
+  forward_ttl: 24h    # cache for words->coords and coords->words
+  suggest_ttl: 5m     # cache for autosuggest
