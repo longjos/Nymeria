@@ -534,6 +534,39 @@ export interface TilePreloadProgress {
 	skipped: number;
 }
 
+// --- Live GPS (own position) ---
+// Mirrors internal/gps.Fix / gps.Status and the server's GET /api/gps +
+// "own_position" WS frame byte-for-byte. See internal/server/gps.go.
+
+export type GpsFixMode = 0 | 1 | 2 | 3;
+
+export interface GpsFix {
+	mode: GpsFixMode;
+	lat: number;
+	lon: number;
+	altitude?: number; // meters MSL
+	hasAltitude: boolean;
+	speedKnots: number;
+	course: number;
+	hasCourse: boolean;
+	satellites?: number;
+	hdop?: number;
+	accuracy?: number; // meters, 0/undefined = unknown
+	time?: string;
+	receivedAt: string;
+}
+
+export interface GpsStatus {
+	enabled: boolean;
+	type?: 'gpsd' | 'nmea';
+	target?: string;
+	connected: boolean;
+	error?: string;
+	fix: GpsFix | null;
+	ageMillis: number | null;
+	stale: boolean;
+}
+
 // --- Settings ---
 
 export interface SettingsResponse {
@@ -546,6 +579,7 @@ export interface SettingsResponse {
 	tileCache: TileCacheSettings;
 	weather: WeatherSettings;
 	store: StoreSettings;
+	gps: GpsSettings;
 }
 
 export interface StationSettings {
@@ -716,6 +750,18 @@ export interface WeatherSettings {
 
 export interface StoreSettings {
 	path: string;
+}
+
+export interface GpsSettings {
+	enabled: boolean;
+	type: 'gpsd' | 'nmea';
+	host: string;
+	port: number;
+	device: string;
+	baud: number;
+	minInterval: string;
+	staleAfter: string;
+	useForBeacon: boolean;
 }
 
 export interface SettingsUpdateResponse {

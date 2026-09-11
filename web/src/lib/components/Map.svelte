@@ -4,12 +4,15 @@
 	import { categoryMeta } from '$lib/annotationMeta';
 	import { symbolInfo } from '$lib/symbols';
 	import { createStationIcon } from '$lib/aprs-icons';
+	import { createOwnPositionIcon } from '$lib/gps-icons';
+	import { formatGpsAge } from '$lib/stores/gps';
 	import { isMoving, computeDRCone, DR_UPDATE_INTERVAL_MS } from '$lib/deadReckoning';
 	import { stationDisplayName } from '$lib/utils';
 	import { getTacticalAlias } from '$lib/stores/tactical';
 	import { weatherUnits } from '$lib/stores/weather';
 	import { convertTemp, convertWindSpeed } from '$lib/units';
 	import type { UnitSystem } from '$lib/units';
+	import type { GpsFix } from '$lib/types';
 	import { get } from 'svelte/store';
 	import L from 'leaflet';
 
@@ -54,6 +57,14 @@
 		placingAnnotation = null,
 		onAnnotationPlaced,
 		onAnnotationPlaceCancelled,
+		placingMissionLocation = null,
+		missionDraftPoint = null,
+		onMissionLocationPlaced,
+		onMissionLocationPlaceCancelled,
+		ownPosition = null,
+		ownPositionStale = false,
+		follow = false,
+		onFollowBreak,
 	}: {
 		stations?: Station[];
 		annotations?: Annotation[];
@@ -93,6 +104,17 @@
 		placingAnnotation?: { id: string | null; name: string } | null;
 		onAnnotationPlaced?: (lat: number, lon: number) => void;
 		onAnnotationPlaceCancelled?: () => void;
+		placingMissionLocation?: { label: string } | null;
+		missionDraftPoint?: { lat: number; lon: number } | null;
+		onMissionLocationPlaced?: (lat: number, lon: number) => void;
+		onMissionLocationPlaceCancelled?: () => void;
+		/** Live host GPS fix (own-position marker). null = no usable fix / GPS off. */
+		ownPosition?: GpsFix | null;
+		ownPositionStale?: boolean;
+		/** When true, the map re-centers on every accepted own_position update. */
+		follow?: boolean;
+		/** Fired when the user manually drags/zooms (or a deliberate fly-to fires) while following. */
+		onFollowBreak?: () => void;
 	} = $props();
 
 	let mapEl: HTMLDivElement;
@@ -102,6 +124,14 @@
 		if (!map) return null;
 		const c = map.getCenter();
 		return { lat: c.lat, lon: c.lng, zoom: map.getZoom() };
+	}
+
+	/** Pans (without zooming) to the current own-position fix, if any. */
+	export function centerOnOwnPosition(): void {
+		if (!map || !ownPosition || ownPosition.mode < 2) return;
+		programmaticMove = true;
+		map.setView([ownPosition.lat, ownPosition.lon], map.getZoom(), { animate: true });
+		map.once('moveend', () => { programmaticMove = false; });
 	}
 	let markers: Map<string, L.Marker> = new Map();
 	let trackLines: Map<string, L.Polyline> = new Map();
@@ -123,6 +153,9 @@
 	let vertexHandles: L.Marker[] = [];
 	let editShape: L.Polyline | L.Polygon | L.CircleMarker | null = null;
 
+	// Draft pin for the mission location picker
+	let missionDraftMarker: L.Marker | null = null;
+
 	// Net overlay layers
 	let netHalos: Map<string, L.CircleMarker | L.Marker> = new Map();
 	let netMissionFlags: Map<string, L.Marker> = new Map();
@@ -142,6 +175,14 @@
 	// Net location annotation layers
 	let netLocMarkers: Map<string, L.Marker> = new Map();
 	let netLocRouteLine: L.Polyline | null = null;
+
+	// Own-position (live GPS) marker + accuracy ring
+	let ownMarker: L.Marker | null = null;
+	let ownAccuracyCircle: L.Circle | null = null;
+	let ownIconSignature = '';
+	// True while a follow-driven or fly-to pan/zoom is in flight, so the
+	// dragstart/zoomstart listeners below don't mistake it for a user gesture.
+	let programmaticMove = false;
 
 	const netStatusColors: Record<string, string> = {
 		available: '#22c55e',
@@ -183,6 +224,10 @@
 		updateAnnotations();
 		updateDRCones();
 		drTimer = setInterval(updateDRCones, DR_UPDATE_INTERVAL_MS);
+
+		// Any real user drag/zoom (not one we drove ourselves) breaks follow.
+		map.on('dragstart', () => { if (!programmaticMove) onFollowBreak?.(); });
+		map.on('zoomstart', () => { if (!programmaticMove) onFollowBreak?.(); });
 	});
 
 	onDestroy(() => {
@@ -193,6 +238,9 @@
 		for (const layer of highlightOverlays) layer.remove();
 		highlightOverlays = [];
 		operatorHighlight?.remove();
+		missionDraftMarker?.remove();
+		ownMarker?.remove();
+		ownAccuracyCircle?.remove();
 		map?.remove();
 	});
 
@@ -211,20 +259,108 @@
 		if (map) updateAnnotations();
 	});
 
-	// Fly to target when it changes
+	// Fly to target when it changes — a deliberate navigation elsewhere
+	// (search, station select, ...), so it breaks GPS follow if it's on.
 	$effect(() => {
 		if (map && flyToTarget) {
+			programmaticMove = true;
 			map.flyTo([flyToTarget.lat, flyToTarget.lon], flyToTarget.zoom ?? 14);
+			map.once('moveend', () => { programmaticMove = false; });
+			onFollowBreak?.();
 		}
 	});
 
-	// Fly to bounds (multi-point) when they change
+	// Fly to bounds (multi-point) when they change — same rationale as above.
 	$effect(() => {
 		if (map && flyToBounds && flyToBounds.length > 0) {
 			const bounds = L.latLngBounds(flyToBounds.map(p => [p.lat, p.lon] as L.LatLngExpression));
+			programmaticMove = true;
 			map.flyToBounds(bounds, { padding: [50, 50], maxZoom: 16 });
+			map.once('moveend', () => { programmaticMove = false; });
+			onFollowBreak?.();
 		}
 	});
+
+	// GPS follow: pan (never zoom) to the live fix on every accepted update.
+	$effect(() => {
+		if (map && follow && ownPosition && ownPosition.mode >= 2) {
+			programmaticMove = true;
+			map.panTo([ownPosition.lat, ownPosition.lon], { animate: true, duration: 0.4 });
+			map.once('moveend', () => { programmaticMove = false; });
+		}
+	});
+
+	// Own-position marker + accuracy ring. Updated in place (setLatLng /
+	// setRadius) so a 1/s fix stream never respawns DOM nodes; the divIcon
+	// itself is only rebuilt when its visual signature actually changes.
+	$effect(() => {
+		if (!map) return;
+		const fix = ownPosition;
+		const stale = ownPositionStale;
+
+		if (!fix || fix.mode < 2) {
+			// No fix — remove the whole layer. A stale wrong position is worse
+			// than none, so we don't fall back to drawing the last known point.
+			ownMarker?.remove();
+			ownMarker = null;
+			ownAccuracyCircle?.remove();
+			ownAccuracyCircle = null;
+			ownIconSignature = '';
+			return;
+		}
+
+		const moving = fix.hasCourse && fix.speedKnots >= 1;
+		const courseBucket = moving ? Math.round(fix.course / 5) * 5 : 0;
+		const sig = `${fix.mode}|${stale}|${moving}|${courseBucket}`;
+
+		if (!ownMarker) {
+			ownMarker = L.marker([fix.lat, fix.lon], {
+				icon: createOwnPositionIcon(fix, stale),
+				interactive: false,
+				keyboard: false,
+				zIndexOffset: 1000,
+			}).addTo(map);
+			ownIconSignature = sig;
+		} else {
+			ownMarker.setLatLng([fix.lat, fix.lon]);
+			if (sig !== ownIconSignature) {
+				ownMarker.setIcon(createOwnPositionIcon(fix, stale));
+				ownIconSignature = sig;
+			}
+		}
+
+		if (stale) {
+			const ageMs = Date.now() - new Date(fix.receivedAt).getTime();
+			ownMarker.unbindTooltip();
+			ownMarker.bindTooltip(`Last fix ${formatGpsAge(ageMs)} ago`, {
+				direction: 'top',
+				className: 'own-pos-tooltip',
+			});
+		} else {
+			ownMarker.unbindTooltip();
+		}
+
+		if (fix.accuracy && fix.accuracy > 0 && fix.accuracy <= 500) {
+			if (!ownAccuracyCircle) {
+				ownAccuracyCircle = L.circle([fix.lat, fix.lon], {
+					radius: fix.accuracy,
+					color: '#38bdf8',
+					weight: 1,
+					opacity: 0.5,
+					fillColor: '#38bdf8',
+					fillOpacity: 0.10,
+					interactive: false,
+				}).addTo(map);
+			} else {
+				ownAccuracyCircle.setLatLng([fix.lat, fix.lon]);
+				ownAccuracyCircle.setRadius(fix.accuracy);
+			}
+		} else {
+			ownAccuracyCircle?.remove();
+			ownAccuracyCircle = null;
+		}
+	});
+
 
 	// Invalidate map size when panel opens/closes
 	$effect(() => {
@@ -234,19 +370,31 @@
 		}
 	});
 
+	// Any place/draw mode being active is the single source of truth for the
+	// cursor + double-click-zoom toggle, so no individual mode effect below
+	// needs to guard against the others still being active.
+	let anyPlaceMode = $derived(
+		!!drawingMode || !!placingOperator || !!placingAnnotation || !!placingMissionLocation
+	);
+
+	$effect(() => {
+		if (!map) return;
+		if (anyPlaceMode) {
+			mapEl.style.cursor = 'crosshair';
+			map.doubleClickZoom.disable();
+		} else {
+			mapEl.style.cursor = '';
+			map.doubleClickZoom.enable();
+		}
+	});
+
 	// Drawing mode effects
 	$effect(() => {
 		if (!map) return;
 		if (drawingMode) {
-			mapEl.style.cursor = 'crosshair';
 			map.on('click', handleDrawClick);
 			map.on('dblclick', handleDrawDblClick);
-			map.doubleClickZoom.disable();
 		} else {
-			if (!placingOperator && !placingAnnotation) {
-				mapEl.style.cursor = '';
-				map.doubleClickZoom.enable();
-			}
 			map.off('click', handleDrawClick);
 			map.off('dblclick', handleDrawDblClick);
 			clearDrawState();
@@ -257,14 +405,8 @@
 	$effect(() => {
 		if (!map) return;
 		if (placingOperator) {
-			mapEl.style.cursor = 'crosshair';
 			map.on('click', handlePlaceClick);
-			map.doubleClickZoom.disable();
 		} else {
-			if (!drawingMode && !placingAnnotation) {
-				mapEl.style.cursor = '';
-				map.doubleClickZoom.enable();
-			}
 			map.off('click', handlePlaceClick);
 		}
 	});
@@ -273,16 +415,49 @@
 	$effect(() => {
 		if (!map) return;
 		if (placingAnnotation) {
-			mapEl.style.cursor = 'crosshair';
 			map.on('click', handleAnnotationPlaceClick);
-			map.doubleClickZoom.disable();
 		} else {
-			if (!drawingMode && !placingOperator) {
-				mapEl.style.cursor = '';
-				map.doubleClickZoom.enable();
-			}
 			map.off('click', handleAnnotationPlaceClick);
 		}
+	});
+
+	// Place mode for mission locations (click-to-set position)
+	$effect(() => {
+		if (!map) return;
+		if (placingMissionLocation) {
+			map.on('click', handleMissionPlaceClick);
+		} else {
+			map.off('click', handleMissionPlaceClick);
+		}
+	});
+
+	// Draft pin for the mission location picker — independent of pick mode so
+	// it stays draggable for nudging after the initial click commits it.
+	$effect(() => {
+		if (!map) return;
+		if (missionDraftMarker) {
+			missionDraftMarker.remove();
+			missionDraftMarker = null;
+		}
+		if (!missionDraftPoint) return;
+		const icon = L.divIcon({
+			className: 'mission-draft-icon',
+			html: '<div class="mission-draft-marker"><div class="mission-draft-pulse"></div><div class="mission-draft-pin"></div></div>',
+			iconSize: [28, 34],
+			iconAnchor: [14, 34],
+		});
+		const marker = L.marker([missionDraftPoint.lat, missionDraftPoint.lon], {
+			icon,
+			draggable: true,
+			zIndexOffset: 1000,
+			keyboard: false,
+		}).addTo(map);
+		marker.on('dragend', (e) => {
+			const ll = (e.target as L.Marker).getLatLng();
+			onMissionLocationPlaced?.(ll.lat, ll.lng);
+		});
+		marker.bindTooltip('Mission location — drag to adjust', { direction: 'top', className: 'annotation-tooltip' });
+		missionDraftMarker = marker;
 	});
 
 	// Preview layer for unsaved geometry
@@ -1031,6 +1206,14 @@
 	// Escape key cancels drawing or placing
 	function handleKeyDown(e: KeyboardEvent) {
 		if (e.key === 'Escape') {
+			if (placingMissionLocation) {
+				// Consumed here — stop it from also reaching SidePanel's own
+				// window-level Escape handler, which would otherwise close
+				// the whole Net Control panel out from under the map pick.
+				e.stopImmediatePropagation();
+				onMissionLocationPlaceCancelled?.();
+				return;
+			}
 			if (placingAnnotation) {
 				onAnnotationPlaceCancelled?.();
 				return;
@@ -1054,6 +1237,11 @@
 	function handleAnnotationPlaceClick(e: L.LeafletMouseEvent) {
 		if (!placingAnnotation) return;
 		onAnnotationPlaced?.(e.latlng.lat, e.latlng.lng);
+	}
+
+	function handleMissionPlaceClick(e: L.LeafletMouseEvent) {
+		if (!placingMissionLocation) return;
+		onMissionLocationPlaced?.(e.latlng.lat, e.latlng.lng);
 	}
 
 	function handleDrawClick(e: L.LeafletMouseEvent) {
@@ -1497,6 +1685,13 @@
 	</div>
 {/if}
 
+{#if placingMissionLocation}
+	<div class="place-hint" style="border-color: var(--color-accent);">
+		Click to set the mission location
+		<kbd>Esc</kbd> cancel
+	</div>
+{/if}
+
 <style>
 	.map-container {
 		width: 100%;
@@ -1708,5 +1903,82 @@
 		height: 8px;
 		background: var(--loc-color);
 		opacity: 0.7;
+	}
+
+	/* Mission location draft pin — must be :global since injected via L.divIcon */
+	:global(.mission-draft-pin) {
+		width: 16px; height: 16px; margin: 0 auto;
+		background: var(--color-accent); border: 2px solid #fff;
+		border-radius: var(--radius-full) var(--radius-full) 2px var(--radius-full);
+		transform: rotate(45deg); box-shadow: var(--shadow-md);
+	}
+	:global(.mission-draft-pulse) {
+		position: absolute; left: 50%; top: 50%; width: 34px; height: 34px;
+		margin: -17px 0 0 -17px; border-radius: var(--radius-full);
+		background: var(--color-accent); opacity: 0.25;
+		animation: missionDraftPulse 1.8s ease-out infinite;
+	}
+	:global(.mission-draft-marker) { position: relative; width: 28px; height: 34px; }
+	@keyframes missionDraftPulse { 0% { transform: scale(0.6); opacity: 0.35 } 100% { transform: scale(1.5); opacity: 0 } }
+
+	/* Own-position (live GPS) marker — must be :global since injected via L.divIcon */
+	:global(.own-pos-marker) {
+		background: none !important;
+		border: none !important;
+	}
+	:global(.own-pos-wrap) {
+		position: relative;
+		width: 40px;
+		height: 40px;
+		overflow: visible;
+		pointer-events: none;
+	}
+	:global(.own-pos-dot) {
+		position: absolute;
+		left: 50%; top: 50%;
+		width: 14px; height: 14px;
+		margin: -7px 0 0 -7px;
+		border-radius: var(--radius-full);
+		background: var(--color-accent);
+		border: 2px solid #fff;
+		box-shadow: 0 0 0 1px rgba(0, 0, 0, 0.4);
+	}
+	:global(.own-pos-dot--stale) {
+		opacity: 0.45;
+		border: 1px dashed #fff;
+	}
+	:global(.own-pos-pulse) {
+		position: absolute;
+		left: 50%; top: 50%;
+		width: 34px; height: 34px;
+		margin: -17px 0 0 -17px;
+		border-radius: var(--radius-full);
+		border: 2px solid var(--color-accent);
+		animation: own-pos-pulse 2s var(--ease-out) infinite;
+	}
+	:global(.own-pos-stale-ring) {
+		position: absolute;
+		left: 50%; top: 50%;
+		width: 20px; height: 20px;
+		margin: -10px 0 0 -10px;
+		border-radius: var(--radius-full);
+		border: 1px dashed rgba(255, 255, 255, 0.6);
+	}
+	@keyframes own-pos-pulse {
+		0% { transform: scale(0.6); opacity: 0.8; }
+		100% { transform: scale(1); opacity: 0; }
+	}
+	@media (prefers-reduced-motion: reduce) {
+		:global(.own-pos-pulse) { animation: none; opacity: 0.35; }
+	}
+	:global(.own-pos-cone) {
+		position: absolute;
+		left: 50%; top: 50%;
+		width: 56px; height: 56px;
+		margin: -28px 0 0 -28px;
+		pointer-events: none;
+	}
+	:global(.own-pos-tooltip) {
+		font-size: 11px;
 	}
 </style>

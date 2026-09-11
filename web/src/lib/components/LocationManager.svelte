@@ -1,4 +1,5 @@
 <script lang="ts">
+	import { untrack } from 'svelte';
 	import { api } from '$lib/api';
 	import type { Annotation, AnnotationBatch, AnnotationCategory, Net } from '$lib/types';
 	import { netAnnotations, orderedCheckpoints } from '$lib/stores/netcontrol';
@@ -9,6 +10,7 @@
 	import { timeAgo } from '$lib/utils';
 	import BatchRemoveDialog from './BatchRemoveDialog.svelte';
 	import { groupByBatch } from '$lib/annotationBatches';
+	import { planFocusReveal, revealAnnotation, type RevealDeps } from '$lib/annotationFocus';
 
 	let {
 		net,
@@ -16,12 +18,16 @@
 		onPlaceOnMap,
 		mapClickedCoords = null,
 		onMapCoordsConsumed,
+		focusedAnnotationId = null,
+		onFocusConsumed,
 	}: {
 		net: Net;
 		onFlyTo?: (lat: number, lon: number) => void;
 		onPlaceOnMap?: (id: string | null, name: string, mode: 'update' | 'form') => void;
 		mapClickedCoords?: { lat: number; lon: number } | null;
 		onMapCoordsConsumed?: () => void;
+		focusedAnnotationId?: string | null;
+		onFocusConsumed?: () => void;
 	} = $props();
 
 	// Point-only event categories for location management.
@@ -153,6 +159,78 @@
 			}
 			onMapCoordsConsumed?.();
 		}
+	});
+
+	// Focused annotation highlight — same reveal/hold contract as
+	// AnnotationPanel, via the shared $lib/annotationFocus helper. This list
+	// has no per-row collapse and no category/batch filter of its own, so the
+	// plan is always a no-op here; the call stays for structural parity with
+	// AnnotationPanel rather than because it does anything.
+	let highlightedLocId = $state<string | null>(null);
+	let locHoldTimer: ReturnType<typeof setTimeout> | null = null;
+	let locFocusGen = 0;
+	let listEl = $state<HTMLElement | null>(null);
+
+	function startLocReveal(id: string, gen: number): () => void {
+		const ann = $netAnnotations.find((a) => a.id === id);
+		if (!ann) {
+			onFocusConsumed?.();
+			showToast('That location is not in this net', 'error');
+			return () => {};
+		}
+
+		planFocusReveal(ann, {
+			collapsedBatchIds: new Set(),
+			filterCategory: '',
+			filterBatchId: '',
+		});
+
+		if (locHoldTimer) {
+			clearTimeout(locHoldTimer);
+			locHoldTimer = null;
+		}
+
+		let focusedOnce = false;
+		const deps: RevealDeps = {
+			find: (x) =>
+				(listEl ?? document).querySelector(`[data-annotation-id="${CSS.escape(x)}"]`),
+			nextFrame: (cb) => requestAnimationFrame(cb),
+			cancelFrame: (h) => cancelAnimationFrame(h),
+			reducedMotion: window.matchMedia('(prefers-reduced-motion: reduce)').matches,
+			scrollTo: (el, smooth) => {
+				el.scrollIntoView({ behavior: smooth ? 'smooth' : 'auto', block: 'center' });
+				if (!focusedOnce) {
+					focusedOnce = true;
+					el.focus({ preventScroll: true });
+				}
+			},
+			setHighlight: (v) => {
+				if (gen === locFocusGen) highlightedLocId = v;
+			},
+			setTimer: (cb, ms) => {
+				const h = setTimeout(cb, ms);
+				locHoldTimer = h;
+				// RevealDeps declares a numeric handle so it stays testable
+				// without a DOM/Node timer; the real handle is round-tripped
+				// through clearTimer regardless of what type it actually is.
+				return h as unknown as number;
+			},
+			clearTimer: (h) => clearTimeout(h),
+			done: (found) => {
+				onFocusConsumed?.();
+				if (!found) showToast(`Could not scroll to "${ann.label}"`, 'error');
+			},
+		};
+
+		return revealAnnotation(id, deps);
+	}
+
+	$effect(() => {
+		const id = focusedAnnotationId;
+		if (!id) return;
+		const gen = ++locFocusGen;
+		const cancel = untrack(() => startLocReveal(id, gen));
+		return cancel;
 	});
 
 	let sortedAnnotations = $derived(
@@ -589,7 +667,7 @@
 	{/if}
 
 	<!-- Location list -->
-	<div class="loc-list">
+	<div class="loc-list" bind:this={listEl}>
 		{#each sortedAnnotations as ann, i (ann.id)}
 			{@const coords = extractCoords(ann)}
 			{@const hasCoords = coords && (coords.lat !== 0 || coords.lon !== 0)}
@@ -637,7 +715,14 @@
 				</div>
 			{:else}
 				<!-- Location row -->
-				<div class="loc-row" class:loc-row-batch={!!highlightBatchId && ann.batchId === highlightBatchId}>
+				<div
+					class="loc-row"
+					class:loc-row-batch={!!highlightBatchId && ann.batchId === highlightBatchId}
+					class:focused={highlightedLocId === ann.id}
+					tabindex="-1"
+					data-annotation-id={ann.id}
+					aria-current={highlightedLocId === ann.id ? 'true' : undefined}
+				>
 					<div class="loc-order-btns">
 						<button class="loc-order-btn" onclick={() => handleMoveUp(ann, i)} disabled={i === 0} title="Move up">&#9650;</button>
 						<button class="loc-order-btn" onclick={() => handleMoveDown(ann, i)} disabled={i === sortedAnnotations.length - 1} title="Move down">&#9660;</button>
@@ -1114,10 +1199,18 @@
 		gap: var(--space-sm);
 		padding: var(--space-xs) 0;
 		border-bottom: 1px solid rgba(255, 255, 255, 0.04);
+		transition: background 200ms ease-out, box-shadow 200ms ease-out;
 	}
 
 	.loc-row:last-child {
 		border-bottom: none;
+	}
+
+	/* Marker-click reveal hold — see the matching rule on AnnotationPanel's
+	   .entry for why this is a transition, not a keyframe animation. */
+	.loc-row.focused {
+		background: color-mix(in srgb, var(--color-accent) 22%, transparent);
+		box-shadow: inset 0 0 0 2px var(--color-accent);
 	}
 
 	.loc-order-btns {

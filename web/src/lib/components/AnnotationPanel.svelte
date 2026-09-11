@@ -1,4 +1,5 @@
 <script lang="ts">
+	import { untrack } from 'svelte';
 	import { api } from '$lib/api';
 	import { canPlot, canOperate } from '$lib/stores/session';
 	import { beaconPath } from '$lib/stores/paths';
@@ -17,6 +18,7 @@
 		statusLabelToValue, statusValueToLabel, statusColor, isTerminalStatus,
 		geometryMeta, canTransmitViaAPRS, categoryCanTransmitViaAPRS,
 	} from '$lib/annotationMeta';
+	import { planFocusReveal, revealAnnotation, type RevealDeps } from '$lib/annotationFocus';
 
 	let {
 		onFlyToAnnotation,
@@ -144,26 +146,92 @@
 		return rows;
 	}
 
-	// Focused annotation highlight
+	// Focused annotation highlight — see $lib/annotationFocus for the shared
+	// reveal/hold contract this and LocationManager both implement.
 	let highlightedId = $state<string | null>(null);
-	let highlightTimer: ReturnType<typeof setTimeout> | null = null;
+	let holdTimer: ReturnType<typeof setTimeout> | null = null;
+	let focusGen = 0;
+	let entriesEl = $state<HTMLElement | null>(null);
+
+	function startReveal(id: string, gen: number): () => void {
+		const ann = $annotationList.find((a) => a.id === id);
+		if (!ann) {
+			onFocusConsumed?.();
+			showToast('That annotation is no longer in the list', 'error');
+			return () => {};
+		}
+
+		const plan = planFocusReveal(ann, {
+			collapsedBatchIds: collapsedBatches,
+			filterCategory,
+			filterBatchId,
+		});
+
+		if (plan.expandBatchId) {
+			const next = new Set(collapsedBatches);
+			next.delete(plan.expandBatchId);
+			collapsedBatches = next;
+			autoCollapsed.add(plan.expandBatchId);
+		}
+		if (plan.clearCategoryFilter) filterCategory = '';
+		if (plan.clearBatchFilter) filterBatchId = '';
+		if (plan.overrode) {
+			showToast('Cleared filters to show this annotation', 'info');
+		}
+
+		// A new reveal sequence supersedes whatever hold timer the previous
+		// one armed — the gen-check on setHighlight already guards against a
+		// stale timer blanking a fresher highlight, this just tidies up.
+		if (holdTimer) {
+			clearTimeout(holdTimer);
+			holdTimer = null;
+		}
+
+		let focusedOnce = false;
+		const deps: RevealDeps = {
+			find: (x) =>
+				(entriesEl ?? document).querySelector(`[data-annotation-id="${CSS.escape(x)}"]`),
+			nextFrame: (cb) => requestAnimationFrame(cb),
+			cancelFrame: (h) => cancelAnimationFrame(h),
+			reducedMotion: window.matchMedia('(prefers-reduced-motion: reduce)').matches,
+			scrollTo: (el, smooth) => {
+				el.scrollIntoView({ behavior: smooth ? 'smooth' : 'auto', block: 'center' });
+				if (!focusedOnce) {
+					focusedOnce = true;
+					el.focus({ preventScroll: true });
+				}
+			},
+			setHighlight: (v) => {
+				if (gen === focusGen) highlightedId = v;
+			},
+			setTimer: (cb, ms) => {
+				const h = setTimeout(cb, ms);
+				holdTimer = h;
+				// RevealDeps declares a numeric handle so it stays testable
+				// without a DOM/Node timer; the real handle is round-tripped
+				// through clearTimer regardless of what type it actually is.
+				return h as unknown as number;
+			},
+			clearTimer: (h) => clearTimeout(h),
+			done: (found) => {
+				onFocusConsumed?.();
+				if (!found) showToast(`Could not scroll to "${ann.label}"`, 'error');
+			},
+		};
+
+		return revealAnnotation(id, deps);
+	}
 
 	$effect(() => {
-		if (!focusedAnnotationId) return;
-		// Use a microtask to allow the DOM to render the entries first
 		const id = focusedAnnotationId;
-		onFocusConsumed?.();
-		requestAnimationFrame(() => {
-			const el = document.querySelector(`[data-annotation-id="${id}"]`) as HTMLElement | null;
-			if (el) {
-				el.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
-				highlightedId = id;
-				if (highlightTimer) clearTimeout(highlightTimer);
-				highlightTimer = setTimeout(() => {
-					highlightedId = null;
-				}, 2000);
-			}
-		});
+		if (!id) return;
+		const gen = ++focusGen;
+		// Everything startReveal reads (collapsedBatches, the filters,
+		// $annotationList) is read untracked so applying the plan below
+		// cannot re-trigger this effect — it must depend on focusedAnnotationId
+		// alone, or the writes create an infinite loop.
+		const cancel = untrack(() => startReveal(id, gen));
+		return cancel;
 	});
 
 	// Status dropdown
@@ -703,7 +771,7 @@
 		</div>
 	{/if}
 
-	<div class="entries">
+	<div class="entries" bind:this={entriesEl}>
 		{#if filteredList.length === 0 && !creating}
 			<div class="empty">
 				{#if filterBatchId}
@@ -794,6 +862,7 @@
 						role="button"
 						tabindex="0"
 						data-annotation-id={ann.id}
+						aria-current={highlightedId === ann.id ? 'true' : undefined}
 						onclick={() => handleClick(ann)}
 						onkeydown={(e) => e.key === 'Enter' && handleClick(ann)}
 					>
@@ -1545,15 +1614,26 @@
 		border-bottom: 1px solid var(--color-primary);
 		border-left: 3px solid transparent;
 		cursor: pointer;
-		transition: background var(--duration-fast);
+		transition: background var(--duration-fast), box-shadow var(--duration-fast);
 	}
 
 	.entry:hover {
 		background: var(--color-primary);
 	}
 
+	/*
+	 * Transition-driven, not a keyframe animation: it holds at full strength
+	 * for as long as JS keeps the .focused class applied (HIGHLIGHT_HOLD_MS in
+	 * annotationFocus.ts) instead of decaying from frame 0, and a re-render
+	 * that re-applies the same class can't restart a decay that was never
+	 * running. The global prefers-reduced-motion rule collapses the 200ms
+	 * fade to near-instant, which is exactly the desired reduced-motion
+	 * behaviour — the held state itself stays fully visible either way.
+	 */
 	.entry.focused {
-		animation: annotation-focus-flash 2s ease-out;
+		background: color-mix(in srgb, var(--color-accent) 22%, transparent);
+		box-shadow: inset 0 0 0 2px var(--color-accent);
+		transition: background 200ms ease-out, box-shadow 200ms ease-out;
 	}
 
 	@keyframes annotation-focus-flash {

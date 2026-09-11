@@ -8,7 +8,7 @@ import type {
 	StationSettings, ServerSettings, TransportSettings, BeaconSettings,
 	SessionSettings, LoggingSettings, WeatherSettings, TileCacheSettings,
 	CheckpointWithPassages, CheckpointMeta, CheckpointPassage, CheckpointProgress,
-	ImportResult, BulkDeleteResult, RenameBatchResult
+	ImportResult, BulkDeleteResult, RenameBatchResult, GpsStatus, GpsSettings
 } from './types';
 
 const BASE = '/api';
@@ -184,6 +184,9 @@ export const api = {
 	// Transports
 	transports: () => get<TransportStatus[]>('/transports'),
 
+	// Live GPS
+	gps: () => get<GpsStatus>('/gps'),
+
 	// Annotations
 	annotations: (params?: Record<string, string>) => {
 		const qs = params ? '?' + new URLSearchParams(params).toString() : '';
@@ -348,5 +351,6 @@ export const api = {
 	updateSession: (data: SessionSettings) => put<SettingsUpdateResponse>('/settings/session', data),
 	updateLogging: (data: LoggingSettings) => put<SettingsUpdateResponse>('/settings/logging', data),
 	updateWeather: (data: WeatherSettings) => put<SettingsUpdateResponse>('/settings/weather', data),
-	updateTileCache: (data: TileCacheSettings) => put<SettingsUpdateResponse>('/settings/tilecache', data)
+	updateTileCache: (data: TileCacheSettings) => put<SettingsUpdateResponse>('/settings/tilecache', data),
+	updateGPS: (data: GpsSettings) => put<SettingsUpdateResponse>('/settings/gps', data)
 };
