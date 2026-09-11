@@ -14,9 +14,34 @@ import (
 
 // BeaconConfig holds beaconing settings.
 type BeaconConfig struct {
-	Enabled  bool          `yaml:"enabled" json:"enabled"`
-	Interval time.Duration `yaml:"interval" json:"interval"`
-	Comment  string        `yaml:"comment" json:"comment"`
+	Enabled     bool               `yaml:"enabled" json:"enabled"`
+	Interval    time.Duration      `yaml:"interval" json:"interval"`
+	Comment     string             `yaml:"comment" json:"comment"`
+	SmartBeacon *SmartBeaconConfig `yaml:"smart_beacon" json:"smartBeacon,omitempty"`
+}
+
+// SmartBeaconConfig mirrors beacon.SmartConfig; speeds in mph, angles in degrees.
+type SmartBeaconConfig struct {
+	Enabled   bool          `yaml:"enabled" json:"enabled"`
+	FastSpeed float64       `yaml:"fast_speed" json:"fastSpeed"`
+	SlowSpeed float64       `yaml:"slow_speed" json:"slowSpeed"`
+	FastRate  time.Duration `yaml:"fast_rate" json:"fastRate"`
+	SlowRate  time.Duration `yaml:"slow_rate" json:"slowRate"`
+	TurnAngle float64       `yaml:"turn_angle" json:"turnAngle"`
+	TurnSlope float64       `yaml:"turn_slope" json:"turnSlope"`
+}
+
+// GPSConfig holds live host-GPS settings.
+type GPSConfig struct {
+	Enabled      bool          `yaml:"enabled" json:"enabled"`
+	Type         string        `yaml:"type" json:"type"` // gpsd | nmea
+	Host         string        `yaml:"host" json:"host"` // gpsd, or nmea-over-TCP
+	Port         int           `yaml:"port" json:"port"`
+	Device       string        `yaml:"device" json:"device"` // nmea serial
+	Baud         int           `yaml:"baud" json:"baud"`
+	MinInterval  time.Duration `yaml:"min_interval" json:"minInterval"`
+	StaleAfter   time.Duration `yaml:"stale_after" json:"staleAfter"`
+	UseForBeacon bool          `yaml:"use_for_beacon" json:"useForBeacon"`
 }
 
 // SessionConfig holds multi-user session settings.
@@ -42,22 +67,23 @@ type WeatherAlertThreshold struct {
 
 // WeatherConfig holds weather dashboard settings.
 type WeatherConfig struct {
-	RetentionDays int                               `yaml:"retention_days" json:"retentionDays"`
-	Alerts        map[string]WeatherAlertThreshold   `yaml:"alerts" json:"alerts"`
-	Units         string                             `yaml:"units" json:"units"`
+	RetentionDays int                              `yaml:"retention_days" json:"retentionDays"`
+	Alerts        map[string]WeatherAlertThreshold `yaml:"alerts" json:"alerts"`
+	Units         string                           `yaml:"units" json:"units"`
 }
 
 // Config holds the application configuration.
 type Config struct {
-	Server     ServerConfig               `yaml:"server" json:"server"`
-	Station    StationConfig              `yaml:"station" json:"station"`
+	Server     ServerConfig                `yaml:"server" json:"server"`
+	Station    StationConfig               `yaml:"station" json:"station"`
 	Transports []transport.TransportConfig `yaml:"transports" json:"transports"`
-	Store      StoreConfig                `yaml:"store" json:"store"`
-	Logging    LoggingConfig              `yaml:"logging" json:"logging"`
-	Beacon     BeaconConfig               `yaml:"beacon" json:"beacon"`
-	Session    SessionConfig              `yaml:"session" json:"session"`
-	TileCache  TileCacheConfig            `yaml:"tile_cache" json:"tileCache"`
-	Weather    WeatherConfig              `yaml:"weather" json:"weather"`
+	Store      StoreConfig                 `yaml:"store" json:"store"`
+	Logging    LoggingConfig               `yaml:"logging" json:"logging"`
+	Beacon     BeaconConfig                `yaml:"beacon" json:"beacon"`
+	Session    SessionConfig               `yaml:"session" json:"session"`
+	TileCache  TileCacheConfig             `yaml:"tile_cache" json:"tileCache"`
+	Weather    WeatherConfig               `yaml:"weather" json:"weather"`
+	GPS        GPSConfig                   `yaml:"gps" json:"gps"`
 }
 
 // ServerConfig holds HTTP server settings.
@@ -129,6 +155,16 @@ func DefaultConfig() Config {
 		Weather: WeatherConfig{
 			RetentionDays: 7,
 			Units:         "metric",
+		},
+		GPS: GPSConfig{
+			Enabled:      false,
+			Type:         "gpsd",
+			Host:         "127.0.0.1",
+			Port:         2947,
+			Baud:         9600,
+			MinInterval:  1 * time.Second,
+			StaleAfter:   30 * time.Second,
+			UseForBeacon: true,
 		},
 	}
 }
@@ -213,6 +249,53 @@ func (c *Config) Validate() error {
 			if t.Device == "" {
 				return fmt.Errorf("transports[%d].device is required for serial", i)
 			}
+		}
+	}
+
+	if c.GPS.Enabled {
+		switch c.GPS.Type {
+		case "gpsd":
+			if c.GPS.Host == "" {
+				return fmt.Errorf("gps.host is required for gpsd")
+			}
+			if c.GPS.Port <= 0 || c.GPS.Port > 65535 {
+				return fmt.Errorf("gps.port must be 1-65535 for gpsd")
+			}
+		case "nmea":
+			if c.GPS.Device == "" && c.GPS.Host == "" {
+				return fmt.Errorf("gps.device or gps.host is required for nmea")
+			}
+			if c.GPS.Device != "" && c.GPS.Host != "" {
+				return fmt.Errorf("gps: set only one of gps.device or gps.host for nmea")
+			}
+			if c.GPS.Host != "" && (c.GPS.Port <= 0 || c.GPS.Port > 65535) {
+				return fmt.Errorf("gps.port must be 1-65535 for nmea over tcp")
+			}
+			if c.GPS.Device != "" && c.GPS.Baud <= 0 {
+				return fmt.Errorf("gps.baud must be > 0 for nmea serial")
+			}
+		case "":
+			return fmt.Errorf("gps.type is required when gps.enabled")
+		default:
+			return fmt.Errorf("gps.type must be gpsd or nmea, got %q", c.GPS.Type)
+		}
+		if c.GPS.MinInterval < 0 {
+			return fmt.Errorf("gps.min_interval must be >= 0")
+		}
+		if c.GPS.StaleAfter < 0 {
+			return fmt.Errorf("gps.stale_after must be >= 0")
+		}
+	}
+
+	if sb := c.Beacon.SmartBeacon; sb != nil && sb.Enabled {
+		if sb.FastSpeed <= sb.SlowSpeed {
+			return fmt.Errorf("beacon.smart_beacon.fast_speed must be > slow_speed")
+		}
+		if sb.FastRate <= 0 || sb.SlowRate <= 0 {
+			return fmt.Errorf("beacon.smart_beacon rates must be > 0")
+		}
+		if sb.FastRate > sb.SlowRate {
+			return fmt.Errorf("beacon.smart_beacon.fast_rate must be <= slow_rate")
 		}
 	}
 

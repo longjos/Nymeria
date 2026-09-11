@@ -2,6 +2,7 @@ package beacon
 
 import (
 	"context"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -249,8 +250,11 @@ func TestStartStop(t *testing.T) {
 	}
 
 	m := New(Config{
-		Enabled:  true,
-		Interval: 20 * time.Millisecond, // very short for testing
+		Enabled: true,
+		// The beacon loop polls for due beacons once per second (needed for
+		// GPS-driven smart-beacon turn/rate checks), so an interval shorter
+		// than that still only fires on whole-second boundaries.
+		Interval: 900 * time.Millisecond,
 		Comment:  "test",
 	}, StationInfo{
 		Callsign:    "N0CALL",
@@ -268,8 +272,9 @@ func TestStartStop(t *testing.T) {
 		t.Error("expected IsRunning() == true after Start")
 	}
 
-	// Wait long enough for at least 2 beacon transmissions
-	time.Sleep(80 * time.Millisecond)
+	// Wait long enough for the initial beacon plus at least one more
+	// 1s-tick-gated transmission.
+	time.Sleep(2200 * time.Millisecond)
 
 	m.Stop()
 	if m.IsRunning() {
@@ -386,8 +391,8 @@ func TestUpdateStationInfo(t *testing.T) {
 
 func TestSmartRate(t *testing.T) {
 	sc := &SmartConfig{
-		FastSpeed: 60,              // mph
-		SlowSpeed: 5,               // mph
+		FastSpeed: 60,               // mph
+		SlowSpeed: 5,                // mph
 		FastRate:  60 * time.Second, // 1 min at fast speed
 		SlowRate:  30 * time.Minute, // 30 min at slow speed
 		TurnAngle: 28,
@@ -434,7 +439,7 @@ func TestSmartTurnThreshold(t *testing.T) {
 		speed float64
 		want  float64 // expected turn threshold in degrees
 	}{
-		{"at 60mph", 60, 28},            // min angle = TurnAngle
+		{"at 60mph", 60, 28},           // min angle = TurnAngle
 		{"at 10mph", 10, 28 + 26.0/10}, // TurnAngle + TurnSlope/speed = 30.6
 		{"at 1mph", 1, 28 + 26},        // TurnAngle + TurnSlope/speed = 54
 	}
@@ -447,5 +452,247 @@ func TestSmartTurnThreshold(t *testing.T) {
 				t.Errorf("TurnThreshold(%f) = %f, want %f", tt.speed, got, tt.want)
 			}
 		})
+	}
+}
+
+// ── FormatCourseSpeed ────────────────────────────────────────────────
+
+func TestFormatCourseSpeed(t *testing.T) {
+	tests := []struct {
+		course, speed float64
+		want          string
+	}{
+		{0, 36, "360/036"},
+		{90, 0, "090/000"},
+		{359.6, 5.4, "360/005"},
+		{84.4, 22.4, "084/022"},
+		{45, 1200, "045/999"},
+	}
+	for _, tt := range tests {
+		got := FormatCourseSpeed(tt.course, tt.speed)
+		if got != tt.want {
+			t.Errorf("FormatCourseSpeed(%v, %v) = %q, want %q", tt.course, tt.speed, got, tt.want)
+		}
+	}
+}
+
+// ── Live-fix-driven buildFrame ───────────────────────────────────────
+
+func TestBuildFrameUsesLiveFixWhenFresh(t *testing.T) {
+	m := New(Config{Enabled: true, LiveMaxAge: 30 * time.Second},
+		StationInfo{Callsign: "N0CALL", Lat: 35, Lon: -84, SymbolTable: "/", SymbolCode: "-"}, nil)
+	m.SetPositionSource(func() (LiveFix, bool) {
+		return LiveFix{Lat: 44.0689, Lon: -121.3140, Age: 2 * time.Second}, true
+	})
+
+	frame := m.buildFrame()
+	want := "!" + FormatLat(44.0689) + "/" + FormatLon(-121.3140) + "-"
+	if frame.Payload != want {
+		t.Errorf("payload = %q, want %q", frame.Payload, want)
+	}
+	if strings.Contains(frame.Payload, FormatLat(35)) {
+		t.Errorf("payload used static station coords: %q", frame.Payload)
+	}
+}
+
+func TestBuildFrameFallsBackWhenStale(t *testing.T) {
+	m := New(Config{Enabled: true, LiveMaxAge: 30 * time.Second},
+		StationInfo{Callsign: "N0CALL", Lat: 35, Lon: -84, SymbolTable: "/", SymbolCode: "-"}, nil)
+	m.SetPositionSource(func() (LiveFix, bool) {
+		return LiveFix{Lat: 44.0689, Lon: -121.3140, Age: 60 * time.Second}, true
+	})
+
+	frame := m.buildFrame()
+	want := "!" + FormatLat(35) + "/" + FormatLon(-84) + "-"
+	if frame.Payload != want {
+		t.Errorf("payload = %q, want %q", frame.Payload, want)
+	}
+}
+
+func TestBuildFrameFallsBackWhenNoSource(t *testing.T) {
+	// Regression guard: byte-identical to the pre-#91 TestBuildFrame payload
+	// when no live-position source is installed.
+	m := New(Config{
+		Enabled:  true,
+		Interval: 10 * time.Minute,
+		Comment:  "Nymeria APRS Client",
+	}, StationInfo{
+		Callsign:    "N0CALL",
+		SSID:        5,
+		Lat:         35.928516,
+		Lon:         -84.331,
+		SymbolTable: "/",
+		SymbolCode:  "-",
+	}, nil)
+
+	frame := m.buildFrame()
+	want := "!3555.71N/08419.86W-Nymeria APRS Client"
+	if frame.Payload != want {
+		t.Errorf("payload = %q, want %q", frame.Payload, want)
+	}
+}
+
+func TestBuildFrameIncludesCourseSpeedWhenMoving(t *testing.T) {
+	m := New(Config{Enabled: true, LiveMaxAge: 30 * time.Second, Comment: "test"},
+		StationInfo{Callsign: "N0CALL", Lat: 0, Lon: 0, SymbolTable: "/", SymbolCode: "-"}, nil)
+	m.SetPositionSource(func() (LiveFix, bool) {
+		return LiveFix{Lat: 48.1173, Lon: 11.5167, Course: 84.4, SpeedKnots: 22.4, HasCourse: true, Age: time.Second}, true
+	})
+
+	frame := m.buildFrame()
+	want := "!" + FormatLat(48.1173) + "/" + FormatLon(11.5167) + "-084/022test"
+	if frame.Payload != want {
+		t.Errorf("payload = %q, want %q", frame.Payload, want)
+	}
+}
+
+func TestBuildFrameOmitsCourseSpeedWhenStationary(t *testing.T) {
+	m := New(Config{Enabled: true, LiveMaxAge: 30 * time.Second, Comment: "test"},
+		StationInfo{Callsign: "N0CALL", Lat: 0, Lon: 0, SymbolTable: "/", SymbolCode: "-"}, nil)
+	m.SetPositionSource(func() (LiveFix, bool) {
+		return LiveFix{Lat: 48.1173, Lon: 11.5167, Course: 84.4, SpeedKnots: 0.4, HasCourse: false, Age: time.Second}, true
+	})
+
+	frame := m.buildFrame()
+	want := "!" + FormatLat(48.1173) + "/" + FormatLon(11.5167) + "-test"
+	if frame.Payload != want {
+		t.Errorf("payload = %q, want %q", frame.Payload, want)
+	}
+}
+
+// ── Smart beaconing decision (shouldBeacon) ─────────────────────────
+
+func TestSmartBeaconRateSelection(t *testing.T) {
+	tests := []struct {
+		name string
+		mph  float64
+	}{
+		{"fast 70mph", 70},
+		{"slow 2mph", 2},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			sb := &SmartConfig{
+				Enabled: true, FastSpeed: 60, SlowSpeed: 5,
+				FastRate: 60 * time.Second, SlowRate: 30 * time.Minute,
+				TurnAngle: 28, TurnSlope: 26,
+			}
+			m := New(Config{Enabled: true, Interval: time.Hour, SmartBeacon: sb},
+				StationInfo{Callsign: "N0CALL"}, func(aprs.APRSFrame) error { return nil })
+
+			knots := tt.mph / knotsToMPH
+			m.SetPositionSource(func() (LiveFix, bool) {
+				return LiveFix{Lat: 35, Lon: -84, SpeedKnots: knots, HasCourse: true, Course: 90, Age: time.Second}, true
+			})
+
+			start := time.Now()
+			m.mu.Lock()
+			m.lastBeaconAt = start
+			m.mu.Unlock()
+
+			rate := sb.Rate(tt.mph)
+			if m.shouldBeacon(start.Add(rate - time.Second)) {
+				t.Errorf("shouldBeacon fired before rate %v elapsed", rate)
+			}
+			if !m.shouldBeacon(start.Add(rate + time.Second)) {
+				t.Errorf("shouldBeacon did not fire after rate %v elapsed", rate)
+			}
+		})
+	}
+}
+
+func TestSmartBeaconTurnTriggers(t *testing.T) {
+	sb := &SmartConfig{
+		Enabled: true, FastSpeed: 60, SlowSpeed: 5,
+		FastRate: 60 * time.Second, SlowRate: 30 * time.Minute,
+		TurnAngle: 28, TurnSlope: 26,
+	}
+	m := New(Config{Enabled: true, Interval: time.Hour, SmartBeacon: sb},
+		StationInfo{Callsign: "N0CALL"}, func(aprs.APRSFrame) error { return nil })
+
+	knots := 30.0 / knotsToMPH
+	m.SetPositionSource(func() (LiveFix, bool) {
+		return LiveFix{Lat: 35, Lon: -84, SpeedKnots: knots, HasCourse: true, Course: 60, Age: time.Second}, true
+	})
+
+	start := time.Now()
+	m.mu.Lock()
+	m.lastBeaconAt = start
+	m.lastCourse = 0
+	m.lastCourseValid = true
+	m.mu.Unlock()
+
+	if rate := sb.Rate(30); rate <= 20*time.Second {
+		t.Fatalf("test setup invalid: Rate(30mph) = %v, too short to isolate the turn trigger", rate)
+	}
+
+	if m.shouldBeacon(start.Add(5 * time.Second)) {
+		t.Error("shouldBeacon fired before minTurnInterval (15s) elapsed")
+	}
+	if !m.shouldBeacon(start.Add(20 * time.Second)) {
+		t.Error("shouldBeacon did not fire on a turn past minTurnInterval")
+	}
+}
+
+func TestSmartBeaconIgnoredWithoutLiveFix(t *testing.T) {
+	sb := &SmartConfig{
+		Enabled: true, FastSpeed: 60, SlowSpeed: 5,
+		FastRate: 60 * time.Second, SlowRate: 30 * time.Minute,
+		TurnAngle: 28, TurnSlope: 26,
+	}
+	m := New(Config{Enabled: true, Interval: 5 * time.Minute, SmartBeacon: sb},
+		StationInfo{Callsign: "N0CALL"}, func(aprs.APRSFrame) error { return nil })
+
+	start := time.Now()
+	m.mu.Lock()
+	m.lastBeaconAt = start
+	m.mu.Unlock()
+
+	if m.shouldBeacon(start.Add(4 * time.Minute)) {
+		t.Error("shouldBeacon fired before the fixed interval elapsed")
+	}
+	if !m.shouldBeacon(start.Add(6 * time.Minute)) {
+		t.Error("shouldBeacon did not fall back to the fixed interval without a live fix")
+	}
+}
+
+func TestAngleDelta(t *testing.T) {
+	tests := []struct {
+		a, b, want float64
+	}{
+		{10, 350, 20},
+		{350, 10, 20},
+		{0, 180, 180},
+		{90, 90, 0},
+	}
+	for _, tt := range tests {
+		if got := angleDelta(tt.a, tt.b); got != tt.want {
+			t.Errorf("angleDelta(%v, %v) = %v, want %v", tt.a, tt.b, got, tt.want)
+		}
+	}
+}
+
+func TestBeaconNowResetsSmartTimer(t *testing.T) {
+	sb := &SmartConfig{
+		Enabled: true, FastSpeed: 60, SlowSpeed: 5,
+		FastRate: 60 * time.Second, SlowRate: 30 * time.Minute,
+		TurnAngle: 28, TurnSlope: 26,
+	}
+	m := New(Config{Enabled: true, Interval: time.Hour, SmartBeacon: sb},
+		StationInfo{Callsign: "N0CALL"}, func(aprs.APRSFrame) error { return nil })
+
+	if err := m.BeaconNow(); err != nil {
+		t.Fatalf("BeaconNow: %v", err)
+	}
+
+	m.mu.Lock()
+	last := m.lastBeaconAt
+	m.mu.Unlock()
+	if last.IsZero() {
+		t.Fatal("lastBeaconAt not set after BeaconNow")
+	}
+
+	if m.shouldBeacon(last.Add(1 * time.Second)) {
+		t.Error("shouldBeacon fired immediately after BeaconNow")
 	}
 }

@@ -18,6 +18,7 @@ import (
 	"github.com/narvel/nymeria/internal/beacon"
 	"github.com/narvel/nymeria/internal/checkpoint"
 	"github.com/narvel/nymeria/internal/config"
+	"github.com/narvel/nymeria/internal/gps"
 	"github.com/narvel/nymeria/internal/message"
 	"github.com/narvel/nymeria/internal/netcontrol"
 	"github.com/narvel/nymeria/internal/object"
@@ -46,6 +47,7 @@ type Server struct {
 	netMgr     *netcontrol.Manager
 	cpMgr      *checkpoint.Manager
 	tileCache  *tilecache.Cache
+	gpsMgr     *gps.Manager
 	configMgr  *config.Manager
 	stationCfg config.StationConfig
 	weatherMu  sync.RWMutex
@@ -108,6 +110,9 @@ func New(tracker station.Tracker, tm *transport.Manager, eng message.Engine, db 
 	if s.sessions != nil {
 		go s.bridgeSessionEvents()
 	}
+	if s.gpsMgr != nil {
+		go s.bridgeGPS()
+	}
 
 	return s
 }
@@ -161,6 +166,13 @@ func WithNetControlManager(mgr *netcontrol.Manager) Option {
 func WithCheckpointManager(mgr *checkpoint.Manager) Option {
 	return func(s *Server) {
 		s.cpMgr = mgr
+	}
+}
+
+// WithGPSManager sets the live GPS manager on the server.
+func WithGPSManager(mgr *gps.Manager) Option {
+	return func(s *Server) {
+		s.gpsMgr = mgr
 	}
 }
 
