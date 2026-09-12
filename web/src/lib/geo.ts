@@ -60,3 +60,60 @@ export function annotationCentroid(anns: Annotation[]): { lat: number; lon: numb
 	if (count === 0) return null;
 	return { lat: sumLat / count, lon: sumLon / count };
 }
+
+/** Representative coordinate for an annotation being used as a mission location.
+ *  Point → its own coordinate (the fallback is ignored — the annotation IS the
+ *  location). LineString/Polygon → the clicked point when one is supplied (the
+ *  user picked a spot on the route/area), else the geometry's midpoint vertex /
+ *  outer-ring centroid (the ring's closing vertex, which duplicates the first
+ *  point, is excluded so it doesn't skew the mean). Unparseable or unsupported
+ *  geometry → the fallback, else null. */
+export function annotationPickPoint(
+	ann: Pick<Annotation, 'geometry'>,
+	fallback?: { lat: number; lon: number } | null
+): { lat: number; lon: number } | null {
+	let geo: { type?: string; coordinates?: unknown };
+	try {
+		geo = typeof ann.geometry === 'string' ? JSON.parse(ann.geometry) : ann.geometry;
+	} catch {
+		return fallback ?? null;
+	}
+
+	if (geo?.type === 'Point' && Array.isArray(geo.coordinates)) {
+		const [lon, lat] = geo.coordinates as [number, number];
+		if (typeof lat === 'number' && typeof lon === 'number') return { lat, lon };
+	}
+
+	if (fallback) return fallback;
+
+	if (geo?.type === 'LineString' && Array.isArray(geo.coordinates)) {
+		const coords = geo.coordinates as [number, number][];
+		if (coords.length === 0) return null;
+		const [lon, lat] = coords[Math.floor(coords.length / 2)];
+		if (typeof lat !== 'number' || typeof lon !== 'number') return null;
+		return { lat, lon };
+	}
+
+	if (geo?.type === 'Polygon' && Array.isArray(geo.coordinates)) {
+		const rings = geo.coordinates as [number, number][][];
+		const ring = rings[0];
+		if (!Array.isArray(ring) || ring.length === 0) return null;
+		let pts = ring;
+		const first = pts[0];
+		const last = pts[pts.length - 1];
+		if (pts.length > 1 && first[0] === last[0] && first[1] === last[1]) {
+			pts = pts.slice(0, -1);
+		}
+		if (pts.length === 0) return null;
+		let sumLat = 0;
+		let sumLon = 0;
+		for (const [lon, lat] of pts) {
+			if (typeof lat !== 'number' || typeof lon !== 'number') return null;
+			sumLat += lat;
+			sumLon += lon;
+		}
+		return { lat: sumLat / pts.length, lon: sumLon / pts.length };
+	}
+
+	return null;
+}

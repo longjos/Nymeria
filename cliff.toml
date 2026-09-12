@@ -22,8 +22,11 @@ footer = '''## Downloads
 | File | Platform |
 |------|----------|
 | `nymeria-linux-amd64` | Linux x86-64 |
-| `nymeria.exe` | Windows x86-64 |
 | `nymeria-linux-arm64` | Raspberry Pi / ARM64 Linux |
+| `nymeria.exe` | Windows x86-64 |
+| `Nymeria-desktop-windows-amd64.exe` | Windows desktop app |
+| `nymeria-darwin-arm64` | macOS Apple Silicon |
+| `nymeria-darwin-amd64` | macOS Intel |
 
 All binaries ship with `checksums.txt` (SHA-256).
 '''
@@ -48,7 +51,7 @@ commit_parsers = [
   # Noise: merges and wiki-submodule bumps never appear in release notes.
   { message = "^Merge pull request", skip = true },
   { message = "^Merge branch", skip = true },
-  { message = "^Update wiki submodule", skip = true },
+  { message = "(?i)^(chore: )?update wiki submodule", skip = true },
   # Conventional types.
   { message = "^feat", group = "<!-- 0 -->Features" },
   { message = "^fix", group = "<!-- 1 -->Bug Fixes" },

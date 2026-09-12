@@ -25,7 +25,7 @@
 	import { parseCommand, getModeIndicator, getAutocompleteContext, type ParsedCommand, type AutocompleteContext } from '$lib/commandParser';
 	import { showToast } from '$lib/stores/toast';
 	import { formatCoord } from '$lib/utils';
-	import { nearestAnnotation, annotationCentroid } from '$lib/geo';
+	import { nearestAnnotation, annotationCentroid, annotationPickPoint } from '$lib/geo';
 	import {
 		isFullAddress, looksLikePartial, formatWords, w3wLocationLabel,
 		isW3WLocation, extractWords, w3wSuffix, cachedReverse, putReverse
@@ -55,6 +55,8 @@
 		onPlaceMissionLocation,
 		missionMapCoords = null,
 		onMissionMapCoordsConsumed,
+		missionPickAnnotation = null,
+		onMissionPickAnnotationConsumed,
 		onClearMissionDraft,
 		missionPickActive = false,
 		onSetMissionDraftPoint,
@@ -71,8 +73,12 @@
 		focusedAnnotationId?: string | null;
 		onFocusConsumed?: () => void;
 		onPlaceMissionLocation?: (label: string) => void;
-		missionMapCoords?: { lat: number; lon: number } | null;
+		missionMapCoords?: { lat: number; lon: number; label?: string } | null;
 		onMissionMapCoordsConsumed?: () => void;
+		/** A pick-mode click landed on an existing annotation — it IS the
+		 * mission location (snap + link), not a dropped pin near it. */
+		missionPickAnnotation?: { id: string; lat: number; lon: number } | null;
+		onMissionPickAnnotationConsumed?: () => void;
 		onClearMissionDraft?: () => void;
 		missionPickActive?: boolean;
 		/** Places the draggable draft pin on the map without routing through
@@ -893,7 +899,10 @@
 		missionLocLon = lon;
 		missionLocSource = 'map';
 		missionLocNearId = near?.annotation.id ?? null;
-		missionLocLabel = near?.annotation.label ?? '';
+		// An explicit label (a station/operator/mission marker the pick
+		// landed on) wins over a merely-nearby annotation guess; a plain
+		// background click behaves exactly as before.
+		missionLocLabel = missionMapCoords.label ?? near?.annotation.label ?? '';
 		// Dragging (or re-clicking) away from a what3words square / geocode
 		// cell means the NCS is overriding it — the words/code are gone
 		// because the pin is no longer in that square, which is correct and
@@ -902,9 +911,29 @@
 		missionLocNear = '';
 		missionLocConfirmed = false;
 		missionLocCode = '';
-		srMessage = near ? `Location set near ${near.annotation.label}` : `Location set to ${formatCoord(lat, lon)}`;
+		srMessage = missionMapCoords.label
+			? `Location set to ${missionMapCoords.label}`
+			: near ? `Location set near ${near.annotation.label}` : `Location set to ${formatCoord(lat, lon)}`;
 		pickingOnMap = false;
 		onMissionMapCoordsConsumed?.();
+	});
+
+	// A pick-mode click landed on an existing annotation layer — snap the
+	// location to it and, when it's a net-scoped, non-terminal location
+	// option, link it to the mission (mirrors selectLocationAnnotation's own
+	// list-pick behaviour). An annotation from another net (or otherwise not
+	// in locOptions) still becomes the location text + coordinates, just
+	// without being silently attached to this net's mission.
+	$effect(() => {
+		const pick = missionPickAnnotation;
+		if (!pick) return;
+		const a = $annotationList.find((x) => x.id === pick.id);
+		if (a) {
+			showMissionForm = true; // defensive; the form is already open
+			selectLocationAnnotation(a, { lat: pick.lat, lon: pick.lon });
+		}
+		pickingOnMap = false;
+		onMissionPickAnnotationConsumed?.();
 	});
 
 	// The map side cancelled (Esc) without ever sending coordinates back —
@@ -927,22 +956,38 @@
 		autoLinkedAnnId = null;
 	}
 
-	function selectLocationAnnotation(a: Annotation) {
+	// fallback (the exact point clicked, when there was one) is used only for
+	// LineString/Polygon geometry — clicking a spot on a route/area places
+	// the mission there rather than at the route's midpoint. Point geometry
+	// always wins over the fallback (see annotationPickPoint).
+	function selectLocationAnnotation(a: Annotation, fallback?: { lat: number; lon: number }) {
 		unlinkStaleAutoLink();
-		try {
-			const geo = typeof a.geometry === 'string' ? JSON.parse(a.geometry) : a.geometry;
-			if (geo?.type === 'Point' && Array.isArray(geo.coordinates)) {
-				missionLocLon = geo.coordinates[0];
-				missionLocLat = geo.coordinates[1];
-			}
-		} catch { /* ignore parse errors */ }
+		const p = annotationPickPoint(a, fallback);
+		if (p) {
+			missionLocLat = p.lat;
+			missionLocLon = p.lon;
+		}
 		missionLocLabel = a.label;
 		missionLocSource = 'annotation';
 		missionLocNearId = a.id;
-		if (!selectedAnnotationIds.includes(a.id)) {
-			selectedAnnotationIds = [...selectedAnnotationIds, a.id];
+		// A resolved geocode/w3w selection preceding this pick must not leave
+		// stale words/code behind once the location has moved to an
+		// annotation — same honesty rule as the missionMapCoords effect.
+		missionLocWords = '';
+		missionLocNear = '';
+		missionLocCode = '';
+		missionLocConfirmed = false;
+		// Only link annotations that are actually valid location options for
+		// this net (net-scoped, non-terminal) — an annotation picked off the
+		// map that belongs to another net (or is terminal) still becomes the
+		// mission's location text + coordinates, but is never silently
+		// attached to this net's mission.
+		if (locOptions.some((o) => o.id === a.id)) {
+			if (!selectedAnnotationIds.includes(a.id)) {
+				selectedAnnotationIds = [...selectedAnnotationIds, a.id];
+			}
+			autoLinkedAnnId = a.id;
 		}
-		autoLinkedAnnId = a.id;
 		locOpen = false;
 		locQuery = '';
 		srMessage = `Location set to ${a.label}`;
