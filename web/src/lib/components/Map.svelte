@@ -18,6 +18,17 @@
 
 	const DEFAULT_ANN_COLOR = '#e63946';
 
+	// The interactive layer (if any) a pick/draw click landed on. 'map' means
+	// the click hit the background (a tile, or an interactive:false layer) —
+	// see layerClick / commitPick below, the single choke point every
+	// pick/draw mode's click now goes through, layer or background alike.
+	type PickSource =
+		| { kind: 'map' }
+		| { kind: 'annotation'; id: string }
+		| { kind: 'station'; callsign: string; label: string }
+		| { kind: 'operator'; id: string; label: string }
+		| { kind: 'mission'; id: string; label: string };
+
 	let {
 		stations = [],
 		annotations = [],
@@ -60,6 +71,7 @@
 		placingMissionLocation = null,
 		missionDraftPoint = null,
 		onMissionLocationPlaced,
+		onMissionLocationAnnotationPicked,
 		onMissionLocationPlaceCancelled,
 		ownPosition = null,
 		ownPositionStale = false,
@@ -106,7 +118,12 @@
 		onAnnotationPlaceCancelled?: () => void;
 		placingMissionLocation?: { label: string } | null;
 		missionDraftPoint?: { lat: number; lon: number } | null;
-		onMissionLocationPlaced?: (lat: number, lon: number) => void;
+		onMissionLocationPlaced?: (lat: number, lon: number, label?: string) => void;
+		/** Fired instead of onMissionLocationPlaced when the click landed on an
+		 * existing annotation layer — the annotation IS the location (snap +
+		 * link), rather than a dropped pin near it. lat/lon are the clicked
+		 * point, used only as a fallback for LineString/Polygon geometry. */
+		onMissionLocationAnnotationPicked?: (annotationId: string, lat: number, lon: number) => void;
 		onMissionLocationPlaceCancelled?: () => void;
 		/** Live host GPS fix (own-position marker). null = no usable fix / GPS off. */
 		ownPosition?: GpsFix | null;
@@ -388,47 +405,30 @@
 		}
 	});
 
-	// Drawing mode effects
+	// Single click registration for every pick/draw mode. A click that lands
+	// on an interactive layer never reaches here — layerClick (below)
+	// intercepts it first and calls commitPick directly — so this only ever
+	// fires for a background click (a tile, or an interactive:false layer).
 	$effect(() => {
 		if (!map) return;
-		if (drawingMode) {
-			map.on('click', handleDrawClick);
-			map.on('dblclick', handleDrawDblClick);
+		if (anyPlaceMode) {
+			map.on('click', handleBackgroundPickClick);
+			if (drawingMode) map.on('dblclick', handleDrawDblClick);
+			else map.off('dblclick', handleDrawDblClick);
 		} else {
-			map.off('click', handleDrawClick);
+			map.off('click', handleBackgroundPickClick);
 			map.off('dblclick', handleDrawDblClick);
-			clearDrawState();
 		}
 	});
 
-	// Place mode effects (click-to-set position for net operators)
+	// Drawing state (accumulated vertices/preview line) is scoped to
+	// drawingMode specifically, independent of anyPlaceMode's transitions —
+	// switching straight from drawing into another pick mode (the four
+	// modes are mutually exclusive by construction, enforced in +page.svelte)
+	// must still discard any in-progress, uncommitted vertices, even though
+	// anyPlaceMode itself never goes false across that switch.
 	$effect(() => {
-		if (!map) return;
-		if (placingOperator) {
-			map.on('click', handlePlaceClick);
-		} else {
-			map.off('click', handlePlaceClick);
-		}
-	});
-
-	// Place mode for annotations (click-to-set position)
-	$effect(() => {
-		if (!map) return;
-		if (placingAnnotation) {
-			map.on('click', handleAnnotationPlaceClick);
-		} else {
-			map.off('click', handleAnnotationPlaceClick);
-		}
-	});
-
-	// Place mode for mission locations (click-to-set position)
-	$effect(() => {
-		if (!map) return;
-		if (placingMissionLocation) {
-			map.on('click', handleMissionPlaceClick);
-		} else {
-			map.off('click', handleMissionPlaceClick);
-		}
+		if (!drawingMode) clearDrawState();
 	});
 
 	// Draft pin for the mission location picker — independent of pick mode so
@@ -590,8 +590,13 @@
 				ci.tacticalCall ? `${ci.callsign} "${ci.tacticalCall}"` : ci.callsign,
 				{ permanent: false, direction: 'top', className: 'station-tooltip' }
 			);
-			(layer as L.Layer & { on: Function }).on('click', () => {
-				onNetOperatorClick?.(ci.id);
+			(layer as L.Layer & { on: Function }).on('click', (e: L.LeafletMouseEvent) => {
+				layerClick(
+					e,
+					{ kind: 'operator', id: ci.id, label: ci.callsign },
+					layer.getLatLng?.() ?? null,
+					() => onNetOperatorClick?.(ci.id)
+				);
 			});
 			netHalos.set(ci.id, layer);
 		}
@@ -625,8 +630,13 @@
 				direction: 'right',
 				className: 'annotation-tooltip',
 			});
-			marker.on('click', () => {
-				onNetMissionClick?.(m.id);
+			marker.on('click', (e: L.LeafletMouseEvent) => {
+				layerClick(
+					e,
+					{ kind: 'mission', id: m.id, label: m.title },
+					marker.getLatLng(),
+					() => onNetMissionClick?.(m.id)
+				);
 			});
 			netMissionFlags.set(m.id, marker);
 		}
@@ -1040,8 +1050,13 @@
 				direction: 'top',
 				className: 'annotation-tooltip',
 			});
-			marker.on('click', () => {
-				onAnnotationClick?.(a.id);
+			marker.on('click', (e: L.LeafletMouseEvent) => {
+				layerClick(
+					e,
+					{ kind: 'annotation', id: a.id },
+					marker.getLatLng(),
+					() => onAnnotationClick?.(a.id)
+				);
 			});
 			netLocMarkers.set(a.id, marker);
 			routePoints.push([lat, lon]);
@@ -1229,28 +1244,67 @@
 		}
 	}
 
-	function handlePlaceClick(e: L.LeafletMouseEvent) {
-		if (!placingOperator) return;
-		onOperatorPlaced?.(placingOperator.id, e.latlng.lat, e.latlng.lng);
+	// The only place a pick/draw click is committed — background and layer
+	// alike. Priority order (mission -> annotation -> operator -> draw) is
+	// defensive only: the four modes are already mutually exclusive, since
+	// every mode-starter in +page.svelte nulls the other three.
+	function commitPick(latlng: L.LatLng, src: PickSource): void {
+		const { lat, lng: lon } = latlng;
+		if (placingMissionLocation) {
+			if (src.kind === 'annotation') {
+				onMissionLocationAnnotationPicked?.(src.id, lat, lon);
+			} else {
+				onMissionLocationPlaced?.(lat, lon, src.kind === 'map' ? undefined : src.label);
+			}
+			return;
+		}
+		if (placingAnnotation) {
+			onAnnotationPlaced?.(lat, lon);
+			return;
+		}
+		if (placingOperator) {
+			onOperatorPlaced?.(placingOperator.id, lat, lon);
+			return;
+		}
+		if (drawingMode) {
+			addDrawVertex(latlng);
+			return;
+		}
 	}
 
-	function handleAnnotationPlaceClick(e: L.LeafletMouseEvent) {
-		if (!placingAnnotation) return;
-		onAnnotationPlaced?.(e.latlng.lat, e.latlng.lng);
+	// The only wrapper every interactive layer's click handler goes through
+	// while a pick/draw mode is active. Stops the click from also reaching
+	// the map's own background click handler (see the single-registration
+	// effect above) so a layer click is never a double-fire, regardless of
+	// whether the layer is a bubbling L.Path or a non-bubbling L.Marker —
+	// see the design notes on Leaflet's bubblingMouseEvents split (#96).
+	// Outside a pick/draw mode, layerClick is a pure passthrough to the
+	// layer's normal navigation callback.
+	function layerClick(
+		e: L.LeafletMouseEvent,
+		src: PickSource,
+		fallback: L.LatLng | null,
+		nav: () => void
+	): void {
+		if (anyPlaceMode) {
+			L.DomEvent.stopPropagation(e);
+			commitPick(e.latlng ?? fallback ?? map.getCenter(), src);
+			return;
+		}
+		nav();
 	}
 
-	function handleMissionPlaceClick(e: L.LeafletMouseEvent) {
-		if (!placingMissionLocation) return;
-		onMissionLocationPlaced?.(e.latlng.lat, e.latlng.lng);
+	function handleBackgroundPickClick(e: L.LeafletMouseEvent) {
+		commitPick(e.latlng, { kind: 'map' });
 	}
 
-	function handleDrawClick(e: L.LeafletMouseEvent) {
+	function addDrawVertex(latlng: L.LatLng) {
 		if (!drawingMode) return;
 
 		if (drawingMode === 'point') {
 			const geojson = JSON.stringify({
 				type: 'Point',
-				coordinates: [e.latlng.lng, e.latlng.lat]
+				coordinates: [latlng.lng, latlng.lat]
 			});
 			clearDrawState();
 			onDrawComplete?.(geojson);
@@ -1258,8 +1312,8 @@
 		}
 
 		// Line or Area — accumulate vertices
-		drawVertices.push(e.latlng);
-		const m = L.circleMarker(e.latlng, {
+		drawVertices.push(latlng);
+		const m = L.circleMarker(latlng, {
 			radius: 5,
 			fillColor: DEFAULT_ANN_COLOR,
 			color: '#fff',
@@ -1419,8 +1473,13 @@
 					direction: 'top',
 					className: 'annotation-tooltip',
 				});
-				(layer as L.Layer & { on: Function }).on('click', () => {
-					onAnnotationClick?.(ann.id);
+				(layer as L.Layer & { on: Function }).on('click', (e: L.LeafletMouseEvent) => {
+					layerClick(
+						e,
+						{ kind: 'annotation', id: ann.id },
+						null,
+						() => onAnnotationClick?.(ann.id)
+					);
 				});
 				(layer as L.Layer & { addTo: Function }).addTo(map);
 				annotationLayers.set(ann.id, layer);
@@ -1486,8 +1545,17 @@
 					className: 'station-tooltip',
 				});
 
-				marker.on('click', () => {
-					onStationClick?.(key);
+				// Captured as a definite (non-undefined) const — `marker` itself
+				// is a `let` (Map.get()'s return type includes undefined), and
+				// TS can't narrow a `let` across the closure boundary below.
+				const stationMarker = marker;
+				stationMarker.on('click', (e: L.LeafletMouseEvent) => {
+					layerClick(
+						e,
+						{ kind: 'station', callsign: key, label: name },
+						stationMarker.getLatLng(),
+						() => onStationClick?.(key)
+					);
 				});
 				marker.on('mouseover', () => {
 					highlightTrack(key, info.color);

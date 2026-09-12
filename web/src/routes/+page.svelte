@@ -76,7 +76,8 @@
 	let annotationMapCoords = $state<{ lat: number; lon: number } | null>(null);
 	let placingMissionLocation = $state<{ label: string } | null>(null);
 	let missionDraftPoint = $state<{ lat: number; lon: number } | null>(null);
-	let missionMapCoords = $state<{ lat: number; lon: number } | null>(null);
+	let missionMapCoords = $state<{ lat: number; lon: number; label?: string } | null>(null);
+	let missionPickAnnotation = $state<{ id: string; lat: number; lon: number } | null>(null);
 	let sheetBeforePick: SheetState | null = null;
 
 	let netCallsigns = $derived(
@@ -317,11 +318,24 @@
 		sheetBeforePick = null;
 	}
 
-	function handleMissionLocationPlaced(lat: number, lon: number) {
+	function handleMissionLocationPlaced(lat: number, lon: number, label?: string) {
 		missionDraftPoint = { lat, lon };
-		missionMapCoords = { lat, lon };
+		missionMapCoords = { lat, lon, label };
 		placingMissionLocation = null;
 		restoreSheetAfterPick();
+	}
+
+	// The click landed on an existing annotation — the annotation IS the
+	// location (snap + link), so there's no separate dropped pin.
+	function handleMissionLocationAnnotationPicked(id: string, lat: number, lon: number) {
+		missionPickAnnotation = { id, lat, lon };
+		missionDraftPoint = null;
+		placingMissionLocation = null;
+		restoreSheetAfterPick();
+	}
+
+	function handleMissionPickAnnotationConsumed() {
+		missionPickAnnotation = null;
 	}
 
 	function handleMissionLocationPlaceCancelled() {
@@ -504,6 +518,7 @@
 			{placingMissionLocation}
 			{missionDraftPoint}
 			onMissionLocationPlaced={handleMissionLocationPlaced}
+			onMissionLocationAnnotationPicked={handleMissionLocationAnnotationPicked}
 			onMissionLocationPlaceCancelled={handleMissionLocationPlaceCancelled}
 			ownPosition={$gpsStatus.fix}
 			ownPositionStale={$gpsStatus.stale}
@@ -625,6 +640,8 @@
 					onPlaceMissionLocation={handlePlaceMissionLocation}
 					{missionMapCoords}
 					onMissionMapCoordsConsumed={handleMissionMapCoordsConsumed}
+					{missionPickAnnotation}
+					onMissionPickAnnotationConsumed={handleMissionPickAnnotationConsumed}
 					onClearMissionDraft={handleClearMissionDraft}
 					missionPickActive={placingMissionLocation != null}
 					onSetMissionDraftPoint={handleSetMissionDraftPoint}
@@ -719,6 +736,8 @@
 					onPlaceMissionLocation={handlePlaceMissionLocation}
 					{missionMapCoords}
 					onMissionMapCoordsConsumed={handleMissionMapCoordsConsumed}
+					{missionPickAnnotation}
+					onMissionPickAnnotationConsumed={handleMissionPickAnnotationConsumed}
 					onClearMissionDraft={handleClearMissionDraft}
 					missionPickActive={placingMissionLocation != null}
 					onSetMissionDraftPoint={handleSetMissionDraftPoint}
