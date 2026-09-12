@@ -313,6 +313,53 @@ func ParseGSA(fields []string) (mode FixMode, pdop, hdop, vdop float64, err erro
 	return mode, pdop, hdop, vdop, nil
 }
 
+// gpsTimeSkewLimit bounds how far a GPS-derived timestamp (an NMEA RMC date,
+// or gpsd's TPV "time") may plausibly differ from the host clock before it
+// is treated as unusable rather than published.
+//
+// The threshold has to sit between two failure modes it must tell apart:
+//   - a receiver hit by the classic 10-bit GPS week-number rollover, which
+//     is wrong by an exact multiple of 1024 weeks (~19.6 years) — this is
+//     the bug this clamp exists to catch (real hardware: a Sierra EM7355
+//     with old firmware reported 2007 instead of 2026, exactly 1024 weeks
+//     off); and
+//   - a host clock that is merely wrong — an emcomm laptop can sit powered
+//     off in the field for weeks with a drifted or dead-battery RTC, and
+//     that drift must NOT cause a good GPS fix to have its time thrown away
+//     (on an emcomm box the host clock is the more trustworthy of the two
+//     only when the GPS time looks implausible, not the other way around).
+//
+// 30 days is comfortably wider than any realistic RTC drift (hours to a
+// couple of weeks even on a dead backup battery resetting to firmware
+// build date is unusual, and ordinary skew is seconds) while remaining
+// utterly dwarfed by the ~7168-day rollover gap — there is no plausible
+// legitimate skew this threshold would misclassify as a rollover, and no
+// rollover it would fail to catch.
+const gpsTimeSkewLimit = 30 * 24 * time.Hour
+
+// clampGPSTime returns t unchanged when it is within gpsTimeSkewLimit of
+// now, and the zero Time otherwise. A zero t is returned as-is (nothing to
+// clamp). See gpsTimeSkewLimit for the threshold rationale.
+//
+// This guards every GPS-derived Fix.Time in the codebase: it is applied
+// here in the shared NMEA path (Assembler.finalize, used by both the raw
+// "nmea" source and ModemManager's cached-NMEA-blob decoding) and again in
+// gpsd.go's ParseTPV, since an old receiver behind gpsd is exactly as
+// capable of reporting a rolled-over date as one spoken to directly.
+func clampGPSTime(t, now time.Time) time.Time {
+	if t.IsZero() {
+		return t
+	}
+	delta := t.Sub(now)
+	if delta < 0 {
+		delta = -delta
+	}
+	if delta > gpsTimeSkewLimit {
+		return time.Time{}
+	}
+	return t
+}
+
 // Assembler merges GGA/RMC/GSA sentences from one NMEA cycle into a complete
 // Fix. It emits once a cycle has both a GGA and an RMC sentence (the two
 // sentence types that carry position); GSA, when present in the same cycle,
@@ -357,6 +404,7 @@ func (a *Assembler) reset() {
 
 func (a *Assembler) finalize() Fix {
 	var f Fix
+	now := a.now()
 
 	if a.haveGGA {
 		f.Lat, f.Lon = a.gga.Lat, a.gga.Lon
@@ -389,12 +437,16 @@ func (a *Assembler) finalize() Fix {
 	if a.haveRMC && !a.rmc.Time.IsZero() {
 		f.Time = a.rmc.Time
 	} else if a.haveGGA && a.ggaTimeField != "" {
-		if t, ok := combineDateAndTimeOfDay(a.ggaTimeField, a.now()); ok {
+		if t, ok := combineDateAndTimeOfDay(a.ggaTimeField, now); ok {
 			f.Time = t
 		}
 	}
+	// Reject a GPS-reported time that is implausibly far from the host
+	// clock (see gpsTimeSkewLimit) rather than publish it — this is the GPS
+	// week-number rollover guard.
+	f.Time = clampGPSTime(f.Time, now)
 
-	f.ReceivedAt = a.now()
+	f.ReceivedAt = now
 	return f
 }
 
@@ -492,6 +544,80 @@ func (a *Assembler) Consume(sentence string) (Fix, bool, error) {
 		return emitted, true, nil
 	}
 	return Fix{}, false, nil
+}
+
+// ConsumeSnapshot feeds a complete, already-grouped set of sentences that are
+// known to belong to ONE cycle — e.g. one ModemManager Location NMEA blob,
+// which caches exactly one sentence of each type. Unlike Consume it does not
+// apply the repeat/time-change cycle heuristics (a snapshot's per-type
+// sentences may carry slightly different time fields, which would make
+// Consume reset and never emit) and it emits when EITHER a GGA or an RMC was
+// present, not only when both were. Returns (fix, true, nil) when a fix was
+// assembled. Per-sentence parse and checksum failures are counted and
+// skipped, never fatal.
+func (a *Assembler) ConsumeSnapshot(sentences []string) (Fix, bool, error) {
+	a.reset()
+	sawValidRMCPosition := false
+
+	for _, raw := range sentences {
+		s := strings.TrimSpace(raw)
+		if s == "" || len(s) > 128 || s[0] != '$' {
+			continue
+		}
+		if strings.IndexByte(s[1:], '$') >= 0 {
+			continue
+		}
+
+		fields, err := Fields(s)
+		if err != nil {
+			if errors.Is(err, ErrChecksum) {
+				a.checksumErrors++
+			}
+			continue
+		}
+		if len(fields) == 0 || len(fields[0]) < 3 {
+			continue
+		}
+		kind := strings.ToUpper(fields[0])
+		kind = kind[len(kind)-3:]
+
+		switch kind {
+		case "GGA":
+			if f, perr := ParseGGA(fields); perr == nil {
+				a.gga = f
+				a.haveGGA = true
+				a.ggaTimeField = fieldAt(fields, 1)
+			}
+		case "RMC":
+			if f, perr := ParseRMC(fields); perr == nil {
+				a.rmc = f
+				a.haveRMC = true
+				if strings.ToUpper(fieldAt(fields, 2)) == "A" && fieldAt(fields, 3) != "" && fieldAt(fields, 5) != "" {
+					sawValidRMCPosition = true
+				}
+			}
+		case "GSA":
+			if mode, _, hdop, _, perr := ParseGSA(fields); perr == nil {
+				a.gsaMode = mode
+				a.gsaHDOP = hdop
+				a.haveGSA = true
+			}
+		}
+	}
+
+	if !a.haveGGA && !a.haveRMC {
+		a.reset()
+		return Fix{}, false, nil
+	}
+
+	f := a.finalize()
+	// RMC alone carries no fix-quality field; ParseRMC only sets Mode for
+	// status "V". A valid RMC with a position is at least a 2D fix.
+	if f.Mode == ModeUnknown && sawValidRMCPosition {
+		f.Mode = Mode2D
+	}
+	a.reset()
+	return f, true, nil
 }
 
 // NMEAConfig configures an NMEA-0183 source: either a serial device or a

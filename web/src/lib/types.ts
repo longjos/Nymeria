@@ -558,7 +558,7 @@ export interface GpsFix {
 
 export interface GpsStatus {
 	enabled: boolean;
-	type?: 'gpsd' | 'nmea';
+	type?: 'gpsd' | 'nmea' | 'modemmanager';
 	target?: string;
 	connected: boolean;
 	error?: string;
@@ -755,10 +755,10 @@ export interface StoreSettings {
 
 export interface GpsSettings {
 	enabled: boolean;
-	type: 'gpsd' | 'nmea';
+	type: 'gpsd' | 'nmea' | 'modemmanager';
 	host: string;
 	port: number;
-	device: string;
+	device: string; // nmea serial device, or modem index / D-Bus object path for modemmanager
 	baud: number;
 	minInterval: string;
 	staleAfter: string;

@@ -61,7 +61,8 @@ logging:
 # Disabled by default; everything GPS-related is hidden in the UI when off.
 gps:
   enabled: false
-  # gpsd (recommended on Linux/RPi) or nmea (direct serial/TCP NMEA-0183)
+  # gpsd (recommended on Linux/RPi), nmea (direct serial/TCP NMEA-0183),
+  # or modemmanager (GNSS inside an LTE modem, via ModemManager on D-Bus)
   type: gpsd
   # gpsd, or NMEA-over-TCP:
   host: 127.0.0.1
@@ -70,6 +71,14 @@ gps:
   # type: nmea
   # device: /dev/ttyACM0
   # baud: 9600
+  # GNSS inside a WWAN modem (Linux only — e.g. the Sierra EM7455 in a
+  # Panasonic CF-20). Needs ModemManager >= 1.10 (1.18+ recommended) and a
+  # polkit rule; see the ModemManager GPS wiki page.
+  #   type: modemmanager
+  #   device: ""   # blank = first GPS-capable modem; or "0", or a full
+  #                # D-Bus object path like
+  #                # /org/freedesktop/ModemManager1/Modem/0
+  # host/port/baud are ignored for modemmanager.
   # Ignore fixes arriving faster than this.
   min_interval: 1s
   # A fix older than this is "stale": beacon falls back to station.lat/lon

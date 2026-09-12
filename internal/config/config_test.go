@@ -384,7 +384,7 @@ func TestValidateGPS(t *testing.T) {
 				c.GPS.Type = "garmin"
 			},
 			wantErr: true,
-			errMsg:  "gpsd or nmea",
+			errMsg:  "gpsd, nmea, or modemmanager",
 		},
 		{
 			name: "valid gpsd",
@@ -404,6 +404,44 @@ func TestValidateGPS(t *testing.T) {
 				c.GPS.Device = "/dev/ttyACM0"
 				c.GPS.Host = ""
 				c.GPS.Baud = 9600
+			},
+			wantErr: false,
+		},
+		{
+			name: "valid modemmanager, no device",
+			modify: func(c *Config) {
+				c.GPS.Enabled = true
+				c.GPS.Type = "modemmanager"
+				c.GPS.Device = ""
+			},
+			wantErr: false,
+		},
+		{
+			name: "valid modemmanager, modem index",
+			modify: func(c *Config) {
+				c.GPS.Enabled = true
+				c.GPS.Type = "modemmanager"
+				c.GPS.Device = "0"
+			},
+			wantErr: false,
+		},
+		{
+			name: "valid modemmanager, object path",
+			modify: func(c *Config) {
+				c.GPS.Enabled = true
+				c.GPS.Type = "modemmanager"
+				c.GPS.Device = "/org/freedesktop/ModemManager1/Modem/0"
+			},
+			wantErr: false,
+		},
+		{
+			name: "modemmanager ignores host/port/baud",
+			modify: func(c *Config) {
+				c.GPS.Enabled = true
+				c.GPS.Type = "modemmanager"
+				c.GPS.Device = ""
+				// Leave Host/Port/Baud at DefaultConfig's gpsd-oriented values —
+				// they must be accepted, not rejected, for modemmanager.
 			},
 			wantErr: false,
 		},

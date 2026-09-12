@@ -2,7 +2,10 @@
 // for the own-position marker and GPS-driven smart beaconing.
 package gps
 
-import "time"
+import (
+	"encoding/json"
+	"time"
+)
 
 // FixMode mirrors gpsd's TPV "mode" field exactly so gpsd values pass through
 // untranslated. NMEA GSA mode 1/2/3 maps onto the same integers.
@@ -55,6 +58,26 @@ type Fix struct {
 	ReceivedAt  time.Time `json:"receivedAt"`         // host clock when parsed — age is computed from this
 }
 
+// MarshalJSON omits Time when it is zero. `omitempty` alone cannot do this —
+// time.Time is a struct, and encoding/json's omitempty only ever looks at
+// Go's "empty" predicate (false/0/""/nil/len==0), which a zero time.Time
+// never satisfies — so without this override a fix with no GPS-reported
+// time (no-fix state, a void RMC, or a timestamp the rollover clamp
+// rejected) would serialize Time as "0001-01-01T00:00:00Z" instead of
+// leaving the field out. The frontend (web/src/lib/types.ts GpsFix.time)
+// already declares this field optional, so omitting it is the only change.
+func (f Fix) MarshalJSON() ([]byte, error) {
+	type fixAlias Fix
+	aux := struct {
+		fixAlias
+		Time *time.Time `json:"time,omitempty"`
+	}{fixAlias: fixAlias(f)}
+	if !f.Time.IsZero() {
+		aux.Time = &f.Time
+	}
+	return json.Marshal(aux)
+}
+
 // HasPosition reports whether the fix carries a usable lat/lon.
 func (f Fix) HasPosition() bool { return f.Mode >= Mode2D }
 
@@ -66,7 +89,7 @@ func (f Fix) Age(now time.Time) time.Duration { return now.Sub(f.ReceivedAt) }
 
 // SourceStatus is the connection health of one Source.
 type SourceStatus struct {
-	Type      string    `json:"type"` // "gpsd" | "nmea"
+	Type      string    `json:"type"` // "gpsd" | "nmea" | "modemmanager"
 	Target    string    `json:"target"`
 	Connected bool      `json:"connected"`
 	Error     string    `json:"error,omitempty"`

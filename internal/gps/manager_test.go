@@ -313,3 +313,146 @@ func TestManagerUpdateConfigRestartsOnTargetChange(t *testing.T) {
 	}
 	mu.Unlock()
 }
+
+// ── modemmanager wiring ───────────────────────────────────────────────
+
+func TestDefaultSourceFactoryModemManager(t *testing.T) {
+	src := defaultSourceFactory(Config{Type: "modemmanager", Device: "0", MinInterval: time.Second})
+	mm, ok := src.(*MMSource)
+	if !ok {
+		t.Fatalf("defaultSourceFactory returned %T, want *MMSource", src)
+	}
+	if got := mm.Status().Type; got != "modemmanager" {
+		t.Errorf("Status().Type = %q, want %q", got, "modemmanager")
+	}
+}
+
+func TestConfigTargetModemManager(t *testing.T) {
+	tests := []struct {
+		device string
+		want   string
+	}{
+		{"", "modemmanager"},
+		{"0", "modemmanager 0"},
+		{"/org/freedesktop/ModemManager1/Modem/0", "modemmanager /org/freedesktop/ModemManager1/Modem/0"},
+	}
+	for _, tt := range tests {
+		cfg := Config{Type: "modemmanager", Device: tt.device}
+		if got := cfg.target(); got != tt.want {
+			t.Errorf("target() with device %q = %q, want %q", tt.device, got, tt.want)
+		}
+	}
+}
+
+func TestManagerStatusPrefersSourceTarget(t *testing.T) {
+	src := newFakeSource()
+	src.status = SourceStatus{Type: "modemmanager", Target: "/org/freedesktop/ModemManager1/Modem/0", Connected: true}
+
+	m := NewManagerWithSource(Config{Enabled: true, Type: "modemmanager"}, src)
+	if err := m.Start(context.Background()); err != nil {
+		t.Fatalf("Start: %v", err)
+	}
+	defer m.Stop()
+
+	st := m.Status()
+	if st.Target != "/org/freedesktop/ModemManager1/Modem/0" {
+		t.Errorf("Status().Target = %q, want the source's live target", st.Target)
+	}
+}
+
+func TestManagerUpdateConfigRestartsOnModemChange(t *testing.T) {
+	var mu sync.Mutex
+	count := 0
+
+	m := NewManager(Config{Enabled: true, Type: "modemmanager", Device: "0"})
+	m.factory = func(cfg Config) Source {
+		mu.Lock()
+		count++
+		mu.Unlock()
+		return newFakeSource()
+	}
+
+	if err := m.Start(context.Background()); err != nil {
+		t.Fatalf("Start: %v", err)
+	}
+	mu.Lock()
+	if count != 1 {
+		t.Fatalf("factory called %d times after Start, want 1", count)
+	}
+	mu.Unlock()
+
+	m.UpdateConfig(Config{Enabled: true, Type: "modemmanager", Device: "1"})
+	mu.Lock()
+	if count != 2 {
+		t.Errorf("factory called %d times after Device change, want 2", count)
+	}
+	mu.Unlock()
+}
+
+// TestManagerUpdateConfigRestartsOnModemManagerMinIntervalChange guards
+// against MinInterval being excluded from targetChanged for modemmanager:
+// unlike gpsd/nmea, MMSource bakes MinInterval into itself at construction
+// (SetGpsRefreshRate + the property-poll tick are both derived from it once,
+// in dialSession/readLoop), so a MinInterval-only change must rebuild the
+// source or the modem keeps refreshing at the old rate forever.
+func TestManagerUpdateConfigRestartsOnModemManagerMinIntervalChange(t *testing.T) {
+	var mu sync.Mutex
+	count := 0
+
+	m := NewManager(Config{Enabled: true, Type: "modemmanager", Device: "0", MinInterval: 30 * time.Second})
+	m.factory = func(cfg Config) Source {
+		mu.Lock()
+		count++
+		mu.Unlock()
+		return newFakeSource()
+	}
+
+	if err := m.Start(context.Background()); err != nil {
+		t.Fatalf("Start: %v", err)
+	}
+	mu.Lock()
+	if count != 1 {
+		t.Fatalf("factory called %d times after Start, want 1", count)
+	}
+	mu.Unlock()
+
+	m.UpdateConfig(Config{Enabled: true, Type: "modemmanager", Device: "0", MinInterval: time.Second})
+	mu.Lock()
+	if count != 2 {
+		t.Errorf("factory called %d times after modemmanager MinInterval change, want 2 (rebuild required)", count)
+	}
+	mu.Unlock()
+}
+
+// TestManagerUpdateConfigGpsdMinIntervalOnlyDoesNotRestart locks in the
+// existing gpsd/nmea behavior: MinInterval there is manager-side only (read
+// fresh from cfg on every ingest), so it must keep hot-reloading with no
+// source rebuild — the modemmanager fix above must not regress this.
+func TestManagerUpdateConfigGpsdMinIntervalOnlyDoesNotRestart(t *testing.T) {
+	var mu sync.Mutex
+	count := 0
+
+	m := NewManager(Config{Enabled: true, Type: "gpsd", Host: "127.0.0.1", Port: 2947, MinInterval: 30 * time.Second})
+	m.factory = func(cfg Config) Source {
+		mu.Lock()
+		count++
+		mu.Unlock()
+		return newFakeSource()
+	}
+
+	if err := m.Start(context.Background()); err != nil {
+		t.Fatalf("Start: %v", err)
+	}
+	mu.Lock()
+	if count != 1 {
+		t.Fatalf("factory called %d times after Start, want 1", count)
+	}
+	mu.Unlock()
+
+	m.UpdateConfig(Config{Enabled: true, Type: "gpsd", Host: "127.0.0.1", Port: 2947, MinInterval: time.Second})
+	mu.Lock()
+	if count != 1 {
+		t.Errorf("factory called %d times after gpsd MinInterval-only change, want 1 (no rebuild)", count)
+	}
+	mu.Unlock()
+}

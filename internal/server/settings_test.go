@@ -810,6 +810,34 @@ func TestUpdateGPSRoundTrip(t *testing.T) {
 	}
 }
 
+func TestUpdateGPSModemManagerRoundTrip(t *testing.T) {
+	srv, sessMgr, cfgMgr, _ := newTestSettingsServer(t)
+	token := adminToken(sessMgr)
+
+	dto := gpsDTO{
+		Enabled: true, Type: "modemmanager", Device: "0",
+		MinInterval: "1s", StaleAfter: "30s",
+	}
+	w := doRequest(srv, "PUT", "/api/settings/gps", dto, token)
+	if w.Code != http.StatusOK {
+		t.Fatalf("PUT gps (modemmanager): %d %s", w.Code, w.Body.String())
+	}
+
+	var resp updateResponse
+	json.Unmarshal(w.Body.Bytes(), &resp)
+	if !resp.RestartRequired {
+		t.Error("flipping gps.enabled (false->true) should require restart")
+	}
+
+	got := cfgMgr.Get()
+	if got.GPS.Type != "modemmanager" {
+		t.Errorf("type = %q, want modemmanager", got.GPS.Type)
+	}
+	if got.GPS.Device != "0" {
+		t.Errorf("device = %q, want 0", got.GPS.Device)
+	}
+}
+
 func TestUpdateGPSRejectsInvalid(t *testing.T) {
 	srv, sessMgr, cfgMgr, _ := newTestSettingsServer(t)
 	token := adminToken(sessMgr)

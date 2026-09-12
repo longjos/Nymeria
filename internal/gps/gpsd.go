@@ -103,7 +103,11 @@ func ParseTPV(data []byte, now time.Time) (Fix, error) {
 
 	if tpv.Time != "" {
 		if t, err := time.Parse(time.RFC3339, tpv.Time); err == nil {
-			f.Time = t
+			// gpsd forwards whatever date its receiver computed; an old
+			// receiver behind gpsd is just as capable of a GPS week-number
+			// rollover as one read directly, so apply the same clamp used
+			// for the NMEA sources (see gpsTimeSkewLimit in nmea.go).
+			f.Time = clampGPSTime(t, now)
 		}
 	}
 

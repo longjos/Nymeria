@@ -15,7 +15,12 @@ import (
 
 func TestParseTPV3D(t *testing.T) {
 	data := []byte(`{"class":"TPV","device":"/dev/ttyUSB0","mode":3,"time":"2021-05-14T20:11:04.000Z","ept":0.005,"lat":44.068921,"lon":-121.314012,"alt":1120.2,"epx":15.0,"epy":19.0,"epv":45.0,"track":10.3221,"speed":6.091,"climb":0.0,"eps":38.0}`)
-	now := time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)
+	wantTime := time.Date(2021, 5, 14, 20, 11, 4, 0, time.UTC)
+	// now must be plausibly close to the TPV's own "time" field — ParseTPV
+	// clamps GPS-reported time against the host clock (see gpsTimeSkewLimit
+	// in nmea.go), and this fixture predates any date near "today" by
+	// years, so a far-future now would have the clamp zero it out.
+	now := wantTime.Add(4 * time.Second)
 
 	f, err := ParseTPV(data, now)
 	if err != nil {
@@ -30,9 +35,31 @@ func TestParseTPV3D(t *testing.T) {
 		t.Error("HasCourse = false, want true")
 	}
 	approxEqual(t, "accuracy", f.Accuracy, math.Hypot(15, 19), 1e-9)
-	wantTime := time.Date(2021, 5, 14, 20, 11, 4, 0, time.UTC)
 	if !f.Time.Equal(wantTime) {
 		t.Errorf("time = %v, want %v", f.Time, wantTime)
+	}
+	if !f.ReceivedAt.Equal(now) {
+		t.Errorf("ReceivedAt = %v, want %v", f.ReceivedAt, now)
+	}
+}
+
+// TestParseTPVClampsRolloverTime reproduces the field bug directly at the
+// gpsd source: an old receiver behind gpsd forwards a GPS week-number
+// rollover date into TPV's "time" field just as readily as one read over
+// raw NMEA, so ParseTPV must clamp it the same way.
+func TestParseTPVClampsRolloverTime(t *testing.T) {
+	now := time.Date(2026, 9, 11, 23, 40, 58, 0, time.UTC)
+	// 1024 weeks (one GPS epoch) before now — the CF-20 field test's
+	// EM7355 reported 2007-01-27 while the host clock read 2026-09-11.
+	rolledOver := "2007-01-27T04:40:57Z"
+	data := []byte(`{"class":"TPV","mode":3,"lat":44.0,"lon":-121.0,"time":"` + rolledOver + `"}`)
+
+	f, err := ParseTPV(data, now)
+	if err != nil {
+		t.Fatalf("ParseTPV: %v", err)
+	}
+	if !f.Time.IsZero() {
+		t.Errorf("Time = %v, want zero (rolled-over date must be clamped)", f.Time)
 	}
 	if !f.ReceivedAt.Equal(now) {
 		t.Errorf("ReceivedAt = %v, want %v", f.ReceivedAt, now)
