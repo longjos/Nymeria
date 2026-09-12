@@ -65,6 +65,7 @@
 		showTracks = true,
 		trackDurationMs = Infinity,
 		showDRCones = true,
+		showCallsigns = false,
 		placingAnnotation = null,
 		onAnnotationPlaced,
 		onAnnotationPlaceCancelled,
@@ -113,6 +114,8 @@
 		showTracks?: boolean;
 		trackDurationMs?: number;
 		showDRCones?: boolean;
+		/** Draw permanent call-sign labels next to station markers. */
+		showCallsigns?: boolean;
 		placingAnnotation?: { id: string | null; name: string } | null;
 		onAnnotationPlaced?: (lat: number, lon: number) => void;
 		onAnnotationPlaceCancelled?: () => void;
@@ -266,6 +269,7 @@
 		const _tracks = showTracks;
 		const _trackDur = trackDurationMs;
 		const _dr = showDRCones;
+		const _labels = showCallsigns;
 		if (map) {
 			updateMarkers();
 			updateDRCones();
@@ -546,6 +550,7 @@
 		if (!map) return;
 		const ops = netOperators;
 		const _netId = activeNetId;
+		const _labels = showCallsigns;
 
 		// Clear old halos
 		for (const [, layer] of netHalos) layer.remove();
@@ -586,9 +591,14 @@
 				}).addTo(map);
 			}
 
+			// Voice-only pins are the station's only marker, so they honour the
+			// call-sign label toggle. APRS operators already have a labelled
+			// station marker under the halo — don't double up.
 			(layer as L.Layer & { bindTooltip: Function }).bindTooltip(
 				ci.tacticalCall ? `${ci.callsign} "${ci.tacticalCall}"` : ci.callsign,
-				{ permanent: false, direction: 'top', className: 'station-tooltip' }
+				ci.source === 'voice'
+					? stationTooltipOpts()
+					: { permanent: false, direction: 'top', className: 'station-tooltip' }
 			);
 			(layer as L.Layer & { on: Function }).on('click', (e: L.LeafletMouseEvent) => {
 				layerClick(
@@ -1495,6 +1505,15 @@
 		}
 	}
 
+	// Station name tooltip options. When call-sign labels are on the tooltip is
+	// permanent and sits below the symbol so it never covers the icon; otherwise
+	// it stays a hover tooltip above the marker.
+	function stationTooltipOpts(): L.TooltipOptions {
+		return showCallsigns
+			? { permanent: true, direction: 'bottom', className: 'station-tooltip station-label' }
+			: { permanent: false, direction: 'top', className: 'station-tooltip' };
+	}
+
 	function updateMarkers() {
 		if (!map) return;
 
@@ -1527,23 +1546,15 @@
 			if (marker) {
 				marker.setLatLng([st.position.lat, st.position.lon]);
 				marker.setIcon(divIcon);
-				// Update tooltip in case tactical alias changed
+				// Rebind in case the tactical alias or the label toggle changed
 				marker.unbindTooltip();
-				marker.bindTooltip(name, {
-					permanent: false,
-					direction: 'top',
-					className: 'station-tooltip',
-				});
+				marker.bindTooltip(name, stationTooltipOpts());
 			} else {
 				marker = L.marker([st.position.lat, st.position.lon], {
 					icon: divIcon,
 				}).addTo(map);
 
-				marker.bindTooltip(name, {
-					permanent: false,
-					direction: 'top',
-					className: 'station-tooltip',
-				});
+				marker.bindTooltip(name, stationTooltipOpts());
 
 				// Captured as a definite (non-undefined) const — `marker` itself
 				// is a `let` (Map.get()'s return type includes undefined), and
@@ -1833,6 +1844,23 @@
 		font-weight: 600;
 		font-size: 12px;
 		box-shadow: none;
+	}
+
+	/* Permanent call-sign label: quieter than a hover tooltip so a dense map
+	   stays readable — no arrow, tight padding, translucent plate. */
+	:global(.station-label) {
+		background: rgba(10, 12, 24, 0.72);
+		border: none;
+		border-radius: 3px;
+		padding: 0 4px;
+		font-size: 11px;
+		line-height: 15px;
+		white-space: nowrap;
+		color: var(--color-text, #eee);
+	}
+
+	:global(.station-label::before) {
+		display: none;
 	}
 
 	:global(.annotation-tooltip) {

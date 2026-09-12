@@ -507,6 +507,7 @@
 			showTracks={$mapSettings.showTracks}
 			trackDurationMs={TRACK_DURATION_MS[$mapSettings.trackDuration]}
 			showDRCones={$mapSettings.showDRCones}
+			showCallsigns={$mapSettings.showCallsigns}
 			{placingOperator}
 			onOperatorPlaced={handleOperatorPlaced}
 			onPlaceCancelled={handlePlaceCancelled}
