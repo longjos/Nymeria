@@ -9,6 +9,7 @@ export interface MapSettings {
 	trackDuration: TrackDuration;
 	showTracks: boolean;
 	showDRCones: boolean;
+	showCallsigns: boolean;
 	showWeatherOverlay: boolean;
 	showDFOverlay: boolean;
 }
@@ -18,6 +19,7 @@ const DEFAULTS: MapSettings = {
 	trackDuration: 'all',
 	showTracks: true,
 	showDRCones: true,
+	showCallsigns: false,
 	showWeatherOverlay: false,
 	showDFOverlay: false,
 };

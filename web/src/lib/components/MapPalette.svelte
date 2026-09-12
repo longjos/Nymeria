@@ -19,6 +19,7 @@
 		$mapSettings.stationAgeFilter !== 'all' ||
 		!$mapSettings.showTracks ||
 		!$mapSettings.showDRCones ||
+		$mapSettings.showCallsigns ||
 		$mapSettings.showWeatherOverlay ||
 		$mapSettings.showDFOverlay ||
 		$mapSettings.trackDuration !== 'all'
@@ -118,6 +119,16 @@
 							onchange={() => updateMapSetting('showDRCones', !$mapSettings.showDRCones)}
 						/>
 						DR cones
+					</label>
+				</div>
+				<div class="palette-row">
+					<label class="palette-checkbox">
+						<input
+							type="checkbox"
+							checked={$mapSettings.showCallsigns}
+							onchange={() => updateMapSetting('showCallsigns', !$mapSettings.showCallsigns)}
+						/>
+						Call signs
 					</label>
 				</div>
 			</div>
