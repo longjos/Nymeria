@@ -246,6 +246,75 @@ func TestParseGSA(t *testing.T) {
 	})
 }
 
+// ── clampGPSTime ─────────────────────────────────────────────────────
+
+func TestClampGPSTime(t *testing.T) {
+	now := time.Date(2026, 9, 11, 23, 40, 58, 0, time.UTC)
+	const week = 7 * 24 * time.Hour
+
+	tests := []struct {
+		name string
+		in   time.Time
+		want time.Time
+	}{
+		{
+			name: "normal in-sync timestamp passes through untouched",
+			in:   now.Add(-2 * time.Second),
+			want: now.Add(-2 * time.Second),
+		},
+		{
+			name: "small clock skew in seconds passes through",
+			in:   now.Add(3 * time.Second),
+			want: now.Add(3 * time.Second),
+		},
+		{
+			name: "small clock skew in minutes passes through",
+			in:   now.Add(-90 * time.Minute),
+			want: now.Add(-90 * time.Minute),
+		},
+		{
+			name: "several days of drifted RTC still passes",
+			in:   now.Add(-10 * 24 * time.Hour),
+			want: now.Add(-10 * 24 * time.Hour),
+		},
+		{
+			name: "just past the threshold is rejected",
+			in:   now.Add(-31 * 24 * time.Hour),
+			want: time.Time{},
+		},
+		{
+			name: "exactly 1024 GPS weeks in the past is rejected",
+			in:   now.Add(-1024 * week),
+			want: time.Time{},
+		},
+		{
+			name: "exactly 1024 GPS weeks in the future is rejected",
+			in:   now.Add(1024 * week),
+			want: time.Time{},
+		},
+		{
+			name: "already-zero time stays zero without error",
+			in:   time.Time{},
+			want: time.Time{},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := clampGPSTime(tt.in, now)
+			if tt.want.IsZero() {
+				if !got.IsZero() {
+					t.Errorf("clampGPSTime(%v, %v) = %v, want zero", tt.in, now, got)
+				}
+				return
+			}
+			if !got.Equal(tt.want) {
+				t.Errorf("clampGPSTime(%v, %v) = %v, want %v", tt.in, now, got, tt.want)
+			}
+		})
+	}
+}
+
 // ── Assembler ────────────────────────────────────────────────────────
 
 func TestAssemblerCompleteCycle(t *testing.T) {
@@ -276,6 +345,47 @@ func TestAssemblerCompleteCycle(t *testing.T) {
 	approxEqual(t, "speed", fix.SpeedKnots, 0.02, 1e-9)
 	if !fix.ReceivedAt.Equal(fixed) {
 		t.Errorf("ReceivedAt = %v, want %v", fix.ReceivedAt, fixed)
+	}
+	// This cycle's RMC date (280511 -> 2011-05-28) is ~14.6 years before the
+	// fixed host clock above — well past gpsTimeSkewLimit — so Time must be
+	// clamped to zero even though the rest of the fix assembles normally.
+	if !fix.Time.IsZero() {
+		t.Errorf("Time = %v, want zero (implausibly far from host clock)", fix.Time)
+	}
+}
+
+// TestAssemblerConsumeClampsRolloverTime reproduces the exact CF-20 field
+// bug through the streaming Consume path (used by NMEASource): a receiver
+// hit by the classic 10-bit GPS week-number rollover reports a date exactly
+// 1024 weeks (one GPS epoch) in the past. finalize() must clamp Time to
+// zero rather than publish it, while everything else about the fix (a
+// position from GGA+RMC) is unaffected.
+func TestAssemblerConsumeClampsRolloverTime(t *testing.T) {
+	// Matches the CF-20 field test: receivedAt 2026-09-11T23:40:58-05:00
+	// (= 2026-09-12T04:40:58Z) vs. the modem's reported 2007-01-27T04:40:57Z
+	// — exactly 1024 weeks (one GPS epoch) earlier.
+	now := time.Date(2026, 9, 12, 4, 40, 58, 0, time.UTC)
+	a := NewAssembler(func() time.Time { return now })
+
+	if _, emitted, err := a.Consume("$GPGGA,044057.00,5321.6802,N,00630.3372,W,1,05,1.9,130.6,M,46.9,M,,*77"); err != nil || emitted {
+		t.Fatalf("GGA: emitted=%v err=%v, want false/nil", emitted, err)
+	}
+	// Date field "270107" -> 2007-01-27, exactly 1024 weeks before `now`.
+	fix, emitted, err := a.Consume("$GPRMC,044057.00,A,5321.6802,N,00630.3372,W,0.0,0.0,270107,,,A*44")
+	if err != nil {
+		t.Fatalf("RMC: err = %v", err)
+	}
+	if !emitted {
+		t.Fatal("RMC: expected a completed cycle to emit")
+	}
+	if !fix.Time.IsZero() {
+		t.Errorf("Time = %v, want zero (1024-week rollover clamp)", fix.Time)
+	}
+	if !fix.HasPosition() {
+		t.Error("expected the fix to still carry a position despite the clamped time")
+	}
+	if !fix.ReceivedAt.Equal(now) {
+		t.Errorf("ReceivedAt = %v, want %v", fix.ReceivedAt, now)
 	}
 }
 
@@ -463,12 +573,17 @@ func TestAssemblerConsumeSnapshot(t *testing.T) {
 		name      string
 		sentences []string
 		wantOK    bool
+		now       time.Time // zero uses the table default of 2026-01-01
 		check     func(t *testing.T, f Fix)
 	}{
 		{
 			name:      "full triad in GSA,GGA,RMC order",
 			sentences: []string{snapGSA, snapGGA, snapRMC},
 			wantOK:    true,
+			// Close to snapRMC's own date (230394 -> 1994-03-23) so this
+			// case exercises date-field decoding, not the rollover clamp
+			// (see the dedicated case below for that).
+			now: time.Date(1994, 3, 23, 12, 40, 0, 0, time.UTC),
 			check: func(t *testing.T, f Fix) {
 				if f.Mode != Mode3D {
 					t.Errorf("Mode = %v, want Mode3D", f.Mode)
@@ -625,11 +740,36 @@ func TestAssemblerConsumeSnapshot(t *testing.T) {
 				}
 			},
 		},
+		{
+			// Reproduces the CF-20 field bug end-to-end through the exact
+			// path ModemManager's cached-NMEA-blob decoding uses: an old
+			// receiver's RMC date is decades away from the host clock (here,
+			// the table default "now" of 2026-01-01 vs. snapRMC's parsed
+			// 1994-03-23 — far past gpsTimeSkewLimit), so Time must come out
+			// zero even though the fix itself (position, mode, etc.) is
+			// still assembled and usable.
+			name:      "RMC date implausibly far from host clock is clamped to zero",
+			sentences: []string{snapGSA, snapGGA, snapRMC},
+			wantOK:    true,
+			now:       time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC),
+			check: func(t *testing.T, f Fix) {
+				if !f.Time.IsZero() {
+					t.Errorf("Time = %v, want zero (rollover/implausible-skew clamp)", f.Time)
+				}
+				if !f.HasPosition() {
+					t.Error("expected the fix to still assemble despite the clamped time")
+				}
+			},
+		},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			asm := NewAssembler(func() time.Time { return time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC) })
+			now := tt.now
+			if now.IsZero() {
+				now = time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)
+			}
+			asm := NewAssembler(func() time.Time { return now })
 			f, ok, err := asm.ConsumeSnapshot(tt.sentences)
 			if err != nil {
 				t.Fatalf("ConsumeSnapshot: unexpected error %v", err)

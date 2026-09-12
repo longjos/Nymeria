@@ -3,6 +3,7 @@ package gps
 import (
 	"context"
 	"errors"
+	"fmt"
 	"net"
 	"sync"
 	"testing"
@@ -26,6 +27,22 @@ func blobCRLF(s ...string) string {
 		out += v
 	}
 	return out
+}
+
+// withChecksum computes a real NMEA "*HH" checksum for a sentence body
+// (everything between "$" and "*") and returns the full sentence. Test-only:
+// lets a fixture carry a time field anchored to time.Now() — required
+// wherever a test's dedup assertion hinges on Fix.Time being non-zero,
+// since MMSource's ingestNMEABlob assembles fixes with a real (not
+// test-injected) clock, and clampGPSTime (nmea.go) now zeroes any parsed
+// time implausibly far from that real clock — which every other fixture in
+// this file (fixed at 1994/2011 dates) deliberately is not concerned with.
+func withChecksum(body string) string {
+	var c byte
+	for i := 0; i < len(body); i++ {
+		c ^= body[i]
+	}
+	return fmt.Sprintf("$%s*%02X", body, c)
 }
 
 func locNMEA(blob string) dbus.Variant {
@@ -800,6 +817,17 @@ func TestMMSourceDropsRepeatedBlob(t *testing.T) {
 }
 
 func TestMMSourceDropsRepeatedFixTime(t *testing.T) {
+	// GGA/RMC time fields anchored to time.Now() rather than the shared
+	// snapGGA/snapRMC fixtures (fixed at 1994) — this test's whole point is
+	// that the dedup keys off a non-zero, unchanged Fix.Time, and
+	// clampGPSTime (nmea.go) would zero out a decades-stale fixture when
+	// compared against ingestNMEABlob's real (not test-injected) clock.
+	now := time.Now().UTC()
+	timeField := now.Format("150405.00")
+	dateField := now.Format("020106")
+	gga := withChecksum(fmt.Sprintf("GPGGA,%s,4807.038,N,01131.000,E,1,08,0.9,545.4,M,46.9,M,,", timeField))
+	rmc := withChecksum(fmt.Sprintf("GPRMC,%s,A,4807.038,N,01131.000,E,022.4,084.4,%s,003.1,W", timeField, dateField))
+
 	fake := newFakeMMConn()
 	s := newTestMMSource(fake)
 	if err := s.Start(context.Background()); err != nil {
@@ -808,10 +836,13 @@ func TestMMSourceDropsRepeatedFixTime(t *testing.T) {
 	defer s.Close()
 	waitFor(t, 2*time.Second, func() bool { return s.Status().Connected })
 
-	blob1 := blobCRLF(snapGGA, snapRMC)
-	blob2 := blobCRLF(snapGSA, snapGGA, snapRMC) // same RMC/GGA time, GSA added
+	blob1 := blobCRLF(gga, rmc)
+	blob2 := blobCRLF(snapGSA, gga, rmc) // same RMC/GGA time, GSA added
 	fake.pushChanged(ifaceLoc, map[string]dbus.Variant{"Location": locNMEA(blob1)})
-	waitForFix(t, s)
+	f1 := waitForFix(t, s)
+	if f1.Time.IsZero() {
+		t.Fatal("f1.Time is zero, want a plausible now-anchored time — dedup below is meaningless otherwise")
+	}
 
 	fake.pushChanged(ifaceLoc, map[string]dbus.Variant{"Location": locNMEA(blob2)})
 	expectNoFix(t, s, 300*time.Millisecond)
