@@ -197,11 +197,14 @@ func (s *MMSource) dialSession(ctx context.Context) (*mmSession, error) {
 		return nil, classifySetupError(err)
 	}
 
-	// Non-fatal: some plugins/versions reject it; MM's 30s default is bad
-	// for smart beaconing but not broken.
+	// Non-fatal: some plugins/versions reject it. The default refresh rate is
+	// whatever the modem reports, and it can be far slower than it sounds — a
+	// Sierra EM7355 was measured at 3600s, i.e. one fix an hour, which is
+	// useless for a live track or for smart beaconing but is not an error.
 	rate := refreshRateSeconds(s.cfg.MinInterval)
 	if err := c.Call(ctx, path, ifaceLoc+".SetGpsRefreshRate", rate); err != nil {
-		log.Printf("[gps] modemmanager: SetGpsRefreshRate failed (%v); updates may arrive only every 30s", err)
+		log.Printf("[gps] modemmanager: SetGpsRefreshRate failed (%v); "+
+			"fixes may arrive only as often as the modem's default (3600s on some Sierra modems)", err)
 	}
 
 	watch, err := c.WatchProperties(ctx, path)
