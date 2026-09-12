@@ -10,7 +10,7 @@ import (
 // Config configures the live GPS manager.
 type Config struct {
 	Enabled      bool
-	Type         string // "gpsd" | "nmea"
+	Type         string // "gpsd" | "nmea" | "modemmanager"
 	Host         string
 	Port         int
 	Device       string
@@ -42,6 +42,12 @@ func (c Config) target() string {
 		}
 		return fmt.Sprintf("%s@%d", c.Device, baud)
 	}
+	if c.Type == "modemmanager" {
+		if c.Device != "" {
+			return "modemmanager " + c.Device
+		}
+		return "modemmanager"
+	}
 	return fmt.Sprintf("%s:%d", c.Host, c.Port)
 }
 
@@ -62,10 +68,14 @@ type Status struct {
 type sourceFactory func(Config) Source
 
 func defaultSourceFactory(cfg Config) Source {
-	if cfg.Type == "nmea" {
+	switch cfg.Type {
+	case "nmea":
 		return NewNMEASource(NMEAConfig{Device: cfg.Device, Baud: cfg.Baud, Host: cfg.Host, Port: cfg.Port})
+	case "modemmanager":
+		return NewMMSource(MMConfig{Device: cfg.Device, MinInterval: cfg.minInterval()})
+	default:
+		return NewGPSDSource(GPSDConfig{Host: cfg.Host, Port: cfg.Port})
 	}
-	return NewGPSDSource(GPSDConfig{Host: cfg.Host, Port: cfg.Port})
 }
 
 // Manager owns one live GPS Source, applies acceptance/rate-limiting rules,
@@ -241,6 +251,12 @@ func (m *Manager) Status() Status {
 		Connected: srcStatus.Connected,
 		Error:     srcStatus.Error,
 	}
+	// Prefer the source's live target (e.g. the resolved D-Bus object path
+	// for modemmanager) once it has one. A no-op for gpsd/nmea, whose
+	// target already equals cfg.target().
+	if srcStatus.Target != "" {
+		st.Target = srcStatus.Target
+	}
 
 	if m.haveFix {
 		fixCopy := m.lastFix
@@ -278,6 +294,15 @@ func (m *Manager) Subscribe() (<-chan Fix, func()) {
 // UpdateConfig applies a new config. When Type/Host/Port/Device/Baud/Enabled
 // changed it tears the source down and rebuilds it; otherwise it only
 // updates the thresholds (MinInterval/StaleAfter/UseForBeacon).
+//
+// MinInterval is normally manager-side only (the acceptance rate limiter in
+// ingest, read fresh from m.cfg every time) and so never needed to force a
+// rebuild — until modemmanager, whose Source bakes MinInterval into itself
+// at construction (it drives SetGpsRefreshRate and the property-poll tick,
+// both set once in dialSession/readLoop). So a MinInterval-only change is
+// therefore also a target change, but ONLY when modemmanager is (or was)
+// the configured type — gpsd/nmea must keep hot-reloading MinInterval with
+// no rebuild.
 func (m *Manager) UpdateConfig(cfg Config) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
@@ -288,7 +313,8 @@ func (m *Manager) UpdateConfig(cfg Config) {
 		old.Port != cfg.Port ||
 		old.Device != cfg.Device ||
 		old.Baud != cfg.Baud ||
-		old.Enabled != cfg.Enabled
+		old.Enabled != cfg.Enabled ||
+		((old.Type == "modemmanager" || cfg.Type == "modemmanager") && old.MinInterval != cfg.MinInterval)
 
 	m.cfg = cfg
 	if !targetChanged {

@@ -494,6 +494,80 @@ func (a *Assembler) Consume(sentence string) (Fix, bool, error) {
 	return Fix{}, false, nil
 }
 
+// ConsumeSnapshot feeds a complete, already-grouped set of sentences that are
+// known to belong to ONE cycle — e.g. one ModemManager Location NMEA blob,
+// which caches exactly one sentence of each type. Unlike Consume it does not
+// apply the repeat/time-change cycle heuristics (a snapshot's per-type
+// sentences may carry slightly different time fields, which would make
+// Consume reset and never emit) and it emits when EITHER a GGA or an RMC was
+// present, not only when both were. Returns (fix, true, nil) when a fix was
+// assembled. Per-sentence parse and checksum failures are counted and
+// skipped, never fatal.
+func (a *Assembler) ConsumeSnapshot(sentences []string) (Fix, bool, error) {
+	a.reset()
+	sawValidRMCPosition := false
+
+	for _, raw := range sentences {
+		s := strings.TrimSpace(raw)
+		if s == "" || len(s) > 128 || s[0] != '$' {
+			continue
+		}
+		if strings.IndexByte(s[1:], '$') >= 0 {
+			continue
+		}
+
+		fields, err := Fields(s)
+		if err != nil {
+			if errors.Is(err, ErrChecksum) {
+				a.checksumErrors++
+			}
+			continue
+		}
+		if len(fields) == 0 || len(fields[0]) < 3 {
+			continue
+		}
+		kind := strings.ToUpper(fields[0])
+		kind = kind[len(kind)-3:]
+
+		switch kind {
+		case "GGA":
+			if f, perr := ParseGGA(fields); perr == nil {
+				a.gga = f
+				a.haveGGA = true
+				a.ggaTimeField = fieldAt(fields, 1)
+			}
+		case "RMC":
+			if f, perr := ParseRMC(fields); perr == nil {
+				a.rmc = f
+				a.haveRMC = true
+				if strings.ToUpper(fieldAt(fields, 2)) == "A" && fieldAt(fields, 3) != "" && fieldAt(fields, 5) != "" {
+					sawValidRMCPosition = true
+				}
+			}
+		case "GSA":
+			if mode, _, hdop, _, perr := ParseGSA(fields); perr == nil {
+				a.gsaMode = mode
+				a.gsaHDOP = hdop
+				a.haveGSA = true
+			}
+		}
+	}
+
+	if !a.haveGGA && !a.haveRMC {
+		a.reset()
+		return Fix{}, false, nil
+	}
+
+	f := a.finalize()
+	// RMC alone carries no fix-quality field; ParseRMC only sets Mode for
+	// status "V". A valid RMC with a position is at least a 2D fix.
+	if f.Mode == ModeUnknown && sawValidRMCPosition {
+		f.Mode = Mode2D
+	}
+	a.reset()
+	return f, true, nil
+}
+
 // NMEAConfig configures an NMEA-0183 source: either a serial device or a
 // TCP host, never both.
 type NMEAConfig struct {

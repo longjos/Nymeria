@@ -40,11 +40,11 @@ type SmartBeaconConfig struct {
 // GPSConfig holds live host-GPS settings.
 type GPSConfig struct {
 	Enabled      bool          `yaml:"enabled" json:"enabled"`
-	Type         string        `yaml:"type" json:"type"` // gpsd | nmea
-	Host         string        `yaml:"host" json:"host"` // gpsd, or nmea-over-TCP
-	Port         int           `yaml:"port" json:"port"`
-	Device       string        `yaml:"device" json:"device"` // nmea serial
-	Baud         int           `yaml:"baud" json:"baud"`
+	Type         string        `yaml:"type" json:"type"`     // gpsd | nmea | modemmanager
+	Host         string        `yaml:"host" json:"host"`     // gpsd, or nmea-over-TCP; unused for modemmanager
+	Port         int           `yaml:"port" json:"port"`     // unused for modemmanager
+	Device       string        `yaml:"device" json:"device"` // nmea serial device; modem index ("0") or D-Bus object path for modemmanager
+	Baud         int           `yaml:"baud" json:"baud"`     // unused for modemmanager
 	MinInterval  time.Duration `yaml:"min_interval" json:"minInterval"`
 	StaleAfter   time.Duration `yaml:"stale_after" json:"staleAfter"`
 	UseForBeacon bool          `yaml:"use_for_beacon" json:"useForBeacon"`
@@ -302,10 +302,19 @@ func (c *Config) Validate() error {
 			if c.GPS.Device != "" && c.GPS.Baud <= 0 {
 				return fmt.Errorf("gps.baud must be > 0 for nmea serial")
 			}
+		case "modemmanager":
+			// Modem selection is optional (blank = first GPS-capable modem) and is
+			// validated at connect time against what ModemManager actually reports,
+			// so there is nothing to check here. host/port/baud are ignored rather
+			// than rejected: DefaultConfig always populates them and the settings
+			// DTO always round-trips them, so rejecting would make Settings
+			// unsaveable. Linux-only-ness is NOT checked here either — config has no
+			// build tags; the source reports "only supported on Linux" through
+			// SourceStatus.Error, which the GPS pill and Settings already render.
 		case "":
 			return fmt.Errorf("gps.type is required when gps.enabled")
 		default:
-			return fmt.Errorf("gps.type must be gpsd or nmea, got %q", c.GPS.Type)
+			return fmt.Errorf("gps.type must be gpsd, nmea, or modemmanager, got %q", c.GPS.Type)
 		}
 		if c.GPS.MinInterval < 0 {
 			return fmt.Errorf("gps.min_interval must be >= 0")

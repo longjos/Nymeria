@@ -430,3 +430,260 @@ func TestNMEASourceReconnects(t *testing.T) {
 		t.Errorf("status.Type = %q, want nmea", status.Type)
 	}
 }
+
+// ── Assembler.ConsumeSnapshot ────────────────────────────────────────
+
+// Verified NMEA fixtures for ConsumeSnapshot, shared with modemmanager_test.go.
+const (
+	snapGGA = `$GPGGA,123519.00,4807.038,N,01131.000,E,1,08,0.9,545.4,M,46.9,M,,*69`
+	snapRMC = `$GPRMC,123519.00,A,4807.038,N,01131.000,E,022.4,084.4,230394,003.1,W*44`
+	snapGSA = `$GPGSA,A,3,04,05,,09,12,,,24,,,,,2.5,1.3,2.1*39`
+
+	// Same triad but RMC's time field is 9s behind GGA's — the regression
+	// guard for the whole snapshot design (see the test using it below).
+	snapRMCTimeSkew = `$GPRMC,123510.00,A,4807.038,N,01131.000,E,022.4,084.4,230394,003.1,W*4D`
+
+	// Straight from the ModemManager introspection XML's own worked example:
+	// a void RMC and an all-empty GGA. MM publishes NMEA regardless of fix
+	// validity, so the parser's validity checks carry the whole load.
+	snapRMCVoid  = `$GPRMC,134526.92,V,,,,,,,030136,,,N*76`
+	snapGGAEmpty = `$GPGGA,,,,,,0,00,0.5,,M,0.0001999,M,0.0000099,0000*45`
+
+	// Multi-constellation talker IDs — 1s later than the GP triad.
+	snapRMCGN = `$GNRMC,123520.00,A,4807.040,N,01131.002,E,024.0,085.0,230394,003.1,W*5A`
+	snapGGAGN = `$GNGGA,123520.00,4807.040,N,01131.002,E,1,09,0.8,546.0,M,46.9,M,,*77`
+	snapGSAGN = `$GNGSA,A,3,04,05,,09,12,,,24,,,,,2.4,1.2,2.0*26`
+
+	// snapGSABadChecksum is snapGSA with one checksum hex digit flipped.
+	snapGSABadChecksum = `$GPGSA,A,3,04,05,,09,12,,,24,,,,,2.5,1.3,2.1*49`
+)
+
+func TestAssemblerConsumeSnapshot(t *testing.T) {
+	tests := []struct {
+		name      string
+		sentences []string
+		wantOK    bool
+		check     func(t *testing.T, f Fix)
+	}{
+		{
+			name:      "full triad in GSA,GGA,RMC order",
+			sentences: []string{snapGSA, snapGGA, snapRMC},
+			wantOK:    true,
+			check: func(t *testing.T, f Fix) {
+				if f.Mode != Mode3D {
+					t.Errorf("Mode = %v, want Mode3D", f.Mode)
+				}
+				approxEqual(t, "lat", f.Lat, 48.1173, 1e-4)
+				approxEqual(t, "lon", f.Lon, 11.516667, 1e-4)
+				if !f.HasAltitude || f.Altitude != 545.4 {
+					t.Errorf("Altitude = %v (has=%v), want 545.4 (true)", f.Altitude, f.HasAltitude)
+				}
+				approxEqual(t, "speed", f.SpeedKnots, 22.4, 1e-9)
+				approxEqual(t, "course", f.Course, 84.4, 1e-9)
+				if !f.HasCourse {
+					t.Error("HasCourse = false, want true")
+				}
+				if f.Satellites != 8 {
+					t.Errorf("Satellites = %d, want 8", f.Satellites)
+				}
+				approxEqual(t, "hdop", f.HDOP, 1.3, 1e-9)
+				approxEqual(t, "accuracy", f.Accuracy, 6.5, 1e-9)
+				want := time.Date(1994, 3, 23, 12, 35, 19, 0, time.UTC)
+				if !f.Time.Equal(want) {
+					t.Errorf("Time = %v, want %v", f.Time, want)
+				}
+			},
+		},
+		{
+			// Regression guard: Consume would emit at GGA (before GSA
+			// arrives) and throw the GSA's Mode/HDOP away. ConsumeSnapshot
+			// must produce the IDENTICAL fix regardless of arrival order.
+			name:      "full triad in arrival order RMC,GGA,GSA",
+			sentences: []string{snapRMC, snapGGA, snapGSA},
+			wantOK:    true,
+			check: func(t *testing.T, f Fix) {
+				if f.Mode != Mode3D {
+					t.Errorf("Mode = %v, want Mode3D", f.Mode)
+				}
+				approxEqual(t, "hdop", f.HDOP, 1.3, 1e-9)
+				if f.Satellites != 8 {
+					t.Errorf("Satellites = %d, want 8", f.Satellites)
+				}
+			},
+		},
+		{
+			// THE single most important test in this file: MM caches one
+			// sentence per type independently, so a real blob can carry a
+			// GGA and RMC whose time fields disagree by a few seconds.
+			// Consume treats that as a cycle boundary and — because GSA
+			// hasn't arrived and GGA+RMC never coexist in the same
+			// accumulator — emits NOTHING, forever. ConsumeSnapshot has no
+			// such heuristic and must still assemble a fix.
+			name:      "time-skewed blob still assembles (Consume would emit nothing forever)",
+			sentences: []string{snapGGA, snapRMCTimeSkew},
+			wantOK:    true,
+			check: func(t *testing.T, f Fix) {
+				if !f.HasPosition() {
+					t.Error("expected a position fix despite the GGA/RMC time skew")
+				}
+			},
+		},
+		{
+			name:      "GGA only",
+			sentences: []string{snapGGA},
+			wantOK:    true,
+			check: func(t *testing.T, f Fix) {
+				if f.Mode != Mode3D {
+					t.Errorf("Mode = %v, want Mode3D", f.Mode)
+				}
+				if f.SpeedKnots != 0 || f.HasCourse {
+					t.Errorf("expected zero speed/course from GGA-only, got speed=%v hasCourse=%v", f.SpeedKnots, f.HasCourse)
+				}
+			},
+		},
+		{
+			name:      "RMC only, status A, with position",
+			sentences: []string{snapRMC},
+			wantOK:    true,
+			check: func(t *testing.T, f Fix) {
+				if f.Mode != Mode2D {
+					t.Errorf("Mode = %v, want Mode2D", f.Mode)
+				}
+				approxEqual(t, "speed", f.SpeedKnots, 22.4, 1e-9)
+				if !f.HasCourse {
+					t.Error("HasCourse = false, want true")
+				}
+			},
+		},
+		{
+			name:      "RMC only, status V",
+			sentences: []string{snapRMCVoid},
+			wantOK:    true,
+			check: func(t *testing.T, f Fix) {
+				if f.Mode != ModeNoFix {
+					t.Errorf("Mode = %v, want ModeNoFix", f.Mode)
+				}
+				if f.Lat != 0 || f.Lon != 0 {
+					t.Errorf("Lat/Lon = %v/%v, want 0/0", f.Lat, f.Lon)
+				}
+			},
+		},
+		{
+			name:      "empty GGA + void RMC",
+			sentences: []string{snapGGAEmpty, snapRMCVoid},
+			wantOK:    true,
+			check: func(t *testing.T, f Fix) {
+				if f.Mode != ModeNoFix {
+					t.Errorf("Mode = %v, want ModeNoFix", f.Mode)
+				}
+				if f.HasPosition() {
+					t.Error("HasPosition() = true, want false")
+				}
+			},
+		},
+		{
+			name:      "GSA only, no position sentence",
+			sentences: []string{snapGSA},
+			wantOK:    false,
+		},
+		{
+			name:      "empty slice",
+			sentences: nil,
+			wantOK:    false,
+		},
+		{
+			name:      "GN talkers",
+			sentences: []string{snapGSAGN, snapGGAGN, snapRMCGN},
+			wantOK:    true,
+			check: func(t *testing.T, f Fix) {
+				if f.Mode != Mode3D {
+					t.Errorf("Mode = %v, want Mode3D", f.Mode)
+				}
+				if f.Satellites != 9 {
+					t.Errorf("Satellites = %d, want 9", f.Satellites)
+				}
+				approxEqual(t, "hdop", f.HDOP, 1.2, 1e-9)
+			},
+		},
+		{
+			name:      "one corrupt checksum among good sentences",
+			sentences: []string{snapGSABadChecksum, snapGGA, snapRMC},
+			wantOK:    true,
+			check: func(t *testing.T, f Fix) {
+				if f.Satellites != 8 {
+					t.Errorf("Satellites = %d, want 8 (from GGA, GSA rejected)", f.Satellites)
+				}
+			},
+		},
+		{
+			name:      "junk and oversized line mixed in",
+			sentences: []string{"not nmea at all", strings.Repeat("$GPGGA,", 30), snapGGA, snapRMC},
+			wantOK:    true,
+			check: func(t *testing.T, f Fix) {
+				if !f.HasPosition() {
+					t.Error("expected the good GGA/RMC to still assemble")
+				}
+			},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			asm := NewAssembler(func() time.Time { return time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC) })
+			f, ok, err := asm.ConsumeSnapshot(tt.sentences)
+			if err != nil {
+				t.Fatalf("ConsumeSnapshot: unexpected error %v", err)
+			}
+			if ok != tt.wantOK {
+				t.Fatalf("ok = %v, want %v", ok, tt.wantOK)
+			}
+			if ok && tt.check != nil {
+				tt.check(t, f)
+			}
+		})
+	}
+}
+
+func TestAssemblerConsumeSnapshotCorruptChecksumCounted(t *testing.T) {
+	asm := NewAssembler(nil)
+	f, ok, err := asm.ConsumeSnapshot([]string{snapGSABadChecksum, snapGGA, snapRMC})
+	if err != nil {
+		t.Fatalf("ConsumeSnapshot: %v", err)
+	}
+	if !ok || !f.HasPosition() {
+		t.Fatalf("expected a fix assembled from GGA+RMC despite bad GSA checksum")
+	}
+	if got := asm.ChecksumErrors(); got != 1 {
+		t.Errorf("ChecksumErrors() = %d, want 1", got)
+	}
+}
+
+// TestAssemblerConsumeSnapshotLeavesNoResidue proves ConsumeSnapshot resets
+// state on both entry and exit: driving two different blobs through the SAME
+// Assembler must not let the first blob's Satellites/HDOP leak into the
+// second's result.
+func TestAssemblerConsumeSnapshotLeavesNoResidue(t *testing.T) {
+	asm := NewAssembler(nil)
+
+	f1, ok, err := asm.ConsumeSnapshot([]string{snapGSA, snapGGA, snapRMC})
+	if err != nil || !ok {
+		t.Fatalf("first ConsumeSnapshot: ok=%v err=%v", ok, err)
+	}
+	if f1.Satellites != 8 {
+		t.Fatalf("first fix satellites = %d, want 8", f1.Satellites)
+	}
+
+	f2, ok, err := asm.ConsumeSnapshot([]string{snapRMCVoid})
+	if err != nil || !ok {
+		t.Fatalf("second ConsumeSnapshot: ok=%v err=%v", ok, err)
+	}
+	if f2.Satellites != 0 {
+		t.Errorf("second fix satellites = %d, want 0 (residue from first blob)", f2.Satellites)
+	}
+	if f2.HDOP != 0 {
+		t.Errorf("second fix HDOP = %v, want 0 (residue from first blob)", f2.HDOP)
+	}
+	if f2.Mode != ModeNoFix {
+		t.Errorf("second fix Mode = %v, want ModeNoFix", f2.Mode)
+	}
+}

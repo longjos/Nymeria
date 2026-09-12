@@ -639,7 +639,7 @@
 							<div class="unit-toggle">
 								<button
 									class="unit-option"
-									class:active={settings.gps.type !== 'nmea'}
+									class:active={settings.gps.type === 'gpsd'}
 									disabled={!settings.gps.enabled}
 									onclick={() => { if (settings) settings.gps.type = 'gpsd'; }}
 								>gpsd</button>
@@ -649,6 +649,12 @@
 									disabled={!settings.gps.enabled}
 									onclick={() => { if (settings) settings.gps.type = 'nmea'; }}
 								>NMEA</button>
+								<button
+									class="unit-option"
+									class:active={settings.gps.type === 'modemmanager'}
+									disabled={!settings.gps.enabled}
+									onclick={() => { if (settings) settings.gps.type = 'modemmanager'; }}
+								>Modem</button>
 							</div>
 						</div>
 
@@ -698,7 +704,7 @@
 									</div>
 								</div>
 							{/if}
-						{:else}
+						{:else if settings.gps.type === 'gpsd'}
 							<div class="field-group">
 								<div class="field-row half">
 									<label for="gps-host">Host</label>
@@ -709,6 +715,25 @@
 									<input id="gps-port" type="number" bind:value={settings.gps.port} placeholder="2947" disabled={!settings.gps.enabled} />
 								</div>
 							</div>
+						{:else}
+							<div class="field-row">
+								<label for="gps-modem">Modem</label>
+								<input
+									id="gps-modem"
+									type="text"
+									bind:value={settings.gps.device}
+									placeholder="first GPS-capable modem"
+									disabled={!settings.gps.enabled}
+								/>
+							</div>
+							<p class="field-help">
+								Uses the GNSS receiver inside an LTE modem via ModemManager (Linux only).
+								Leave blank to use the first GPS-capable modem, or enter a modem index
+								("0") or a D-Bus object path. Requires a polkit rule granting this user
+								the ModemManager Device.Control and Location actions — see the
+								<a href="https://github.com/longjos/Nymeria/wiki/ModemManager-GPS" target="_blank" rel="noopener noreferrer">ModemManager GPS wiki page</a>.
+								Host, port, and baud are not used for this source.
+							</p>
 						{/if}
 
 						<div class="field-group">

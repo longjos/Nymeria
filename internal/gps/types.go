@@ -66,7 +66,7 @@ func (f Fix) Age(now time.Time) time.Duration { return now.Sub(f.ReceivedAt) }
 
 // SourceStatus is the connection health of one Source.
 type SourceStatus struct {
-	Type      string    `json:"type"` // "gpsd" | "nmea"
+	Type      string    `json:"type"` // "gpsd" | "nmea" | "modemmanager"
 	Target    string    `json:"target"`
 	Connected bool      `json:"connected"`
 	Error     string    `json:"error,omitempty"`
