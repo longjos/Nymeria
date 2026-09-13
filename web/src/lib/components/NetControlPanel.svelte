@@ -20,6 +20,9 @@
 		orderedCheckpoints
 	} from '$lib/stores/netcontrol';
 	import { annotationList } from '$lib/stores/annotations';
+	import OperatorPicker from './OperatorPicker.svelte';
+	import MissionPicker from './MissionPicker.svelte';
+	import MissionOpChip from './MissionOpChip.svelte';
 	import { categoryMeta, isTerminalStatus } from '$lib/annotationMeta';
 	import { stationCategoryMeta } from '$lib/stationCategoryMeta';
 	import { parseCommand, getModeIndicator, getAutocompleteContext, type ParsedCommand, type AutocompleteContext } from '$lib/commandParser';
@@ -137,7 +140,9 @@
 	let newMissionTitle = $state('');
 	let newMissionDesc = $state('');
 	let newMissionPriority = $state('routine');
-	let newMissionAssign = $state('');
+	// Check-in IDs, not callsigns: assignment is addressed by check-in, and the
+	// mission card renders N operators, so the create form must too.
+	let newMissionAssigneeIds = $state<string[]>([]);
 	let titleEl = $state<HTMLInputElement>();
 
 	// Mission location — one source of truth (design doc task #92 §3).
@@ -312,7 +317,7 @@
 				newMissionTitle = backup.title;
 				newMissionDesc = backup.desc;
 				newMissionPriority = backup.priority;
-				newMissionAssign = backup.assign;
+				newMissionAssigneeIds = backup.assigneeIds ?? [];
 				missionLocLabel = backup.locLabel;
 				missionLocLat = backup.locLat;
 				missionLocLon = backup.locLon;
@@ -1252,7 +1257,7 @@
 				title: newMissionTitle,
 				desc: newMissionDesc,
 				priority: newMissionPriority,
-				assign: newMissionAssign,
+				assigneeIds: [...newMissionAssigneeIds],
 				locLabel: missionLocLabel,
 				locLat: missionLocLat,
 				locLon: missionLocLon,
@@ -1504,7 +1509,7 @@
 		newMissionTitle = '';
 		newMissionDesc = '';
 		newMissionPriority = 'routine';
-		newMissionAssign = '';
+		newMissionAssigneeIds = [];
 		missionLocLabel = '';
 		missionLocLat = null;
 		missionLocLon = null;
@@ -1527,6 +1532,12 @@
 		resetW3WSuggestState();
 	}
 
+	function toggleMissionAssignee(ciId: string) {
+		newMissionAssigneeIds = newMissionAssigneeIds.includes(ciId)
+			? newMissionAssigneeIds.filter((id) => id !== ciId)
+			: [...newMissionAssigneeIds, ciId];
+	}
+
 	function cancelMissionForm() {
 		resetMissionForm();
 		onClearMissionDraft?.();
@@ -1542,12 +1553,12 @@
 		formError = '';
 		missionSubmitting = true;
 		try {
-			const data: Partial<NetMission> = {
+			const data: Partial<NetMission> & { assigneeIds?: string[] } = {
 				title: newMissionTitle.trim(),
 				description: newMissionDesc.trim(),
 				priority: newMissionPriority,
-				assignedTo: newMissionAssign,
 				location: missionLocLabel.trim(),
+				assigneeIds: newMissionAssigneeIds,
 			};
 			if (missionLocLat != null && missionLocLon != null) {
 				data.lat = missionLocLat;
@@ -1572,10 +1583,27 @@
 			}
 			resetMissionForm();
 			onClearMissionDraft?.();
+			const assignedCount = mission.assignedOperators?.length ?? 0;
+			const opPart =
+				assignedCount === 0
+					? ''
+					: assignedCount === 1
+						? ' — 1 operator assigned'
+						: ` — ${assignedCount} operators assigned`;
 			showToast(
-				w3wToastWords ? `Mission created at ${formatWords(w3wToastWords)}` : `Mission created: ${mission.title}`,
+				(w3wToastWords ? `Mission created at ${formatWords(w3wToastWords)}` : `Mission created: ${mission.title}`) + opPart,
 				'success'
 			);
+			// A roster mismatch never fails the create — say so instead of
+			// silently dropping the operator.
+			const skipped = mission.skippedAssignees ?? [];
+			if (skipped.length > 0) {
+				showToast(
+					`${skipped.length} operator${skipped.length === 1 ? '' : 's'} not in roster — mission created without them`,
+					'error',
+					5000
+				);
+			}
 			if (failed > 0) {
 				showToast(`Mission created — ${failed} annotation link(s) failed`, 'error', 5000);
 			}
@@ -1604,24 +1632,32 @@
 		}
 	}
 
-	async function handleAssignMission(ciId: string, missionId: string) {
+	// Assignment is ONE operation, addressable from either object. The mission
+	// card and the roster card both land here.
+	async function assignOperator(missionId: string, ciId: string) {
 		if (!$activeNet) return;
 		try {
-			await api.assignMission($activeNet.id, ciId, missionId);
+			await api.assignMissionOperator($activeNet.id, missionId, ciId);
+			assigningMissionId = null;
 			assigningCheckInId = null;
 		} catch (e) {
-			console.error('Assign mission failed:', e);
+			console.error('Assign failed:', e);
+			showToast('Assign failed — check the connection', 'error', 5000);
 		}
 	}
 
-	async function handleUnassignMission(ciId: string, missionId: string) {
+	async function unassignOperator(missionId: string, ciId: string) {
 		if (!$activeNet) return;
 		try {
-			await api.unassignMission($activeNet.id, ciId, missionId);
+			await api.unassignMissionOperator($activeNet.id, missionId, ciId);
 		} catch (e) {
-			console.error('Unassign mission failed:', e);
+			console.error('Unassign failed:', e);
+			showToast('Unassign failed — check the connection', 'error', 5000);
 		}
 	}
+
+	// Roster-side wrapper: the chip strip is keyed by (checkIn, mission).
+	const handleUnassignMission = (ciId: string, missionId: string) => unassignOperator(missionId, ciId);
 
 	function toggleDeviceList(ciId: string) {
 		expandedDeviceId = expandedDeviceId === ciId ? null : ciId;
@@ -1973,25 +2009,6 @@
 			onFlyToBounds?.(coords);
 		} else if (coords.length === 1) {
 			onFlyTo?.(coords[0].lat, coords[0].lon);
-		}
-	}
-
-	async function handleAssignOperatorToMission(missionId: string, ciId: string) {
-		if (!$activeNet) return;
-		try {
-			await api.assignMission($activeNet.id, ciId, missionId);
-			assigningMissionId = null;
-		} catch (e) {
-			console.error('Assign operator to mission failed:', e);
-		}
-	}
-
-	async function handleUnassignFromMission(ciId: string, missionId: string) {
-		if (!$activeNet) return;
-		try {
-			await api.unassignMission($activeNet.id, ciId, missionId);
-		} catch (e) {
-			console.error('Unassign from mission failed:', e);
 		}
 	}
 
@@ -2499,12 +2516,9 @@
 										</button>
 									{/if}
 								</div>
-								{#if ci.assignment}
-									<div class="op-assignment">📋 {ci.assignment}</div>
-								{/if}
 								{#if ci.missionIds?.length > 0}
 									<div class="op-mission-chips">
-									{#each ci.missionIds as mid}
+									{#each ci.missionIds as mid (mid)}
 										{@const linkedMission = $missions.find((m) => m.id === mid)}
 										{#if linkedMission}
 											<!-- svelte-ignore a11y_no_static_element_interactions -->
@@ -2517,7 +2531,7 @@
 												>
 													<span class="mission-chip-dot"></span>
 													<span class="mission-chip-title">{linkedMission.title}</span>
-													<button class="mission-chip-remove" title="Unassign mission" onclick={() => handleUnassignMission(ci.id, mid)}>✕</button>
+													<button class="mission-chip-remove" title="Unassign mission" aria-label="Unassign {linkedMission.title}" onclick={(e) => { e.stopPropagation(); handleUnassignMission(ci.id, mid); }}>✕</button>
 												</div>
 										{/if}
 									{/each}
@@ -2578,7 +2592,7 @@
 									{/each}
 								</select>
 								<span class="bar-spacer"></span>
-								<button class="bar-btn" title="Assign Mission" onclick={() => { assigningCheckInId = assigningCheckInId === ci.id ? null : ci.id; }}>Assign</button>
+								<button class="bar-btn" class:active={assigningCheckInId === ci.id} aria-expanded={assigningCheckInId === ci.id} title="Assign Mission" onclick={() => { assigningCheckInId = assigningCheckInId === ci.id ? null : ci.id; }}>Assign</button>
 								<button class="bar-btn" title="Note" onclick={() => { if (noteCheckInId === ci.id) { closeNoteComposer(); } else { openNoteComposer({ checkInId: ci.id }); } }}>Note</button>
 								<div class="overflow-wrap">
 									<button class="bar-btn overflow-trigger" onclick={() => { overflowOpenId = overflowOpenId === ci.id ? null : ci.id; }} title="More actions">
@@ -2631,17 +2645,13 @@
 
 							{#if assigningCheckInId === ci.id}
 								<div class="card-expand">
-									<div class="assign-picker">
-										{#each $missions.filter((m) => m.status !== 'complete' && !ci.missionIds?.includes(m.id)) as m}
-											<button class="assign-option" onclick={() => handleAssignMission(ci.id, m.id)}>
-												<span class="priority-dot" style="background: {trafficColors[m.priority] ?? '#6b7280'}"></span>
-												{m.title}
-											</button>
-										{/each}
-										{#if $missions.filter((m) => m.status !== 'complete' && !ci.missionIds?.includes(m.id)).length === 0}
-											<span class="assign-empty">No available missions</span>
-										{/if}
-									</div>
+									<MissionPicker
+										missions={$missions.filter((mm) => mm.status !== 'complete')}
+										excludeIds={ci.missionIds ?? []}
+										ariaLabel="Assign mission to {ci.callsign}"
+										onSelect={(mm) => assignOperator(mm.id, ci.id)}
+										onClose={() => { assigningCheckInId = null; }}
+									/>
 								</div>
 							{/if}
 
@@ -3019,17 +3029,36 @@
 							{/each}
 						</div>
 
-						<select
-							class="mission-assign-select"
-							bind:value={newMissionAssign}
-							aria-label="Assign to"
-							onkeydown={(e) => { if (e.key === 'Enter') { e.preventDefault(); handleCreateMission(); } }}
-						>
-							<option value="">Unassigned</option>
-							{#each $activeCheckIns as ci}
-								<option value={ci.callsign}>{ci.callsign}</option>
-							{/each}
-						</select>
+						<div class="mission-assign-field">
+							<span class="mission-assign-label">
+								Assign operators
+								{#if newMissionAssigneeIds.length > 0}<span class="link-count">({newMissionAssigneeIds.length})</span>{/if}
+							</span>
+							{#if newMissionAssigneeIds.length > 0}
+								<div class="mission-operators">
+									{#each newMissionAssigneeIds as ciId (ciId)}
+										{@const pickedCi = $activeCheckIns.find((c) => c.id === ciId)}
+										{#if pickedCi}
+											<MissionOpChip
+												callsign={pickedCi.callsign}
+												status={pickedCi.status}
+												color={statusColors[pickedCi.status]}
+												removable
+												onRemove={() => toggleMissionAssignee(pickedCi.id)}
+											/>
+										{/if}
+									{/each}
+								</div>
+							{/if}
+							<OperatorPicker
+								candidates={$activeCheckIns}
+								selectedIds={newMissionAssigneeIds}
+								mode="multi"
+								ariaLabel="Assign operators to this mission"
+								emptyLabel="No operators checked in"
+								onSelect={(ci) => toggleMissionAssignee(ci.id)}
+							/>
+						</div>
 
 						<button type="button" class="details-toggle" onclick={() => (detailsOpen = !detailsOpen)} aria-expanded={detailsOpen}>
 							<span aria-hidden="true">{detailsOpen ? '▾' : '▸'}</span>
@@ -3085,7 +3114,7 @@
 				<div class="mission-list">
 					{#each filteredMissions as m (m.id)}
 						{@const assignedOps = operatorsForMission(m.id)}
-						{@const hasNoOperators = assignedOps.length === 0 && !m.assignedTo}
+						{@const hasNoOperators = assignedOps.length === 0}
 						<div
 							class="mission-card priority-{m.priority}"
 							class:complete={m.status === 'complete'}
@@ -3139,20 +3168,15 @@
 
 								<!-- Assigned operators -->
 								<div class="mission-operators">
-									{#if assignedOps.length > 0}
-										{#each assignedOps as op}
-											<div class="mission-op-chip">
-												<span class="mission-op-dot" style="background: {statusColors[op.status]}"></span>
-												<span class="mission-op-call">{op.callsign}</span>
-												<span class="mission-op-status">{op.status}</span>
-												{#if m.status !== 'complete'}
-													<button class="mission-op-remove" title="Unassign" onclick={() => handleUnassignFromMission(op.id, m.id)}>✕</button>
-												{/if}
-											</div>
-										{/each}
-									{:else if m.assignedTo}
-										<span class="mission-assigned-text">→ {m.assignedTo}</span>
-									{/if}
+									{#each assignedOps as op (op.id)}
+										<MissionOpChip
+											callsign={op.callsign}
+											status={op.status}
+											color={statusColors[op.status]}
+											removable={m.status !== 'complete'}
+											onRemove={() => unassignOperator(m.id, op.id)}
+										/>
+									{/each}
 									{#if hasNoOperators && m.status !== 'complete'}
 										<span class="mission-unassigned">No operators assigned</span>
 									{/if}
@@ -3197,26 +3221,16 @@
 
 								<!-- Assign operator picker (from mission side) -->
 								{#if assigningMissionId === m.id}
-									<div class="assign-picker">
-										{#each $activeCheckIns.filter((ci) => !ci.missionIds?.includes(m.id)) as ci}
-											<button
-												class="assign-option"
-												onclick={() => handleAssignOperatorToMission(m.id, ci.id)}
-												onmouseenter={() => handleAssignPickerHover(m, ci)}
-												onmouseleave={() => hoveredCheckInId.set(null)}
-											>
-												<span class="mission-op-dot" style="background: {statusColors[ci.status]}"></span>
-												{ci.callsign}
-												{#if ci.tacticalCall}
-													<span class="assign-option-tactical">"{ci.tacticalCall}"</span>
-												{/if}
-												{#if ci.lat != null}<span class="assign-option-pos">GPS</span>{/if}
-											</button>
-										{/each}
-										{#if $activeCheckIns.filter((ci) => !ci.missionIds?.includes(m.id)).length === 0}
-											<span class="assign-empty">No available operators</span>
-										{/if}
-									</div>
+									<OperatorPicker
+										candidates={$activeCheckIns}
+										selectedIds={$activeCheckIns.filter((ci) => ci.missionIds?.includes(m.id)).map((ci) => ci.id)}
+										mode="single"
+										ariaLabel="Assign operator to {m.title}"
+										onSelect={(ci) => assignOperator(m.id, ci.id)}
+										onHover={(ci) => handleAssignPickerHover(m, ci)}
+										onHoverEnd={() => hoveredCheckInId.set(null)}
+										onClose={() => { assigningMissionId = null; }}
+									/>
 								{/if}
 
 								<!-- Inline note preview on mission card -->
@@ -3300,7 +3314,7 @@
 								<span class="bar-spacer"></span>
 								{#if m.status !== 'complete'}
 									<button class="bar-btn" title="Link annotation" onclick={() => { linkingAnnotationMissionId = linkingAnnotationMissionId === m.id ? null : m.id; }}>+ Ann</button>
-									<button class="bar-btn" title="Assign operator" onclick={() => { assigningMissionId = assigningMissionId === m.id ? null : m.id; }}>+ Assign</button>
+									<button class="bar-btn" class:active={assigningMissionId === m.id} aria-expanded={assigningMissionId === m.id} title="Assign operator" onclick={() => { assigningMissionId = assigningMissionId === m.id ? null : m.id; }}>+ Assign</button>
 									<button class="bar-btn" title="Add note" onclick={() => { if (noteMissionId === m.id) { closeNoteComposer(); } else { openNoteComposer({ missionId: m.id }); } }}>+ Note</button>
 								{/if}
 								{#if m.status === 'open'}
@@ -4090,12 +4104,6 @@
 		border-color: var(--color-accent);
 	}
 
-	.op-assignment {
-		font-size: 0.8rem;
-		color: var(--color-accent);
-		margin-top: 3px;
-	}
-
 	/* Roster mission chips */
 	.op-mission-chips {
 		display: flex;
@@ -4159,55 +4167,6 @@
 
 	.mission-chip-remove:hover {
 		color: #ef4444;
-	}
-
-	.assign-picker {
-		display: flex;
-		flex-direction: column;
-		gap: 1px;
-		background: var(--color-bg);
-		border: 1px solid var(--color-primary);
-		border-radius: var(--radius-sm);
-		max-height: 160px;
-		overflow-y: auto;
-		min-width: 0;
-	}
-
-	.assign-option {
-		display: flex;
-		align-items: center;
-		gap: 8px;
-		padding: 10px 12px;
-		background: none;
-		border: none;
-		border-bottom: 1px solid var(--color-primary);
-		color: var(--color-text);
-		font-size: 0.8rem;
-		text-align: left;
-		cursor: pointer;
-		min-height: 44px;
-	}
-
-	.assign-option:hover {
-		background: var(--color-primary);
-	}
-
-	.assign-option:last-child {
-		border-bottom: none;
-	}
-
-	.assign-empty {
-		padding: 10px 12px;
-		font-size: 0.75rem;
-		color: var(--color-text-muted);
-		font-style: italic;
-	}
-
-	.priority-dot {
-		width: 8px;
-		height: 8px;
-		border-radius: 50%;
-		flex-shrink: 0;
 	}
 
 	.missed-badge {
@@ -4858,8 +4817,7 @@
 	}
 
 	.mission-form input,
-	.mission-form textarea,
-	.mission-form select {
+	.mission-form textarea {
 		background: var(--color-bg);
 		border: 1px solid var(--color-primary);
 		border-radius: var(--radius-sm);
@@ -4872,6 +4830,20 @@
 
 	.mission-form textarea {
 		resize: vertical;
+	}
+
+	.mission-assign-field {
+		display: flex;
+		flex-direction: column;
+		gap: 6px;
+		min-width: 0;
+	}
+
+	.mission-assign-label {
+		font-size: 0.7rem;
+		text-transform: uppercase;
+		letter-spacing: 0.04em;
+		color: var(--color-text-muted);
 	}
 
 	.mission-list {
@@ -5038,60 +5010,8 @@
 		margin-top: 4px;
 	}
 
-	.mission-op-chip {
-		display: inline-flex;
-		align-items: center;
-		gap: 4px;
-		background: var(--color-bg);
-		border: 1px solid var(--color-primary);
-		border-radius: var(--radius-sm);
-		padding: 4px 8px;
-		font-size: 0.72rem;
-		min-height: 28px;
-	}
-
-	.mission-op-dot {
-		width: 8px;
-		height: 8px;
-		border-radius: 50%;
-		flex-shrink: 0;
-	}
-
-	.mission-op-call {
-		font-family: monospace;
-		font-weight: 600;
-	}
-
-	.mission-op-status {
-		color: var(--color-text-muted);
-		font-size: 0.65rem;
-		text-transform: uppercase;
-	}
-
-	.mission-op-remove {
-		background: none;
-		border: none;
-		color: var(--color-text-muted);
-		font-size: 0.8rem;
-		padding: 2px 6px;
-		cursor: pointer;
-		line-height: 1;
-		min-width: 28px;
-		min-height: 28px;
-		display: flex;
-		align-items: center;
-		justify-content: center;
-	}
-
-	.mission-op-remove:hover {
-		color: #ef4444;
-	}
-
-	.mission-assigned-text {
-		font-family: monospace;
-		font-size: 0.8rem;
-		color: var(--color-accent);
-	}
+	/* Chip visuals live in MissionOpChip.svelte — the create form and the
+	   mission card render the same component so they cannot drift. */
 
 	.mission-unassigned {
 		font-size: 0.75rem;
@@ -5099,17 +5019,54 @@
 		font-style: italic;
 	}
 
-	.assign-option-tactical {
-		font-size: 0.7rem;
-		color: var(--color-accent);
+	/* Shell for the annotation-link picker, the one picker left in this file.
+	   OperatorPicker/MissionPicker carry their own copy — Svelte scoped styles
+	   cannot be shared, and hoisting these to app.css would leak globals. */
+	.assign-picker {
+		display: flex;
+		flex-direction: column;
+		gap: 1px;
+		background: var(--color-bg);
+		border: 1px solid var(--color-primary);
+		border-radius: var(--radius-sm);
+		max-height: 160px;
+		overflow-y: auto;
+		min-width: 0;
 	}
 
-	.assign-option-pos {
-		font-size: 0.6rem;
-		font-weight: 700;
-		color: #22c55e;
-		margin-left: auto;
-		letter-spacing: 0.04em;
+	.assign-option {
+		display: flex;
+		align-items: center;
+		gap: 8px;
+		padding: 10px 12px;
+		background: none;
+		border: none;
+		border-bottom: 1px solid var(--color-primary);
+		color: var(--color-text);
+		font-size: 0.8rem;
+		text-align: left;
+		cursor: pointer;
+		min-height: 44px;
+	}
+
+	.assign-option:hover {
+		background: var(--color-primary);
+	}
+
+	.assign-option:last-of-type {
+		border-bottom: none;
+	}
+
+	.assign-option:focus-visible {
+		outline: 2px solid var(--color-accent);
+		outline-offset: -2px;
+	}
+
+	.assign-empty {
+		padding: 10px 12px;
+		font-size: 0.75rem;
+		color: var(--color-text-muted);
+		font-style: italic;
 	}
 
 	.mission-action-bar {

@@ -17,7 +17,7 @@ import (
 	_ "modernc.org/sqlite"
 )
 
-const currentSchemaVersion = 22
+const currentSchemaVersion = 23
 
 // SQLiteStore implements Store using modernc.org/sqlite.
 type SQLiteStore struct {
@@ -206,6 +206,12 @@ func (s *SQLiteStore) migrate() error {
 	if version < 22 {
 		if err := s.migrateV22(); err != nil {
 			return fmt.Errorf("migrate v22: %w", err)
+		}
+	}
+
+	if version < 23 {
+		if err := s.migrateV23(); err != nil {
+			return fmt.Errorf("migrate v23: %w", err)
 		}
 	}
 
@@ -1262,12 +1268,12 @@ func (s *SQLiteStore) SaveNetCheckIn(ci NetCheckIn) error {
 	_, err := s.db.Exec(`
 		INSERT OR REPLACE INTO net_check_ins
 			(id, net_id, callsign, tactical_call, operator_name, status, traffic,
-			 source, category, location, lat, lon, assignment,
+			 source, category, location, lat, lon,
 			 mission_ids, tracked_stations, checked_in_at, checked_out_at, last_heard, missed_roll_calls)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
 		ci.ID, ci.NetID, ci.Callsign, ci.TacticalCall, ci.OperatorName,
 		ci.Status, ci.Traffic, source, category, ci.Location,
-		lat, lon, ci.Assignment,
+		lat, lon,
 		missionIDsJSON, trackedJSON, ci.CheckedInAt.UTC(), checkedOutAt, ci.LastHeard.UTC(), ci.MissedRollCalls,
 	)
 	if err != nil {
@@ -1279,7 +1285,7 @@ func (s *SQLiteStore) SaveNetCheckIn(ci NetCheckIn) error {
 func (s *SQLiteStore) LoadNetCheckIns(netID string) ([]NetCheckIn, error) {
 	rows, err := s.db.Query(`
 		SELECT id, net_id, callsign, tactical_call, operator_name, status, traffic,
-		       source, category, location, lat, lon, assignment,
+		       source, category, location, lat, lon,
 		       mission_ids, tracked_stations, checked_in_at, checked_out_at, last_heard, missed_roll_calls
 		FROM net_check_ins WHERE net_id = ? ORDER BY checked_in_at ASC`, netID)
 	if err != nil {
@@ -1298,7 +1304,7 @@ func (s *SQLiteStore) LoadNetCheckIns(netID string) ([]NetCheckIn, error) {
 		if err := rows.Scan(
 			&ci.ID, &ci.NetID, &ci.Callsign, &ci.TacticalCall, &ci.OperatorName,
 			&ci.Status, &ci.Traffic, &ci.Source, &ci.Category, &ci.Location,
-			&lat, &lon, &ci.Assignment,
+			&lat, &lon,
 			&missionIDsJSON, &trackedJSON, &checkedInAt, &checkedOutAt, &lastHeard, &ci.MissedRollCalls,
 		); err != nil {
 			return nil, fmt.Errorf("scan net check-in: %w", err)
@@ -1374,7 +1380,7 @@ func (s *SQLiteStore) SaveNetMission(m NetMission) error {
 			(id, net_id, title, description, priority, status, assigned_to, location, lat, lon, created_at, completed_at)
 		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
 		m.ID, m.NetID, m.Title, m.Description, m.Priority,
-		m.Status, m.AssignedTo, m.Location, lat, lon, m.CreatedAt.UTC(), completedAt,
+		m.Status, "", m.Location, lat, lon, m.CreatedAt.UTC(), completedAt,
 	)
 	if err != nil {
 		return fmt.Errorf("save net mission: %w", err)
@@ -1384,7 +1390,7 @@ func (s *SQLiteStore) SaveNetMission(m NetMission) error {
 
 func (s *SQLiteStore) LoadNetMissions(netID string) ([]NetMission, error) {
 	rows, err := s.db.Query(`
-		SELECT id, net_id, title, description, priority, status, assigned_to,
+		SELECT id, net_id, title, description, priority, status,
 		       location, lat, lon, created_at, completed_at
 		FROM net_missions WHERE net_id = ? ORDER BY created_at ASC`, netID)
 	if err != nil {
@@ -1401,7 +1407,7 @@ func (s *SQLiteStore) LoadNetMissions(netID string) ([]NetMission, error) {
 
 		if err := rows.Scan(
 			&m.ID, &m.NetID, &m.Title, &m.Description, &m.Priority,
-			&m.Status, &m.AssignedTo, &m.Location, &lat, &lon, &createdAt, &completedAt,
+			&m.Status, &m.Location, &lat, &lon, &createdAt, &completedAt,
 		); err != nil {
 			return nil, fmt.Errorf("scan net mission: %w", err)
 		}
@@ -2689,6 +2695,104 @@ func (s *SQLiteStore) migrateV22() error {
 		return fmt.Errorf("clear schema version: %w", err)
 	}
 	if _, err := s.db.Exec(`INSERT INTO schema_version (version) VALUES (?)`, 22); err != nil {
+		return fmt.Errorf("set schema version: %w", err)
+	}
+	return nil
+}
+
+// migrateV23 folds the vestigial net_missions.assigned_to callsign into the
+// real assignment record, NetCheckIn.MissionIDs, then clears the column.
+// assigned_to was written only by the mission-create form and read by nothing,
+// so every non-empty value is an assignment the operator never actually got.
+//
+// The present-table guard mirrors migrateV22: narrow migration-test fixtures
+// hand-build only the tables their own migration touches.
+func (s *SQLiteStore) migrateV23() error {
+	var missionsPresent, checkInsPresent int
+	if err := s.db.QueryRow(
+		`SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name='net_missions'`,
+	).Scan(&missionsPresent); err != nil {
+		return fmt.Errorf("migrate v23 check net_missions table: %w", err)
+	}
+	if err := s.db.QueryRow(
+		`SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name='net_check_ins'`,
+	).Scan(&checkInsPresent); err != nil {
+		return fmt.Errorf("migrate v23 check net_check_ins table: %w", err)
+	}
+
+	if missionsPresent == 1 && checkInsPresent == 1 {
+		rows, err := s.db.Query(
+			`SELECT id, net_id, assigned_to FROM net_missions WHERE assigned_to != ''`)
+		if err != nil {
+			return fmt.Errorf("migrate v23 read missions: %w", err)
+		}
+		type pending struct{ missionID, netID, callsign string }
+		var todo []pending
+		for rows.Next() {
+			var p pending
+			if err := rows.Scan(&p.missionID, &p.netID, &p.callsign); err != nil {
+				rows.Close()
+				return fmt.Errorf("migrate v23 scan mission: %w", err)
+			}
+			todo = append(todo, p)
+		}
+		rows.Close()
+		if err := rows.Err(); err != nil {
+			return fmt.Errorf("migrate v23 iterate missions: %w", err)
+		}
+
+		for _, p := range todo {
+			var ciID, raw string
+			err := s.db.QueryRow(
+				`SELECT id, mission_ids FROM net_check_ins
+				 WHERE net_id = ? AND UPPER(callsign) = UPPER(?) AND status != 'released'
+				 ORDER BY checked_in_at DESC LIMIT 1`,
+				p.netID, p.callsign).Scan(&ciID, &raw)
+			if err == sql.ErrNoRows {
+				// Orphaned callsign — no matching roster entry. Nothing to
+				// carry forward; the column is cleared below either way.
+				continue
+			}
+			if err != nil {
+				return fmt.Errorf("migrate v23 find check-in: %w", err)
+			}
+
+			ids := []string{}
+			if raw != "" {
+				_ = json.Unmarshal([]byte(raw), &ids)
+			}
+			dup := false
+			for _, id := range ids {
+				if id == p.missionID {
+					dup = true
+					break
+				}
+			}
+			if dup {
+				continue
+			}
+			ids = append(ids, p.missionID)
+			enc, err := json.Marshal(ids)
+			if err != nil {
+				return fmt.Errorf("migrate v23 encode mission_ids: %w", err)
+			}
+			if _, err := s.db.Exec(
+				`UPDATE net_check_ins SET mission_ids = ?,
+				   status = CASE WHEN status = 'available' THEN 'assigned' ELSE status END
+				 WHERE id = ?`, string(enc), ciID); err != nil {
+				return fmt.Errorf("migrate v23 update check-in: %w", err)
+			}
+		}
+
+		if _, err := s.db.Exec(`UPDATE net_missions SET assigned_to = '' WHERE assigned_to != ''`); err != nil {
+			return fmt.Errorf("migrate v23 clear assigned_to: %w", err)
+		}
+	}
+
+	if _, err := s.db.Exec(`DELETE FROM schema_version`); err != nil {
+		return fmt.Errorf("clear schema version: %w", err)
+	}
+	if _, err := s.db.Exec(`INSERT INTO schema_version (version) VALUES (?)`, 23); err != nil {
 		return fmt.Errorf("set schema version: %w", err)
 	}
 	return nil
