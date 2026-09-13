@@ -440,6 +440,33 @@
 			<!-- Access Requests (admin only) -->
 			<PendingApprovals />
 
+			<!-- Units. Deliberately not a collapsible section: it is one binary
+			     choice that governs every number in the app — course distance,
+			     speed and temperature alike — and it was previously reachable
+			     only by opening the collapsed Weather section, where nobody
+			     looking for road distances would think to find it. Saves on
+			     click; a single preference should not need a Save button. -->
+			<div class="units-row">
+				<div class="units-copy">
+					<span class="units-title">Units</span>
+					<span class="units-hint">Distance, speed and temperature</span>
+				</div>
+				<div class="unit-toggle">
+					<button
+						class="unit-option"
+						class:active={settings.weather.units !== 'imperial'}
+						disabled={saving['weather']}
+						onclick={() => { if (settings && settings.weather.units !== 'metric') { settings.weather.units = 'metric'; saveWeather(); } }}
+					>Metric</button>
+					<button
+						class="unit-option"
+						class:active={settings.weather.units === 'imperial'}
+						disabled={saving['weather']}
+						onclick={() => { if (settings && settings.weather.units !== 'imperial') { settings.weather.units = 'imperial'; saveWeather(); } }}
+					>Imperial</button>
+				</div>
+			</div>
+
 			<!-- Station -->
 			<div class="section" class:open={openSections.station}>
 				<button class="section-header" onclick={() => toggle('station')}>
@@ -878,22 +905,6 @@
 				</button>
 				{#if openSections.weather}
 					<div class="section-body">
-						<div class="field-row">
-							<!-- svelte-ignore a11y_label_has_associated_control -->
-							<label>Units</label>
-							<div class="unit-toggle">
-								<button
-									class="unit-option"
-									class:active={settings.weather.units !== 'imperial'}
-									onclick={() => { if (settings) settings.weather.units = 'metric'; }}
-								>Metric</button>
-								<button
-									class="unit-option"
-									class:active={settings.weather.units === 'imperial'}
-									onclick={() => { if (settings) settings.weather.units = 'imperial'; }}
-								>Imperial</button>
-							</div>
-						</div>
 						<div class="field-row">
 							<label for="wx-retention">Retention Days</label>
 							<input id="wx-retention" type="number" min="1" bind:value={settings.weather.retentionDays} />
@@ -1634,5 +1645,44 @@
 
 	.unit-option:hover:not(.active) {
 		color: var(--color-text);
+	}
+
+	.unit-option:disabled {
+		cursor: default;
+		opacity: 0.6;
+	}
+
+	.units-row {
+		display: flex;
+		align-items: center;
+		justify-content: space-between;
+		gap: var(--space-md);
+		flex-wrap: wrap;
+		padding: var(--space-md);
+		background: var(--color-surface);
+		border: 1px solid var(--color-border);
+		border-radius: var(--radius-md);
+	}
+
+	.units-copy {
+		display: flex;
+		flex-direction: column;
+		gap: 2px;
+		min-width: 0;
+	}
+
+	.units-title {
+		font-size: 0.85rem;
+		font-weight: 600;
+		color: var(--color-text);
+	}
+
+	.units-hint {
+		font-size: 0.72rem;
+		color: var(--color-text-muted);
+	}
+
+	.units-row .unit-option {
+		min-height: 32px;
 	}
 </style>
