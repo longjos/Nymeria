@@ -477,13 +477,19 @@
 	.rail-btn.active {
 		color: var(--color-accent);
 		background: var(--color-primary);
-		box-shadow: inset 3px 0 0 var(--color-accent);
+		/* Accent bar rides the RIGHT inside edge on purpose: this rail is docked to
+		   the right of the viewport, so the outer edge is the screen edge — the same
+		   relationship a left-docked sidebar's left-hand bar has. The rail's own
+		   border-left is the panel side and already draws that line; do not "fix"
+		   this back to `inset 3px` (left) — that points away from both. */
+		box-shadow: inset -3px 0 0 var(--color-accent);
 	}
 
 	.pending-badge {
 		position: absolute;
 		top: 4px;
-		right: 4px;
+		/* Clears the 3px active accent bar on the right inside edge. */
+		right: 6px;
 		min-width: 14px;
 		height: 14px;
 		padding: 0 3px;
@@ -521,13 +527,15 @@
 
 	.rail-btn.net-active.active {
 		color: #22c55e;
-		box-shadow: inset 3px 0 0 #22c55e;
+		/* Right inside edge — see .rail-btn.active above. */
+		box-shadow: inset -3px 0 0 #22c55e;
 	}
 
 	.badge {
 		position: absolute;
 		top: 4px;
-		right: 2px;
+		/* Clears the 3px active accent bar on the right inside edge. */
+		right: 6px;
 		font-size: 0.5rem;
 		font-weight: 700;
 		padding: 1px 4px;
