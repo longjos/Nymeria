@@ -1,6 +1,8 @@
 package checkpoint
 
 import (
+	"bytes"
+	"encoding/json"
 	"path/filepath"
 	"testing"
 	"time"
@@ -372,5 +374,67 @@ func TestLoad(t *testing.T) {
 	}
 	if len(passages) != 1 || passages[0].Label != "lead" {
 		t.Error("passages not loaded from store")
+	}
+}
+
+// A checkpoint with no passages logged yet must serialize its passages as an
+// empty JSON array, never null. The frontend's progressElements store iterates
+// cp.passages directly; a null there throws "passages is not iterable" inside a
+// Svelte derived-store subscription, which kills the whole reactive flush and
+// wedges the UI (clicks still highlight, nothing re-renders). Checkpoints with
+// zero passages are the normal state at the start of every event, so this is
+// the default path, not an edge case.
+func TestCheckpointPassagesNeverNilJSON(t *testing.T) {
+	cpMgr, annMgr, _ := newTestManager(t)
+
+	withPassage := createCheckpointAnnotation(t, annMgr, "net-1", "CP1")
+	noPassage := createCheckpointAnnotation(t, annMgr, "net-1", "CP2")
+
+	cpMgr.SetMeta(store.CheckpointMeta{AnnotationID: withPassage.ID, NetID: "net-1", SequenceNumber: 1})
+	cpMgr.SetMeta(store.CheckpointMeta{AnnotationID: noPassage.ID, NetID: "net-1", SequenceNumber: 2})
+
+	cpMgr.LogPassage(store.CheckpointPassage{
+		CheckpointID: withPassage.ID, NetID: "net-1", Label: "lead", Direction: "through",
+	})
+
+	checkpoints, err := cpMgr.GetCheckpointsForNet("net-1")
+	if err != nil {
+		t.Fatalf("GetCheckpointsForNet failed: %v", err)
+	}
+	if len(checkpoints) != 2 {
+		t.Fatalf("expected 2 checkpoints, got %d", len(checkpoints))
+	}
+	for _, cp := range checkpoints {
+		if cp.Passages == nil {
+			t.Errorf("checkpoint seq %d: Passages is nil, want empty slice", cp.Meta.SequenceNumber)
+		}
+	}
+
+	data, err := json.Marshal(checkpoints)
+	if err != nil {
+		t.Fatalf("marshal failed: %v", err)
+	}
+	if bytes.Contains(data, []byte(`"passages":null`)) {
+		t.Errorf("passages serialized as null, want []: %s", data)
+	}
+
+	// The same guarantee must hold through GetProgress, which the net control
+	// panel fetches on open.
+	progress, err := cpMgr.GetProgress("net-1")
+	if err != nil {
+		t.Fatalf("GetProgress failed: %v", err)
+	}
+	pdata, err := json.Marshal(progress)
+	if err != nil {
+		t.Fatalf("marshal progress failed: %v", err)
+	}
+	if bytes.Contains(pdata, []byte(`"passages":null`)) {
+		t.Errorf("progress passages serialized as null, want []: %s", pdata)
+	}
+	if bytes.Contains(pdata, []byte(`"checkpoints":null`)) {
+		t.Errorf("progress checkpoints serialized as null, want []: %s", pdata)
+	}
+	if bytes.Contains(pdata, []byte(`"elements":null`)) {
+		t.Errorf("progress elements serialized as null, want []: %s", pdata)
 	}
 }

@@ -109,9 +109,9 @@
 						</span>
 						<button class="rp-detail-close" onclick={() => expandedCpId = null}>&times;</button>
 					</div>
-					{#if cp.passages.length > 0}
+					{#if (cp.passages ?? []).length > 0}
 						<div class="rp-passages">
-							{#each cp.passages.slice().reverse() as p (p.id)}
+							{#each (cp.passages ?? []).slice().reverse() as p (p.id)}
 								<div class="rp-passage">
 									<span class="rp-passage-label" style="color: {getElementColor(p.label)}">{p.label}</span>
 									<span class="rp-passage-dir">{p.direction}</span>

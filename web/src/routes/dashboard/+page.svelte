@@ -79,7 +79,7 @@
 
 		const elemMap = new Map<string, ProgressElement>();
 		for (const cp of checkpoints) {
-			for (const p of cp.passages) {
+			for (const p of cp.passages ?? []) {
 				const seq = seqMap.get(p.checkpointId);
 				if (seq == null) continue;
 				const existing = elemMap.get(p.label);
@@ -208,7 +208,7 @@
 				if (cp.meta.annotationId !== passage.checkpointId) return cp;
 				return {
 					...cp,
-					passages: [...cp.passages, passage],
+					passages: [...(cp.passages ?? []), passage],
 					passageCount: cp.passageCount + 1,
 					latestPassage: passage.passageTime,
 				};

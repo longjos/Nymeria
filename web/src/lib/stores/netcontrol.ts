@@ -93,7 +93,10 @@ export const progressElements = derived(checkpoints, ($cps) => {
 
 	const elemMap = new Map<string, { label: string; lastCheckpointId: string; lastCheckpointSeq: number; lastPassageTime: string }>();
 	for (const cp of $cps) {
-		for (const p of cp.passages) {
+		// ?? [] guards a server payload that ever sends null again: this runs
+		// inside a derived-store subscription, where a throw kills the whole
+		// Svelte flush and freezes the UI rather than failing locally.
+		for (const p of cp.passages ?? []) {
 			const seq = seqMap.get(p.checkpointId);
 			if (seq == null) continue;
 			const existing = elemMap.get(p.label);
@@ -387,7 +390,7 @@ export function initNetControlStore(): void {
 				if (cp.meta.annotationId !== passage.checkpointId) return cp;
 				return {
 					...cp,
-					passages: [...cp.passages, passage],
+					passages: [...(cp.passages ?? []), passage],
 					passageCount: cp.passageCount + 1,
 					latestPassage: passage.passageTime,
 				};
