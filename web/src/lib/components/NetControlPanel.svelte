@@ -5,7 +5,7 @@
 	import { openICS309, openSettings, missionDraftBackup } from '$lib/stores/ui';
 	import { get } from 'svelte/store';
 	import { canAdmin } from '$lib/stores/session';
-	import type { Net, NetCheckIn, NetMission, NetEvent, NetNote, OperatorStatus, TrafficType, Annotation, NoteCategory, NoteSeverity, StationCategory, W3WSuggestion } from '$lib/types';
+	import type { Net, NetCheckIn, NetMission, NetEvent, NetNote, NetSummary, OperatorStatus, TrafficType, Annotation, NoteCategory, NoteSeverity, StationCategory, W3WSuggestion } from '$lib/types';
 	import {
 		activeNet, checkIns, missions, timeline, notes,
 		sortedCheckIns, activeCheckIns,
@@ -262,6 +262,36 @@
 	// Elapsed timer
 	let elapsed = $state('');
 	let timerInterval: ReturnType<typeof setInterval>;
+
+	// Net lifecycle + overflow menus. Both popovers are position:fixed and
+	// anchored from getBoundingClientRect(), because .sheet-content scrolls and
+	// .side-panel clips — an absolutely-positioned menu would detach or vanish.
+	let lifecycleOpen = $state(false);
+	let moreOpen = $state(false);
+	let showCloseDialog = $state(false);
+	let stateChipEl = $state<HTMLButtonElement | null>(null);
+	let moreBtnEl = $state<HTMLButtonElement | null>(null);
+	let popTop = $state(0);
+	let popLeft = $state(0);
+	let closeDialogEl = $state<HTMLDivElement | null>(null);
+	let closeCancelEl = $state<HTMLButtonElement | null>(null);
+	/** The active-net header — focus lands here once the net is gone. */
+	let headerEl = $state<HTMLDivElement | null>(null);
+	// The panel root outlives the active-net branch, so it is the only focus
+	// target guaranteed to still exist after a net ends.
+	let panelRootEl = $state<HTMLDivElement | null>(null);
+	let closePending = $state(false);
+	let closeError = $state<string | null>(null);
+	/** After-action card. Component-local: NetControlPanel stays mounted when the
+	    net closes, so the card renders. It is lost if the operator leaves and
+	    comes back — the toast is the durable signal. */
+	let closedSummary = $state<NetSummary | null>(null);
+	/** Set once the dialog has decided how it closed, so focus returns correctly. */
+	let closeDialogSucceeded = false;
+
+	// Stakes shown in the close-net dialog. isTerminalStatus takes one argument.
+	let openMissionCount = $derived($missions.filter((m) => m.status !== 'complete').length);
+	let openLocationCount = $derived($netAnnotations.filter((a) => !isTerminalStatus(a.status)).length);
 
 	// Status colors
 	const statusColors: Record<OperatorStatus, string> = {
@@ -876,15 +906,192 @@
 		}
 	}
 
-	async function handleCloseNet() {
-		if (!$activeNet || !confirm('Close this net?')) return;
+	function requestCloseNet() {
+		if (!$activeNet) return;
+		closeError = null;
+		closePopovers();
+		showCloseDialog = true;
+	}
+
+	function finishCloseDialog(succeeded: boolean) {
+		closeDialogSucceeded = succeeded;
+		showCloseDialog = false;
+	}
+
+	async function confirmCloseNet() {
+		if (!$activeNet || closePending) return;
+		closePending = true;
+		closeError = null;
 		try {
-			await api.closeNet($activeNet.id);
+			const { summary } = await api.closeNet($activeNet.id);
+			closedSummary = summary;
 			clearNetControl();
+			showToast(
+				`Net closed — ${summary.duration}, ${summary.totalCheckIns} check-ins, ${summary.totalMissions} missions.`,
+				'info',
+				6000
+			);
+			finishCloseDialog(true);
 		} catch (e) {
+			closeError = e instanceof ApiError ? e.message : 'Close net failed. The net is still open.';
 			console.error('Close net failed:', e);
+		} finally {
+			closePending = false;
 		}
 	}
+
+	// --- Popovers -------------------------------------------------------------
+
+	/**
+	 * Promote a fixed-position overlay into the top layer.
+	 *
+	 * Every shell this panel renders in is transformed — SidePanel is
+	 * `translateX(0)` when open, BottomSheet carries an inline `translateY` —
+	 * and any transform other than `none` makes that ancestor the containing
+	 * block for `position: fixed` descendants. Coordinates from
+	 * getBoundingClientRect() are viewport coordinates, so the menus landed
+	 * hundreds of pixels away (measured: a menu anchored to a chip at x=856
+	 * rendered at x=1609 in a 1280px viewport, entirely off-screen).
+	 *
+	 * The top layer has no containing-block ancestor, so `fixed` resolves
+	 * against the viewport again. The attribute is set here rather than in the
+	 * markup deliberately: `[popover]` is `display: none` until shown, so on an
+	 * engine without the API the element must never receive the attribute at
+	 * all, or it would vanish instead of merely being mispositioned.
+	 */
+	function topLayer(node: HTMLElement) {
+		if (typeof node.showPopover !== 'function') return;
+		try {
+			node.setAttribute('popover', 'manual');
+			node.showPopover();
+		} catch {
+			node.removeAttribute('popover');
+		}
+		return {
+			destroy() {
+				try {
+					if (node.isConnected) node.hidePopover();
+				} catch {
+					/* already closed by the engine */
+				}
+			}
+		};
+	}
+
+	function openPopover(anchor: HTMLElement | null, align: 'left' | 'right') {
+		if (!anchor) return;
+		const r = anchor.getBoundingClientRect();
+		popTop = r.bottom + 6;
+		popLeft = align === 'left' ? r.left : Math.max(8, r.right - 240);
+	}
+
+	function closePopovers() {
+		lifecycleOpen = false;
+		moreOpen = false;
+	}
+
+	// Dismiss an open popover on an outside press, or whenever the anchor could
+	// have moved out from under it.
+	$effect(() => {
+		if (!lifecycleOpen && !moreOpen) return;
+		const onDown = (e: PointerEvent) => {
+			const t = e.target as HTMLElement;
+			if (
+				t.closest('.pop-menu') ||
+				t === stateChipEl ||
+				t === moreBtnEl ||
+				t.closest('.net-state-chip') ||
+				t.closest('.more-btn')
+			) return;
+			closePopovers();
+		};
+		const onScrollOrResize = () => closePopovers();
+		window.addEventListener('pointerdown', onDown, true);
+		window.addEventListener('scroll', onScrollOrResize, true);
+		window.addEventListener('resize', onScrollOrResize);
+		return () => {
+			window.removeEventListener('pointerdown', onDown, true);
+			window.removeEventListener('scroll', onScrollOrResize, true);
+			window.removeEventListener('resize', onScrollOrResize);
+		};
+	});
+
+	function trapTab(e: KeyboardEvent, root: HTMLElement) {
+		const focusables = Array.from(
+			root.querySelectorAll<HTMLElement>(
+				'button:not([disabled]), input:not([disabled]), [href], [tabindex]:not([tabindex="-1"])'
+			)
+		).filter((el) => el.offsetParent !== null || el === document.activeElement);
+		if (focusables.length === 0) return;
+		const first = focusables[0];
+		const last = focusables[focusables.length - 1];
+		if (e.shiftKey && document.activeElement === first) {
+			e.preventDefault();
+			last.focus();
+		} else if (!e.shiftKey && document.activeElement === last) {
+			e.preventDefault();
+			first.focus();
+		}
+	}
+
+	function handleWindowKeydown(e: KeyboardEvent) {
+		if (showCloseDialog) {
+			if (e.key === 'Escape') {
+				e.preventDefault();
+				if (!closePending) finishCloseDialog(false);
+				return;
+			}
+			if (e.key === 'Tab' && closeDialogEl) trapTab(e, closeDialogEl);
+			return;
+		}
+		if ((lifecycleOpen || moreOpen) && e.key === 'Escape') {
+			e.preventDefault();
+			const back = lifecycleOpen ? stateChipEl : moreBtnEl;
+			closePopovers();
+			back?.focus();
+		}
+	}
+
+	// Focus the dialog, isolate the rest of the page, and lock background scroll.
+	$effect(() => {
+		const node = closeDialogEl;
+		if (!node) return;
+
+		const previouslyFocused = document.activeElement as HTMLElement | null;
+		const hidden: HTMLElement[] = [];
+		for (const child of Array.from(document.body.children)) {
+			const el = child as HTMLElement;
+			if (el.contains(node) || el.tagName === 'SCRIPT' || el.tagName === 'STYLE') continue;
+			if (el.hasAttribute('aria-hidden')) continue;
+			el.setAttribute('aria-hidden', 'true');
+			el.setAttribute('inert', '');
+			hidden.push(el);
+		}
+
+		const prevOverflow = document.body.style.overflow;
+		document.body.style.overflow = 'hidden';
+
+		// Cancel, never the danger button, takes initial focus.
+		closeCancelEl?.focus();
+
+		return () => {
+			for (const el of hidden) {
+				el.removeAttribute('aria-hidden');
+				el.removeAttribute('inert');
+			}
+			document.body.style.overflow = prevOverflow;
+			// On success the invoking menu row and chip are gone, so land on the
+			// panel header; on cancel, return to the "End net…" row.
+			// On success the invoking row, the chip and the whole active-net
+			// header unmount with the net, so headerEl and previouslyFocused are
+			// both detached by now; without the panel-root fallback focus would
+			// drop to <body> and a keyboard operator would lose their place.
+			const target = closeDialogSucceeded && headerEl?.isConnected ? headerEl : previouslyFocused;
+			if (target?.isConnected) target.focus();
+			else panelRootEl?.focus();
+			closeDialogSucceeded = false;
+		};
+	});
 
 	// Open the form — focuses the title input once it mounts.
 	$effect(() => {
@@ -2080,12 +2287,39 @@
 	}
 </script>
 
-<div class="net-panel">
+<svelte:window onkeydown={handleWindowKeydown} />
+
+<div class="net-panel" bind:this={panelRootEl} tabindex="-1">
 	{#if !$activeNet}
 		<!-- No active net -->
 		<div class="panel-header">
 			<span class="title">Net Control</span>
 		</div>
+
+		{#if closedSummary}
+			<div class="summary-card">
+				<span class="summary-kicker">Net ended</span>
+				<span class="summary-name">{closedSummary.name}</span>
+				<div class="summary-grid">
+					<div class="summary-stat">
+						<span class="summary-value">{closedSummary.duration}</span>
+						<span class="summary-label">Duration</span>
+					</div>
+					<div class="summary-stat">
+						<span class="summary-value">{closedSummary.totalCheckIns}</span>
+						<span class="summary-label">Check-ins</span>
+					</div>
+					<div class="summary-stat">
+						<span class="summary-value">{closedSummary.totalMissions}</span>
+						<span class="summary-label">Missions</span>
+					</div>
+				</div>
+				<div class="summary-actions">
+					<button class="btn-secondary" onclick={() => openICS309(closedSummary?.netId)}>Open ICS-309 Log</button>
+					<button class="btn-secondary" onclick={() => (closedSummary = null)}>Dismiss</button>
+				</div>
+			</div>
+		{/if}
 
 		{#if !showCreateForm}
 			<div class="empty-state">
@@ -2133,16 +2367,32 @@
 			</div>
 		{/if}
 	{:else}
-		<!-- Active net header -->
-		<div class="panel-header">
+		<!-- Active net header. The net's lifecycle belongs to the status chip, not to
+		     the action row: ending a net is not a sibling of logging a note. -->
+		<div class="panel-header" bind:this={headerEl} tabindex="-1">
 			<div class="header-info">
 				<div class="header-title-row">
 					<span class="title">{$activeNet.name}</span>
-					<span class="status-badge status-{$activeNet.status}">{$activeNet.status}</span>
+					<button
+						class="net-state-chip state-{$activeNet.status}"
+						bind:this={stateChipEl}
+						onclick={(e) => {
+							e.stopPropagation();
+							moreOpen = false;
+							if (!lifecycleOpen) openPopover(stateChipEl, 'left');
+							lifecycleOpen = !lifecycleOpen;
+						}}
+						aria-haspopup="menu"
+						aria-expanded={lifecycleOpen}
+						aria-label="Net status: {$activeNet.status}{elapsed ? `, open ${elapsed}` : ''}. Net lifecycle actions."
+					>
+						<span class="chip-state">{$activeNet.status}</span>
+						{#if elapsed}<span class="chip-elapsed">{elapsed}</span>{/if}
+						<svg class="chip-caret" width="10" height="10" viewBox="0 0 10 10" fill="none" aria-hidden="true">
+							<path d="M2 4l3 3 3-3" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/>
+						</svg>
+					</button>
 				</div>
-				{#if elapsed}
-					<span class="elapsed">{elapsed}</span>
-				{/if}
 				{#if $activeNet.frequency}
 					<span class="frequency">{$activeNet.frequency}</span>
 				{/if}
@@ -2150,56 +2400,122 @@
 					<span class="mission-brief">{$activeNet.missionBrief}</span>
 				{/if}
 			</div>
-			<div class="header-actions">
-				<button
-					class="action-btn"
-					class:ops-view-set={$opsView}
-					onclick={() => onSetOpsView?.()}
-					title="Save Ops View"
-				>
-					<svg width="16" height="16" viewBox="0 0 16 16" fill="none">
-						<circle cx="8" cy="8" r="6" stroke="currentColor" stroke-width="1.5"/>
-						<circle cx="8" cy="8" r="2" fill="currentColor"/>
-						<path d="M8 1v3M8 12v3M1 8h3M12 8h3" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/>
-					</svg>
-				</button>
-				<button class="action-btn" onclick={handleRollCall} title="Roll Call">
-					<svg width="16" height="16" viewBox="0 0 16 16" fill="none">
+			<div class="header-actions" role="toolbar" aria-label="Net actions">
+				<button class="action-btn labelled" onclick={handleRollCall} title="Roll Call" aria-label="Start roll call">
+					<svg width="16" height="16" viewBox="0 0 16 16" fill="none" aria-hidden="true">
 						<path d="M1 8h3l2-5 3 10 2-5h4" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/>
 					</svg>
+					<span class="action-text">Roll Call</span>
 				</button>
-				<button class="action-btn" onclick={() => openNoteComposer({})} title="Log Note">
-					<svg width="16" height="16" viewBox="0 0 16 16" fill="none">
+
+				<button class="action-btn labelled" onclick={() => openNoteComposer({})} title="Log Note" aria-label="Log a note to the net log">
+					<svg width="16" height="16" viewBox="0 0 16 16" fill="none" aria-hidden="true">
 						<path d="M12 2l2 2-8 8H4v-2l8-8z" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/>
 						<path d="M2 14h12" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/>
 					</svg>
+					<span class="action-text">Log Note</span>
 				</button>
-				<button class="action-btn" onclick={() => openICS309($activeNet?.id)} title="ICS-309 Log">
-					<svg width="16" height="16" viewBox="0 0 16 16" fill="none">
-						<path d="M4 2h8a1 1 0 0 1 1 1v10a1 1 0 0 1-1 1H4a1 1 0 0 1-1-1V3a1 1 0 0 1 1-1z" stroke="currentColor" stroke-width="1.5"/>
-						<path d="M6 5h4M6 8h4M6 11h2" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/>
-					</svg>
-				</button>
-				<a
-					href="/dashboard?net={$activeNet?.id}"
-					target="_blank"
-					rel="noopener"
-					class="action-btn agency-view-btn"
-					title="Agency View"
+
+				<button
+					class="action-btn more-btn"
+					bind:this={moreBtnEl}
+					title="More"
+					onclick={(e) => {
+						e.stopPropagation();
+						lifecycleOpen = false;
+						if (!moreOpen) openPopover(moreBtnEl, 'right');
+						moreOpen = !moreOpen;
+					}}
+					aria-haspopup="menu"
+					aria-expanded={moreOpen}
+					aria-label="More net actions"
 				>
-					<svg width="16" height="16" viewBox="0 0 16 16" fill="none">
-						<rect x="2" y="3" width="12" height="8" rx="1" stroke="currentColor" stroke-width="1.5"/>
-						<line x1="5" y1="13" x2="11" y2="13" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/>
-						<line x1="8" y1="11" x2="8" y2="13" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/>
-					</svg>
-				</a>
-				<button class="action-btn danger" onclick={handleCloseNet} title="Close Net">
-					<svg width="16" height="16" viewBox="0 0 16 16" fill="none">
-						<path d="M4 4l8 8M12 4l-8 8" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/>
+					<svg width="16" height="16" viewBox="0 0 16 16" aria-hidden="true">
+						<circle cx="3" cy="8" r="1.4" fill="currentColor"/>
+						<circle cx="8" cy="8" r="1.4" fill="currentColor"/>
+						<circle cx="13" cy="8" r="1.4" fill="currentColor"/>
 					</svg>
 				</button>
 			</div>
 		</div>
+
+		{#if lifecycleOpen && $activeNet}
+			<div
+				class="pop-menu"
+				role="menu"
+				aria-label="Net lifecycle"
+				data-blocks-escape="true"
+				style="top:{popTop}px; left:{popLeft}px"
+				use:topLayer
+			>
+				<div class="pop-meta">
+					<span class="pop-name">{$activeNet.name}</span>
+					<span class="pop-sub">Opened {$activeNet.openedAt ? timeAgo($activeNet.openedAt) : '—'} · NCS {$activeNet.ncsCallsign}</span>
+				</div>
+				{#if $activeNet.status === 'open'}
+					<button class="pop-row pop-row-danger" role="menuitem" onclick={requestCloseNet}>
+						<svg width="16" height="16" viewBox="0 0 16 16" fill="none" aria-hidden="true">
+							<path d="M8 2v6" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/>
+							<path d="M4.5 4.5a5 5 0 1 0 7 0" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/>
+						</svg>
+						<span>End net…</span>
+					</button>
+				{/if}
+			</div>
+		{/if}
+
+		{#if moreOpen && $activeNet}
+			<div
+				class="pop-menu"
+				role="menu"
+				aria-label="More net actions"
+				data-blocks-escape="true"
+				style="top:{popTop}px; left:{popLeft}px"
+				use:topLayer
+			>
+				<button
+					class="pop-row"
+					class:ops-view-set={$opsView}
+					role="menuitem"
+					onclick={() => { onSetOpsView?.(); closePopovers(); }}
+				>
+					<svg width="16" height="16" viewBox="0 0 16 16" fill="none" aria-hidden="true">
+						<circle cx="8" cy="8" r="6" stroke="currentColor" stroke-width="1.5"/>
+						<circle cx="8" cy="8" r="2" fill="currentColor"/>
+						<path d="M8 1v3M8 12v3M1 8h3M12 8h3" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/>
+					</svg>
+					<span>{$opsView ? 'Ops View saved — save again' : 'Save Ops View'}</span>
+				</button>
+
+				<button class="pop-row" role="menuitem" onclick={() => { openICS309($activeNet?.id); closePopovers(); }}>
+					<svg width="16" height="16" viewBox="0 0 16 16" fill="none" aria-hidden="true">
+						<path d="M4 2h8a1 1 0 0 1 1 1v10a1 1 0 0 1-1 1H4a1 1 0 0 1-1-1V3a1 1 0 0 1 1-1z" stroke="currentColor" stroke-width="1.5"/>
+						<path d="M6 5h4M6 8h4M6 11h2" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/>
+					</svg>
+					<span>ICS-309 Log</span>
+				</button>
+
+				<!-- Stays a real link: middle-click and copy-link matter when handing a
+				     URL to an agency rep. -->
+				<a
+					class="pop-row"
+					role="menuitem"
+					href="/dashboard?net={$activeNet.id}"
+					target="_blank"
+					rel="noopener"
+					aria-label="Agency View (opens in a new tab)"
+					onclick={() => closePopovers()}
+				>
+					<svg width="16" height="16" viewBox="0 0 16 16" fill="none" aria-hidden="true">
+						<rect x="2" y="3" width="12" height="8" rx="1" stroke="currentColor" stroke-width="1.5"/>
+						<line x1="5" y1="13" x2="11" y2="13" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/>
+						<line x1="8" y1="11" x2="8" y2="13" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/>
+					</svg>
+					<span>Agency View</span>
+					<span class="pop-hint" aria-hidden="true">↗</span>
+				</a>
+			</div>
+		{/if}
 
 		<!-- Metrics bar -->
 		{#if $activeCheckIns.length > 0 || $missions.length > 0}
@@ -3439,6 +3755,76 @@
 			{/if}
 		</div>
 	{/if}
+
+	<!-- Close-net dialog. Inline by design: no new component file in this package.
+	     Structure and geometry mirror BatchRemoveDialog. -->
+	{#if showCloseDialog && $activeNet}
+		<!-- svelte-ignore a11y_no_static_element_interactions -->
+		<div
+			class="cn-backdrop"
+			onmousedown={(e) => { if (e.target === e.currentTarget && !closePending) finishCloseDialog(false); }}
+			use:topLayer
+		>
+			<div
+				class="cn-dialog"
+				bind:this={closeDialogEl}
+				role="alertdialog"
+				aria-modal="true"
+				aria-labelledby="close-net-title"
+				aria-describedby="close-net-stakes"
+			>
+				<div class="cn-grab" aria-hidden="true"></div>
+
+				<div class="cn-header">
+					<span class="cn-title" id="close-net-title">End net</span>
+					<button class="cn-x" onclick={() => finishCloseDialog(false)} disabled={closePending} aria-label="Close">&times;</button>
+				</div>
+
+				<div class="cn-body">
+					<div class="cn-identity">
+						<span class="cn-name">{$activeNet.name}</span>
+						<span class="cn-sub">Open {elapsed || '—'} · NCS {$activeNet.ncsCallsign}</span>
+					</div>
+
+					<ul class="cn-stakes" id="close-net-stakes">
+						{#if $netMetrics.totalIn > 0}
+							<li class="cn-row">
+								<span class="cn-icon" aria-hidden="true">!</span>
+								<span>{$netMetrics.totalIn} operator{$netMetrics.totalIn === 1 ? ' is' : 's are'} still checked in. They will be checked out and the roster closes.</span>
+							</li>
+						{/if}
+						{#if openMissionCount > 0}
+							<li class="cn-row">
+								<span class="cn-icon" aria-hidden="true">!</span>
+								<span>{openMissionCount} mission{openMissionCount === 1 ? ' is' : 's are'} still open. They are recorded incomplete in the log.</span>
+							</li>
+						{/if}
+						{#if openLocationCount > 0}
+							<li class="cn-row">
+								<span class="cn-icon" aria-hidden="true">!</span>
+								<span>{openLocationCount} net location{openLocationCount === 1 ? '' : 's'} will be marked resolved or closed. This cannot be undone.</span>
+							</li>
+						{/if}
+						<li class="cn-row">
+							<span class="cn-icon" aria-hidden="true">▤</span>
+							<span>The roster, the timeline and the ICS-309 log are kept. You can still export them after the net ends.</span>
+						</li>
+					</ul>
+
+					<p class="cn-footnote">There is no “reopen net” in the app. Ending a net is final.</p>
+
+					{#if closeError}<div class="cn-error" role="alert">{closeError}</div>{/if}
+				</div>
+
+				<div class="cn-footer">
+					<button class="cn-btn" bind:this={closeCancelEl} onclick={() => finishCloseDialog(false)} disabled={closePending}>Keep net open</button>
+					<button class="cn-btn cn-btn-danger" onclick={confirmCloseNet} disabled={closePending} aria-busy={closePending}>
+						{closePending ? 'Ending…' : `End “${$activeNet.name}”`}
+					</button>
+				</div>
+			</div>
+		</div>
+	{/if}
 </div>
 
 <style>
@@ -3466,6 +3852,7 @@
 		display: flex;
 		flex-direction: column;
 		gap: 2px;
+		min-width: 0;
 	}
 
 	.header-title-row {
@@ -3477,25 +3864,47 @@
 	.title {
 		font-weight: 600;
 		font-size: 0.95rem;
+		overflow: hidden;
+		text-overflow: ellipsis;
+		white-space: nowrap;
 	}
 
-	.status-badge {
-		font-size: 0.65rem;
+	/* The status chip owns the net's lifecycle: state, how long it has been in
+	   that state, and the menu that changes it. */
+	.net-state-chip {
+		display: inline-flex;
+		align-items: center;
+		gap: var(--space-xs);
+		flex-shrink: 0;
+		min-height: 34px;
+		padding: 0 var(--space-sm);
+		background: var(--color-surface);
+		border: 1px solid var(--color-primary);
+		border-radius: var(--radius-full);
+		font-family: inherit;
+		font-size: 0.7rem;
 		font-weight: 700;
 		text-transform: uppercase;
 		letter-spacing: 0.05em;
-		padding: 2px 8px;
-		border-radius: var(--radius-sm);
+		color: var(--color-text);
+		cursor: pointer;
 	}
 
-	.status-open { background: #22c55e; color: #000; }
-	.status-draft { background: var(--color-primary); color: var(--color-text-muted); }
-	.status-closed { background: #6b7280; color: #fff; }
+	.net-state-chip.state-open { border-color: #22c55e; }
+	.net-state-chip.state-open .chip-state { color: #22c55e; }
+	.net-state-chip.state-closed .chip-state { color: var(--color-text-muted); }
 
-	.elapsed {
+	.chip-elapsed {
 		font-family: monospace;
-		font-size: 0.8rem;
-		color: #22c55e;
+		font-weight: 600;
+		text-transform: none;
+		letter-spacing: 0;
+		color: var(--color-text-muted);
+	}
+
+	.chip-caret {
+		flex-shrink: 0;
+		color: var(--color-text-muted);
 	}
 
 	.frequency {
@@ -3515,18 +3924,19 @@
 
 	.header-actions {
 		display: flex;
-		gap: 6px;
+		gap: var(--space-sm);
 		flex-shrink: 0;
 		flex-wrap: wrap;
 		justify-content: flex-end;
+		align-items: center;
 	}
 
 	.action-btn {
 		display: flex;
 		align-items: center;
 		justify-content: center;
-		width: 36px;
-		height: 36px;
+		min-width: 44px;
+		height: 44px;
 		background: none;
 		border: 1px solid var(--color-primary);
 		border-radius: var(--radius-sm);
@@ -3540,34 +3950,318 @@
 		color: var(--color-text);
 	}
 
-	.action-btn.danger {
-		border-color: rgba(239, 68, 68, 0.4);
+	/* The two frequent actions carry visible text: `title` is not a label on a
+	   hoverless tablet. */
+	.action-btn.labelled {
+		width: auto;
+		padding: 0 var(--space-sm);
+		gap: var(--space-xs);
+		color: var(--color-text);
 	}
 
-	.action-btn.danger:hover {
-		border-color: #ef4444;
-		color: #ef4444;
+	.action-text {
+		font-size: 0.8rem;
+		font-weight: 600;
 	}
 
-	.action-btn.ops-view-set {
-		border-color: #22c55e;
-		color: #22c55e;
+	/* Popovers — one pattern, instantiated twice. position: fixed is required:
+	   .sheet-content is overflow-y:auto and .side-panel is overflow:hidden. */
+	.pop-menu {
+		position: fixed;
+		/* The UA stylesheet gives every [popover] inset:0 + margin:auto, which
+		   would fight the anchored top/left set inline. */
+		inset: auto;
+		margin: 0;
+		z-index: var(--z-overlay);
+		min-width: 240px;
+		max-width: min(280px, calc(100vw - 16px));
+		background: var(--color-surface);
+		border: 1px solid var(--color-primary);
+		border-radius: var(--radius-md);
+		box-shadow: var(--shadow-lg);
+		padding: var(--space-xs);
+		display: flex;
+		flex-direction: column;
 	}
 
-	.action-btn.ops-view-set:hover {
-		background: rgba(34, 197, 94, 0.1);
+	.pop-meta {
+		display: flex;
+		flex-direction: column;
+		gap: 2px;
+		padding: var(--space-xs) var(--space-sm) var(--space-sm);
 	}
 
-	.agency-view-btn {
-		text-decoration: none;
+	.pop-name {
+		font-size: 0.85rem;
+		font-weight: 600;
+	}
+
+	.pop-sub {
+		font-size: 0.7rem;
+		color: var(--color-text-muted);
+	}
+
+	.pop-row {
 		display: flex;
 		align-items: center;
-		justify-content: center;
+		gap: var(--space-sm);
+		width: 100%;
+		min-height: 44px;
+		padding: 0 var(--space-sm);
+		background: none;
+		border: none;
+		border-radius: var(--radius-sm);
+		color: var(--color-text);
+		font-family: inherit;
+		font-size: 0.85rem;
+		text-align: left;
+		text-decoration: none;
+		cursor: pointer;
 	}
 
-	.agency-view-btn:hover {
-		border-color: var(--color-accent);
-		color: var(--color-accent);
+	.pop-row:hover,
+	.pop-row:focus-visible {
+		background: var(--color-primary);
+	}
+
+	.pop-row.ops-view-set { color: #22c55e; }
+
+	.pop-row-danger { color: var(--color-error); }
+
+	.pop-row-danger:hover,
+	.pop-row-danger:focus-visible {
+		background: rgba(231, 76, 60, 0.16);
+	}
+
+	.pop-hint {
+		margin-left: auto;
+		color: var(--color-text-muted);
+	}
+
+	/* Close-net dialog — same geometry as BatchRemoveDialog */
+	.cn-backdrop {
+		position: fixed;
+		inset: 0;
+		/* Beat the UA [popover] rules: fit-content sizing and auto margins
+		   would shrink the backdrop off the full viewport box. */
+		width: auto;
+		height: auto;
+		margin: 0;
+		border: none;
+		z-index: var(--z-overlay);
+		background: rgba(0, 0, 0, 0.6);
+		display: flex;
+		justify-content: center;
+		align-items: center;
+		padding: var(--space-lg);
+	}
+
+	.cn-dialog {
+		width: min(440px, 92vw);
+		max-height: min(80vh, 620px);
+		background: var(--color-surface);
+		border: 1px solid var(--color-primary);
+		border-radius: var(--radius-lg);
+		box-shadow: var(--shadow-lg);
+		display: flex;
+		flex-direction: column;
+		overflow: hidden;
+	}
+
+	.cn-grab {
+		display: none;
+	}
+
+	.cn-header {
+		display: flex;
+		align-items: center;
+		justify-content: space-between;
+		padding: var(--space-md);
+		border-bottom: 1px solid rgba(255, 255, 255, 0.06);
+		flex-shrink: 0;
+	}
+
+	.cn-title {
+		font-weight: 600;
+		font-size: 0.9rem;
+	}
+
+	.cn-x {
+		background: none;
+		border: none;
+		color: var(--color-text-muted);
+		font-size: 1.2rem;
+		line-height: 1;
+		cursor: pointer;
+		padding: 4px 8px;
+		border-radius: 4px;
+	}
+
+	.cn-x:hover:not(:disabled) {
+		color: var(--color-text);
+	}
+
+	.cn-body {
+		flex: 1;
+		overflow-y: auto;
+		padding: var(--space-md);
+		display: flex;
+		flex-direction: column;
+		gap: var(--space-sm);
+	}
+
+	.cn-identity {
+		display: flex;
+		flex-direction: column;
+		gap: 2px;
+	}
+
+	.cn-name {
+		font-size: 0.95rem;
+		font-weight: 600;
+	}
+
+	.cn-sub {
+		font-size: 0.7rem;
+		color: var(--color-text-muted);
+	}
+
+	.cn-stakes {
+		list-style: none;
+		display: flex;
+		flex-direction: column;
+		gap: var(--space-sm);
+		margin: 0;
+		padding: 0;
+	}
+
+	.cn-row {
+		display: flex;
+		gap: var(--space-sm);
+		font-size: 0.8rem;
+		line-height: 1.4;
+	}
+
+	.cn-icon {
+		flex-shrink: 0;
+		width: 18px;
+		text-align: center;
+		color: var(--color-error);
+		font-weight: 700;
+	}
+
+	.cn-footnote {
+		font-size: 0.6875rem;
+		color: var(--color-text-muted);
+		margin: 0;
+	}
+
+	.cn-error {
+		font-size: 0.75rem;
+		line-height: 1.4;
+		color: var(--color-error);
+		padding: var(--space-sm);
+		background: rgba(231, 76, 60, 0.1);
+		border-radius: var(--radius-sm);
+	}
+
+	.cn-footer {
+		display: flex;
+		justify-content: flex-end;
+		gap: var(--space-sm);
+		padding: var(--space-md);
+		border-top: 1px solid rgba(255, 255, 255, 0.06);
+		flex-shrink: 0;
+	}
+
+	.cn-btn {
+		padding: 8px 14px;
+		min-height: 44px;
+		font-size: 0.8125rem;
+		font-family: inherit;
+		background: transparent;
+		border: 1px solid rgba(255, 255, 255, 0.12);
+		border-radius: var(--radius-sm);
+		color: var(--color-text-muted);
+		cursor: pointer;
+		transition: border-color var(--duration-fast), color var(--duration-fast), background var(--duration-fast);
+	}
+
+	.cn-btn:hover:not(:disabled) {
+		border-color: rgba(255, 255, 255, 0.25);
+		color: var(--color-text);
+	}
+
+	.cn-btn:disabled {
+		opacity: 0.45;
+		cursor: not-allowed;
+	}
+
+	.cn-btn-danger {
+		background: var(--color-error);
+		border-color: var(--color-error);
+		color: #fff;
+		font-weight: 600;
+	}
+
+	.cn-btn-danger:hover:not(:disabled) {
+		background: color-mix(in srgb, var(--color-error) 85%, black);
+		border-color: color-mix(in srgb, var(--color-error) 85%, black);
+		color: #fff;
+	}
+
+	/* After-action card: "Duration 3m · 0 check-ins" makes an accidental end
+	   self-evident, where the panel used to just silently empty. */
+	.summary-card {
+		display: flex;
+		flex-direction: column;
+		gap: var(--space-sm);
+		margin: var(--space-md);
+		padding: var(--space-md);
+		background: var(--color-surface);
+		border: 1px solid var(--color-primary);
+		border-radius: var(--radius-md);
+	}
+
+	.summary-kicker {
+		font-size: 0.65rem;
+		font-weight: 700;
+		text-transform: uppercase;
+		letter-spacing: 0.05em;
+		color: var(--color-text-muted);
+	}
+
+	.summary-name {
+		font-size: 1rem;
+		font-weight: 600;
+	}
+
+	.summary-grid {
+		display: flex;
+		gap: var(--space-lg);
+	}
+
+	.summary-stat {
+		display: flex;
+		flex-direction: column;
+	}
+
+	.summary-value {
+		font-size: 1.1rem;
+		font-weight: 700;
+	}
+
+	.summary-label {
+		font-size: 0.65rem;
+		text-transform: uppercase;
+		letter-spacing: 0.05em;
+		color: var(--color-text-muted);
+	}
+
+	.summary-actions {
+		display: flex;
+		gap: var(--space-sm);
+		flex-wrap: wrap;
 	}
 
 	/* Tabs — one row, never wraps. Tabs share the width when it fits and
@@ -5767,6 +6461,56 @@
 	/* Category badge on operator card */
 	.cat-badge {
 		color: #fff;
+	}
+
+	/* Narrow panel: stack the header so the action row left-aligns and never
+	   sits under the mobile toolbar's FAB column. */
+	@media (max-width: 768px) {
+		.panel-header {
+			flex-direction: column;
+			align-items: stretch;
+			gap: var(--space-sm);
+		}
+
+		.header-actions {
+			justify-content: flex-start;
+		}
+	}
+
+	@media (max-width: 640px) {
+		.cn-backdrop {
+			padding: 0;
+			align-items: flex-end;
+		}
+
+		.cn-dialog {
+			width: 100%;
+			position: fixed;
+			inset: auto 0 0 0;
+			max-height: 80vh;
+			overflow-y: auto;
+			border-radius: var(--radius-lg) var(--radius-lg) 0 0;
+			border-bottom: none;
+			padding-bottom: max(var(--space-md), env(safe-area-inset-bottom));
+		}
+
+		.cn-grab {
+			display: block;
+			width: 36px;
+			height: 4px;
+			margin: var(--space-sm) auto 0;
+			border-radius: var(--radius-full);
+			background: rgba(255, 255, 255, 0.2);
+		}
+
+		/* Danger sits at the thumb; DOM order unchanged so Cancel keeps focus. */
+		.cn-footer {
+			flex-direction: column-reverse;
+		}
+
+		.cn-btn {
+			width: 100%;
+		}
 	}
 
 </style>
