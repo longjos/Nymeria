@@ -3115,6 +3115,10 @@
 					{#each filteredMissions as m (m.id)}
 						{@const assignedOps = operatorsForMission(m.id)}
 						{@const hasNoOperators = assignedOps.length === 0}
+						<!-- Bound once: annotationsForMission() scans every annotation in the
+						     app, and it was called twice per card (guard + each loop). Same
+						     call, same result and ordering — purely fewer scans. -->
+						{@const missionAnns = annotationsForMission(m.id)}
 						<div
 							class="mission-card priority-{m.priority}"
 							class:complete={m.status === 'complete'}
@@ -3183,9 +3187,9 @@
 								</div>
 
 								<!-- Linked annotations -->
-								{#if annotationsForMission(m.id).length > 0}
+								{#if missionAnns.length > 0}
 									<div class="mission-annotations">
-										{#each annotationsForMission(m.id) as ann}
+										{#each missionAnns as ann}
 											{@const annCat = ann.category || 'general'}
 											<div class="mission-ann-chip">
 												<svg width="10" height="10" viewBox="0 0 16 16" fill="none">

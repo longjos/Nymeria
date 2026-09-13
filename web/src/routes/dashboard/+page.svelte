@@ -98,9 +98,14 @@
 	});
 
 	// --- Lifecycle ---
-	onMount(async () => {
-		await initSession();
-		sessionReady = true;
+	// Synchronous on purpose: Svelte only honours the returned destroy callback
+	// for a sync onMount. As an async function the cleanup was discarded, so
+	// every visit to this route leaked its dashboard WebSocket.
+	onMount(() => {
+		void (async () => {
+			await initSession();
+			sessionReady = true;
+		})();
 
 		return () => {
 			ws?.disconnect();

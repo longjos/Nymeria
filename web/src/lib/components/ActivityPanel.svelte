@@ -23,23 +23,30 @@
 		transport_disconnect: 'Transport disconnected'
 	};
 
-	onMount(async () => {
-		try {
-			const resp = await api.activity({ limit: '50' });
-			entries = resp.entries ?? [];
-		} catch {
-			// silent
-		} finally {
-			loading = false;
-		}
+	// onMount must stay SYNCHRONOUS: Svelte only treats the return value as a
+	// destroy callback for a sync onMount, so an async one silently discards it
+	// and the WS handler below would leak on every open/close of this panel.
+	onMount(() => {
+		void (async () => {
+			try {
+				const resp = await api.activity({ limit: '50' });
+				entries = resp.entries ?? [];
+			} catch {
+				// silent
+			} finally {
+				loading = false;
+			}
+		})();
 
-		// Live updates
-		wsClient.on('activity_logged', (msg) => {
+		// Live updates. Unsubscribing while the panel is closed loses nothing:
+		// the initial fetch above re-loads the latest entries on every mount.
+		const off = wsClient.on('activity_logged', (msg) => {
 			const entry = msg.entry as ActivityEntry;
 			if (entry) {
 				entries = [entry, ...entries].slice(0, 100);
 			}
 		});
+		return off;
 	});
 
 	function handleExport() {

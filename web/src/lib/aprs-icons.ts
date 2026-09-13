@@ -190,7 +190,14 @@ export function createMarkerHtml(sym: APRSSymbol, color: string, selected: boole
 	const arrow = isMoving(speed, course) ? directionArrow(course!, size) : '';
 	const outer = size + 20; // extra space for arrow overflow
 
-	return `<div style="position:relative;width:${outer}px;height:${outer}px;display:flex;align-items:center;justify-content:center;">${arrow}<div style="width:${size}px;height:${size}px;border-radius:50%;background:${color};border:${border};display:flex;align-items:center;justify-content:center;box-shadow:${shadow};transition:all 0.15s ease;">${svg}</div></div>`;
+	// NOTE: deliberately no CSS transition on the circle. Leaflet's
+	// DivIcon.createIcon assigns this string to element.innerHTML, so the node
+	// is always brand new and a transition could never play — but declaring one
+	// put every marker on the style engine's transitionable list. With marker
+	// icon caching in Map.svelte the element now survives across updates, so a
+	// transition here would actually start firing 150ms fades that never
+	// existed before.
+	return `<div style="position:relative;width:${outer}px;height:${outer}px;display:flex;align-items:center;justify-content:center;">${arrow}<div style="width:${size}px;height:${size}px;border-radius:50%;background:${color};border:${border};display:flex;align-items:center;justify-content:center;box-shadow:${shadow};">${svg}</div></div>`;
 }
 
 /**

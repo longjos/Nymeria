@@ -154,6 +154,16 @@
 		map.once('moveend', () => { programmaticMove = false; });
 	}
 	let markers: Map<string, L.Marker> = new Map();
+	// Render caches, keyed exactly like `markers`. These exist purely so
+	// updateMarkers() can skip work whose output would be byte-identical to
+	// what is already in the DOM — every inbound APRS packet re-runs the
+	// station effect, and rebuilding N icons/tooltips/polylines for the one
+	// station that actually moved is what saturates the main thread.
+	// Every entry is deleted alongside its layer, so a removed-and-re-added
+	// station is always rebuilt from scratch.
+	const iconSigs: Map<string, string> = new Map();
+	const tooltipState: Map<string, { name: string; permanent: boolean }> = new Map();
+	const trackSigs: Map<string, string> = new Map();
 	let trackLines: Map<string, L.Polyline> = new Map();
 	let trackHighlights: Map<string, L.Polyline> = new Map();
 	let drCones: Map<string, L.Polygon> = new Map();
@@ -203,6 +213,11 @@
 	// True while a follow-driven or fly-to pan/zoom is in flight, so the
 	// dragstart/zoomstart listeners below don't mistake it for a user gesture.
 	let programmaticMove = false;
+	// Tracked as $state so the marker effect below re-runs (and does a single
+	// catch-up rebuild) the moment the tab comes back. WebSocket handlers are
+	// not throttled in background tabs, so without this a hidden tab keeps
+	// rebuilding map layers nobody can see.
+	let pageHidden = $state(typeof document !== 'undefined' ? document.hidden : false);
 
 	const netStatusColors: Record<string, string> = {
 		available: '#22c55e',
@@ -248,10 +263,17 @@
 		// Any real user drag/zoom (not one we drove ourselves) breaks follow.
 		map.on('dragstart', () => { if (!programmaticMove) onFollowBreak?.(); });
 		map.on('zoomstart', () => { if (!programmaticMove) onFollowBreak?.(); });
+
+		document.addEventListener('visibilitychange', onVisibilityChange);
 	});
+
+	function onVisibilityChange() {
+		pageHidden = document.hidden;
+	}
 
 	onDestroy(() => {
 		if (drTimer) clearInterval(drTimer);
+		if (typeof document !== 'undefined') document.removeEventListener('visibilitychange', onVisibilityChange);
 		for (const [, layer] of drCones) layer.remove();
 		for (const [, layer] of drCenterLines) layer.remove();
 		for (const [, hl] of trackHighlights) hl.remove();
@@ -270,7 +292,11 @@
 		const _trackDur = trackDurationMs;
 		const _dr = showDRCones;
 		const _labels = showCallsigns;
-		if (map) {
+		// Read unconditionally so the effect always re-subscribes to it: while
+		// hidden the effect stops touching `stations`, and unhiding is the only
+		// thing that can bring it back.
+		const hidden = pageHidden;
+		if (map && !hidden) {
 			updateMarkers();
 			updateDRCones();
 		}
@@ -799,14 +825,19 @@
 	$effect(() => {
 		if (!map) return;
 		const show = showWeatherOverlay;
-		const wxStations = weatherOverlay;
-		const units = get(weatherUnits) as UnitSystem;
 
 		// Remove all existing weather markers when hidden or data changes
 		for (const [, m] of wxMarkers) m.remove();
 		wxMarkers.clear();
 
-		if (!show || !wxStations.length) return;
+		// Bail out BEFORE reading `weatherOverlay`: that array gets a new
+		// identity on every inbound packet, and reading it up front kept this
+		// effect re-running on every packet even with the overlay switched off.
+		if (!show) return;
+
+		const wxStations = weatherOverlay;
+		const units = get(weatherUnits) as UnitSystem;
+		if (!wxStations.length) return;
 
 		for (const s of wxStations) {
 			if (!s.position || !s.weather) continue;
@@ -858,7 +889,6 @@
 	$effect(() => {
 		if (!map) return;
 		const show = showDFOverlay;
-		const dfStations = dfOverlay;
 
 		// Clear existing DF layers
 		for (const [, line] of dfLines) line.remove();
@@ -870,7 +900,12 @@
 		dfTargetCircle?.remove();
 		dfTargetCircle = null;
 
-		if (!show || !dfStations.length) return;
+		// Same reasoning as the weather effect above: don't subscribe to the
+		// per-packet `dfOverlay` array while the overlay is off.
+		if (!show) return;
+
+		const dfStations = dfOverlay;
+		if (!dfStations.length) return;
 
 		const DEFAULT_RANGE_MI = 50;
 		const MI_TO_M = 1609.344;
@@ -1526,6 +1561,13 @@
 		}
 
 		const currentKeys = new Set<string>();
+		// Resolve the tactical-alias lookup once: `getTacticalAlias` is a cold
+		// derived store, so get() would subscribe/recompute/unsubscribe once per
+		// station per packet. It cannot change while this loop runs.
+		const aliasFor = get(getTacticalAlias);
+		// Hoisted out of the per-station track filter below — one clock read for
+		// the whole pass instead of one per station.
+		const trackCutoff = trackDurationMs === Infinity ? -Infinity : Date.now() - trackDurationMs;
 
 		for (const st of stations) {
 			if (!st.position) continue;
@@ -1534,27 +1576,47 @@
 
 			const info = symbolInfo(st.symbol);
 			const baseName = stationDisplayName(st.callsign, st.ssid);
-			const tacAlias = get(getTacticalAlias)(key);
+			const tacAlias = aliasFor(key);
 			const name = tacAlias ? `${tacAlias} (${baseName})` : baseName;
 			const isSelected = key === selectedCallsign;
 
-			const iconOpts = createStationIcon(st.symbol, info.color, isSelected, st.position?.speed, st.position?.course);
-			const divIcon = L.divIcon(iconOpts);
+			// Enumerates every input createStationIcon() has plus everything
+			// createMarkerHtml() branches on (symbol table+code, colour,
+			// selected, and the arrow's isMoving()/course). Equal signature ⇒
+			// identical HTML ⇒ identical DOM, so setIcon() can be skipped.
+			// `course` is deliberately unrounded so the arrow angle is exact.
+			const iconSig = `${st.symbol?.table ?? ''}|${st.symbol?.code ?? ''}|${info.color}|${isSelected ? 1 : 0}|${isMoving(st.position.speed, st.position.course) ? st.position.course : ''}`;
 
 			// Update or create marker
 			let marker = markers.get(key);
 			if (marker) {
 				marker.setLatLng([st.position.lat, st.position.lon]);
-				marker.setIcon(divIcon);
-				// Rebind in case the tactical alias or the label toggle changed
-				marker.unbindTooltip();
-				marker.bindTooltip(name, stationTooltipOpts());
+				if (iconSigs.get(key) !== iconSig) {
+					marker.setIcon(L.divIcon(createStationIcon(st.symbol, info.color, isSelected, st.position?.speed, st.position?.course)));
+					iconSigs.set(key, iconSig);
+				}
+				// The tooltip options object only varies with `showCallsigns`
+				// (see stationTooltipOpts), so a full unbind/rebind — the
+				// expensive half, it tears down and re-adds every focus
+				// listener — is only needed when the label toggle flips. A
+				// changed tactical alias is just new content.
+				const prevTip = tooltipState.get(key);
+				if (!prevTip || prevTip.permanent !== showCallsigns) {
+					marker.unbindTooltip();
+					marker.bindTooltip(name, stationTooltipOpts());
+					tooltipState.set(key, { name, permanent: showCallsigns });
+				} else if (prevTip.name !== name) {
+					marker.setTooltipContent(name);
+					prevTip.name = name;
+				}
 			} else {
 				marker = L.marker([st.position.lat, st.position.lon], {
-					icon: divIcon,
+					icon: L.divIcon(createStationIcon(st.symbol, info.color, isSelected, st.position?.speed, st.position?.course)),
 				}).addTo(map);
+				iconSigs.set(key, iconSig);
 
 				marker.bindTooltip(name, stationTooltipOpts());
+				tooltipState.set(key, { name, permanent: showCallsigns });
 
 				// Captured as a definite (non-undefined) const — `marker` itself
 				// is a `let` (Map.get()'s return type includes undefined), and
@@ -1582,27 +1644,41 @@
 			if (showTracks && st.track && st.track.length > 1) {
 				let trackPoints = st.track;
 				if (trackDurationMs !== Infinity) {
-					const cutoff = Date.now() - trackDurationMs;
-					trackPoints = trackPoints.filter((tp) => new Date(tp.time).getTime() >= cutoff);
+					// The filter itself always runs, so points ageing out of a
+					// finite window still change trackPoints.length and so the
+					// signature below — only the projection work is cached.
+					trackPoints = trackPoints.filter((tp) => new Date(tp.time).getTime() >= trackCutoff);
 				}
 
 				if (trackPoints.length > 1) {
-					const latlngs: L.LatLngExpression[] = trackPoints.map((tp) => [tp.lat, tp.lon]);
+					const lastTp = trackPoints[trackPoints.length - 1];
+					// Track points are only ever appended (or dropped off the
+					// front by the window filter), so length + first/last
+					// timestamp + last coordinate identifies the point set.
+					// trackDurationMs is included so changing the window always
+					// re-projects.
+					const trackSig = `${trackDurationMs}|${trackPoints.length}|${trackPoints[0].time}|${lastTp.time}|${lastTp.lat},${lastTp.lon}`;
 					let line = trackLines.get(key);
-					if (line) {
-						line.setLatLngs(latlngs);
-					} else {
-						line = L.polyline(latlngs, {
+					if (!line) {
+						line = L.polyline(trackPoints.map((tp) => [tp.lat, tp.lon] as L.LatLngExpression), {
 							color: info.color,
 							weight: 2,
 							opacity: 0.6,
 							dashArray: '4 4',
 						}).addTo(map);
 						trackLines.set(key, line);
+						trackSigs.set(key, trackSig);
+					} else if (trackSigs.get(key) !== trackSig) {
+						const latlngs: L.LatLngExpression[] = trackPoints.map((tp) => [tp.lat, tp.lon]);
+						line.setLatLngs(latlngs);
+						// Keep highlight in sync with track data. When the
+						// signature is unchanged the highlight already holds
+						// these exact points (highlightTrack copies them from
+						// the base line), so there is nothing to sync.
+						const hl = trackHighlights.get(key);
+						if (hl) hl.setLatLngs(latlngs);
+						trackSigs.set(key, trackSig);
 					}
-					// Keep highlight in sync with track data
-					const hl = trackHighlights.get(key);
-					if (hl) hl.setLatLngs(latlngs);
 
 					// Persistent highlight for selected station
 					if (key === selectedCallsign && !trackHighlights.has(key)) {
@@ -1612,6 +1688,7 @@
 					// Too few points after filter — remove track
 					const line = trackLines.get(key);
 					if (line) { line.remove(); trackLines.delete(key); }
+					trackSigs.delete(key);
 					const hl = trackHighlights.get(key);
 					if (hl) { hl.remove(); trackHighlights.delete(key); }
 				}
@@ -1619,6 +1696,7 @@
 				// Tracks disabled — remove any existing track for this station
 				const line = trackLines.get(key);
 				if (line) { line.remove(); trackLines.delete(key); }
+				trackSigs.delete(key);
 				const hl = trackHighlights.get(key);
 				if (hl) { hl.remove(); trackHighlights.delete(key); }
 			}
@@ -1629,12 +1707,15 @@
 			if (!currentKeys.has(key)) {
 				marker.remove();
 				markers.delete(key);
+				iconSigs.delete(key);
+				tooltipState.delete(key);
 			}
 		}
 		for (const [key, line] of trackLines) {
 			if (!currentKeys.has(key)) {
 				line.remove();
 				trackLines.delete(key);
+				trackSigs.delete(key);
 			}
 		}
 		for (const [key, hl] of trackHighlights) {
@@ -1647,6 +1728,9 @@
 
 	function updateDRCones() {
 		if (!map) return;
+		// Also called from a 30s setInterval; skip layer work for a tab nobody
+		// is looking at. The marker effect re-runs on unhide and restores them.
+		if (typeof document !== 'undefined' && document.hidden) return;
 
 		if (!showDRCones) {
 			for (const [, layer] of drCones) layer.remove();
