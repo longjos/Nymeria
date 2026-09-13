@@ -15,6 +15,7 @@
 	import type { GpsFix } from '$lib/types';
 	import { get } from 'svelte/store';
 	import L from 'leaflet';
+	import type { MeasureBand } from './NextStopPill.svelte';
 
 	const DEFAULT_ANN_COLOR = '#e63946';
 
@@ -78,6 +79,10 @@
 		ownPositionStale = false,
 		follow = false,
 		onFollowBreak,
+		onDistanceOriginPicked,
+		onDistanceOriginCleared,
+		distanceDraftPoint = null,
+		measureBand = null,
 	}: {
 		stations?: Station[];
 		annotations?: Annotation[];
@@ -135,6 +140,24 @@
 		follow?: boolean;
 		/** Fired when the user manually drags/zooms (or a deliberate fly-to fires) while following. */
 		onFollowBreak?: () => void;
+		/**
+		 * Long-press / right-click picked a "measure from here" origin. `src`
+		 * carries what the gesture landed on so the caller can label the pill
+		 * with a callsign or annotation name instead of a bare coordinate.
+		 * This is deliberately NOT a pick mode: it arms and commits in one
+		 * gesture, so it never joins anyPlaceMode and never steals a click.
+		 */
+		onDistanceOriginPicked?: (
+			lat: number,
+			lon: number,
+			src: { kind: 'map' } | { kind: 'annotation' | 'station'; id: string; label: string }
+		) => void;
+		/** Escape with nothing else armed: drop the long-pressed origin. */
+		onDistanceOriginCleared?: () => void;
+		/** Draggable pin marking a long-pressed distance origin. */
+		distanceDraftPoint?: { lat: number; lon: number } | null;
+		/** What the Next Stop card measured — drawn only while the card is open. */
+		measureBand?: MeasureBand | null;
 	} = $props();
 
 	let mapEl: HTMLDivElement;
@@ -185,6 +208,16 @@
 
 	// Draft pin for the mission location picker
 	let missionDraftMarker: L.Marker | null = null;
+
+	// Draft pin for a long-pressed "measure from here" origin.
+	let distanceDraftMarker: L.Marker | null = null;
+	// Rubber band showing what the Next Stop card measured.
+	let measureLayers: L.Layer[] = [];
+	// Suppresses the native contextmenu that some browsers fire right after
+	// our own touch-hold has already committed, so one long press is one pick.
+	let longPressFiredAt = 0;
+	let longPressTimer: ReturnType<typeof setTimeout> | null = null;
+	let longPressStart: { x: number; y: number } | null = null;
 
 	// Net overlay layers
 	let netHalos: Map<string, L.CircleMarker | L.Marker> = new Map();
@@ -264,8 +297,115 @@
 		map.on('dragstart', () => { if (!programmaticMove) onFollowBreak?.(); });
 		map.on('zoomstart', () => { if (!programmaticMove) onFollowBreak?.(); });
 
+		// Long press / right-click = "measure from here". Bound on the DOM
+		// container rather than via map.on('contextmenu') because L.Marker does
+		// not bubble its mouse events to the map, so a Leaflet-level handler
+		// would never fire over a station marker — and picking a station is
+		// half the point of the gesture.
+		mapEl.addEventListener('contextmenu', onMapContextMenu);
+		mapEl.addEventListener('pointerdown', onMapPointerDown);
+		mapEl.addEventListener('pointermove', onMapPointerMove);
+		mapEl.addEventListener('pointerup', cancelLongPress);
+		mapEl.addEventListener('pointercancel', cancelLongPress);
+
 		document.addEventListener('visibilitychange', onVisibilityChange);
 	});
+
+	// --- "measure from here" long press ------------------------------------
+
+	/** Pixel radius within which a long press counts as landing ON a feature. */
+	const PICK_SNAP_PX = 22;
+
+	/**
+	 * What the gesture landed on. Resolved by proximity in screen space rather
+	 * than by layer hit-testing: a thumb on a phone is far bigger than a
+	 * circleMarker, and this also sidesteps Leaflet's marker/path event-bubbling
+	 * split entirely.
+	 */
+	function identifyAt(latlng: L.LatLng):
+		| { kind: 'map' }
+		| { kind: 'annotation' | 'station'; id: string; label: string } {
+		if (!map) return { kind: 'map' };
+		const p = map.latLngToLayerPoint(latlng);
+		let best: { kind: 'annotation' | 'station'; id: string; label: string } | null = null;
+		let bestD = PICK_SNAP_PX;
+
+		for (const st of stations) {
+			if (!st.position) continue;
+			const q = map.latLngToLayerPoint([st.position.lat, st.position.lon]);
+			const d = p.distanceTo(q);
+			if (d < bestD) {
+				bestD = d;
+				const key = stationKey(st);
+				best = { kind: 'station', id: key, label: get(getTacticalAlias)(key) || key };
+			}
+		}
+		for (const ann of annotations) {
+			if (ann.type !== 'point') continue;
+			try {
+				const geom = JSON.parse(ann.geometry);
+				if (geom?.type !== 'Point') continue;
+				// GeoJSON is [lon, lat]; Leaflet wants [lat, lon].
+				const q = map.latLngToLayerPoint([geom.coordinates[1], geom.coordinates[0]]);
+				const d = p.distanceTo(q);
+				if (d < bestD) {
+					bestD = d;
+					best = { kind: 'annotation', id: ann.id, label: ann.shortName || ann.label };
+				}
+			} catch {
+				// Unparseable geometry is simply not pickable.
+			}
+		}
+		return best ?? { kind: 'map' };
+	}
+
+	function commitDistanceOrigin(latlng: L.LatLng) {
+		onDistanceOriginPicked?.(latlng.lat, latlng.lng, identifyAt(latlng));
+	}
+
+	function onMapContextMenu(e: MouseEvent) {
+		// Always suppress the browser menu over the map — intended.
+		e.preventDefault();
+		if (!map) return;
+		// An armed draw/place mode owns the gesture; measuring must not commit
+		// an origin under the same press that commits the pick.
+		if (anyPlaceMode) return;
+		// Our own touch-hold already fired for this press on browsers that also
+		// synthesize a contextmenu afterwards.
+		if (Date.now() - longPressFiredAt < 1000) return;
+		commitDistanceOrigin(map.mouseEventToLatLng(e));
+	}
+
+	function onMapPointerDown(e: PointerEvent) {
+		cancelLongPress();
+		if (e.pointerType === 'mouse') return; // right-click covers desktop
+		if (!map) return;
+		// Careful aiming for a draw/place tap takes well over 600 ms; arming the
+		// long press here would fire "measure from here" mid-gesture.
+		if (anyPlaceMode) return;
+		longPressStart = { x: e.clientX, y: e.clientY };
+		const ev = e;
+		longPressTimer = setTimeout(() => {
+			longPressTimer = null;
+			longPressStart = null;
+			longPressFiredAt = Date.now();
+			commitDistanceOrigin(map.mouseEventToLatLng(ev as unknown as MouseEvent));
+		}, 600);
+	}
+
+	function onMapPointerMove(e: PointerEvent) {
+		// A pan is not a long press: 10 px of travel cancels it.
+		if (!longPressStart) return;
+		if (Math.abs(e.clientX - longPressStart.x) > 10 || Math.abs(e.clientY - longPressStart.y) > 10) {
+			cancelLongPress();
+		}
+	}
+
+	function cancelLongPress() {
+		if (longPressTimer) clearTimeout(longPressTimer);
+		longPressTimer = null;
+		longPressStart = null;
+	}
 
 	function onVisibilityChange() {
 		pageHidden = document.hidden;
@@ -281,6 +421,15 @@
 		highlightOverlays = [];
 		operatorHighlight?.remove();
 		missionDraftMarker?.remove();
+		distanceDraftMarker?.remove();
+		for (const l of measureLayers) l.remove();
+		measureLayers = [];
+		cancelLongPress();
+		mapEl?.removeEventListener('contextmenu', onMapContextMenu);
+		mapEl?.removeEventListener('pointerdown', onMapPointerDown);
+		mapEl?.removeEventListener('pointermove', onMapPointerMove);
+		mapEl?.removeEventListener('pointerup', cancelLongPress);
+		mapEl?.removeEventListener('pointercancel', cancelLongPress);
 		ownMarker?.remove();
 		ownAccuracyCircle?.remove();
 		map?.remove();
@@ -488,6 +637,77 @@
 		});
 		marker.bindTooltip('Mission location — drag to adjust', { direction: 'top', className: 'annotation-tooltip' });
 		missionDraftMarker = marker;
+	});
+
+	// Draft pin for a long-pressed distance origin. Same divIcon/marker recipe
+	// as the mission draft pin, so the two read as one affordance; dragging it
+	// re-fires the pick so the answer follows the pin live.
+	$effect(() => {
+		if (!map) return;
+		if (distanceDraftMarker) {
+			distanceDraftMarker.remove();
+			distanceDraftMarker = null;
+		}
+		if (!distanceDraftPoint) return;
+		const icon = L.divIcon({
+			className: 'mission-draft-icon',
+			html: '<div class="mission-draft-marker"><div class="mission-draft-pulse"></div><div class="mission-draft-pin"></div></div>',
+			iconSize: [28, 34],
+			iconAnchor: [14, 34],
+		});
+		const marker = L.marker([distanceDraftPoint.lat, distanceDraftPoint.lon], {
+			icon,
+			draggable: true,
+			zIndexOffset: 1000,
+			keyboard: false,
+		}).addTo(map);
+		marker.on('dragend', (e) => {
+			const ll = (e.target as L.Marker).getLatLng();
+			onDistanceOriginPicked?.(ll.lat, ll.lng, { kind: 'map' });
+		});
+		marker.bindTooltip('Measuring from here — drag to adjust', { direction: 'top', className: 'annotation-tooltip' });
+		distanceDraftMarker = marker;
+	});
+
+	// The rubber band: draw exactly what was measured. Remove-then-recreate on
+	// every change, the same discipline updateAnnotations() uses.
+	$effect(() => {
+		if (!map) return;
+		for (const l of measureLayers) l.remove();
+		measureLayers = [];
+		const band = measureBand;
+		if (!band) return;
+		if (band.kind === 'road' && band.latlngs.length > 1) {
+			measureLayers.push(
+				L.polyline(band.latlngs as L.LatLngExpression[], {
+					color: '#e94560',
+					weight: 5,
+					opacity: 0.9,
+					dashArray: '10 8',
+					interactive: false,
+				}).addTo(map)
+			);
+		} else if (band.kind === 'direct' && band.from && band.to) {
+			measureLayers.push(
+				L.polyline([[band.from.lat, band.from.lon], [band.to.lat, band.to.lon]] as L.LatLngExpression[], {
+					color: '#f59e0b',
+					weight: 4,
+					opacity: 0.9,
+					dashArray: '4 8',
+					interactive: false,
+				}).addTo(map)
+			);
+		}
+		// Amber tick from the operator to the point on the course the road
+		// answer was actually measured from — visible proof of the snap.
+		if (band.snap) {
+			measureLayers.push(
+				L.polyline(
+					[[band.snap.from.lat, band.snap.from.lon], [band.snap.to.lat, band.snap.to.lon]] as L.LatLngExpression[],
+					{ color: '#f59e0b', weight: 2, opacity: 0.9, dashArray: '3 4', interactive: false }
+				).addTo(map)
+			);
+		}
 	});
 
 	// Preview layer for unsaved geometry
@@ -1285,6 +1505,14 @@
 			if (drawingMode) {
 				clearDrawState();
 				onDrawComplete?.('');
+				return;
+			}
+			// Last: only when nothing else is armed does Escape drop a
+			// long-pressed distance origin. An expanded Next Stop card takes
+			// Escape ahead of this in the capture phase, so closing the card
+			// never also throws away the pin it was measuring from.
+			if (distanceDraftPoint) {
+				onDistanceOriginCleared?.();
 			}
 		}
 	}

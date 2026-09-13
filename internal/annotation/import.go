@@ -17,10 +17,67 @@ type gpxFile struct {
 }
 
 type gpxWaypoint struct {
-	Lat  float64 `xml:"lat,attr"`
-	Lon  float64 `xml:"lon,attr"`
-	Name string  `xml:"name"`
-	Desc string  `xml:"desc"`
+	Lat float64 `xml:"lat,attr"`
+	Lon float64 `xml:"lon,attr"`
+	// Name, Desc are free text. Cmt and Type are the exporter's own
+	// classification of the waypoint and are what separate a rest stop from a
+	// turn cue; see classifyWaypoint.
+	Name string `xml:"name"`
+	Desc string `xml:"desc"`
+	Cmt  string `xml:"cmt"`
+	Type string `xml:"type"`
+}
+
+// turnCueCmtPrefixes are the leading words of a turn-by-turn navigation
+// instruction. Route planners (RideWithGPS, Garmin) emit one <wpt> per cue
+// alongside the handful of waypoints a rider actually cares about — the real
+// 48-mile course file carries 45 cues and 4 stops — and an imported cue named
+// "Left" is worse than no data, because "next stop: Left, 0.3 mi" sounds like
+// an answer over the radio.
+var turnCueCmtPrefixes = []string{
+	"turn ", "continue ", "slight ", "keep ", "bear ",
+	"sharp ", "head ", "make a ", "merge ", "exit ",
+}
+
+// turnCueNames are the bare cue labels planners use when there is no <cmt> to
+// go on. They are only treated as cues when <type> is also "dot" (the generic
+// map-dot symbol), so a real place that happens to be called "Left" but is
+// typed as something meaningful survives.
+var turnCueNames = map[string]bool{
+	"left": true, "right": true, "straight": true,
+	"slight left": true, "slight right": true,
+	"sharp left": true, "sharp right": true,
+}
+
+// classifyWaypoint maps a GPX waypoint to an annotation category, reporting
+// false when the waypoint is a turn cue and should not be imported at all.
+//
+// Unknown vocabularies fall through to CategoryGeneral and are kept: a stop we
+// fail to recognise can be recategorised by hand, but a stop we drop is gone.
+func classifyWaypoint(name, cmt, typ string) (category string, keep bool) {
+	name = strings.ToLower(strings.TrimSpace(name))
+	cmt = strings.ToLower(strings.TrimSpace(cmt))
+	typ = strings.ToLower(strings.TrimSpace(typ))
+
+	switch {
+	case typ == "rest_area" || cmt == "rest_stop":
+		return CategoryAid, true
+	case cmt == "finish" || strings.HasPrefix(name, "finish"):
+		return CategoryFinish, true
+	case cmt == "start" || strings.HasPrefix(name, "start"):
+		return CategoryStart, true
+	}
+
+	for _, p := range turnCueCmtPrefixes {
+		if strings.HasPrefix(cmt, p) {
+			return "", false
+		}
+	}
+	if typ == "dot" && turnCueNames[name] {
+		return "", false
+	}
+
+	return CategoryGeneral, true
 }
 
 // gpxTrack is a <trk>: a named collection of segments. Segments are just GPS
@@ -71,12 +128,20 @@ func ParseGPX(r io.Reader) ([]ImportItem, error) {
 		if wpt.Name == "" {
 			continue
 		}
+		category, keep := classifyWaypoint(wpt.Name, wpt.Cmt, wpt.Type)
+		if !keep {
+			continue // turn cue: never import it
+		}
+		desc := wpt.Desc
+		if desc == "" {
+			desc = wpt.Cmt // keep the only text this waypoint has
+		}
 		items = append(items, ImportItem{
 			Name:        wpt.Name,
 			Lat:         wpt.Lat,
 			Lon:         wpt.Lon,
-			Description: wpt.Desc,
-			Category:    CategoryGeneral,
+			Description: desc,
+			Category:    category,
 			ShortName:   "",
 		})
 	}

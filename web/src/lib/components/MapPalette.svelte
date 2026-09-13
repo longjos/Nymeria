@@ -10,11 +10,19 @@
 		totalCount = 0,
 		hasActiveNet = false,
 		rosterCount = 0,
+		nextStopEnabled = true,
+		hasCourse = false,
+		onNextStopToggle,
 	}: {
 		filteredCount?: number;
 		totalCount?: number;
 		hasActiveNet?: boolean;
 		rosterCount?: number;
+		/** Whether the along-course "Next stop" readout is shown on the map. */
+		nextStopEnabled?: boolean;
+		/** A route-category annotation is loaded; without one the readout has nothing to measure. */
+		hasCourse?: boolean;
+		onNextStopToggle?: () => void;
 	} = $props();
 
 	let open = $state(false);
@@ -27,6 +35,13 @@
 	let rosterDisabled = $derived(rosterReason !== '');
 	let rosterActive = $derived($mapSettings.showRosterOnly && !rosterDisabled);
 
+	// Without a course line there is nothing to measure along, so the toggle is
+	// disabled and says why rather than silently doing nothing.
+	let nextStopReason = $derived(
+		hasCourse ? '' : 'No course loaded — import a GPX or KML in Annotations.'
+	);
+	let nextStopDisabled = $derived(nextStopReason !== '');
+
 	let hasNonDefault = $derived(
 		$mapSettings.stationAgeFilter !== 'all' ||
 		!$mapSettings.showTracks ||
@@ -35,6 +50,7 @@
 		$mapSettings.showRosterOnly ||
 		$mapSettings.showWeatherOverlay ||
 		$mapSettings.showDFOverlay ||
+		!nextStopEnabled ||
 		$mapSettings.trackDuration !== 'all'
 	);
 
@@ -196,6 +212,26 @@
 						/>
 						DF overlay
 					</label>
+				</div>
+				<div class="palette-row">
+					<label class="palette-checkbox" class:is-disabled={nextStopDisabled}>
+						<input
+							id="next-stop-readout"
+							type="checkbox"
+							checked={nextStopEnabled && !nextStopDisabled}
+							disabled={nextStopDisabled}
+							aria-describedby="next-stop-note"
+							onchange={() => onNextStopToggle?.()}
+						/>
+						Next stop readout
+					</label>
+				</div>
+				<div class="palette-info" id="next-stop-note">
+					{#if nextStopDisabled}
+						{nextStopReason}
+					{:else}
+						Distance to the next stop along the course
+					{/if}
 				</div>
 			</div>
 		</div>

@@ -28,10 +28,13 @@
 	import CommandPalette from '$lib/components/CommandPalette.svelte';
 	import GpsFollowControl from '$lib/components/GpsFollowControl.svelte';
 	import GpsStatusPill from '$lib/components/GpsStatusPill.svelte';
+	import NextStopPill from '$lib/components/NextStopPill.svelte';
+	import type { MeasureBand, DistanceOrigin } from '$lib/components/NextStopPill.svelte';
+	import { STOP_CATEGORIES } from '$lib/routeDistance';
 	import { stations, stationList, initStationStore, wsClient, connectWS } from '$lib/stores/stations';
 	import { initMessageStore, conversationList } from '$lib/stores/messages';
 	import { initTransportStore } from '$lib/stores/transports';
-	import { gpsStatus, gpsFollow, initGpsStore } from '$lib/stores/gps';
+	import { gpsStatus, gpsFollow, gpsAgeMs, gpsHasFix, initGpsStore } from '$lib/stores/gps';
 	import { showToast } from '$lib/stores/toast';
 	import { annotationList, initAnnotationStore } from '$lib/stores/annotations';
 	import { api } from '$lib/api';
@@ -79,6 +82,16 @@
 	let missionMapCoords = $state<{ lat: number; lon: number; label?: string } | null>(null);
 	let missionPickAnnotation = $state<{ id: string; lat: number; lon: number } | null>(null);
 	let sheetBeforePick: SheetState | null = null;
+
+	// --- Next Stop (along-course distance) ---------------------------------
+	// null origin means "measure from my own GPS fix"; a long press or the
+	// station Distance button replaces it with an explicit point.
+	let distanceOrigin = $state<{ lat: number; lon: number; label: string; bearingDeg?: number } | null>(null);
+	/** True only for a long-pressed bare coordinate — the draggable pin case. */
+	let distancePinned = $state(false);
+	let nextStopExpanded = $state(false);
+	let measureBand = $state<MeasureBand | null>(null);
+	let showNextStop = $state(true);
 
 	// Any check-in change (status, note, roll call, position update) re-emits
 	// $activeCheckIns, and a fresh Set here would change the identity of
@@ -217,6 +230,11 @@
 		})();
 
 		if (!browser) return;
+		try {
+			showNextStop = localStorage.getItem('nymeria_next_stop_pill') !== '0';
+		} catch {
+			// default on
+		}
 		const mq = window.matchMedia('(min-width: 769px)');
 		isDesktop = mq.matches;
 		const handler = (e: MediaQueryListEvent) => { isDesktop = e.matches; };
@@ -331,6 +349,97 @@
 		const v = $opsView;
 		if (v) {
 			flyToTarget = { lat: v.lat, lon: v.lon, zoom: v.zoom };
+		}
+	}
+
+	// The course lines and the marked stops on them. `general` is structurally
+	// ineligible as a destination (STOP_CATEGORIES), which is what keeps an
+	// imported turn cue from ever being announced as the next rest stop.
+	let routeAnnotations = $derived($annotationList.filter((a) => a.category === 'route'));
+	let stopAnnotations = $derived(
+		$annotationList.filter((a) => (STOP_CATEGORIES as readonly string[]).includes(a.category))
+	);
+
+	/**
+	 * Below this speed a GPS course-over-ground is noise, not a heading: NMEA
+	 * RMC leaves it undefined at rest and receivers emit the last value, 0.0, or
+	 * jitter. Feeding that to the distance engine flips "ahead" to the stop
+	 * BEHIND the operator — observed on the real course while parked. Same gate,
+	 * and same threshold, as courseForStation below.
+	 */
+	const MIN_COURSE_SPEED_KNOTS = 1;
+
+	// Own GPS fix as an origin. A stale or old fix is still passed through —
+	// the pill decides how to present it (amber + age, or "no fix" past 10 min).
+	let gpsOrigin = $derived.by((): DistanceOrigin | null => {
+		const fix = $gpsStatus.fix;
+		if (!fix || fix.mode < 2) return null;
+		return {
+			lat: fix.lat,
+			lon: fix.lon,
+			label: 'my position',
+			bearingDeg:
+				fix.hasCourse && fix.speedKnots > MIN_COURSE_SPEED_KNOTS ? fix.course : undefined,
+			ageMs: $gpsAgeMs ?? undefined,
+			stale: $gpsStatus.stale || !$gpsHasFix,
+			source: 'gps'
+		};
+	});
+
+	let effectiveDistanceOrigin = $derived<DistanceOrigin | null>(
+		distanceOrigin ? { ...distanceOrigin, source: 'pick' } : gpsOrigin
+	);
+
+	/**
+	 * Long press / right-click on the map. Not a pick mode: it arms and commits
+	 * in one gesture, so the bottom sheet is deliberately left alone.
+	 */
+	function handleDistanceOriginPicked(
+		lat: number,
+		lon: number,
+		src: { kind: 'map' } | { kind: 'annotation' | 'station'; id: string; label: string }
+	) {
+		distanceOrigin = {
+			lat,
+			lon,
+			label: src.kind === 'map' ? 'pin' : src.label,
+			bearingDeg: src.kind === 'station' ? courseForStation(src.id) : undefined
+		};
+		distancePinned = src.kind === 'map';
+		showNextStop = true;
+	}
+
+	/** Course of a moving station only — a parked station's last course is noise. */
+	function courseForStation(key: string): number | undefined {
+		const st = $stations.get(key);
+		const pos = st?.position;
+		if (!pos || pos.course == null) return undefined;
+		return (pos.speed ?? 0) > 1 ? pos.course : undefined;
+	}
+
+	function handleDistanceOriginCleared() {
+		distanceOrigin = null;
+		distancePinned = false;
+	}
+
+	/** StationDetail's "Distance" button — the discoverable twin of long-press. */
+	function handleStationDistance(key: string, lat: number, lon: number, label: string) {
+		distanceOrigin = { lat, lon, label, bearingDeg: courseForStation(key) };
+		distancePinned = false;
+		showNextStop = true;
+		nextStopExpanded = true;
+	}
+
+	function toggleNextStopPill() {
+		showNextStop = !showNextStop;
+		if (!showNextStop) {
+			nextStopExpanded = false;
+			measureBand = null;
+		}
+		try {
+			localStorage.setItem('nymeria_next_stop_pill', showNextStop ? '1' : '0');
+		} catch {
+			// per-viewer convenience only — the session still honours the toggle
 		}
 	}
 
@@ -592,6 +701,12 @@
 			ownPositionStale={$gpsStatus.stale}
 			follow={$gpsFollow}
 			onFollowBreak={handleGpsFollowBreak}
+			onDistanceOriginPicked={handleDistanceOriginPicked}
+			onDistanceOriginCleared={handleDistanceOriginCleared}
+			distanceDraftPoint={distancePinned && distanceOrigin
+				? { lat: distanceOrigin.lat, lon: distanceOrigin.lon }
+				: null}
+			measureBand={showNextStop ? measureBand : null}
 		/>
 	</div>
 
@@ -604,11 +719,28 @@
 		totalCount={allStationsWithPosition.length}
 		hasActiveNet={netIsOpen}
 		rosterCount={rosterMappedCount}
+		nextStopEnabled={showNextStop}
+		hasCourse={routeAnnotations.length > 0}
+		onNextStopToggle={toggleNextStopPill}
 	/>
 
 	<!-- Live GPS follow toggle + status -->
 	<GpsFollowControl oncenter={() => mapRef?.centerOnOwnPosition()} />
 	<GpsStatusPill />
+
+	<!-- Along-course distance readout (below the GPS status pill) -->
+	{#if showNextStop}
+		<NextStopPill
+			origin={effectiveDistanceOrigin}
+			{routeAnnotations}
+			{stopAnnotations}
+			activeNetId={$activeNet?.id ?? null}
+			expanded={nextStopExpanded}
+			onToggle={() => (nextStopExpanded = !nextStopExpanded)}
+			onClear={handleDistanceOriginCleared}
+			onMeasureChange={(b) => (measureBand = b)}
+		/>
+	{/if}
 
 	<!-- Floating Ops View restore button -->
 	{#if $opsView && $activeNet}
@@ -668,6 +800,7 @@
 					onTabChange={handleTabChange}
 					onClose={closePanel}
 					onFlyTo={handleFlyTo}
+					onDistance={handleStationDistance}
 				/>
 			{:else if $panelMode === 'messages'}
 				<ConvoList
@@ -680,6 +813,7 @@
 					onTabChange={handleTabChange}
 					onClose={closePanel}
 					onFlyTo={handleFlyTo}
+					onDistance={handleStationDistance}
 				/>
 			{:else if $panelMode === 'transports'}
 				<TransportPanel />
@@ -762,6 +896,7 @@
 					onTabChange={handleTabChange}
 					onClose={closePanel}
 					onFlyTo={handleFlyTo}
+					onDistance={handleStationDistance}
 				/>
 			{:else if $panelMode === 'messages'}
 				<ConvoList
@@ -776,6 +911,7 @@
 					onClose={closePanel}
 					onBack={openMessages}
 					onFlyTo={handleFlyTo}
+					onDistance={handleStationDistance}
 				/>
 			{:else if $panelMode === 'transports'}
 				<TransportPanel />
