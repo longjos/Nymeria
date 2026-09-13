@@ -10,6 +10,7 @@ export interface MapSettings {
 	showTracks: boolean;
 	showDRCones: boolean;
 	showCallsigns: boolean;
+	showRosterOnly: boolean;
 	showWeatherOverlay: boolean;
 	showDFOverlay: boolean;
 }
@@ -20,6 +21,7 @@ const DEFAULTS: MapSettings = {
 	showTracks: true,
 	showDRCones: true,
 	showCallsigns: false,
+	showRosterOnly: false,
 	showWeatherOverlay: false,
 	showDFOverlay: false,
 };
