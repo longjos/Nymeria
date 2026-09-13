@@ -21,6 +21,11 @@
 	}
 
 	function handleKeydown(e: KeyboardEvent) {
+		if (!open) return;
+		// A modal above the panel owns Escape. `inert` on body children does not
+		// silence a window listener, and stopPropagation cannot help — both
+		// listeners are on window — so check the DOM for an open modal instead.
+		if (document.querySelector('[aria-modal="true"], [data-blocks-escape="true"]')) return;
 		if (e.key !== 'Escape') return;
 		if (onBack) onBack();
 		else onClose?.();
@@ -112,8 +117,8 @@
 		display: flex;
 		align-items: center;
 		justify-content: center;
-		width: 32px;
-		height: 32px;
+		width: 44px;
+		height: 44px;
 		background: var(--color-surface);
 		border: 1px solid var(--color-primary);
 		border-radius: var(--radius-sm);

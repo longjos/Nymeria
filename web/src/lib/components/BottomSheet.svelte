@@ -2,6 +2,12 @@
 	import type { Snippet } from 'svelte';
 	import type { SheetState } from '$lib/stores/ui';
 
+	// Peek height: handle 20 + peek status row 32 + nav rail 58 + 12 padding.
+	// Hoisted so the snap arithmetic and the published CSS token can never drift apart.
+	// Measured, not budgeted: at 112 the status row's real 32px min-height pushed
+	// the rail 10px past the viewport and clipped the bottom of every FAB.
+	const PEEK_H = 122;
+
 	let {
 		sheetLevel = 'peek' as SheetState,
 		onStateChange,
@@ -21,10 +27,23 @@
 	let startTime = $state(0);
 	let sheetEl: HTMLDivElement;
 
+	// Publish the peek height as a CSS token at runtime so overlays that sit above
+	// the sheet (Toast) can position themselves against it. BottomSheet only renders
+	// on mobile, so this never applies on desktop.
+	$effect(() => {
+		const root = document.documentElement;
+		const prev = root.style.getPropertyValue('--sheet-peek');
+		root.style.setProperty('--sheet-peek', `${PEEK_H}px`);
+		return () => {
+			if (prev) root.style.setProperty('--sheet-peek', prev);
+			else root.style.removeProperty('--sheet-peek');
+		};
+	});
+
 	function snapY(s: SheetState): number {
 		const vh = window.innerHeight;
 		switch (s) {
-			case 'peek': return vh - 60;
+			case 'peek': return vh - PEEK_H;
 			case 'half': return vh * 0.5;
 			case 'full': return vh * 0.1;
 		}
@@ -64,7 +83,7 @@
 		} else {
 			// Snap to nearest
 			const vh = window.innerHeight;
-			const peekY = vh - 60;
+			const peekY = vh - PEEK_H;
 			const halfY = vh * 0.5;
 			const fullY = vh * 0.1;
 			const y = currentTranslate;

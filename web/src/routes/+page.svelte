@@ -764,22 +764,6 @@
 		/>
 	{/if}
 
-	<!-- Mobile: Toolbar (FABs) -->
-	<Toolbar
-		unreadCount={totalUnread}
-		onSearchOpen={() => searchOpen.set(true)}
-		onMessagesOpen={openMessages}
-		onBulletinsOpen={openBulletins}
-		onTransportsOpen={openTransports}
-		onAnnotationsOpen={openAnnotations}
-		onNetControlOpen={openNetControl}
-		onWeatherOpen={openWeather}
-		onDFOpen={openDF}
-		onPacketsOpen={openPackets}
-		onSettingsOpen={openSettings}
-		onCommandPalette={toggleCommandPalette}
-	/>
-
 	<!-- Desktop: Side Panel -->
 	{#if isDesktop}
 		<SidePanel
@@ -878,9 +862,26 @@
 		>
 			{#snippet peekContent()}
 				<div class="sheet-peek-row">
-					<ConnectionStatus />
+					<button class="peek-status" onclick={openTransports} aria-label="Transport status — open transports">
+						<ConnectionStatus />
+					</button>
 					<span class="station-count">{$stationList.length} stations</span>
 				</div>
+				<Toolbar
+					unreadCount={totalUnread}
+					activeMode={$panelMode}
+					onSearchOpen={() => searchOpen.set(true)}
+					onMessagesOpen={openMessages}
+					onBulletinsOpen={openBulletins}
+					onTransportsOpen={openTransports}
+					onAnnotationsOpen={openAnnotations}
+					onNetControlOpen={openNetControl}
+					onWeatherOpen={openWeather}
+					onDFOpen={openDF}
+					onPacketsOpen={openPackets}
+					onSettingsOpen={openSettings}
+					onCommandPalette={toggleCommandPalette}
+				/>
 			{/snippet}
 
 			{#if $panelMode === 'closed' || $panelMode === 'stations'}
@@ -1005,6 +1006,18 @@
 		align-items: center;
 		gap: var(--space-sm);
 		padding-bottom: var(--space-xs);
+	}
+
+	.peek-status {
+		display: inline-flex;
+		align-items: center;
+		min-height: 32px;
+		padding: 0;
+		background: none;
+		border: none;
+		color: inherit;
+		font: inherit;
+		cursor: pointer;
 	}
 
 	.station-count {
