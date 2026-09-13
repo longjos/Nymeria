@@ -212,14 +212,21 @@ func (m *Manager) GetCheckpointsForNet(netID string) ([]CheckpointWithPassages, 
 		passageMap[p.CheckpointID] = append(passageMap[p.CheckpointID], p)
 	}
 
-	var result []CheckpointWithPassages
+	result := []CheckpointWithPassages{}
 	for _, meta := range netMetas {
 		ann, ok := m.annMgr.Get(meta.AnnotationID)
 		if !ok {
 			continue // annotation was deleted
 		}
 
+		// Never nil: a nil slice marshals to JSON null, and the frontend
+		// iterates cp.passages directly inside a derived store. A null there
+		// throws mid-subscription and takes the whole reactive flush down with
+		// it. Zero passages is the normal state before an event starts.
 		passages := passageMap[meta.AnnotationID]
+		if passages == nil {
+			passages = []store.CheckpointPassage{}
+		}
 		var latest *time.Time
 		if len(passages) > 0 {
 			t := passages[len(passages)-1].PassageTime
@@ -281,7 +288,7 @@ func (m *Manager) GetProgress(netID string) (*CheckpointProgress, error) {
 		}
 	}
 
-	var elements []ProgressElement
+	elements := []ProgressElement{}
 	for _, info := range elemMap {
 		elements = append(elements, ProgressElement{
 			Label:             info.label,
