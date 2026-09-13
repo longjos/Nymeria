@@ -605,8 +605,8 @@ func TestV2SchemaVersion(t *testing.T) {
 	if err != nil {
 		t.Fatalf("query schema_version: %v", err)
 	}
-	if version != 22 {
-		t.Errorf("expected schema version 22, got %d", version)
+	if version != 23 {
+		t.Errorf("expected schema version 23, got %d", version)
 	}
 }
 
@@ -1105,8 +1105,8 @@ func TestV3SchemaVersion(t *testing.T) {
 	if err != nil {
 		t.Fatalf("query schema_version: %v", err)
 	}
-	if version != 22 {
-		t.Errorf("expected schema version 22, got %d", version)
+	if version != 23 {
+		t.Errorf("expected schema version 23, got %d", version)
 	}
 }
 
@@ -1339,7 +1339,6 @@ func TestSaveAndLoadNetMissionRoundtrip(t *testing.T) {
 		Description: "Set up comms at Red Cross shelter",
 		Priority:    "priority",
 		Status:      "open",
-		AssignedTo:  "KD7BBC",
 		CreatedAt:   now,
 	}
 
@@ -1362,8 +1361,8 @@ func TestSaveAndLoadNetMissionRoundtrip(t *testing.T) {
 	if got.Priority != m.Priority {
 		t.Errorf("priority: got %q, want %q", got.Priority, m.Priority)
 	}
-	if got.AssignedTo != m.AssignedTo {
-		t.Errorf("assignedTo: got %q, want %q", got.AssignedTo, m.AssignedTo)
+	if got.AssignedTo != "" {
+		t.Errorf("assignedTo: got %q, want empty (deprecated, never persisted)", got.AssignedTo)
 	}
 	if got.CompletedAt != nil {
 		t.Errorf("completedAt: expected nil, got %v", got.CompletedAt)
@@ -1727,8 +1726,8 @@ func TestV5MigrationAddsTrackedStationsColumn(t *testing.T) {
 
 	var version int
 	s.db.QueryRow("SELECT version FROM schema_version LIMIT 1").Scan(&version)
-	if version != 22 {
-		t.Errorf("expected schema version 22, got %d", version)
+	if version != 23 {
+		t.Errorf("expected schema version 23, got %d", version)
 	}
 }
 
@@ -1834,8 +1833,8 @@ func TestV6MigrationCreatesTacticalAliasesTable(t *testing.T) {
 
 	var version int
 	s.db.QueryRow("SELECT version FROM schema_version LIMIT 1").Scan(&version)
-	if version != 22 {
-		t.Errorf("expected schema version 22, got %d", version)
+	if version != 23 {
+		t.Errorf("expected schema version 23, got %d", version)
 	}
 }
 
@@ -2002,8 +2001,8 @@ func TestV7MigrationAddsAnnotationColumns(t *testing.T) {
 
 	var version int
 	s.db.QueryRow("SELECT version FROM schema_version LIMIT 1").Scan(&version)
-	if version != 22 {
-		t.Errorf("expected schema version 22, got %d", version)
+	if version != 23 {
+		t.Errorf("expected schema version 23, got %d", version)
 	}
 }
 
@@ -2305,8 +2304,8 @@ func TestMigrateV8CreatesOperationsTable(t *testing.T) {
 
 	var version int
 	s.db.QueryRow("SELECT version FROM schema_version LIMIT 1").Scan(&version)
-	if version != 22 {
-		t.Errorf("expected schema version 22, got %d", version)
+	if version != 23 {
+		t.Errorf("expected schema version 23, got %d", version)
 	}
 
 	// Verify operations table exists by doing a query.
@@ -2325,8 +2324,8 @@ func TestMigrateV11AddsOpsViewColumns(t *testing.T) {
 
 	var version int
 	s.db.QueryRow("SELECT version FROM schema_version LIMIT 1").Scan(&version)
-	if version != 22 {
-		t.Errorf("expected schema version 22, got %d", version)
+	if version != 23 {
+		t.Errorf("expected schema version 23, got %d", version)
 	}
 
 	// Verify ops_view columns exist.
@@ -2715,8 +2714,8 @@ func TestMigrateV13CreatesTelemetryReadingsTable(t *testing.T) {
 
 	var version int
 	s.db.QueryRow("SELECT version FROM schema_version LIMIT 1").Scan(&version)
-	if version != 22 {
-		t.Errorf("expected schema version 22, got %d", version)
+	if version != 23 {
+		t.Errorf("expected schema version 23, got %d", version)
 	}
 }
 
@@ -2959,8 +2958,8 @@ func TestMigrateV16(t *testing.T) {
 	if err != nil {
 		t.Fatalf("query schema_version: %v", err)
 	}
-	if version != 22 {
-		t.Errorf("expected schema version 22, got %d", version)
+	if version != 23 {
+		t.Errorf("expected schema version 23, got %d", version)
 	}
 }
 
@@ -3240,8 +3239,8 @@ func TestMigrateV19CreatesCheckpointTables(t *testing.T) {
 	if err := s.db.QueryRow("SELECT version FROM schema_version LIMIT 1").Scan(&version); err != nil {
 		t.Fatalf("read schema_version: %v", err)
 	}
-	if version != 22 {
-		t.Errorf("expected schema version 22, got %d", version)
+	if version != 23 {
+		t.Errorf("expected schema version 23, got %d", version)
 	}
 
 	// Verify tables exist.
@@ -3353,8 +3352,8 @@ func TestMigrateV20NormalizesLegacySources(t *testing.T) {
 	if err := s.db.QueryRow("SELECT version FROM schema_version LIMIT 1").Scan(&version); err != nil {
 		t.Fatalf("read schema_version: %v", err)
 	}
-	if version != 22 {
-		t.Errorf("expected schema version 22, got %d", version)
+	if version != 23 {
+		t.Errorf("expected schema version 23, got %d", version)
 	}
 
 	// sources column must exist.
@@ -3526,8 +3525,8 @@ func TestMigrateV21CreatesConversationReadsTable(t *testing.T) {
 	if err := s.db.QueryRow("SELECT version FROM schema_version LIMIT 1").Scan(&version); err != nil {
 		t.Fatalf("read schema_version: %v", err)
 	}
-	if version != 22 {
-		t.Errorf("expected schema version 22, got %d", version)
+	if version != 23 {
+		t.Errorf("expected schema version 23, got %d", version)
 	}
 
 	var count int
@@ -3775,8 +3774,8 @@ func TestMigrateV22AddsAnnotationBatchColumns(t *testing.T) {
 	if err := s.db.QueryRow("SELECT version FROM schema_version LIMIT 1").Scan(&version); err != nil {
 		t.Fatalf("read schema_version: %v", err)
 	}
-	if version != 22 {
-		t.Errorf("expected schema version 22, got %d", version)
+	if version != 23 {
+		t.Errorf("expected schema version 23, got %d", version)
 	}
 
 	cols := map[string]bool{}
@@ -3839,6 +3838,7 @@ func TestMigrateV22Idempotent(t *testing.T) {
 		t.Fatalf("second rerun of migrateV22 failed: %v", err)
 	}
 
+	// migrateV22 re-stamps its own version, so the direct rerun leaves 22.
 	var version int
 	if err := s.db.QueryRow("SELECT version FROM schema_version LIMIT 1").Scan(&version); err != nil {
 		t.Fatalf("read schema_version: %v", err)
@@ -4054,5 +4054,206 @@ func TestUpdateAnnotationBatchLabel(t *testing.T) {
 	}
 	if count != 0 {
 		t.Errorf("rows affected for unknown batch = %d, want 0", count)
+	}
+}
+
+// --- v23: fold net_missions.assigned_to into NetCheckIn.MissionIDs ---
+
+// preV23Fixture hand-builds a v22-shaped database with the nets, net_missions
+// and net_check_ins tables the v23 backfill touches.
+func preV23Fixture(t *testing.T, checkIns []string, missions []string) string {
+	t.Helper()
+	path := filepath.Join(t.TempDir(), "pre-v23.db")
+	db, err := sql.Open("sqlite", path)
+	if err != nil {
+		t.Fatalf("open raw db: %v", err)
+	}
+	stmts := []string{
+		`CREATE TABLE schema_version (version INTEGER NOT NULL)`,
+		`INSERT INTO schema_version (version) VALUES (22)`,
+		`CREATE TABLE nets (id TEXT PRIMARY KEY, name TEXT NOT NULL)`,
+		`INSERT INTO nets (id, name) VALUES ('net-1', 'Test')`,
+		`CREATE TABLE net_missions (
+			id TEXT PRIMARY KEY,
+			net_id TEXT NOT NULL,
+			title TEXT NOT NULL,
+			assigned_to TEXT NOT NULL DEFAULT ''
+		)`,
+		`CREATE TABLE net_check_ins (
+			id TEXT PRIMARY KEY,
+			net_id TEXT NOT NULL,
+			callsign TEXT NOT NULL,
+			status TEXT NOT NULL DEFAULT 'available',
+			checked_in_at DATETIME NOT NULL,
+			mission_ids TEXT NOT NULL DEFAULT '[]'
+		)`,
+	}
+	stmts = append(stmts, missions...)
+	stmts = append(stmts, checkIns...)
+	for _, stmt := range stmts {
+		if _, err := db.Exec(stmt); err != nil {
+			db.Close()
+			t.Fatalf("setup stmt %q: %v", stmt, err)
+		}
+	}
+	if err := db.Close(); err != nil {
+		t.Fatalf("close raw db: %v", err)
+	}
+	return path
+}
+
+func v23Version(t *testing.T, s *SQLiteStore) int {
+	t.Helper()
+	var version int
+	if err := s.db.QueryRow("SELECT version FROM schema_version LIMIT 1").Scan(&version); err != nil {
+		t.Fatalf("read schema_version: %v", err)
+	}
+	return version
+}
+
+func v23MissionIDs(t *testing.T, s *SQLiteStore, ciID string) string {
+	t.Helper()
+	var raw string
+	if err := s.db.QueryRow(`SELECT mission_ids FROM net_check_ins WHERE id = ?`, ciID).Scan(&raw); err != nil {
+		t.Fatalf("read mission_ids: %v", err)
+	}
+	return raw
+}
+
+func TestMigrateV23BackfillsAssignedTo(t *testing.T) {
+	path := preV23Fixture(t,
+		[]string{`INSERT INTO net_check_ins (id, net_id, callsign, status, checked_in_at)
+			VALUES ('ci-1', 'net-1', 'KD7BBC', 'available', '2024-01-01T00:00:00Z')`},
+		[]string{`INSERT INTO net_missions (id, net_id, title, assigned_to)
+			VALUES ('m-1', 'net-1', 'Deploy', 'KD7BBC')`},
+	)
+
+	s := NewSQLiteStore(path)
+	if err := s.Init(); err != nil {
+		t.Fatalf("Init failed: %v", err)
+	}
+	defer s.Close()
+
+	if v := v23Version(t, s); v != 23 {
+		t.Errorf("expected schema version 23, got %d", v)
+	}
+	if got := v23MissionIDs(t, s, "ci-1"); got != `["m-1"]` {
+		t.Errorf("mission_ids: got %s, want [\"m-1\"]", got)
+	}
+	var status string
+	if err := s.db.QueryRow(`SELECT status FROM net_check_ins WHERE id = 'ci-1'`).Scan(&status); err != nil {
+		t.Fatalf("read status: %v", err)
+	}
+	if status != "assigned" {
+		t.Errorf("status: got %q, want %q", status, "assigned")
+	}
+	var assignedTo string
+	if err := s.db.QueryRow(`SELECT assigned_to FROM net_missions WHERE id = 'm-1'`).Scan(&assignedTo); err != nil {
+		t.Fatalf("read assigned_to: %v", err)
+	}
+	if assignedTo != "" {
+		t.Errorf("assigned_to: got %q, want empty", assignedTo)
+	}
+}
+
+func TestMigrateV23OrphanCallsignDoesNotFail(t *testing.T) {
+	path := preV23Fixture(t,
+		[]string{`INSERT INTO net_check_ins (id, net_id, callsign, status, checked_in_at)
+			VALUES ('ci-1', 'net-1', 'KD7BBC', 'available', '2024-01-01T00:00:00Z')`},
+		[]string{`INSERT INTO net_missions (id, net_id, title, assigned_to)
+			VALUES ('m-1', 'net-1', 'Deploy', 'W1AW')`},
+	)
+
+	s := NewSQLiteStore(path)
+	if err := s.Init(); err != nil {
+		t.Fatalf("Init must tolerate an orphaned assigned_to callsign: %v", err)
+	}
+	defer s.Close()
+
+	if v := v23Version(t, s); v != 23 {
+		t.Errorf("expected schema version 23, got %d", v)
+	}
+	if got := v23MissionIDs(t, s, "ci-1"); got != `[]` {
+		t.Errorf("mission_ids: got %s, want []", got)
+	}
+	var assignedTo string
+	if err := s.db.QueryRow(`SELECT assigned_to FROM net_missions WHERE id = 'm-1'`).Scan(&assignedTo); err != nil {
+		t.Fatalf("read assigned_to: %v", err)
+	}
+	if assignedTo != "" {
+		t.Errorf("assigned_to: got %q, want empty", assignedTo)
+	}
+}
+
+func TestMigrateV23CaseInsensitiveAndReleasedSkipped(t *testing.T) {
+	path := preV23Fixture(t,
+		[]string{
+			`INSERT INTO net_check_ins (id, net_id, callsign, status, checked_in_at)
+				VALUES ('ci-released', 'net-1', 'KD7BBC', 'released', '2024-01-01T00:00:00Z')`,
+			`INSERT INTO net_check_ins (id, net_id, callsign, status, checked_in_at)
+				VALUES ('ci-active', 'net-1', 'KD7BBC', 'available', '2024-01-01T01:00:00Z')`,
+		},
+		[]string{`INSERT INTO net_missions (id, net_id, title, assigned_to)
+			VALUES ('m-1', 'net-1', 'Deploy', 'kd7bbc')`},
+	)
+
+	s := NewSQLiteStore(path)
+	if err := s.Init(); err != nil {
+		t.Fatalf("Init failed: %v", err)
+	}
+	defer s.Close()
+
+	if got := v23MissionIDs(t, s, "ci-active"); got != `["m-1"]` {
+		t.Errorf("active check-in mission_ids: got %s, want [\"m-1\"]", got)
+	}
+	if got := v23MissionIDs(t, s, "ci-released"); got != `[]` {
+		t.Errorf("released check-in mission_ids: got %s, want []", got)
+	}
+}
+
+func TestMigrateV23NoDuplicateWhenAlreadyAssigned(t *testing.T) {
+	path := preV23Fixture(t,
+		[]string{`INSERT INTO net_check_ins (id, net_id, callsign, status, checked_in_at, mission_ids)
+			VALUES ('ci-1', 'net-1', 'KD7BBC', 'assigned', '2024-01-01T00:00:00Z', '["m-1"]')`},
+		[]string{`INSERT INTO net_missions (id, net_id, title, assigned_to)
+			VALUES ('m-1', 'net-1', 'Deploy', 'KD7BBC')`},
+	)
+
+	s := NewSQLiteStore(path)
+	if err := s.Init(); err != nil {
+		t.Fatalf("Init failed: %v", err)
+	}
+	defer s.Close()
+
+	if got := v23MissionIDs(t, s, "ci-1"); got != `["m-1"]` {
+		t.Errorf("mission_ids: got %s, want [\"m-1\"] (no duplicate)", got)
+	}
+}
+
+func TestMigrateV23WithoutMissionTables(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "pre-v23-bare.db")
+	db, err := sql.Open("sqlite", path)
+	if err != nil {
+		t.Fatalf("open raw db: %v", err)
+	}
+	for _, stmt := range []string{
+		`CREATE TABLE schema_version (version INTEGER NOT NULL)`,
+		`INSERT INTO schema_version (version) VALUES (22)`,
+	} {
+		if _, err := db.Exec(stmt); err != nil {
+			db.Close()
+			t.Fatalf("setup stmt %q: %v", stmt, err)
+		}
+	}
+	db.Close()
+
+	s := NewSQLiteStore(path)
+	if err := s.Init(); err != nil {
+		t.Fatalf("Init must succeed without the mission tables: %v", err)
+	}
+	defer s.Close()
+
+	if v := v23Version(t, s); v != 23 {
+		t.Errorf("expected schema version 23, got %d", v)
 	}
 }

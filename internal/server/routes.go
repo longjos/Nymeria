@@ -149,6 +149,8 @@ func (s *Server) routes() {
 			r.Post("/nets/{id}/checkout/{ciId}", s.handleCheckOut)
 			r.Post("/nets/{id}/missions", s.handleCreateMission)
 			r.Put("/nets/{id}/missions/{mId}", s.handleUpdateMission)
+			r.Post("/nets/{id}/missions/{mId}/operators/{ciId}", s.handleAssignMissionOperator)
+			r.Delete("/nets/{id}/missions/{mId}/operators/{ciId}", s.handleUnassignMissionOperator)
 			r.Post("/nets/{id}/notes", s.handleAddNetNote)
 			r.Patch("/nets/{id}/notes/{noteId}/pin", s.handleToggleNotePin)
 			r.Post("/nets/{id}/rollcall", s.handleInitiateRollCall)
@@ -2198,6 +2200,22 @@ func (s *Server) handleCheckOut(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, map[string]string{"status": "checked out"})
 }
 
+// createMissionRequest is the POST /nets/{id}/missions body: the mission
+// fields inline, plus the check-in IDs to assign as part of the same
+// operation. Keeping it here leaves store.NetMission a pure persistence type.
+type createMissionRequest struct {
+	store.NetMission
+	AssigneeIDs []string `json:"assigneeIds"`
+}
+
+// createMissionResponse returns the created mission alongside the operators
+// actually assigned and the assignee tokens that did not match the roster.
+type createMissionResponse struct {
+	store.NetMission
+	AssignedOperators []store.NetCheckIn `json:"assignedOperators"`
+	SkippedAssignees  []string           `json:"skippedAssignees"`
+}
+
 func (s *Server) handleCreateMission(w http.ResponseWriter, r *http.Request) {
 	if s.netMgr == nil {
 		writeJSON(w, http.StatusServiceUnavailable, map[string]string{"error": "net control not available"})
@@ -2205,20 +2223,30 @@ func (s *Server) handleCreateMission(w http.ResponseWriter, r *http.Request) {
 	}
 
 	id := chi.URLParam(r, "id")
-	var req store.NetMission
+	var req createMissionRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid request body"})
 		return
 	}
 	req.NetID = id
 
-	m, err := s.netMgr.CreateMission(req)
+	mission, assigned, skipped, err := s.netMgr.CreateMissionWithAssignees(req.NetMission, req.AssigneeIDs)
 	if err != nil {
 		writeJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
 		return
 	}
+	if assigned == nil {
+		assigned = []store.NetCheckIn{}
+	}
+	if skipped == nil {
+		skipped = []string{}
+	}
 
-	writeJSON(w, http.StatusCreated, m)
+	writeJSON(w, http.StatusCreated, createMissionResponse{
+		NetMission:        *mission,
+		AssignedOperators: assigned,
+		SkippedAssignees:  skipped,
+	})
 }
 
 func (s *Server) handleUpdateMission(w http.ResponseWriter, r *http.Request) {
@@ -2244,6 +2272,7 @@ func (s *Server) handleUpdateMission(w http.ResponseWriter, r *http.Request) {
 	}
 	updated.ID = mId
 	updated.NetID = id
+	updated.AssignedTo = "" // deprecated: never persisted
 
 	m, err := s.netMgr.UpdateMission(updated)
 	if err != nil {
@@ -2376,6 +2405,40 @@ func (s *Server) handleSearchOperators(w http.ResponseWriter, r *http.Request) {
 		results = []station.Station{}
 	}
 	writeJSON(w, http.StatusOK, results)
+}
+
+// handleAssignMissionOperator is the mission-scoped mirror of
+// handleAssignMission — same manager call, addressed from the mission.
+func (s *Server) handleAssignMissionOperator(w http.ResponseWriter, r *http.Request) {
+	if s.netMgr == nil {
+		writeJSON(w, http.StatusServiceUnavailable, map[string]string{"error": "net control not available"})
+		return
+	}
+
+	ci, err := s.netMgr.AssignMission(chi.URLParam(r, "id"), chi.URLParam(r, "ciId"), chi.URLParam(r, "mId"))
+	if err != nil {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
+		return
+	}
+
+	writeJSON(w, http.StatusOK, ci)
+}
+
+// handleUnassignMissionOperator removes exactly one mission assignment; the
+// "unassign all" case stays on the check-in-scoped route.
+func (s *Server) handleUnassignMissionOperator(w http.ResponseWriter, r *http.Request) {
+	if s.netMgr == nil {
+		writeJSON(w, http.StatusServiceUnavailable, map[string]string{"error": "net control not available"})
+		return
+	}
+
+	ci, err := s.netMgr.UnassignMission(chi.URLParam(r, "id"), chi.URLParam(r, "ciId"), chi.URLParam(r, "mId"))
+	if err != nil {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
+		return
+	}
+
+	writeJSON(w, http.StatusOK, ci)
 }
 
 func (s *Server) handleAssignMission(w http.ResponseWriter, r *http.Request) {
@@ -2842,7 +2905,7 @@ func (s *Server) handleExportRosterCSV(w http.ResponseWriter, r *http.Request) {
 
 	w.Header().Set("Content-Type", "text/csv")
 	w.Header().Set("Content-Disposition", "attachment; filename=roster.csv")
-	netcontrol.ExportRosterCSV(w, checkIns)
+	netcontrol.ExportRosterCSV(w, checkIns, s.netMgr.GetMissions(id))
 }
 
 func findCheckIn(cis []store.NetCheckIn, id string) *store.NetCheckIn {

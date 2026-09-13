@@ -125,7 +125,7 @@ export interface MissionDraftSnapshot {
 	title: string;
 	desc: string;
 	priority: string;
-	assign: string;
+	assigneeIds: string[];
 	locLabel: string;
 	locLat: number | null;
 	locLon: number | null;

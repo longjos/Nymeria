@@ -79,7 +79,7 @@
 	}
 
 	function currentAssignment(ci: NetCheckIn): string {
-		return ci.assignment || statusLabels[ci.status] || ci.status;
+		return statusLabels[ci.status] || ci.status;
 	}
 </script>
 

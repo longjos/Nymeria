@@ -366,7 +366,6 @@ export interface NetCheckIn {
 	location: string;
 	lat?: number;
 	lon?: number;
-	assignment: string;
 	missionIds: string[];
 	trackedStations: TrackedStation[];
 	checkedInAt: string;
@@ -382,12 +381,26 @@ export interface NetMission {
 	description: string;
 	priority: string;
 	status: MissionStatus;
-	assignedTo: string;
+	/** @deprecated Create-time input only; always "" in responses. Do not read. */
+	assignedTo?: string;
+	/** Create-time input only (check-in IDs). Never present on a loaded mission. */
+	assigneeIds?: string[];
 	location: string;
 	lat?: number;
 	lon?: number;
 	createdAt: string;
 	completedAt?: string;
+}
+
+/**
+ * POST /nets/{id}/missions response: the mission plus the operators that were
+ * actually assigned as part of the same operation, and the assignee tokens the
+ * server could not resolve to a roster check-in (never an error — the mission
+ * is still created).
+ */
+export interface CreateMissionResponse extends NetMission {
+	assignedOperators: NetCheckIn[];
+	skippedAssignees: string[];
 }
 
 export type NoteCategory = 'general' | 'medical' | 'logistical' | 'tactical' | 'weather' | 'resource' | 'hazard' | 'comms';

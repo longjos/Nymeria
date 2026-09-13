@@ -80,9 +80,25 @@
 	let missionPickAnnotation = $state<{ id: string; lat: number; lon: number } | null>(null);
 	let sheetBeforePick: SheetState | null = null;
 
-	let netCallsigns = $derived(
-		new Set($activeCheckIns.map((ci) => ci.callsign))
-	);
+	// Any check-in change (status, note, roll call, position update) re-emits
+	// $activeCheckIns, and a fresh Set here would change the identity of
+	// stationsWithPosition below, forcing the Map to rebuild every marker even
+	// though the callsign membership is usually unchanged. Return the cached Set
+	// when the contents are identical; it is only ever read via .has(), so a
+	// stable reference is indistinguishable from a fresh one.
+	let prevNetCallsigns: Set<string> | null = null;
+	let netCallsigns = $derived.by(() => {
+		const next = new Set($activeCheckIns.map((ci) => ci.callsign));
+		if (prevNetCallsigns && prevNetCallsigns.size === next.size) {
+			let same = true;
+			for (const c of next) {
+				if (!prevNetCallsigns.has(c)) { same = false; break; }
+			}
+			if (same) return prevNetCallsigns;
+		}
+		prevNetCallsigns = next;
+		return next;
+	});
 
 	let allStationsWithPosition = $derived(
 		$stationList.filter((s) => s.position)
@@ -144,17 +160,21 @@
 		}
 	});
 
-	onMount(async () => {
-		await initSession();
-		sessionReady = true;
+	// Synchronous on purpose: Svelte only honours the returned destroy callback
+	// for a sync onMount, so the async version silently dropped it and leaked
+	// the matchMedia listener on every unmount.
+	onMount(() => {
+		void (async () => {
+			await initSession();
+			sessionReady = true;
+		})();
 
-		if (browser) {
-			const mq = window.matchMedia('(min-width: 769px)');
-			isDesktop = mq.matches;
-			const handler = (e: MediaQueryListEvent) => { isDesktop = e.matches; };
-			mq.addEventListener('change', handler);
-			return () => mq.removeEventListener('change', handler);
-		}
+		if (!browser) return;
+		const mq = window.matchMedia('(min-width: 769px)');
+		isDesktop = mq.matches;
+		const handler = (e: MediaQueryListEvent) => { isDesktop = e.matches; };
+		mq.addEventListener('change', handler);
+		return () => mq.removeEventListener('change', handler);
 	});
 
 	// Auto-enable overlay when its panel opens (convenience)

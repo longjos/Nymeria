@@ -67,7 +67,6 @@ type NetCheckIn struct {
 	Location        string           `json:"location"`
 	Lat             *float64         `json:"lat,omitempty"`
 	Lon             *float64         `json:"lon,omitempty"`
-	Assignment      string           `json:"assignment"`
 	MissionIDs      []string         `json:"missionIds"`
 	TrackedStations []TrackedStation `json:"trackedStations"`
 	CheckedInAt     time.Time        `json:"checkedInAt"`
@@ -84,6 +83,8 @@ type NetMission struct {
 	Description string     `json:"description"`
 	Priority    string     `json:"priority"`
 	Status      string     `json:"status"`
+	// Deprecated: superseded by NetCheckIn.MissionIDs. Accepted as a
+	// create-time assignee input only; never persisted, always "" on load.
 	AssignedTo  string     `json:"assignedTo"`
 	Location    string     `json:"location"`
 	Lat         *float64   `json:"lat,omitempty"`

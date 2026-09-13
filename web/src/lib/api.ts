@@ -1,7 +1,7 @@
 import type {
 	Station, Message, Conversation, Bulletin, HealthResponse, TransportStatus,
 	SessionUser, PublicUser, ConfigResponse, SetupData, Annotation, ActivityResponse,
-	Net, NetCheckIn, NetMission, NetNote, NetEvent, NetSummary, TacticalAlias,
+	Net, NetCheckIn, NetMission, NetNote, NetEvent, NetSummary, TacticalAlias, CreateMissionResponse,
 	AnnotationTemplate, Operation, ICS309Report, TileCacheStatus,
 	WeatherReading, WeatherConfig, TelemetryReading, TelemetryReadingsResponse,
 	SettingsResponse, SettingsUpdateResponse, SerialPortsResponse, KissTncsResponse,
@@ -236,7 +236,7 @@ export const api = {
 	checkIn: (netId: string, callsign: string, traffic?: string, category?: string) => post<NetCheckIn>(`/nets/${netId}/checkin`, { callsign, traffic, category }),
 	updateCheckIn: (netId: string, ciId: string, data: Partial<NetCheckIn>) => put<NetCheckIn>(`/nets/${netId}/checkin/${ciId}`, data),
 	checkOut: (netId: string, ciId: string) => post<{ status: string }>(`/nets/${netId}/checkout/${ciId}`, {}),
-	createMission: (netId: string, data: Partial<NetMission>) => post<NetMission>(`/nets/${netId}/missions`, data),
+	createMission: (netId: string, data: Partial<NetMission>) => post<CreateMissionResponse>(`/nets/${netId}/missions`, data),
 	updateMission: (netId: string, mId: string, data: Partial<NetMission>) => put<NetMission>(`/nets/${netId}/missions/${mId}`, data),
 	addNetNote: (netId: string, data: { checkInId?: string; missionId?: string; content: string; category?: string; severity?: string }) => post<NetNote>(`/nets/${netId}/notes`, data),
 	netEvents: (netId: string) => get<NetEvent[]>(`/nets/${netId}/events`),
@@ -249,6 +249,12 @@ export const api = {
 		post<NetCheckIn>(`/nets/${netId}/checkin/${ciId}/assign`, { missionId }),
 	unassignMission: (netId: string, ciId: string, missionId: string) =>
 		del<NetCheckIn>(`/nets/${netId}/checkin/${ciId}/assign?missionId=${encodeURIComponent(missionId)}`),
+	// Mission-scoped mirrors of the two above — same manager operation,
+	// addressable from whichever object the UI is holding.
+	assignMissionOperator: (netId: string, mId: string, ciId: string) =>
+		post<NetCheckIn>(`/nets/${netId}/missions/${mId}/operators/${ciId}`, {}),
+	unassignMissionOperator: (netId: string, mId: string, ciId: string) =>
+		del<NetCheckIn>(`/nets/${netId}/missions/${mId}/operators/${ciId}`),
 	addTrackedStation: (netId: string, ciId: string, callsign: string) =>
 		post<NetCheckIn>(`/nets/${netId}/checkin/${ciId}/devices`, { callsign }),
 	removeTrackedStation: (netId: string, ciId: string, callsign: string) =>

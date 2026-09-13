@@ -2,8 +2,10 @@ package netcontrol
 
 import (
 	"bytes"
+	"fmt"
 	"path/filepath"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -228,16 +230,12 @@ func TestUpdateCheckIn(t *testing.T) {
 
 	// Update status.
 	ci.Status = OpAssigned
-	ci.Assignment = "Red Cross Shelter"
 	updated, err := mgr.UpdateCheckIn(*ci)
 	if err != nil {
 		t.Fatalf("UpdateCheckIn failed: %v", err)
 	}
 	if updated.Status != OpAssigned {
 		t.Errorf("status: got %q, want %q", updated.Status, OpAssigned)
-	}
-	if updated.Assignment != "Red Cross Shelter" {
-		t.Errorf("assignment: got %q, want %q", updated.Assignment, "Red Cross Shelter")
 	}
 }
 
@@ -273,10 +271,9 @@ func TestMissionCRUD(t *testing.T) {
 
 	// Create
 	m, err := mgr.CreateMission(store.NetMission{
-		NetID:      n.ID,
-		Title:      "Deploy to shelter",
-		AssignedTo: "KD7BBC",
-		Priority:   "priority",
+		NetID:    n.ID,
+		Title:    "Deploy to shelter",
+		Priority: "priority",
 	})
 	if err != nil {
 		t.Fatalf("CreateMission failed: %v", err)
@@ -771,7 +768,7 @@ func TestExportRosterCSV(t *testing.T) {
 	}
 
 	var buf bytes.Buffer
-	if err := ExportRosterCSV(&buf, checkIns); err != nil {
+	if err := ExportRosterCSV(&buf, checkIns, nil); err != nil {
 		t.Fatalf("ExportRosterCSV failed: %v", err)
 	}
 
@@ -1613,7 +1610,7 @@ func TestExportRosterCSVCategory(t *testing.T) {
 	}
 
 	var buf bytes.Buffer
-	if err := ExportRosterCSV(&buf, checkIns); err != nil {
+	if err := ExportRosterCSV(&buf, checkIns, nil); err != nil {
 		t.Fatalf("ExportRosterCSV failed: %v", err)
 	}
 
@@ -1845,3 +1842,490 @@ func TestPinnedPersistence(t *testing.T) {
 	s.Close()
 }
 
+
+// --- Mission create-with-assignees tests (#unify-mission-assignment) ---
+
+// newTwoOperatorNet builds an open net with two available check-ins.
+func newTwoOperatorNet(t *testing.T, mgr *Manager) (netID string, a, b *store.NetCheckIn) {
+	t.Helper()
+	n, err := mgr.CreateNet(store.Net{Name: "Test Net"})
+	if err != nil {
+		t.Fatalf("CreateNet failed: %v", err)
+	}
+	if err := mgr.OpenNet(n.ID); err != nil {
+		t.Fatalf("OpenNet failed: %v", err)
+	}
+	a, err = mgr.CheckIn(n.ID, "KD7BBC", "", "")
+	if err != nil {
+		t.Fatalf("CheckIn A failed: %v", err)
+	}
+	b, err = mgr.CheckIn(n.ID, "W1AW", "", "")
+	if err != nil {
+		t.Fatalf("CheckIn B failed: %v", err)
+	}
+	return n.ID, a, b
+}
+
+func TestCreateMissionWithAssignees(t *testing.T) {
+	mgr := newTestManager(t)
+	netID, a, b := newTwoOperatorNet(t, mgr)
+
+	mission, assigned, skipped, err := mgr.CreateMissionWithAssignees(
+		store.NetMission{NetID: netID, Title: "Sweep Aid 3"}, []string{a.ID, b.ID})
+	if err != nil {
+		t.Fatalf("CreateMissionWithAssignees failed: %v", err)
+	}
+	if len(assigned) != 2 {
+		t.Fatalf("assigned: got %d, want 2", len(assigned))
+	}
+	if len(skipped) != 0 {
+		t.Errorf("skipped: got %v, want empty", skipped)
+	}
+	if mission.AssignedTo != "" {
+		t.Errorf("assignedTo: got %q, want empty", mission.AssignedTo)
+	}
+	for _, ci := range assigned {
+		if len(ci.MissionIDs) != 1 || ci.MissionIDs[0] != mission.ID {
+			t.Errorf("%s missionIds: got %v, want [%s]", ci.Callsign, ci.MissionIDs, mission.ID)
+		}
+		if ci.Status != OpAssigned {
+			t.Errorf("%s status: got %q, want %q", ci.Callsign, ci.Status, OpAssigned)
+		}
+	}
+}
+
+func TestCreateMissionWithAssigneesReflectedInGetCheckIns(t *testing.T) {
+	mgr := newTestManager(t)
+	netID, a, b := newTwoOperatorNet(t, mgr)
+
+	mission, _, _, err := mgr.CreateMissionWithAssignees(
+		store.NetMission{NetID: netID, Title: "Sweep Aid 3"}, []string{a.ID, b.ID})
+	if err != nil {
+		t.Fatalf("CreateMissionWithAssignees failed: %v", err)
+	}
+
+	for _, ci := range mgr.GetCheckIns(netID) {
+		if len(ci.MissionIDs) != 1 || ci.MissionIDs[0] != mission.ID {
+			t.Errorf("%s missionIds in manager state: got %v, want [%s]", ci.Callsign, ci.MissionIDs, mission.ID)
+		}
+		if ci.Status != OpAssigned {
+			t.Errorf("%s status in manager state: got %q, want %q", ci.Callsign, ci.Status, OpAssigned)
+		}
+	}
+}
+
+func TestCreateMissionUnknownAssigneeWarnsAndCreates(t *testing.T) {
+	mgr := newTestManager(t)
+	netID, a, _ := newTwoOperatorNet(t, mgr)
+
+	mission, assigned, skipped, err := mgr.CreateMissionWithAssignees(
+		store.NetMission{NetID: netID, Title: "Sweep Aid 3"}, []string{a.ID, "NOT-A-REAL-ID"})
+	if err != nil {
+		t.Fatalf("CreateMissionWithAssignees failed: %v", err)
+	}
+	if len(mgr.GetMissions(netID)) != 1 {
+		t.Fatalf("expected the mission to exist, got %d", len(mgr.GetMissions(netID)))
+	}
+	if len(assigned) != 1 || assigned[0].ID != a.ID {
+		t.Errorf("assigned: got %v, want just %s", assigned, a.ID)
+	}
+	if len(skipped) != 1 || skipped[0] != "NOT-A-REAL-ID" {
+		t.Errorf("skipped: got %v, want [NOT-A-REAL-ID]", skipped)
+	}
+	if mission.ID == "" {
+		t.Error("expected mission ID to be set")
+	}
+}
+
+func TestCreateMissionAllAssigneesUnknownStillCreates(t *testing.T) {
+	mgr := newTestManager(t)
+	netID, _, _ := newTwoOperatorNet(t, mgr)
+
+	mission, assigned, skipped, err := mgr.CreateMissionWithAssignees(
+		store.NetMission{NetID: netID, Title: "Sweep Aid 3"}, []string{"nope-1", "nope-2"})
+	if err != nil {
+		t.Fatalf("CreateMissionWithAssignees must not fail on roster mismatch: %v", err)
+	}
+	if mission == nil || len(mgr.GetMissions(netID)) != 1 {
+		t.Fatal("mission should have been created unassigned")
+	}
+	if len(assigned) != 0 {
+		t.Errorf("assigned: got %v, want empty", assigned)
+	}
+	if len(skipped) != 2 {
+		t.Errorf("skipped: got %v, want 2 entries", skipped)
+	}
+}
+
+func TestCreateMissionAssigneeByCallsign(t *testing.T) {
+	mgr := newTestManager(t)
+	netID, a, _ := newTwoOperatorNet(t, mgr)
+
+	_, assigned, skipped, err := mgr.CreateMissionWithAssignees(
+		store.NetMission{NetID: netID, Title: "Sweep Aid 3"}, []string{"kd7bbc"})
+	if err != nil {
+		t.Fatalf("CreateMissionWithAssignees failed: %v", err)
+	}
+	if len(skipped) != 0 {
+		t.Errorf("skipped: got %v, want empty", skipped)
+	}
+	if len(assigned) != 1 || assigned[0].ID != a.ID {
+		t.Errorf("assigned: got %v, want just %s", assigned, a.ID)
+	}
+}
+
+func TestCreateMissionAssigneesDeduped(t *testing.T) {
+	mgr := newTestManager(t)
+	netID, a, _ := newTwoOperatorNet(t, mgr)
+
+	mission, assigned, skipped, err := mgr.CreateMissionWithAssignees(
+		store.NetMission{NetID: netID, Title: "Sweep Aid 3"}, []string{a.ID, a.ID, "KD7BBC"})
+	if err != nil {
+		t.Fatalf("CreateMissionWithAssignees failed: %v", err)
+	}
+	if len(assigned) != 1 {
+		t.Fatalf("assigned: got %d, want 1", len(assigned))
+	}
+	if len(skipped) != 0 {
+		t.Errorf("skipped: got %v, want empty", skipped)
+	}
+	for _, ci := range mgr.GetCheckIns(netID) {
+		if ci.ID == a.ID && len(ci.MissionIDs) != 1 {
+			t.Errorf("missionIds: got %v, want exactly [%s]", ci.MissionIDs, mission.ID)
+		}
+	}
+}
+
+func TestCreateMissionEmitsAssignmentsBeforeMissionCreated(t *testing.T) {
+	mgr := newTestManager(t)
+	netID, a, b := newTwoOperatorNet(t, mgr)
+	drainEvents(mgr)
+
+	if _, _, _, err := mgr.CreateMissionWithAssignees(
+		store.NetMission{NetID: netID, Title: "Sweep Aid 3"}, []string{a.ID, b.ID}); err != nil {
+		t.Fatalf("CreateMissionWithAssignees failed: %v", err)
+	}
+
+	var types []string
+	for {
+		select {
+		case evt := <-mgr.Events():
+			types = append(types, evt.Type)
+			continue
+		default:
+		}
+		break
+	}
+
+	createdIdx := -1
+	created := 0
+	for i, ty := range types {
+		if ty == EventMissionCreated {
+			created++
+			createdIdx = i
+		}
+	}
+	if created != 1 {
+		t.Fatalf("mission_created count: got %d, want 1 (events: %v)", created, types)
+	}
+	checkinCount := 0
+	for i, ty := range types {
+		if ty != EventCheckInUpdated {
+			continue
+		}
+		checkinCount++
+		if i > createdIdx {
+			t.Errorf("checkin_updated at %d comes after mission_created at %d (events: %v)", i, createdIdx, types)
+		}
+	}
+	if checkinCount != 2 {
+		t.Errorf("checkin_updated count: got %d, want 2 (events: %v)", checkinCount, types)
+	}
+}
+
+func TestCreateMissionLogsAssignedOperators(t *testing.T) {
+	mgr := newTestManager(t)
+	netID, a, b := newTwoOperatorNet(t, mgr)
+
+	if _, _, _, err := mgr.CreateMissionWithAssignees(
+		store.NetMission{NetID: netID, Title: "Sweep Aid 3"}, []string{a.ID, b.ID}); err != nil {
+		t.Fatalf("CreateMissionWithAssignees failed: %v", err)
+	}
+
+	events, err := mgr.GetEvents(netID)
+	if err != nil {
+		t.Fatalf("GetEvents failed: %v", err)
+	}
+	found := false
+	for _, e := range events {
+		if e.Type != "mission_created" {
+			continue
+		}
+		found = true
+		if !strings.Contains(e.Summary, "Sweep Aid 3") ||
+			!strings.Contains(e.Summary, "KD7BBC") ||
+			!strings.Contains(e.Summary, "W1AW") {
+			t.Errorf("mission_created summary %q should name the title and both operators", e.Summary)
+		}
+		if e.Callsign != "" {
+			t.Errorf("mission_created callsign: got %q, want empty", e.Callsign)
+		}
+	}
+	if !found {
+		t.Fatal("no mission_created event logged")
+	}
+}
+
+func TestCreateMissionNoAssigneesUnchanged(t *testing.T) {
+	mgr := newTestManager(t)
+	netID, _, _ := newTwoOperatorNet(t, mgr)
+	drainEvents(mgr)
+
+	_, assigned, skipped, err := mgr.CreateMissionWithAssignees(
+		store.NetMission{NetID: netID, Title: "Deploy"}, nil)
+	if err != nil {
+		t.Fatalf("CreateMissionWithAssignees failed: %v", err)
+	}
+	if assigned == nil || len(assigned) != 0 {
+		t.Errorf("assigned: got %v, want empty non-nil", assigned)
+	}
+	if skipped == nil || len(skipped) != 0 {
+		t.Errorf("skipped: got %v, want empty non-nil", skipped)
+	}
+
+	for {
+		select {
+		case evt := <-mgr.Events():
+			if evt.Type == EventCheckInUpdated {
+				t.Errorf("unexpected checkin_updated event with no assignees")
+			}
+			continue
+		default:
+		}
+		break
+	}
+
+	events, err := mgr.GetEvents(netID)
+	if err != nil {
+		t.Fatalf("GetEvents failed: %v", err)
+	}
+	for _, e := range events {
+		if e.Type == "mission_created" && e.Summary != "Mission: Deploy" {
+			t.Errorf("summary: got %q, want %q", e.Summary, "Mission: Deploy")
+		}
+	}
+}
+
+func TestCreateMissionLegacyAssignedToResolves(t *testing.T) {
+	mgr := newTestManager(t)
+	netID, a, _ := newTwoOperatorNet(t, mgr)
+
+	mission, assigned, skipped, err := mgr.CreateMissionWithAssignees(
+		store.NetMission{NetID: netID, Title: "X", AssignedTo: "KD7BBC"}, nil)
+	if err != nil {
+		t.Fatalf("CreateMissionWithAssignees failed: %v", err)
+	}
+	if len(assigned) != 1 || assigned[0].ID != a.ID {
+		t.Errorf("assigned: got %v, want just %s", assigned, a.ID)
+	}
+	if len(skipped) != 0 {
+		t.Errorf("skipped: got %v, want empty", skipped)
+	}
+	if mission.AssignedTo != "" {
+		t.Errorf("assignedTo: got %q, want empty", mission.AssignedTo)
+	}
+}
+
+func TestCreateMissionAssignmentsPersist(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "persist.db")
+	s := store.NewSQLiteStore(path)
+	if err := s.Init(); err != nil {
+		t.Fatalf("Init failed: %v", err)
+	}
+	tracker := station.NewMemoryTracker(config.StationConfig{
+		StaleTimeout:   time.Hour,
+		TrackMaxPoints: 10,
+		DedupWindow:    30 * time.Second,
+	})
+	mgr := NewManager(s, tracker)
+
+	netID, a, _ := newTwoOperatorNet(t, mgr)
+	mission, _, _, err := mgr.CreateMissionWithAssignees(
+		store.NetMission{NetID: netID, Title: "Sweep Aid 3"}, []string{a.ID})
+	if err != nil {
+		t.Fatalf("CreateMissionWithAssignees failed: %v", err)
+	}
+	s.Close()
+
+	s2 := store.NewSQLiteStore(path)
+	if err := s2.Init(); err != nil {
+		t.Fatalf("re-Init failed: %v", err)
+	}
+	defer s2.Close()
+	mgr2 := NewManager(s2, tracker)
+	if err := mgr2.Load(); err != nil {
+		t.Fatalf("Load failed: %v", err)
+	}
+
+	cis := mgr2.GetCheckIns(netID)
+	found := false
+	for _, ci := range cis {
+		if ci.ID != a.ID {
+			continue
+		}
+		found = true
+		if len(ci.MissionIDs) != 1 || ci.MissionIDs[0] != mission.ID {
+			t.Errorf("reloaded missionIds: got %v, want [%s]", ci.MissionIDs, mission.ID)
+		}
+	}
+	if !found {
+		t.Fatal("check-in did not survive reload")
+	}
+	ms := mgr2.GetMissions(netID)
+	if len(ms) != 1 {
+		t.Fatalf("expected 1 reloaded mission, got %d", len(ms))
+	}
+	if ms[0].AssignedTo != "" {
+		t.Errorf("reloaded assignedTo: got %q, want empty", ms[0].AssignedTo)
+	}
+}
+
+func TestCreateMissionWithAssigneesConcurrent(t *testing.T) {
+	mgr := newTestManager(t)
+	netID, a, b := newTwoOperatorNet(t, mgr)
+
+	timer := time.AfterFunc(10*time.Second, func() { panic("deadlock in CreateMissionWithAssignees") })
+	defer timer.Stop()
+
+	// Drain events in the background: the channel is capped, but emit() is
+	// non-blocking, so this only keeps the test realistic.
+	done := make(chan struct{})
+	go func() {
+		for {
+			select {
+			case <-mgr.Events():
+			case <-done:
+				return
+			}
+		}
+	}()
+
+	var wg sync.WaitGroup
+	for i := 0; i < 8; i++ {
+		wg.Add(1)
+		go func(i int) {
+			defer wg.Done()
+			if _, _, _, err := mgr.CreateMissionWithAssignees(
+				store.NetMission{NetID: netID, Title: fmt.Sprintf("Mission %d", i)},
+				[]string{a.ID, b.ID},
+			); err != nil {
+				t.Errorf("concurrent create %d failed: %v", i, err)
+			}
+		}(i)
+	}
+	wg.Wait()
+	close(done)
+
+	if got := len(mgr.GetMissions(netID)); got != 8 {
+		t.Errorf("missions: got %d, want 8", got)
+	}
+	for _, ci := range mgr.GetCheckIns(netID) {
+		if len(ci.MissionIDs) != 8 {
+			t.Errorf("%s missionIds: got %d, want 8", ci.Callsign, len(ci.MissionIDs))
+		}
+	}
+}
+
+func TestExportRosterCSVMissionsColumn(t *testing.T) {
+	missions := []store.NetMission{
+		{ID: "m-1", Title: "Deploy"},
+		{ID: "m-2", Title: "Sweep"},
+	}
+	checkIns := []store.NetCheckIn{
+		{
+			Callsign:    "KD7BBC",
+			Status:      "assigned",
+			Traffic:     "routine",
+			Source:      "voice",
+			MissionIDs:  []string{"m-1", "m-2"},
+			CheckedInAt: time.Date(2024, 1, 1, 12, 0, 0, 0, time.UTC),
+			LastHeard:   time.Date(2024, 1, 1, 12, 30, 0, 0, time.UTC),
+		},
+	}
+
+	var buf bytes.Buffer
+	if err := ExportRosterCSV(&buf, checkIns, missions); err != nil {
+		t.Fatalf("ExportRosterCSV failed: %v", err)
+	}
+
+	lines := strings.Split(strings.TrimSpace(buf.String()), "\n")
+	header := strings.Split(lines[0], ",")
+	if len(header) < 9 || header[8] != "missions" {
+		t.Fatalf("header column 8: got %v, want \"missions\"", header)
+	}
+	if !strings.Contains(buf.String(), "Deploy;Sweep") {
+		t.Errorf("CSV should join mission titles: %q", buf.String())
+	}
+}
+
+// failCheckInStore wraps a real store and can be flipped to fail every
+// SaveNetCheckIn, standing in for a disk-full / SQLITE_BUSY write failure.
+type failCheckInStore struct {
+	store.Store
+	fail bool
+}
+
+func (f *failCheckInStore) SaveNetCheckIn(ci store.NetCheckIn) error {
+	if f.fail {
+		return fmt.Errorf("simulated persist failure")
+	}
+	return f.Store.SaveNetCheckIn(ci)
+}
+
+func TestCreateMissionAssigneePersistFailureIsReportedAsSkipped(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "test.db")
+	s := store.NewSQLiteStore(path)
+	if err := s.Init(); err != nil {
+		t.Fatalf("Init failed: %v", err)
+	}
+	t.Cleanup(func() { s.Close() })
+	fs := &failCheckInStore{Store: s}
+
+	tracker := station.NewMemoryTracker(config.StationConfig{
+		StaleTimeout:   time.Hour,
+		TrackMaxPoints: 10,
+		DedupWindow:    30 * time.Second,
+	})
+	mgr := NewManager(fs, tracker)
+
+	netID, a, _ := newTwoOperatorNet(t, mgr)
+	fs.fail = true
+
+	mission, assigned, skipped, err := mgr.CreateMissionWithAssignees(
+		store.NetMission{NetID: netID, Title: "Sweep Aid 3"}, []string{a.ID})
+	if err != nil {
+		t.Fatalf("CreateMissionWithAssignees must still create the mission: %v", err)
+	}
+	if mission == nil {
+		t.Fatal("mission is nil")
+	}
+	if len(assigned) != 0 {
+		t.Errorf("assigned: got %v, want empty — the assignment was never persisted", assigned)
+	}
+	if len(skipped) != 1 || skipped[0] != a.ID {
+		t.Errorf("skipped: got %v, want [%s]", skipped, a.ID)
+	}
+
+	// In-memory state must be rolled back so it matches the store.
+	for _, ci := range mgr.GetCheckIns(netID) {
+		if ci.ID != a.ID {
+			continue
+		}
+		if len(ci.MissionIDs) != 0 {
+			t.Errorf("missionIds: got %v, want empty after rollback", ci.MissionIDs)
+		}
+		if ci.Status != OpAvailable {
+			t.Errorf("status: got %q, want %q after rollback", ci.Status, OpAvailable)
+		}
+	}
+}

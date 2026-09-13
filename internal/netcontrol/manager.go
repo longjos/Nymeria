@@ -4,6 +4,7 @@ import (
 	"encoding/csv"
 	"fmt"
 	"io"
+	"log"
 	"strings"
 	"sync"
 	"time"
@@ -443,18 +444,36 @@ func (m *Manager) CheckOut(netID, checkInID string) error {
 	return nil
 }
 
-// CreateMission creates a new mission.
+// CreateMission creates a new mission with no assignees.
 func (m *Manager) CreateMission(mission store.NetMission) (*store.NetMission, error) {
+	created, _, _, err := m.CreateMissionWithAssignees(mission, nil)
+	return created, err
+}
+
+// CreateMissionWithAssignees creates a mission and assigns operators to it as
+// one operation, so the mission_created event never precedes its assignments.
+// assigneeIDs are check-in IDs (a callsign or tactical call also resolves).
+// Tokens that do not match the roster are returned in skipped and DO NOT fail
+// the create — an NCS under pressure must never lose a mission to a typo.
+func (m *Manager) CreateMissionWithAssignees(
+	mission store.NetMission, assigneeIDs []string,
+) (created *store.NetMission, assigned []store.NetCheckIn, skipped []string, err error) {
 	m.mu.RLock()
 	_, ok := m.nets[mission.NetID]
 	m.mu.RUnlock()
 	if !ok {
-		return nil, fmt.Errorf("net %q not found", mission.NetID)
+		return nil, nil, nil, fmt.Errorf("net %q not found", mission.NetID)
 	}
 
 	if strings.TrimSpace(mission.Title) == "" {
-		return nil, fmt.Errorf("mission title is required")
+		return nil, nil, nil, fmt.Errorf("mission title is required")
 	}
+
+	// Legacy single-callsign input channel.
+	if len(assigneeIDs) == 0 && strings.TrimSpace(mission.AssignedTo) != "" {
+		assigneeIDs = []string{strings.TrimSpace(mission.AssignedTo)}
+	}
+	mission.AssignedTo = "" // deprecated: never persisted
 
 	mission.ID = uuid.New().String()
 	if mission.Status == "" {
@@ -466,21 +485,88 @@ func (m *Manager) CreateMission(mission store.NetMission) (*store.NetMission, er
 	mission.CreatedAt = time.Now().UTC()
 
 	if err := m.store.SaveNetMission(mission); err != nil {
-		return nil, fmt.Errorf("persist mission: %w", err)
+		return nil, nil, nil, fmt.Errorf("persist mission: %w", err)
 	}
 
+	assigned = []store.NetCheckIn{}
+	skipped = []string{}
+
+	// pending assignments, kept with the token that produced them and the
+	// status they had before, so a persist failure can be rolled back and
+	// reported instead of being claimed as a success.
+	type pendingAssign struct {
+		token        string
+		ci           store.NetCheckIn
+		priorStatus  string
+		priorMission []string
+	}
+	var pending []pendingAssign
+
+	// One critical section: append the mission, then resolve and assign every
+	// operator against it. All store writes / logEvent / emit happen AFTER the
+	// unlock — assignOperatorLocked and resolveAssigneeLocked never re-lock.
 	m.mu.Lock()
 	m.missions[mission.NetID] = append(m.missions[mission.NetID], mission)
+	seen := map[string]bool{}
+	for _, token := range assigneeIDs {
+		ciID, ok := m.resolveAssigneeLocked(mission.NetID, token)
+		if !ok {
+			skipped = append(skipped, strings.TrimSpace(token))
+			continue
+		}
+		if seen[ciID] {
+			continue
+		}
+		seen[ciID] = true
+		prevStatus, prevMissions := m.checkInStateLocked(mission.NetID, ciID)
+		updated, _, aerr := m.assignOperatorLocked(mission.NetID, ciID, mission.ID)
+		if aerr != nil {
+			skipped = append(skipped, strings.TrimSpace(token))
+			continue
+		}
+		pending = append(pending, pendingAssign{
+			token: strings.TrimSpace(token), ci: updated,
+			priorStatus: prevStatus, priorMission: prevMissions,
+		})
+	}
 	m.mu.Unlock()
 
-	assignStr := ""
-	if mission.AssignedTo != "" {
-		assignStr = fmt.Sprintf(" → %s", mission.AssignedTo)
+	// Roster misses are everything skipped so far; persist failures are logged
+	// separately below as they happen.
+	for _, sk := range skipped {
+		log.Printf("netcontrol: mission %q assignee %q not in roster for net %s — created unassigned",
+			mission.Title, sk, mission.NetID)
 	}
-	m.logEvent(mission.NetID, "mission_created", mission.AssignedTo, fmt.Sprintf("Mission: %s%s", mission.Title, assignStr))
+
+	callsigns := make([]string, 0, len(pending))
+	for _, p := range pending {
+		if err := m.store.SaveNetCheckIn(p.ci); err != nil {
+			// The mission row is already committed, so this must not fail the
+			// create — but the caller must not be told the operator is attached
+			// when only RAM says so. Roll the in-memory append back and report
+			// the token as skipped.
+			log.Printf("netcontrol: persist assignment for %s: %v — reported as skipped", p.ci.Callsign, err)
+			m.mu.Lock()
+			m.restoreCheckInStateLocked(mission.NetID, p.ci.ID, p.priorStatus, p.priorMission)
+			m.mu.Unlock()
+			skipped = append(skipped, p.token)
+			continue
+		}
+		assigned = append(assigned, p.ci)
+		m.logEvent(mission.NetID, "assignment", p.ci.Callsign,
+			fmt.Sprintf("%s assigned to mission %q", p.ci.Callsign, mission.Title))
+		m.emit(Event{Type: EventCheckInUpdated, Data: p.ci})
+		callsigns = append(callsigns, p.ci.Callsign)
+	}
+	assignStr := ""
+	if len(callsigns) > 0 {
+		assignStr = fmt.Sprintf(" → %s", strings.Join(callsigns, ", "))
+	}
+	m.logEvent(mission.NetID, "mission_created", "",
+		fmt.Sprintf("Mission: %s%s", mission.Title, assignStr))
 	m.emit(Event{Type: EventMissionCreated, Data: mission})
 
-	return &mission, nil
+	return &mission, assigned, skipped, nil
 }
 
 // UpdateMission updates an existing mission.
@@ -518,7 +604,7 @@ func (m *Manager) UpdateMission(mission store.NetMission) (*store.NetMission, er
 		return nil, fmt.Errorf("persist mission: %w", err)
 	}
 
-	m.logEvent(mission.NetID, "mission_updated", mission.AssignedTo, fmt.Sprintf("Mission %q → %s", mission.Title, mission.Status))
+	m.logEvent(mission.NetID, "mission_updated", "", fmt.Sprintf("Mission %q → %s", mission.Title, mission.Status))
 	m.emit(Event{Type: EventMissionUpdated, Data: mission})
 
 	if mission.Status == "complete" {
@@ -830,64 +916,117 @@ func (m *Manager) GetEvents(netID string) ([]store.NetEvent, error) {
 	return m.store.LoadNetEvents(netID)
 }
 
-// AssignMission assigns a mission to an operator (appends to MissionIDs).
-func (m *Manager) AssignMission(netID, checkInID, missionID string) (*store.NetCheckIn, error) {
-	m.mu.Lock()
+// assignOperatorLocked appends missionID to the named check-in's MissionIDs.
+// Caller MUST hold m.mu for writing; sync.RWMutex is not reentrant, so this
+// never takes the lock itself. Returns the updated copy and the mission title.
+func (m *Manager) assignOperatorLocked(netID, checkInID, missionID string) (store.NetCheckIn, string, error) {
 	cis, ok := m.checkIns[netID]
 	if !ok {
-		m.mu.Unlock()
-		return nil, fmt.Errorf("net %q not found", netID)
+		return store.NetCheckIn{}, "", fmt.Errorf("net %q not found", netID)
 	}
 
-	// Validate mission exists.
-	missions := m.missions[netID]
-	var mission *store.NetMission
-	for i, ms := range missions {
-		if ms.ID == missionID {
-			mission = &missions[i]
-			break
-		}
-	}
-	if mission == nil {
-		m.mu.Unlock()
-		return nil, fmt.Errorf("mission %q not found", missionID)
-	}
-
+	var title string
 	found := false
-	var updated store.NetCheckIn
-	for i, ci := range cis {
-		if ci.ID == checkInID {
-			// Reject duplicate assignment.
-			for _, mid := range cis[i].MissionIDs {
-				if mid == missionID {
-					m.mu.Unlock()
-					return nil, fmt.Errorf("operator already assigned to mission %q", missionID)
-				}
-			}
-			cis[i].MissionIDs = append(cis[i].MissionIDs, missionID)
-			if cis[i].Status == OpAvailable {
-				cis[i].Status = OpAssigned
-			}
-			updated = cis[i]
+	for i := range m.missions[netID] {
+		if m.missions[netID][i].ID == missionID {
+			title = m.missions[netID][i].Title
 			found = true
 			break
 		}
 	}
-
 	if !found {
-		m.mu.Unlock()
-		return nil, fmt.Errorf("check-in %q not found", checkInID)
+		return store.NetCheckIn{}, "", fmt.Errorf("mission %q not found", missionID)
 	}
 
-	m.checkIns[netID] = cis
+	for i := range cis {
+		if cis[i].ID != checkInID {
+			continue
+		}
+		for _, mid := range cis[i].MissionIDs {
+			if mid == missionID {
+				return store.NetCheckIn{}, title, fmt.Errorf("operator already assigned to mission %q", missionID)
+			}
+		}
+		cis[i].MissionIDs = append(cis[i].MissionIDs, missionID)
+		if cis[i].Status == OpAvailable {
+			cis[i].Status = OpAssigned
+		}
+		m.checkIns[netID] = cis
+		return cis[i], title, nil
+	}
+
+	return store.NetCheckIn{}, title, fmt.Errorf("check-in %q not found", checkInID)
+}
+
+// checkInStateLocked snapshots the assignment-relevant state of a check-in so
+// a failed persist can be undone. Caller MUST hold m.mu.
+func (m *Manager) checkInStateLocked(netID, checkInID string) (status string, missionIDs []string) {
+	for _, ci := range m.checkIns[netID] {
+		if ci.ID == checkInID {
+			return ci.Status, append([]string{}, ci.MissionIDs...)
+		}
+	}
+	return "", nil
+}
+
+// restoreCheckInStateLocked puts a check-in back to a snapshot taken by
+// checkInStateLocked. Caller MUST hold m.mu.
+func (m *Manager) restoreCheckInStateLocked(netID, checkInID, status string, missionIDs []string) {
+	cis := m.checkIns[netID]
+	for i := range cis {
+		if cis[i].ID != checkInID {
+			continue
+		}
+		if missionIDs == nil {
+			missionIDs = []string{}
+		}
+		cis[i].MissionIDs = missionIDs
+		cis[i].Status = status
+		m.checkIns[netID] = cis
+		return
+	}
+}
+
+// resolveAssigneeLocked maps an assignee token to a check-in ID. The token is
+// a check-in ID, or (for legacy/palette callers) a callsign or tactical call.
+// Caller MUST hold m.mu.
+func (m *Manager) resolveAssigneeLocked(netID, token string) (string, bool) {
+	token = strings.TrimSpace(token)
+	if token == "" {
+		return "", false
+	}
+	cis := m.checkIns[netID]
+	for i := range cis {
+		if cis[i].ID == token {
+			return cis[i].ID, true
+		}
+	}
+	for i := range cis {
+		if cis[i].Status == OpReleased {
+			continue
+		}
+		if strings.EqualFold(cis[i].Callsign, token) || strings.EqualFold(cis[i].TacticalCall, token) {
+			return cis[i].ID, true
+		}
+	}
+	return "", false
+}
+
+// AssignMission assigns a mission to an operator (appends to MissionIDs).
+func (m *Manager) AssignMission(netID, checkInID, missionID string) (*store.NetCheckIn, error) {
+	m.mu.Lock()
+	updated, title, err := m.assignOperatorLocked(netID, checkInID, missionID)
 	m.mu.Unlock()
+	if err != nil {
+		return nil, err
+	}
 
 	if err := m.store.SaveNetCheckIn(updated); err != nil {
 		return nil, fmt.Errorf("persist check-in: %w", err)
 	}
 
 	m.logEvent(netID, "assignment", updated.Callsign,
-		fmt.Sprintf("%s assigned to mission %q", updated.Callsign, mission.Title))
+		fmt.Sprintf("%s assigned to mission %q", updated.Callsign, title))
 	m.emit(Event{Type: EventCheckInUpdated, Data: updated})
 
 	return &updated, nil
@@ -992,13 +1131,18 @@ func (m *Manager) UnassignAllMissions(netID, checkInID string) (*store.NetCheckI
 }
 
 // ExportRosterCSV writes the roster as CSV.
-func ExportRosterCSV(w io.Writer, checkIns []store.NetCheckIn) error {
+func ExportRosterCSV(w io.Writer, checkIns []store.NetCheckIn, missions []store.NetMission) error {
 	cw := csv.NewWriter(w)
 	defer cw.Flush()
 
+	titles := make(map[string]string, len(missions))
+	for _, ms := range missions {
+		titles[ms.ID] = ms.Title
+	}
+
 	header := []string{
 		"callsign", "tacticalCall", "operatorName", "status", "traffic",
-		"category", "source", "location", "assignment", "trackedDevices", "checkedInAt", "checkedOutAt",
+		"category", "source", "location", "missions", "trackedDevices", "checkedInAt", "checkedOutAt",
 		"lastHeard", "missedRollCalls",
 	}
 	if err := cw.Write(header); err != nil {
@@ -1018,6 +1162,12 @@ func ExportRosterCSV(w io.Writer, checkIns []store.NetCheckIn) error {
 		if category == "" {
 			category = CatGeneral
 		}
+		var missionTitles []string
+		for _, mid := range ci.MissionIDs {
+			if t, ok := titles[mid]; ok {
+				missionTitles = append(missionTitles, t)
+			}
+		}
 		row := []string{
 			ci.Callsign,
 			ci.TacticalCall,
@@ -1027,7 +1177,7 @@ func ExportRosterCSV(w io.Writer, checkIns []store.NetCheckIn) error {
 			category,
 			ci.Source,
 			ci.Location,
-			ci.Assignment,
+			strings.Join(missionTitles, ";"),
 			strings.Join(deviceNames, ","),
 			ci.CheckedInAt.Format(time.RFC3339),
 			checkedOut,

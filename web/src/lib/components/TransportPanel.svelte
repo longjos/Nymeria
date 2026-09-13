@@ -37,14 +37,20 @@
 	onMount(() => {
 		loadTileStatus();
 
-		wsClient.on('tile_preload_progress', (msg) => {
+		// Capture the unsubscribers: this panel is mounted/unmounted by the
+		// panel-mode branches, so dropping them leaks a live handler per open.
+		const offProgress = wsClient.on('tile_preload_progress', (msg) => {
 			const data = msg.data as { done: number; total: number; skipped: number };
 			if (data) preloadProgress = { done: data.done, total: data.total };
 		});
-		wsClient.on('tile_preload_complete', () => {
+		const offComplete = wsClient.on('tile_preload_complete', () => {
 			preloading = false;
 			loadTileStatus();
 		});
+		return () => {
+			offProgress();
+			offComplete();
+		};
 	});
 
 	async function loadTileStatus() {
