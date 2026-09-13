@@ -8,18 +8,31 @@
 	let {
 		filteredCount = 0,
 		totalCount = 0,
+		hasActiveNet = false,
+		rosterCount = 0,
 	}: {
 		filteredCount?: number;
 		totalCount?: number;
+		hasActiveNet?: boolean;
+		rosterCount?: number;
 	} = $props();
 
 	let open = $state(false);
+
+	// The roster filter needs a net with someone on it; without that the toggle
+	// would silently blank the map, so it is disabled and says why.
+	let rosterReason = $derived(
+		!hasActiveNet ? 'No active net' : rosterCount === 0 ? 'No roster stations on the map' : ''
+	);
+	let rosterDisabled = $derived(rosterReason !== '');
+	let rosterActive = $derived($mapSettings.showRosterOnly && !rosterDisabled);
 
 	let hasNonDefault = $derived(
 		$mapSettings.stationAgeFilter !== 'all' ||
 		!$mapSettings.showTracks ||
 		!$mapSettings.showDRCones ||
 		$mapSettings.showCallsigns ||
+		$mapSettings.showRosterOnly ||
 		$mapSettings.showWeatherOverlay ||
 		$mapSettings.showDFOverlay ||
 		$mapSettings.trackDuration !== 'all'
@@ -74,6 +87,8 @@
 						id="age-filter"
 						class="palette-select"
 						value={$mapSettings.stationAgeFilter}
+						disabled={rosterActive}
+						aria-describedby="age-filter-note"
 						onchange={(e) => updateMapSetting('stationAgeFilter', (e.target as HTMLSelectElement).value as StationAgeFilter)}
 					>
 						{#each Object.entries(AGE_FILTER_LABELS) as [value, label]}
@@ -81,8 +96,12 @@
 						{/each}
 					</select>
 				</div>
-				{#if $mapSettings.stationAgeFilter !== 'all'}
-					<div class="palette-info">
+				{#if rosterActive}
+					<div class="palette-info" id="age-filter-note">
+						Roster only overrides the age filter
+					</div>
+				{:else if $mapSettings.stationAgeFilter !== 'all'}
+					<div class="palette-info" id="age-filter-note">
 						Showing {filteredCount} of {totalCount} stations
 					</div>
 				{/if}
@@ -130,6 +149,28 @@
 						/>
 						Call signs
 					</label>
+				</div>
+				<div class="palette-row">
+					<label class="palette-checkbox" class:is-disabled={rosterDisabled}>
+						<input
+							id="roster-only"
+							type="checkbox"
+							checked={$mapSettings.showRosterOnly}
+							disabled={rosterDisabled}
+							aria-describedby="roster-only-note"
+							onchange={() => updateMapSetting('showRosterOnly', !$mapSettings.showRosterOnly)}
+						/>
+						Roster only
+					</label>
+				</div>
+				<div class="palette-info" id="roster-only-note">
+					{#if rosterDisabled}
+						{rosterReason} — roster filter unavailable
+					{:else if rosterActive}
+						Showing {filteredCount} of {totalCount} stations
+					{:else}
+						Hides stations not checked into the net
+					{/if}
 				</div>
 			</div>
 
@@ -301,6 +342,15 @@
 		font-size: 0.8rem;
 		color: var(--color-text, #eee);
 		cursor: pointer;
+	}
+
+	.palette-checkbox.is-disabled {
+		opacity: 0.4;
+		cursor: not-allowed;
+	}
+
+	.palette-checkbox input[type="checkbox"]:disabled {
+		cursor: not-allowed;
 	}
 
 	.palette-checkbox input[type="checkbox"] {
