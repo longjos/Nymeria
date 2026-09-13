@@ -187,7 +187,10 @@ export function createMarkerHtml(sym: APRSSymbol, color: string, selected: boole
 		: 'none';
 	const border = selected ? '2px solid #fff' : '2px solid rgba(255,255,255,0.3)';
 
-	const arrow = isMoving(speed, course) ? directionArrow(course!, size) : '';
+	// directionArrow's third parameter is required; omitting it emitted
+	// fill="undefined", so every moving-station arrow fell back to black
+	// instead of the station's symbol colour.
+	const arrow = isMoving(speed, course) ? directionArrow(course!, size, color) : '';
 	const outer = size + 20; // extra space for arrow overflow
 
 	// NOTE: deliberately no CSS transition on the circle. Leaflet's
