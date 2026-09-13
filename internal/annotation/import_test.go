@@ -2,6 +2,7 @@ package annotation
 
 import (
 	"encoding/json"
+	"os"
 	"strings"
 	"testing"
 )
@@ -566,5 +567,270 @@ func TestParseGPXSkipsPointsMissingCoords(t *testing.T) {
 	}
 	if items[0].Name != "Partial Track" || items[1].Name != "Partial Route" {
 		t.Errorf("names = %q, %q", items[0].Name, items[1].Name)
+	}
+}
+
+// --- Turn-cue classification ------------------------------------------------
+//
+// Route planners (RideWithGPS, Garmin) export turn-by-turn cues as <wpt>
+// elements alongside the real stops. The real course file has 49 waypoints of
+// which only 4 are places a rider cares about; the other 45 are literally named
+// "Left"/"Right"/"Straight". The file classifies itself via <type> and <cmt>,
+// which the parser used to discard.
+
+func TestClassifyWaypoint(t *testing.T) {
+	tests := []struct {
+		name         string
+		wptName      string
+		cmt          string
+		typ          string
+		wantCategory string
+		wantKeep     bool
+	}{
+		// Rule 1: rest areas.
+		{"rest area by type", "Rest Stop Maxwell Chapel", "rest_stop", "rest_area", CategoryAid, true},
+		{"rest area by cmt only", "Rest Stop Eakin Elementary", "rest_stop", "", CategoryAid, true},
+		{"rest area by type only", "Rest Stop Flat Creek", "", "rest_area", CategoryAid, true},
+		{"rest area mixed case and padding", "Rest Stop", "  REST_STOP  ", " Rest_Area ", CategoryAid, true},
+
+		// Rule 2: finish.
+		{"finish by cmt", "Finish  Jack Daniel's Visitor Parking", "finish", "generic", CategoryFinish, true},
+		{"finish by name prefix", "Finish Line", "", "", CategoryFinish, true},
+		{"finish name mixed case", "FINISH area", "", "", CategoryFinish, true},
+
+		// Rule 3: start.
+		{"start by cmt", "START LINE", "start", "", CategoryStart, true},
+		{"start by name prefix", "Start Corral", "", "", CategoryStart, true},
+
+		// Rule 4: cue comments.
+		{"turn left cue", "Left", "Turn left onto Maxwell Chapel Rd", "Dot", "", false},
+		{"turn right cue", "Right", "Turn right onto Shelbyville Hwy", "Dot", "", false},
+		{"continue cue", "Straight", "Continue onto Highway 64", "Dot", "", false},
+		{"slight cue", "Slight Left", "Slight left onto Old Tullahoma Rd", "Dot", "", false},
+		{"keep cue", "Keep Right", "Keep right at the fork", "Dot", "", false},
+		{"bear cue", "Bear Left", "Bear left onto County Rd", "Dot", "", false},
+		{"sharp cue", "Sharp Right", "Sharp right onto Elm", "Dot", "", false},
+		{"head cue", "Head North", "Head north on Main St", "Dot", "", false},
+		{"make a cue", "Left", "Make a U-turn", "Dot", "", false},
+		{"merge cue", "Merge", "Merge onto US-231", "Dot", "", false},
+		{"exit cue", "Exit", "Exit onto the ramp", "Dot", "", false},
+		{"cue cmt mixed case and padding", "Left", "  TURN LEFT onto Foo  ", "Dot", "", false},
+
+		// Rule 5: bare turn-cue names with type Dot and no comment.
+		{"dot left no cmt", "Left", "", "Dot", "", false},
+		{"dot right no cmt", "Right", "", "Dot", "", false},
+		{"dot straight no cmt", "Straight", "", "Dot", "", false},
+		{"dot slight left no cmt", "Slight Left", "", "Dot", "", false},
+		{"dot slight right no cmt", "slight right", "", "dot", "", false},
+		{"dot sharp left no cmt", "Sharp Left", "", "Dot", "", false},
+		{"dot sharp right no cmt", " SHARP RIGHT ", "", " DOT ", "", false},
+		// A Dot-typed waypoint whose name is a real place is NOT a cue.
+		{"dot with real name kept", "Water Stop", "", "Dot", CategoryGeneral, true},
+		// A cue-looking name without type Dot is kept: we only drop when the
+		// exporter itself marked it as a map dot.
+		{"left name without dot type kept", "Left", "", "", CategoryGeneral, true},
+
+		// Rule 6: fallthrough.
+		{"plain waypoint", "Water", "", "", CategoryGeneral, true},
+		{"unknown vocabulary", "Picnic Shelter", "", "picnic", CategoryGeneral, true},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			gotCategory, gotKeep := classifyWaypoint(tt.wptName, tt.cmt, tt.typ)
+			if gotKeep != tt.wantKeep {
+				t.Fatalf("classifyWaypoint(%q,%q,%q) keep = %v, want %v", tt.wptName, tt.cmt, tt.typ, gotKeep, tt.wantKeep)
+			}
+			if gotCategory != tt.wantCategory {
+				t.Errorf("classifyWaypoint(%q,%q,%q) category = %q, want %q", tt.wptName, tt.cmt, tt.typ, gotCategory, tt.wantCategory)
+			}
+		})
+	}
+}
+
+const testGPXTurnCues = `<?xml version="1.0" encoding="UTF-8"?>
+<gpx version="1.1" creator="ridewithgps.com">
+  <wpt lat="35.73728" lon="-86.64471">
+    <name>Left</name>
+    <cmt>Turn left onto Maxwell Chapel Rd</cmt>
+    <type>Dot</type>
+  </wpt>
+  <wpt lat="35.61365" lon="-86.54982">
+    <name>Rest Stop Maxwell Chapel</name>
+    <desc>191 Maxwell Chapel Road</desc>
+    <cmt>rest_stop</cmt>
+    <type>rest_area</type>
+  </wpt>
+  <wpt lat="35.60000" lon="-86.54000">
+    <name>Right</name>
+    <cmt>Turn right onto Shelbyville Hwy</cmt>
+    <type>Dot</type>
+  </wpt>
+  <wpt lat="35.59000" lon="-86.53000">
+    <name>Straight</name>
+    <cmt>Continue onto Highway 64</cmt>
+    <type>Dot</type>
+  </wpt>
+  <wpt lat="35.28487" lon="-86.37205">
+    <name>Finish  Jack Daniel's Visitor Parking</name>
+    <cmt>finish</cmt>
+    <type>generic</type>
+  </wpt>
+  <trk>
+    <name>Day 1 48M Jack and Back</name>
+    <trkseg>
+      <trkpt lat="35.73864" lon="-86.64463"></trkpt>
+      <trkpt lat="35.61365" lon="-86.54982"></trkpt>
+      <trkpt lat="35.28487" lon="-86.37205"></trkpt>
+    </trkseg>
+  </trk>
+</gpx>`
+
+func TestParseGPXSkipsTurnCues(t *testing.T) {
+	items, err := ParseGPX(strings.NewReader(testGPXTurnCues))
+	if err != nil {
+		t.Fatalf("ParseGPX: %v", err)
+	}
+	if len(items) != 3 {
+		t.Fatalf("got %d items, want 3 (2 stops + 1 line): %+v", len(items), items)
+	}
+
+	if items[0].Name != "Rest Stop Maxwell Chapel" {
+		t.Errorf("items[0].Name = %q, want Rest Stop Maxwell Chapel", items[0].Name)
+	}
+	if items[0].Category != CategoryAid {
+		t.Errorf("items[0].Category = %q, want %q", items[0].Category, CategoryAid)
+	}
+	if items[0].ItemType != "" {
+		t.Errorf("items[0].ItemType = %q, want empty (point)", items[0].ItemType)
+	}
+
+	if items[1].Name != "Finish  Jack Daniel's Visitor Parking" {
+		t.Errorf("items[1].Name = %q", items[1].Name)
+	}
+	if items[1].Category != CategoryFinish {
+		t.Errorf("items[1].Category = %q, want %q", items[1].Category, CategoryFinish)
+	}
+
+	if items[2].Category != CategoryRoute || items[2].ItemType != TypeLine {
+		t.Errorf("items[2] = category %q type %q, want %q/%q", items[2].Category, items[2].ItemType, CategoryRoute, TypeLine)
+	}
+}
+
+const testGPXCmtDescription = `<?xml version="1.0" encoding="UTF-8"?>
+<gpx version="1.1" creator="test">
+  <wpt lat="35.1" lon="-86.1">
+    <name>Rest Stop One</name>
+    <cmt>rest_stop</cmt>
+    <type>rest_area</type>
+  </wpt>
+  <wpt lat="35.2" lon="-86.2">
+    <name>Rest Stop Two</name>
+    <desc>191 Maxwell Chapel Road</desc>
+    <cmt>rest_stop</cmt>
+    <type>rest_area</type>
+  </wpt>
+</gpx>`
+
+// A kept waypoint must not lose the only text it has: when <desc> is absent the
+// <cmt> becomes the description.
+func TestParseGPXCmtFillsEmptyDescription(t *testing.T) {
+	items, err := ParseGPX(strings.NewReader(testGPXCmtDescription))
+	if err != nil {
+		t.Fatalf("ParseGPX: %v", err)
+	}
+	if len(items) != 2 {
+		t.Fatalf("got %d items, want 2: %+v", len(items), items)
+	}
+	if items[0].Description != "rest_stop" {
+		t.Errorf("items[0].Description = %q, want rest_stop (from cmt)", items[0].Description)
+	}
+	if items[1].Description != "191 Maxwell Chapel Road" {
+		t.Errorf("items[1].Description = %q, want the desc to win over cmt", items[1].Description)
+	}
+}
+
+const testGPXUnknownVocabulary = `<?xml version="1.0" encoding="UTF-8"?>
+<gpx version="1.1" creator="some-other-planner">
+  <wpt lat="35.1" lon="-86.1">
+    <name>Shady Picnic Area</name>
+    <type>picnic</type>
+  </wpt>
+</gpx>`
+
+// Safe degradation: an exporter whose <type> vocabulary we do not recognise must
+// still have its waypoints imported (as general), never silently dropped.
+func TestParseGPXUnknownVocabularyFallsThrough(t *testing.T) {
+	items, err := ParseGPX(strings.NewReader(testGPXUnknownVocabulary))
+	if err != nil {
+		t.Fatalf("ParseGPX: %v", err)
+	}
+	if len(items) != 1 {
+		t.Fatalf("got %d items, want 1: %+v", len(items), items)
+	}
+	if items[0].Category != CategoryGeneral {
+		t.Errorf("category = %q, want %q", items[0].Category, CategoryGeneral)
+	}
+	if items[0].Name != "Shady Picnic Area" {
+		t.Errorf("name = %q", items[0].Name)
+	}
+}
+
+// TestParseGPXRealCourse runs against the operator's real event file when it is
+// present in the repo root. 49 waypoints (45 of them turn cues) must reduce to
+// the 3 rest stops plus the finish, alongside the single course line.
+func TestParseGPXRealCourse(t *testing.T) {
+	f, err := os.Open("../../Day_1_48M_Jack_and_Back.gpx")
+	if err != nil {
+		if os.IsNotExist(err) {
+			t.Skip("real course file not present")
+		}
+		t.Fatalf("open real course: %v", err)
+	}
+	defer f.Close()
+
+	items, err := ParseGPX(f)
+	if err != nil {
+		t.Fatalf("ParseGPX: %v", err)
+	}
+
+	var points, lines []ImportItem
+	for _, it := range items {
+		if it.ItemType == TypeLine {
+			lines = append(lines, it)
+		} else {
+			points = append(points, it)
+		}
+	}
+	if len(points) != 4 {
+		names := make([]string, len(points))
+		for i, p := range points {
+			names[i] = p.Name
+		}
+		t.Fatalf("got %d point items, want 4: %v", len(points), names)
+	}
+	if len(lines) != 1 {
+		t.Fatalf("got %d line items, want 1", len(lines))
+	}
+
+	wantNames := map[string]string{
+		"Rest Stop Maxwell Chapel":              CategoryAid,
+		"Rest Stop Eakin Elementary":            CategoryAid,
+		"Rest Stop Flat Creek Community Center": CategoryAid,
+		"Finish  Jack Daniel's Visitor Parking": CategoryFinish,
+	}
+	for _, p := range points {
+		wantCat, ok := wantNames[p.Name]
+		if !ok {
+			t.Errorf("unexpected kept waypoint %q", p.Name)
+			continue
+		}
+		if p.Category != wantCat {
+			t.Errorf("%q category = %q, want %q", p.Name, p.Category, wantCat)
+		}
+		delete(wantNames, p.Name)
+	}
+	for missing := range wantNames {
+		t.Errorf("missing expected stop %q", missing)
 	}
 }

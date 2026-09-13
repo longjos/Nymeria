@@ -22,7 +22,8 @@
 		onTabChange,
 		onClose,
 		onBack,
-		onFlyTo
+		onFlyTo,
+		onDistance
 	}: {
 		stationKey: string;
 		activeTab?: DetailTab;
@@ -36,6 +37,12 @@
 		onClose?: () => void;
 		onBack?: () => void;
 		onFlyTo?: (lat: number, lon: number) => void;
+		/**
+		 * Measure along-course distance from this station's last known position.
+		 * The discoverable twin of the map long-press, for anyone who arrived
+		 * here from a list rather than from the map.
+		 */
+		onDistance?: (stationKey: string, lat: number, lon: number, label: string) => void;
 	} = $props();
 
 	let station = $state<Station | null>(null);
@@ -169,6 +176,12 @@
 	function handleFlyTo() {
 		if (station?.position) {
 			onFlyTo?.(station.position.lat, station.position.lon);
+		}
+	}
+
+	function handleDistance() {
+		if (station?.position) {
+			onDistance?.(stationKey, station.position.lat, station.position.lon, tacAlias || stationKey);
 		}
 	}
 
@@ -393,6 +406,11 @@
 				<div class="actions">
 					{#if station.position}
 						<button class="btn" onclick={handleFlyTo}>Fly To</button>
+						<button
+							class="btn btn-secondary"
+							onclick={handleDistance}
+							title="Measure along-course distance from this station"
+						>Distance</button>
 					{/if}
 					<button class="btn btn-secondary" onclick={handleMessage}>Message</button>
 				</div>
