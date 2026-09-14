@@ -273,8 +273,11 @@
 	let moreBtnEl = $state<HTMLButtonElement | null>(null);
 	let popTop = $state(0);
 	let popLeft = $state(0);
-	let closeDialogEl = $state<HTMLDivElement | null>(null);
+	let closeDialogEl = $state<HTMLDialogElement | null>(null);
 	let closeCancelEl = $state<HTMLButtonElement | null>(null);
+	/** Captured before the dialog mounts — showModal() moves focus, so
+	    document.activeElement is no longer the invoker by the time effects run. */
+	let closeDialogInvoker: HTMLElement | null = null;
 	/** The active-net header — focus lands here once the net is gone. */
 	let headerEl = $state<HTMLDivElement | null>(null);
 	// The panel root outlives the active-net branch, so it is the only focus
@@ -909,6 +912,7 @@
 	function requestCloseNet() {
 		if (!$activeNet) return;
 		closeError = null;
+		closeDialogInvoker = document.activeElement as HTMLElement | null;
 		closePopovers();
 		showCloseDialog = true;
 	}
@@ -1016,34 +1020,82 @@
 		};
 	});
 
-	function trapTab(e: KeyboardEvent, root: HTMLElement) {
-		const focusables = Array.from(
-			root.querySelectorAll<HTMLElement>(
-				'button:not([disabled]), input:not([disabled]), [href], [tabindex]:not([tabindex="-1"])'
-			)
-		).filter((el) => el.offsetParent !== null || el === document.activeElement);
-		if (focusables.length === 0) return;
-		const first = focusables[0];
-		const last = focusables[focusables.length - 1];
-		if (e.shiftKey && document.activeElement === first) {
-			e.preventDefault();
-			last.focus();
-		} else if (!e.shiftKey && document.activeElement === last) {
-			e.preventDefault();
-			first.focus();
+	/**
+	 * Open a <dialog> modally.
+	 *
+	 * showModal() is what buys the behaviour this panel used to hand-roll and
+	 * got wrong: everything outside the dialog goes inert (the old loop walked
+	 * document.body.children and skipped any node containing the dialog — which
+	 * is the single SvelteKit app root, so nothing was ever made inert), Tab is
+	 * trapped, background scroll is suppressed, and Escape is handled by the UA.
+	 */
+	function modalDialog(node: HTMLDialogElement) {
+		node.showModal();
+		return {
+			destroy() {
+				if (node.open) node.close();
+			}
+		};
+	}
+
+	/**
+	 * The WAI-ARIA menu keyboard contract for a `.pop-menu`, which declares
+	 * role="menu": focus lands on the first item when the menu opens, Up/Down
+	 * move between items and wrap, Home/End jump to the ends, and only the
+	 * active item is tabbable (roving tabindex) so Tab leaves the menu rather
+	 * than walking it. Escape and outside-press dismissal stay with the panel's
+	 * own handlers, which also return focus to the invoking control.
+	 */
+	function menuNav(node: HTMLElement) {
+		const items = () =>
+			Array.from(node.querySelectorAll<HTMLElement>('[role="menuitem"]:not([disabled])'));
+
+		function activate(index: number) {
+			const list = items();
+			if (list.length === 0) return;
+			const i = ((index % list.length) + list.length) % list.length;
+			list.forEach((el, n) => el.setAttribute('tabindex', n === i ? '0' : '-1'));
+			list[i].focus();
 		}
+
+		function onKeydown(e: KeyboardEvent) {
+			const list = items();
+			if (list.length === 0) return;
+			const cur = list.indexOf(document.activeElement as HTMLElement);
+			switch (e.key) {
+				case 'ArrowDown':
+					e.preventDefault();
+					activate(cur + 1);
+					break;
+				case 'ArrowUp':
+					// From outside the item list, Up enters at the end.
+					e.preventDefault();
+					activate(cur < 0 ? -1 : cur - 1);
+					break;
+				case 'Home':
+					e.preventDefault();
+					activate(0);
+					break;
+				case 'End':
+					e.preventDefault();
+					activate(list.length - 1);
+					break;
+			}
+		}
+
+		node.addEventListener('keydown', onKeydown);
+		activate(0);
+		return {
+			destroy() {
+				node.removeEventListener('keydown', onKeydown);
+			}
+		};
 	}
 
 	function handleWindowKeydown(e: KeyboardEvent) {
-		if (showCloseDialog) {
-			if (e.key === 'Escape') {
-				e.preventDefault();
-				if (!closePending) finishCloseDialog(false);
-				return;
-			}
-			if (e.key === 'Tab' && closeDialogEl) trapTab(e, closeDialogEl);
-			return;
-		}
+		// The close-net dialog is a native modal: the UA closes it on Escape and
+		// traps Tab inside it, so there is nothing to do here.
+		if (showCloseDialog) return;
 		if ((lifecycleOpen || moreOpen) && e.key === 'Escape') {
 			e.preventDefault();
 			const back = lifecycleOpen ? stateChipEl : moreBtnEl;
@@ -1052,44 +1104,25 @@
 		}
 	}
 
-	// Focus the dialog, isolate the rest of the page, and lock background scroll.
+	// Set initial focus and restore it on close. Inertness, the Tab trap, the
+	// scroll lock and Escape all belong to showModal() now (see modalDialog).
 	$effect(() => {
-		const node = closeDialogEl;
-		if (!node) return;
-
-		const previouslyFocused = document.activeElement as HTMLElement | null;
-		const hidden: HTMLElement[] = [];
-		for (const child of Array.from(document.body.children)) {
-			const el = child as HTMLElement;
-			if (el.contains(node) || el.tagName === 'SCRIPT' || el.tagName === 'STYLE') continue;
-			if (el.hasAttribute('aria-hidden')) continue;
-			el.setAttribute('aria-hidden', 'true');
-			el.setAttribute('inert', '');
-			hidden.push(el);
-		}
-
-		const prevOverflow = document.body.style.overflow;
-		document.body.style.overflow = 'hidden';
+		if (!closeDialogEl) return;
 
 		// Cancel, never the danger button, takes initial focus.
 		closeCancelEl?.focus();
 
 		return () => {
-			for (const el of hidden) {
-				el.removeAttribute('aria-hidden');
-				el.removeAttribute('inert');
-			}
-			document.body.style.overflow = prevOverflow;
-			// On success the invoking menu row and chip are gone, so land on the
-			// panel header; on cancel, return to the "End net…" row.
 			// On success the invoking row, the chip and the whole active-net
-			// header unmount with the net, so headerEl and previouslyFocused are
-			// both detached by now; without the panel-root fallback focus would
-			// drop to <body> and a keyboard operator would lose their place.
-			const target = closeDialogSucceeded && headerEl?.isConnected ? headerEl : previouslyFocused;
+			// header unmount with the net, so headerEl and the invoker are both
+			// detached by now; without the panel-root fallback focus would drop
+			// to <body> and a keyboard operator would lose their place.
+			const target =
+				closeDialogSucceeded && headerEl?.isConnected ? headerEl : closeDialogInvoker;
 			if (target?.isConnected) target.focus();
 			else panelRootEl?.focus();
 			closeDialogSucceeded = false;
+			closeDialogInvoker = null;
 		};
 	});
 
@@ -2400,7 +2433,11 @@
 					<span class="mission-brief">{$activeNet.missionBrief}</span>
 				{/if}
 			</div>
-			<div class="header-actions" role="toolbar" aria-label="Net actions">
+			<!-- role="group", not "toolbar": a toolbar promises arrow-key
+			     navigation with a roving tabindex, and these are plain
+			     Tab-reachable buttons. The two menus below do implement the
+			     menu contract (see menuNav). -->
+			<div class="header-actions" role="group" aria-label="Net actions">
 				<button class="action-btn labelled" onclick={handleRollCall} title="Roll Call" aria-label="Start roll call">
 					<svg width="16" height="16" viewBox="0 0 16 16" fill="none" aria-hidden="true">
 						<path d="M1 8h3l2-5 3 10 2-5h4" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/>
@@ -2447,6 +2484,7 @@
 				data-blocks-escape="true"
 				style="top:{popTop}px; left:{popLeft}px"
 				use:topLayer
+				use:menuNav
 			>
 				<div class="pop-meta">
 					<span class="pop-name">{$activeNet.name}</span>
@@ -2472,6 +2510,7 @@
 				data-blocks-escape="true"
 				style="top:{popTop}px; left:{popLeft}px"
 				use:topLayer
+				use:menuNav
 			>
 				<button
 					class="pop-row"
@@ -2519,7 +2558,8 @@
 
 		<!-- Metrics bar -->
 		{#if $activeCheckIns.length > 0 || $missions.length > 0}
-			<div class="metrics-bar" role="toolbar" aria-label="Net status metrics">
+			<!-- Also a group, not a toolbar — same reason as .header-actions. -->
+			<div class="metrics-bar" role="group" aria-label="Net status metrics">
 				<button
 					class="metric"
 					class:active={metricsFilter === null && currentTab === 'roster'}
@@ -3759,71 +3799,74 @@
 	<!-- Close-net dialog. Inline by design: no new component file in this package.
 	     Structure and geometry mirror BatchRemoveDialog. -->
 	{#if showCloseDialog && $activeNet}
-		<!-- svelte-ignore a11y_no_static_element_interactions -->
-		<div
-			class="cn-backdrop"
+		<!-- A real <dialog> opened with showModal(): the UA supplies inertness,
+		     the focus trap and Escape. data-blocks-escape keeps SidePanel's own
+		     window-level Escape from closing the panel behind the dialog — a
+		     native modal is implicitly aria-modal, so the attribute SidePanel
+		     looks for first is not present. The dim is on ::backdrop, and the
+		     dialog box itself is the only element, so a press that lands on the
+		     dialog and nothing inside it is a backdrop press. -->
+		<dialog
+			class="cn-dialog"
+			bind:this={closeDialogEl}
+			use:modalDialog
+			role="alertdialog"
+			data-blocks-escape="true"
+			aria-labelledby="close-net-title"
+			aria-describedby="close-net-stakes"
+			oncancel={(e) => { e.preventDefault(); if (!closePending) finishCloseDialog(false); }}
 			onmousedown={(e) => { if (e.target === e.currentTarget && !closePending) finishCloseDialog(false); }}
-			use:topLayer
 		>
-			<div
-				class="cn-dialog"
-				bind:this={closeDialogEl}
-				role="alertdialog"
-				aria-modal="true"
-				aria-labelledby="close-net-title"
-				aria-describedby="close-net-stakes"
-			>
-				<div class="cn-grab" aria-hidden="true"></div>
+			<div class="cn-grab" aria-hidden="true"></div>
 
-				<div class="cn-header">
-					<span class="cn-title" id="close-net-title">End net</span>
-					<button class="cn-x" onclick={() => finishCloseDialog(false)} disabled={closePending} aria-label="Close">&times;</button>
-				</div>
-
-				<div class="cn-body">
-					<div class="cn-identity">
-						<span class="cn-name">{$activeNet.name}</span>
-						<span class="cn-sub">Open {elapsed || '—'} · NCS {$activeNet.ncsCallsign}</span>
-					</div>
-
-					<ul class="cn-stakes" id="close-net-stakes">
-						{#if $netMetrics.totalIn > 0}
-							<li class="cn-row">
-								<span class="cn-icon" aria-hidden="true">!</span>
-								<span>{$netMetrics.totalIn} operator{$netMetrics.totalIn === 1 ? ' is' : 's are'} still checked in. They will be checked out and the roster closes.</span>
-							</li>
-						{/if}
-						{#if openMissionCount > 0}
-							<li class="cn-row">
-								<span class="cn-icon" aria-hidden="true">!</span>
-								<span>{openMissionCount} mission{openMissionCount === 1 ? ' is' : 's are'} still open. They are recorded incomplete in the log.</span>
-							</li>
-						{/if}
-						{#if openLocationCount > 0}
-							<li class="cn-row">
-								<span class="cn-icon" aria-hidden="true">!</span>
-								<span>{openLocationCount} net location{openLocationCount === 1 ? '' : 's'} will be marked resolved or closed. This cannot be undone.</span>
-							</li>
-						{/if}
-						<li class="cn-row">
-							<span class="cn-icon" aria-hidden="true">▤</span>
-							<span>The roster, the timeline and the ICS-309 log are kept. You can still export them after the net ends.</span>
-						</li>
-					</ul>
-
-					<p class="cn-footnote">There is no “reopen net” in the app. Ending a net is final.</p>
-
-					{#if closeError}<div class="cn-error" role="alert">{closeError}</div>{/if}
-				</div>
-
-				<div class="cn-footer">
-					<button class="cn-btn" bind:this={closeCancelEl} onclick={() => finishCloseDialog(false)} disabled={closePending}>Keep net open</button>
-					<button class="cn-btn cn-btn-danger" onclick={confirmCloseNet} disabled={closePending} aria-busy={closePending}>
-						{closePending ? 'Ending…' : `End “${$activeNet.name}”`}
-					</button>
-				</div>
+			<div class="cn-header">
+				<span class="cn-title" id="close-net-title">End net</span>
+				<button class="cn-x" onclick={() => finishCloseDialog(false)} disabled={closePending} aria-label="Close">&times;</button>
 			</div>
-		</div>
+
+			<div class="cn-body">
+				<div class="cn-identity">
+					<span class="cn-name">{$activeNet.name}</span>
+					<span class="cn-sub">Open {elapsed || '—'} · NCS {$activeNet.ncsCallsign}</span>
+				</div>
+
+				<ul class="cn-stakes" id="close-net-stakes">
+					{#if $netMetrics.totalIn > 0}
+						<li class="cn-row">
+							<span class="cn-icon" aria-hidden="true">!</span>
+							<span>{$netMetrics.totalIn} operator{$netMetrics.totalIn === 1 ? ' is' : 's are'} still checked in. They will be checked out and the roster closes.</span>
+						</li>
+					{/if}
+					{#if openMissionCount > 0}
+						<li class="cn-row">
+							<span class="cn-icon" aria-hidden="true">!</span>
+							<span>{openMissionCount} mission{openMissionCount === 1 ? ' is' : 's are'} still open. They are recorded incomplete in the log.</span>
+						</li>
+					{/if}
+					{#if openLocationCount > 0}
+						<li class="cn-row">
+							<span class="cn-icon" aria-hidden="true">!</span>
+							<span>{openLocationCount} net location{openLocationCount === 1 ? '' : 's'} will be marked resolved or closed. This cannot be undone.</span>
+						</li>
+					{/if}
+					<li class="cn-row">
+						<span class="cn-icon" aria-hidden="true">▤</span>
+						<span>The roster, the timeline and the ICS-309 log are kept. You can still export them after the net ends.</span>
+					</li>
+				</ul>
+
+				<p class="cn-footnote">There is no “reopen net” in the app. Ending a net is final.</p>
+
+				{#if closeError}<div class="cn-error" role="alert">{closeError}</div>{/if}
+			</div>
+
+			<div class="cn-footer">
+				<button class="cn-btn" bind:this={closeCancelEl} onclick={() => finishCloseDialog(false)} disabled={closePending}>Keep net open</button>
+				<button class="cn-btn cn-btn-danger" onclick={confirmCloseNet} disabled={closePending} aria-busy={closePending}>
+					{closePending ? 'Ending…' : `End “${$activeNet.name}”`}
+				</button>
+			</div>
+		</dialog>
 	{/if}
 </div>
 
@@ -4039,33 +4082,31 @@
 	}
 
 	/* Close-net dialog — same geometry as BatchRemoveDialog */
-	.cn-backdrop {
-		position: fixed;
-		inset: 0;
-		/* Beat the UA [popover] rules: fit-content sizing and auto margins
-		   would shrink the backdrop off the full viewport box. */
-		width: auto;
-		height: auto;
-		margin: 0;
-		border: none;
-		z-index: var(--z-overlay);
+	.cn-dialog::backdrop {
 		background: rgba(0, 0, 0, 0.6);
-		display: flex;
-		justify-content: center;
-		align-items: center;
-		padding: var(--space-lg);
 	}
 
 	.cn-dialog {
+		/* Reset the UA <dialog> box: 1em padding, a solid border and the
+		   max-width/max-height that would otherwise fight the sizes below.
+		   Centring is the UA's own inset:0 + margin:auto, left in place. */
+		padding: 0;
+		max-width: none;
 		width: min(440px, 92vw);
 		max-height: min(80vh, 620px);
+		color: var(--color-text);
 		background: var(--color-surface);
 		border: 1px solid var(--color-primary);
 		border-radius: var(--radius-lg);
 		box-shadow: var(--shadow-lg);
+		overflow: hidden;
+	}
+
+	/* Qualified with [open]: an author `display` would beat the UA's
+	   `dialog:not([open]) { display: none }` and render a closed dialog. */
+	.cn-dialog[open] {
 		display: flex;
 		flex-direction: column;
-		overflow: hidden;
 	}
 
 	.cn-grab {
@@ -6478,15 +6519,13 @@
 	}
 
 	@media (max-width: 640px) {
-		.cn-backdrop {
-			padding: 0;
-			align-items: flex-end;
-		}
-
+		/* Bottom sheet. The dialog is in the top layer, so `fixed` resolves
+		   against the viewport even though every shell ancestor is transformed. */
 		.cn-dialog {
 			width: 100%;
 			position: fixed;
 			inset: auto 0 0 0;
+			margin: 0;
 			max-height: 80vh;
 			overflow-y: auto;
 			border-radius: var(--radius-lg) var(--radius-lg) 0 0;

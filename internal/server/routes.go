@@ -1988,6 +1988,14 @@ func (s *Server) handleOpenNet(w http.ResponseWriter, r *http.Request) {
 	}
 
 	id := chi.URLParam(r, "id")
+	// Opening a fresh net is ordinary operator work. Re-opening a net that was
+	// closed is not: OpenNet now clears ClosedAt, so without this an operator
+	// refused by the end-net gate could simply re-open what the NCS just ended.
+	if n, ok := s.netMgr.GetNet(id); ok && n.Status == "closed" {
+		if !s.allowNetControlAction(w, r, id, "re-open this net") {
+			return
+		}
+	}
 	if err := s.netMgr.OpenNet(id); err != nil {
 		writeJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
 		return
@@ -1997,6 +2005,53 @@ func (s *Server) handleOpenNet(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, n)
 }
 
+// allowNetControlAction guards the actions that belong to whoever is running
+// the net — ending it, handing it over, and re-opening a closed one. It writes
+// a 403 and returns false when the caller may not proceed.
+//
+// Ownership here is deliberately weaker than it looks, because this app has no
+// durable user identity: session.MemoryManager mints a fresh UUID on every
+// login, including the saved-token reconnect path, while Net.NCSUserID is
+// persisted in SQLite. A plain `n.NCSUserID != user.ID` check therefore locks
+// the genuine NCS out of their own net after any restart, session timeout or
+// re-login — the exact operator it is meant to protect, at the worst moment.
+//
+// So the gate only bites while the recorded NCS is actually still connected. If
+// that session is gone the net is orphaned and any operator may act, which is
+// what an incident needs: someone has to be able to close a net whose NCS went
+// off the air. Admins always pass.
+func (s *Server) allowNetControlAction(w http.ResponseWriter, r *http.Request, netID, action string) bool {
+	n, ok := s.netMgr.GetNet(netID)
+	if !ok {
+		return true // let the handler produce its own not-found error
+	}
+	user, authed := UserFromContext(r.Context())
+	if !authed {
+		writeJSON(w, http.StatusForbidden, map[string]string{"error": "authentication required"})
+		return false
+	}
+	if session.RoleLevel(user.Role) >= session.RoleLevel(session.RoleAdmin) {
+		return true
+	}
+	if n.NCSUserID == "" || n.NCSUserID == user.ID {
+		return true
+	}
+	// Recorded NCS, but are they still here?
+	if s.sessions != nil {
+		if _, live := s.sessions.GetByID(n.NCSUserID); !live {
+			return true
+		}
+	}
+	ncs := n.NCSCallsign
+	if ncs == "" {
+		ncs = "net control"
+	}
+	writeJSON(w, http.StatusForbidden, map[string]string{
+		"error": fmt.Sprintf("only %s (net control) or an admin can %s", ncs, action),
+	})
+	return false
+}
+
 func (s *Server) handleCloseNet(w http.ResponseWriter, r *http.Request) {
 	if s.netMgr == nil {
 		writeJSON(w, http.StatusServiceUnavailable, map[string]string{"error": "net control not available"})
@@ -2004,6 +2059,11 @@ func (s *Server) handleCloseNet(w http.ResponseWriter, r *http.Request) {
 	}
 
 	id := chi.URLParam(r, "id")
+
+	if !s.allowNetControlAction(w, r, id, "end this net") {
+		return
+	}
+
 	n, summary, err := s.netMgr.CloseNet(id)
 	if err != nil {
 		writeJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
@@ -2026,6 +2086,13 @@ func (s *Server) handleTransferNCS(w http.ResponseWriter, r *http.Request) {
 	}
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid request body"})
+		return
+	}
+
+	// Handing the net over is itself an NCS action. Without this the end-net
+	// gate would be advisory: any operator could transfer NCS to themselves in
+	// one call and then close the net.
+	if !s.allowNetControlAction(w, r, id, "hand over net control") {
 		return
 	}
 

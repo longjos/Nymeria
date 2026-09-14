@@ -6,7 +6,7 @@
 	// Hoisted so the snap arithmetic and the published CSS token can never drift apart.
 	// Measured, not budgeted: at 112 the status row's real 32px min-height pushed
 	// the rail 10px past the viewport and clipped the bottom of every FAB.
-	const PEEK_H = 122;
+	const PEEK_CONTENT_H = 122;
 
 	let {
 		sheetLevel = 'peek' as SheetState,
@@ -20,6 +20,27 @@
 		children?: Snippet;
 	} = $props();
 
+	// env(safe-area-inset-bottom) is only legible to CSS, but the snap arithmetic is
+	// in JS — so measure it off a throwaway probe instead of guessing 34px. Without
+	// this the rail's label row renders inside the home-indicator strip.
+	let safeBottom = $state(0);
+
+	function measureSafeBottom(): number {
+		const probe = document.createElement('div');
+		probe.style.cssText =
+			'position:fixed;bottom:0;left:0;width:0;height:env(safe-area-inset-bottom);' +
+			'visibility:hidden;pointer-events:none';
+		document.body.appendChild(probe);
+		const h = probe.getBoundingClientRect().height;
+		probe.remove();
+		return h;
+	}
+
+	// Name kept uppercase: the drag/snap handlers below read PEEK_H and are deliberately
+	// left byte-for-byte unchanged. It is now reactive because the inset can change
+	// (orientation) and the published token must always equal the rendered height.
+	let PEEK_H = $derived(PEEK_CONTENT_H + safeBottom);
+
 	let dragging = $state(false);
 	let startY = $state(0);
 	let startTranslate = $state(0);
@@ -27,13 +48,22 @@
 	let startTime = $state(0);
 	let sheetEl: HTMLDivElement;
 
+	$effect(() => {
+		safeBottom = measureSafeBottom();
+		const onResize = () => { safeBottom = measureSafeBottom(); };
+		window.addEventListener('resize', onResize);
+		return () => window.removeEventListener('resize', onResize);
+	});
+
 	// Publish the peek height as a CSS token at runtime so overlays that sit above
 	// the sheet (Toast) can position themselves against it. BottomSheet only renders
 	// on mobile, so this never applies on desktop.
+	// The token is the inset-free height: Toast adds env(safe-area-inset-bottom)
+	// itself, so publishing PEEK_H here would double-count the inset.
 	$effect(() => {
 		const root = document.documentElement;
 		const prev = root.style.getPropertyValue('--sheet-peek');
-		root.style.setProperty('--sheet-peek', `${PEEK_H}px`);
+		root.style.setProperty('--sheet-peek', `${PEEK_CONTENT_H}px`);
 		return () => {
 			if (prev) root.style.setProperty('--sheet-peek', prev);
 			else root.style.removeProperty('--sheet-peek');
@@ -163,8 +193,12 @@
 		opacity: 0.5;
 	}
 
+	/* Side padding must survive the safe-area addition, so the inset goes on
+	   padding-bottom only — never a padding shorthand. PEEK_H adds the same inset
+	   to the snap height, which is what lifts the rail clear of the home indicator. */
 	.sheet-peek {
 		padding: 0 var(--space-md);
+		padding-bottom: env(safe-area-inset-bottom);
 		flex-shrink: 0;
 	}
 
@@ -172,6 +206,7 @@
 		flex: 1;
 		overflow-y: auto;
 		padding: 0 var(--space-md);
+		padding-bottom: env(safe-area-inset-bottom);
 		overscroll-behavior: contain;
 	}
 </style>

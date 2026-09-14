@@ -15,6 +15,37 @@ export const checkpoints = writable<CheckpointWithPassages[]>([]);
 // Net-scoped annotation views derived from the global annotation store.
 export const activeNetId = derived(activeNet, ($net) => $net?.id ?? '');
 
+// Every collection above holds rows for exactly one net. Whenever the active
+// net changes identity — closed (null) or swapped for a different net — those
+// rows belong to a net nobody is looking at any more, so drop them here rather
+// than at each call site: activeNet is set from the init fetch, two WebSocket
+// handlers and the pin/unpin/reorder responses, and a missed reset shows the
+// previous net's roster (#108).
+let lastNetId: string | null = null;
+activeNet.subscribe((net) => {
+	const id = net?.id ?? null;
+	if (id === lastNetId) return;
+	lastNetId = id;
+	checkIns.set([]);
+	missions.set([]);
+	timeline.set([]);
+	notes.set([]);
+	checkpoints.set([]);
+	opsView.set(null);
+	// Clearing alone would leave any client that ADOPTS a net at runtime — the
+	// net_updated handler picking up an already-running open net, or a net
+	// being reopened — showing an empty roster, timeline and checkpoint set for
+	// a live net until a full page reload. loadNetData is otherwise only called
+	// from the initial fetch and from net creation, neither of which covers
+	// those paths. Fire-and-forget: a failure here must not break the store,
+	// and the WebSocket keeps the data current afterwards.
+	if (id) {
+		loadNetData(id).catch(() => {
+			/* transient; live events continue to update these stores */
+		});
+	}
+});
+
 export const netAnnotations = derived(
 	[annotations, activeNetId],
 	([$anns, $netId]) => {
@@ -133,8 +164,11 @@ export const sortedCheckIns = derived(checkIns, ($cis) =>
 	[...$cis].sort((a, b) => statusPriority(a) - statusPriority(b))
 );
 
-export const activeCheckIns = derived(checkIns, ($cis) =>
-	$cis.filter((ci) => ci.status !== 'released')
+// Scoped to the active net as well as status: the reset above lands via a store
+// subscription, so scoping here is what guarantees no stale row is ever rendered,
+// not even for the single frame between two net payloads arriving.
+export const activeCheckIns = derived([checkIns, activeNetId], ([$cis, $netId]) =>
+	$netId ? $cis.filter((ci) => ci.status !== 'released' && ci.netId === $netId) : []
 );
 
 export const operatorsWithPosition = derived(checkIns, ($cis) =>
@@ -328,8 +362,10 @@ export function initNetControlStore(): void {
 	api.nets().then((nets) => {
 		const open = nets.find((n) => n.status === 'open');
 		if (open) {
+			// The activeNet subscription above loads this net's data on any
+			// identity change, so setting it here is enough — calling
+			// loadNetData directly as well would double every request.
 			activeNet.set(open);
-			loadNetData(open.id);
 		}
 	}).catch(() => {});
 
@@ -343,13 +379,16 @@ export function initNetControlStore(): void {
 		const n = msg.data as Net;
 		if (!n) return;
 		activeNet.update((current) => {
-			if (current && current.id === n.id) return n;
+			// Order matters: the net we hold leaving 'open' has to drop out before
+			// the generic "still open / newly open" replacement, or a close event
+			// would reinstate the closed net as the active one (#108).
+			if (current && current.id === n.id) return n.status === 'open' ? n : null;
 			if (n.status === 'open') return n;
-			if (current && current.id === n.id && n.status !== 'open') return null;
 			return current;
 		});
-		// Sync ops view from net data.
-		if (n.opsViewLat != null && n.opsViewLon != null && n.opsViewZoom != null) {
+		// Sync ops view from net data — but only for the net we actually kept,
+		// so a closing net doesn't re-seat the view the reset just cleared.
+		if (lastNetId === n.id && n.opsViewLat != null && n.opsViewLon != null && n.opsViewZoom != null) {
 			opsView.set({ lat: n.opsViewLat, lon: n.opsViewLon, zoom: n.opsViewZoom });
 		}
 	});

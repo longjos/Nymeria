@@ -2,6 +2,7 @@ import { writable, derived, get } from 'svelte/store';
 import { checkIns, missions, notes } from './netcontrol';
 import { stationList } from './stations';
 import { tacticalAliases } from './tactical';
+import { rosterFilterActive, rosterCallsigns, isRosterStation } from './rosterScope';
 import type { NetCheckIn, NetMission, NetNote, Station, NoteCategory, NoteSeverity } from '$lib/types';
 
 // --- Types ---
@@ -127,8 +128,8 @@ function scoreResult(query: string, item: PaletteResult): number {
 // --- Derived results ---
 
 export const paletteResults = derived(
-	[paletteQuery, paletteFilter, checkIns, stationList, tacticalAliases],
-	([$query, $filter, $checkIns, $stations, $aliases]) => {
+	[paletteQuery, paletteFilter, checkIns, stationList, tacticalAliases, rosterFilterActive, rosterCallsigns],
+	([$query, $filter, $checkIns, $stations, $aliases, $rosterActive, $roster]) => {
 		const q = $query.trim();
 
 		// Build unified list of candidates
@@ -186,6 +187,19 @@ export const paletteResults = derived(
 		let filtered = $filter === 'tactical'
 			? candidates.filter((c) => c.tacticalCall)
 			: candidates;
+
+		// The app-wide roster scope (#106) must be applied BEFORE the top-20 cut
+		// below, not by the consumer afterwards: filtering a page that has
+		// already been truncated silently drops roster stations whose score put
+		// them at rank 21, so a search for an operator who is on the roster can
+		// come back empty. Check-ins are roster by definition; station rows
+		// survive only if the roster claims them, which keeps a tracked device
+		// (W4ABC-9 for W4ABC) findable.
+		if ($rosterActive) {
+			filtered = filtered.filter(
+				(c) => c.type === 'checkin' || (c.station != null && isRosterStation($roster, c.station))
+			);
+		}
 
 		// If no query, show all (sorted by lastHeard)
 		if (!q) {

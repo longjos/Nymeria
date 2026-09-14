@@ -2276,3 +2276,4 @@ func TestDeleteBatchStoreFailureRollsBack(t *testing.T) {
 		t.Errorf("persisted annotations after rollback: got %d, want 3", len(persisted))
 	}
 }
+

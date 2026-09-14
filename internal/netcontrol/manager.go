@@ -122,9 +122,15 @@ func (m *Manager) OpenNet(id string) error {
 		return fmt.Errorf("net %q not found", id)
 	}
 
-	now := time.Now().UTC()
 	n.Status = StatusOpen
-	n.OpenedAt = &now
+	// The first open is the net's start of operations; re-opening must not
+	// rewrite it, or the log loses when the net actually began.
+	if n.OpenedAt == nil || n.OpenedAt.IsZero() {
+		now := time.Now().UTC()
+		n.OpenedAt = &now
+	}
+	// An open net cannot also carry a close time.
+	n.ClosedAt = nil
 	m.nets[id] = n
 	m.mu.Unlock()
 

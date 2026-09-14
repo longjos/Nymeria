@@ -2,7 +2,10 @@
 <html lang="en">
 	<head>
 		<meta charset="utf-8" />
-		<meta name="viewport" content="width=device-width, initial-scale=1" />
+		<!-- viewport-fit=cover is required for env(safe-area-inset-*) to report
+		     anything but 0; the bottom sheet pads its nav rail out of the home
+		     indicator strip with it. -->
+		<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
 		<link rel="icon" href="%sveltekit.assets%/favicon.png" />
 		<title>Nymeria</title>
 		%sveltekit.head%

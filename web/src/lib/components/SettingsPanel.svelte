@@ -3,6 +3,7 @@
 	import { get } from 'svelte/store';
 	import { api } from '$lib/api';
 	import { closePanel, settingsOpenSection } from '$lib/stores/ui';
+	import CloseButton from './CloseButton.svelte';
 	import { weatherConfig } from '$lib/stores/weather';
 	import { loadW3WStatus } from '$lib/stores/w3w';
 	import FilterBuilder from './FilterBuilder.svelte';
@@ -398,11 +399,8 @@
 	<!-- Header -->
 	<div class="panel-header">
 		<h2>Settings</h2>
-		<button class="close-btn" onclick={closePanel} aria-label="Close">
-			<svg width="16" height="16" viewBox="0 0 16 16" fill="none">
-				<path d="M4 4l8 8M12 4l-8 8" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/>
-			</svg>
-		</button>
+		<!-- 28px, not the 44px floor: a larger target would grow the panel header. -->
+		<CloseButton onClick={() => closePanel()} label="Close settings" size={28} />
 	</div>
 
 	<!-- Restart banner -->
@@ -556,11 +554,13 @@
 							<div class="transport-card">
 								<div class="transport-header">
 									<span class="transport-type">{t.type.toUpperCase()}</span>
-									<button class="remove-btn" onclick={() => removeTransport(i)} title="Remove transport">
-										<svg width="14" height="14" viewBox="0 0 16 16" fill="none">
-											<path d="M4 4l8 8M12 4l-8 8" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/>
-										</svg>
-									</button>
+									<CloseButton
+										onClick={() => removeTransport(i)}
+										label="Remove transport"
+										size={24}
+										iconSize={14}
+										tone="danger"
+									/>
 								</div>
 								<div class="field-row">
 									<label for="t{i}-name">Name</label>
@@ -1097,24 +1097,6 @@
 		color: var(--color-text);
 	}
 
-	.close-btn {
-		display: flex;
-		align-items: center;
-		justify-content: center;
-		width: 28px;
-		height: 28px;
-		background: none;
-		border: none;
-		border-radius: var(--radius-sm);
-		color: var(--color-text-muted);
-		cursor: pointer;
-	}
-
-	.close-btn:hover {
-		color: var(--color-text);
-		background: var(--color-primary);
-	}
-
 	/* Restart banner */
 	.restart-banner {
 		display: flex;
@@ -1539,24 +1521,6 @@
 		font-weight: 700;
 		color: var(--color-accent);
 		letter-spacing: 0.05em;
-	}
-
-	.remove-btn {
-		display: flex;
-		align-items: center;
-		justify-content: center;
-		width: 24px;
-		height: 24px;
-		background: none;
-		border: none;
-		border-radius: var(--radius-sm);
-		color: var(--color-text-muted);
-		cursor: pointer;
-	}
-
-	.remove-btn:hover {
-		color: #f87171;
-		background: rgba(239, 68, 68, 0.1);
 	}
 
 	/* Add transport */

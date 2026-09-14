@@ -1,5 +1,6 @@
 <script lang="ts">
 	import type { Snippet } from 'svelte';
+	import CloseButton from './CloseButton.svelte';
 
 	let {
 		open = false,
@@ -49,11 +50,7 @@
 				Messages
 			</button>
 		{/if}
-		<button class="close-btn" onclick={onClose} aria-label="Close panel">
-			<svg width="16" height="16" viewBox="0 0 16 16" fill="none">
-				<path d="M4 4l8 8M12 4l-8 8" stroke="currentColor" stroke-width="2" stroke-linecap="round"/>
-			</svg>
-		</button>
+		<CloseButton onClick={() => onClose?.()} label="Close panel" bordered />
 	</div>
 	<div class="panel-body">
 		{#if children}
@@ -111,25 +108,6 @@
 
 	.back-btn:hover {
 		color: var(--color-accent);
-	}
-
-	.close-btn {
-		display: flex;
-		align-items: center;
-		justify-content: center;
-		width: 44px;
-		height: 44px;
-		background: var(--color-surface);
-		border: 1px solid var(--color-primary);
-		border-radius: var(--radius-sm);
-		color: var(--color-text-muted);
-		cursor: pointer;
-		transition: color var(--duration-fast), border-color var(--duration-fast);
-	}
-
-	.close-btn:hover {
-		color: var(--color-text);
-		border-color: var(--color-accent);
 	}
 
 	.panel-body {

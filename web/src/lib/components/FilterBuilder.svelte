@@ -5,6 +5,7 @@
 		parseFilter, serializeFilter, validateRule, filterTypeLabel,
 		ruleSummary, createDefaultRule, filterTypeGroups
 	} from '$lib/filter-parser';
+	import CloseButton from './CloseButton.svelte';
 
 	let { value = $bindable(''), oninput }: { value: string; oninput?: (v: string) => void } = $props();
 
@@ -474,11 +475,14 @@
 									</svg>
 								</button>
 							{/if}
-							<button class="rule-action-btn delete-btn" onclick={() => deleteRule(i)} title="Remove">
-								<svg width="12" height="12" viewBox="0 0 16 16" fill="none">
-									<path d="M4 4l8 8M12 4l-8 8" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/>
-								</svg>
-							</button>
+							<!-- 22px to match the sibling edit/done controls in this dense rule row. -->
+							<CloseButton
+								onClick={() => deleteRule(i)}
+								label="Remove rule"
+								size={22}
+								iconSize={12}
+								tone="danger"
+							/>
 						</div>
 					</div>
 
@@ -837,11 +841,6 @@
 	.done-btn:hover {
 		color: var(--color-success);
 		background: rgba(34, 197, 94, 0.1);
-	}
-
-	.delete-btn:hover {
-		color: #f87171;
-		background: rgba(239, 68, 68, 0.1);
 	}
 
 	.rule-summary {

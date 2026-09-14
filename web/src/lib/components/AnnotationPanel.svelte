@@ -5,6 +5,7 @@
 	import { beaconPath } from '$lib/stores/paths';
 	import { formatPathDisplay } from '$lib/aprsPath';
 	import PathHint from './PathHint.svelte';
+	import CloseButton from './CloseButton.svelte';
 	import { annotationList, annotationBatches } from '$lib/stores/annotations';
 	import { showToast } from '$lib/stores/toast';
 	import BatchRemoveDialog from './BatchRemoveDialog.svelte';
@@ -1031,15 +1032,12 @@
 											<path d="M3 8l4 4 6-8" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/>
 										</svg>
 									</button>
-									<button
-										class="action-btn cancel-edit-btn"
-										title="Cancel editing"
-										onclick={(e) => { e.stopPropagation(); handleCancelEdit(); }}
-									>
-										<svg width="14" height="14" viewBox="0 0 16 16" fill="none">
-											<path d="M4 4l8 8M12 4l-8 8" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/>
-										</svg>
-									</button>
+									<CloseButton
+										label="Cancel editing"
+										size={36}
+										iconSize={14}
+										onClick={(e) => { e.stopPropagation(); handleCancelEdit(); }}
+									/>
 								</div>
 							{:else}
 								<button
@@ -1068,15 +1066,13 @@
 										<path d="M12 2l2 2-8 8H4v-2l8-8z" stroke="currentColor" stroke-width="1.2" stroke-linecap="round" stroke-linejoin="round"/>
 									</svg>
 								</button>
-								<button
-									class="action-btn delete-btn"
-									title="Delete"
-									onclick={(e) => { e.stopPropagation(); handleDelete(ann.id); }}
-								>
-									<svg width="14" height="14" viewBox="0 0 16 16" fill="none">
-										<path d="M4 4l8 8M12 4l-8 8" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/>
-									</svg>
-								</button>
+								<CloseButton
+									label="Delete annotation"
+									size={36}
+									iconSize={14}
+									tone="danger"
+									onClick={(e) => { e.stopPropagation(); handleDelete(ann.id); }}
+								/>
 							{/if}
 						{/if}
 					</div>
@@ -2172,11 +2168,6 @@
 		background: rgba(230, 57, 70, 0.1);
 	}
 
-	.delete-btn:hover {
-		color: var(--color-accent);
-		background: rgba(230, 57, 70, 0.1);
-	}
-
 	.save-edit-btn:hover {
 		color: var(--color-success, #2a9d8f);
 		background: rgba(42, 157, 143, 0.1);
@@ -2185,11 +2176,6 @@
 	.save-edit-btn:disabled {
 		opacity: 0.3;
 		cursor: not-allowed;
-	}
-
-	.cancel-edit-btn:hover {
-		color: var(--color-accent);
-		background: rgba(230, 57, 70, 0.1);
 	}
 
 	.empty {

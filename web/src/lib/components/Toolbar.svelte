@@ -1,6 +1,7 @@
 <script lang="ts">
 	import { activeNet, activeCheckIns } from '$lib/stores/netcontrol';
 	import { canAdmin } from '$lib/stores/session';
+	import { sheetState } from '$lib/stores/ui';
 	import type { PanelMode } from '$lib/stores/ui';
 
 	let {
@@ -35,11 +36,22 @@
 
 	let netActive = $derived($activeNet?.status === 'open');
 	let netOpCount = $derived($activeCheckIns.length);
+
+	// At 'peek' the rail is one scrollable row because that is all the 58px of peek
+	// budget allows. Above peek there is room for every destination at once, so the
+	// rail becomes a wrapped grid — no hidden targets, no horizontal hunting.
+	// Read from the store rather than a prop: +page.svelte owns the prop signature.
+	let expanded = $derived($sheetState !== 'peek');
 </script>
 
 <!-- Mobile navigation rail: lives in the bottom sheet's always-visible peek area,
      so no target can ever be occluded by the sheet painting over it. -->
-<div class="mobile-toolbar mobile-only" role="navigation" aria-label="Panels">
+<div
+	class="mobile-toolbar mobile-only"
+	class:expanded
+	role="navigation"
+	aria-label="Panels"
+>
 	<button class="fab search-fab" onclick={onSearchOpen} title="Search" aria-label="Search stations">
 		<svg width="18" height="18" viewBox="0 0 16 16" fill="none" aria-hidden="true">
 			<circle cx="6.5" cy="6.5" r="5.5" stroke="currentColor" stroke-width="1.5"/>
@@ -200,6 +212,7 @@
 		overscroll-behavior-x: contain;
 		touch-action: pan-x;
 		scroll-snap-type: x proximity;
+		flex-wrap: nowrap;
 		scrollbar-width: none;
 		-webkit-overflow-scrolling: touch;
 		padding-bottom: var(--space-sm);
@@ -213,6 +226,32 @@
 
 	.mobile-toolbar::-webkit-scrollbar { display: none; }
 
+	/* Sheet above peek: every destination on screen at once. auto-fit lands on 4
+	   columns at 390px and 5 on wider phones, so the row count follows the device
+	   instead of a hardcoded breakpoint. */
+	.mobile-toolbar.expanded {
+		display: grid;
+		grid-template-columns: repeat(auto-fit, minmax(76px, 1fr));
+		/* The rail lives in .sheet-peek, which is flex-shrink: 0 ABOVE the
+		   scrollable .sheet-content — so an unbounded grid pushes the panel it
+		   navigates to off the bottom of the screen. Two rows is the most it may
+		   take; past that the rail scrolls itself rather than eating the panel.
+		   Landscape (844x390) lands on 9 columns and so still wraps to two, which
+		   this cap accommodates rather than fights. */
+		max-height: calc(2 * 58px + var(--space-xs));
+		overflow-y: auto;
+		overflow-x: visible;
+		touch-action: auto;
+		mask-image: none;
+		-webkit-mask-image: none;
+	}
+
+	.mobile-toolbar.expanded .fab { width: auto; }
+
+	/* Nothing scrolls away in grid mode, so the pinned Search slot is pointless
+	   and sticky positioning would only fight the grid's own placement. */
+	.mobile-toolbar.expanded .fab.search-fab { position: static; }
+
 	.fab {
 		flex: 0 0 auto;
 		scroll-snap-align: start;
@@ -221,8 +260,10 @@
 		align-items: center;
 		justify-content: center;
 		gap: 2px;
-		width: 72px;
+		width: 76px;
 		height: 58px;
+		padding: 0 4px;
+		box-sizing: border-box;
 		background: var(--color-surface);
 		border: 1px solid var(--color-primary);
 		border-radius: var(--radius-md);
@@ -241,10 +282,12 @@
 	}
 
 	.fab-label {
-		font-size: 0.625rem;
+		/* 12px, not 10px: this label is the only thing naming the control on a
+		   hoverless device, read at arm's length in sunlight. Letter-spacing dropped
+		   to buy back the width the larger size costs. */
+		font-size: 0.75rem;
 		line-height: 1;
-		letter-spacing: 0.02em;
-		max-width: 68px;
+		max-width: 100%;
 		overflow: hidden;
 		text-overflow: ellipsis;
 		white-space: nowrap;
@@ -258,7 +301,7 @@
 	.fab.active .fab-label { color: var(--color-text); }
 
 	.fab.cmd-fab { border-color: var(--color-accent); color: var(--color-accent); }
-	.fab.net-active { border-color: #22c55e; color: #22c55e; }
+	.fab.net-active { border-color: var(--color-success); color: var(--color-success); }
 
 	.fab-badge {
 		position: absolute;

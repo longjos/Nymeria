@@ -187,6 +187,9 @@
 	const iconSigs: Map<string, string> = new Map();
 	const tooltipState: Map<string, { name: string; permanent: boolean }> = new Map();
 	const trackSigs: Map<string, string> = new Map();
+	// key -> cached bbox of the drawn track, invalidated by the same inputs as
+	// the polyline itself. See trackBBox().
+	const trackBBoxes: Map<string, { sig: string; box: { minLat: number; maxLat: number; minLon: number; maxLon: number } | null }> = new Map();
 	let trackLines: Map<string, L.Polyline> = new Map();
 	let trackHighlights: Map<string, L.Polyline> = new Map();
 	let drCones: Map<string, L.Polygon> = new Map();
@@ -252,6 +255,36 @@
 	// rebuilding map layers nobody can see.
 	let pageHidden = $state(typeof document !== 'undefined' ? document.hidden : false);
 
+	// --- Viewport culling (#107) -------------------------------------------
+	// The v0.11.0 pass took per-packet JS from 84ms to 6ms; what is left at high
+	// marker counts is browser style/recalc/paint for one DOM node per marker,
+	// which is why interactive panning stays ~flat per marker. Clustering and
+	// canvas rendering both fix that by changing what the operator sees and how
+	// they interact with it; culling is the only one of the three that is
+	// invisible to them — a marker outside the viewport cannot be seen, so never
+	// creating its node costs nothing on screen and removes most of the paint
+	// cost exactly when panning hurts (zoomed in).
+	const CULL_MIN_STATIONS = 200;
+	/** Fraction of the viewport added on every side, so panning never pops markers in at the edge. */
+	const CULL_PAD = 0.5;
+	const VIEWPORT_SETTLE_MS = 120;
+	// Bumped (coalesced) after the map settles so the station effect re-runs
+	// against the new bounds. $state so the effect subscribes to it.
+	let viewportEpoch = $state(0);
+	let viewportTimer: ReturnType<typeof setTimeout> | null = null;
+
+	function onViewportSettled() {
+		// A hidden tab is not panning for anybody, and the unhide rebuild covers it.
+		if (pageHidden) return;
+		// One pinch-zoom fires both zoomend and moveend, and a held keyboard pan
+		// fires a run of moveends — one rebuild per settle is enough.
+		if (viewportTimer) clearTimeout(viewportTimer);
+		viewportTimer = setTimeout(() => {
+			viewportTimer = null;
+			viewportEpoch++;
+		}, VIEWPORT_SETTLE_MS);
+	}
+
 	const netStatusColors: Record<string, string> = {
 		available: '#22c55e',
 		assigned: '#3b82f6',
@@ -296,6 +329,16 @@
 		// Any real user drag/zoom (not one we drove ourselves) breaks follow.
 		map.on('dragstart', () => { if (!programmaticMove) onFollowBreak?.(); });
 		map.on('zoomstart', () => { if (!programmaticMove) onFollowBreak?.(); });
+
+		// Viewport culling needs a rebuild whenever the visible bounds change.
+		// 'move' fires continuously during a held drag; 'moveend' only on
+		// release. Without the continuous one, a slow one-handed pan past the
+		// 50% pad exposes empty map until the finger lifts — which is exactly
+		// the gesture this is meant to help. onViewportSettled coalesces, so
+		// the extra events cost one timer reset each.
+		map.on('move', onViewportSettled);
+		map.on('moveend', onViewportSettled);
+		map.on('zoomend', onViewportSettled);
 
 		// Long press / right-click = "measure from here". Bound on the DOM
 		// container rather than via map.on('contextmenu') because L.Marker does
@@ -413,6 +456,7 @@
 
 	onDestroy(() => {
 		if (drTimer) clearInterval(drTimer);
+		if (viewportTimer) clearTimeout(viewportTimer);
 		if (typeof document !== 'undefined') document.removeEventListener('visibilitychange', onVisibilityChange);
 		for (const [, layer] of drCones) layer.remove();
 		for (const [, layer] of drCenterLines) layer.remove();
@@ -441,6 +485,8 @@
 		const _trackDur = trackDurationMs;
 		const _dr = showDRCones;
 		const _labels = showCallsigns;
+		// Viewport changes decide which stations survive culling in updateMarkers().
+		const _viewport = viewportEpoch;
 		// Read unconditionally so the effect always re-subscribes to it: while
 		// hidden the effect stops touching `stations`, and unhiding is the only
 		// thing that can bring it back.
@@ -1777,6 +1823,74 @@
 			: { permanent: false, direction: 'top', className: 'station-tooltip' };
 	}
 
+	/**
+	 * Off-screen stations that must be rendered anyway (see CULL_PAD above):
+	 * the selection, whose marker and highlighted track are part of the UI state
+	 * and which the operator can select from a list while it is off-screen; a
+	 * station whose track the operator is hovering; a station with an open hover
+	 * tooltip they are still reading; and any station whose track crosses the
+	 * padded viewport — the polyline is visible even when the symbol is not, and
+	 * dropping the key would take the track with it.
+	 */
+	function mustRenderOffscreen(key: string, st: Station, bounds: L.LatLngBounds, trackCutoff: number): boolean {
+		if (key === selectedCallsign) return true;
+		if (trackHighlights.has(key)) return true;
+		const marker = markers.get(key);
+		// Permanent call-sign labels report open for every marker, so they say
+		// nothing about what is being read — only a hover tooltip does.
+		if (marker && marker.isTooltipOpen() && !tooltipState.get(key)?.permanent) return true;
+
+		if (showTracks && st.track && st.track.length > 1) {
+			const bb = trackBBox(key, st, trackCutoff);
+			if (bb) {
+				const sw = bounds.getSouthWest();
+				const ne = bounds.getNorthEast();
+				if (bb.maxLat >= sw.lat && bb.minLat <= ne.lat && bb.maxLon >= sw.lng && bb.minLon <= ne.lng) return true;
+			}
+		}
+		return false;
+	}
+
+	/**
+	 * Bounding box of the track as it is actually DRAWN, cached per station.
+	 *
+	 * Two things this must not do. It must not use the unfiltered history: with
+	 * the default trackDuration of 'all', a station's whole-day track spans the
+	 * course, overlaps any zoomed-in viewport, and would protect every station
+	 * from culling — the paint win would never materialise at exactly the event
+	 * size that needs it. And it must not walk the points on every packet:
+	 * updateMarkers() runs per packet, so an O(points) scan per off-screen
+	 * station would hand back the cost culling is meant to save.
+	 *
+	 * Keyed on the same signature the polyline itself is cached against, so the
+	 * box is recomputed only when the drawn line actually changes.
+	 */
+	function trackBBox(
+		key: string,
+		st: Station,
+		cutoff: number
+	): { minLat: number; maxLat: number; minLon: number; maxLon: number } | null {
+		const pts = st.track ?? [];
+		const last = pts[pts.length - 1];
+		const sig = `${trackDurationMs}|${pts.length}|${last?.time ?? ''}|${last?.lat},${last?.lon}`;
+		const hit = trackBBoxes.get(key);
+		if (hit && hit.sig === sig) return hit.box;
+
+		let minLat = Infinity, maxLat = -Infinity, minLon = Infinity, maxLon = -Infinity;
+		let n = 0;
+		for (const tp of pts) {
+			if (cutoff !== -Infinity && new Date(tp.time).getTime() < cutoff) continue;
+			n++;
+			if (tp.lat < minLat) minLat = tp.lat;
+			if (tp.lat > maxLat) maxLat = tp.lat;
+			if (tp.lon < minLon) minLon = tp.lon;
+			if (tp.lon > maxLon) maxLon = tp.lon;
+		}
+		const box = n > 1 ? { minLat, maxLat, minLon, maxLon } : null;
+		trackBBoxes.set(key, { sig, box });
+		return box;
+	}
+
 	function updateMarkers() {
 		if (!map) return;
 
@@ -1796,10 +1910,21 @@
 		// Hoisted out of the per-station track filter below — one clock read for
 		// the whole pass instead of one per station.
 		const trackCutoff = trackDurationMs === Infinity ? -Infinity : Date.now() - trackDurationMs;
+		// Below the threshold every station is rendered exactly as before, so
+		// small nets and normal use are untouched by culling.
+		const cullBounds = stations.length > CULL_MIN_STATIONS ? map.getBounds().pad(CULL_PAD) : null;
 
 		for (const st of stations) {
 			if (!st.position) continue;
 			const key = stationKey(st);
+			// A culled station never joins currentKeys, so the removal loops at
+			// the end of this function prune its marker, tooltip, track and
+			// highlight through the same path a disappeared station takes.
+			if (
+				cullBounds &&
+				!cullBounds.contains([st.position.lat, st.position.lon]) &&
+				!mustRenderOffscreen(key, st, cullBounds, trackCutoff)
+			) continue;
 			currentKeys.add(key);
 
 			const info = symbolInfo(st.symbol);
@@ -1937,6 +2062,7 @@
 				markers.delete(key);
 				iconSigs.delete(key);
 				tooltipState.delete(key);
+				trackBBoxes.delete(key);
 			}
 		}
 		for (const [key, line] of trackLines) {
