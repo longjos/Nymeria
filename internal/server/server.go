@@ -461,23 +461,11 @@ func (s *Server) bridgeNetControlEvents() {
 		}
 		s.hub.Broadcast(data)
 
-		// Close net-scoped annotations when net is closed.
-		if evt.Type == "net_updated" && s.annMgr != nil {
-			if nData, ok := evt.Data.(store.Net); ok && nData.Status == "closed" {
-				s.annMgr.CloseNetAnnotations(nData.ID)
-			} else {
-				raw, err := json.Marshal(evt.Data)
-				if err == nil {
-					var n struct {
-						ID     string `json:"id"`
-						Status string `json:"status"`
-					}
-					if json.Unmarshal(raw, &n) == nil && n.Status == "closed" && n.ID != "" {
-						s.annMgr.CloseNetAnnotations(n.ID)
-					}
-				}
-			}
-		}
+		// Closing a net deliberately does NOT touch its annotations. Bulk-resolving
+		// them stamped a ResolvedAt nobody earned, destroyed the record of what was
+		// still outstanding when the net ended, and could not be undone. Whether a
+		// net's annotations are still live is already carried by the net's own
+		// Status/ClosedAt (#117).
 
 		// Sync mission status change → annotation status.
 		if evt.Type == "mission_updated" && s.annMgr != nil {

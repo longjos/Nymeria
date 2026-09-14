@@ -618,11 +618,14 @@
 	}
 
 	function onKey(e: KeyboardEvent) {
-		if (e.key === 'Escape' && expanded) {
-			e.stopImmediatePropagation();
-			routeChooserOpen = false;
-			onToggle();
-		}
+		if (e.key !== 'Escape' || !expanded) return;
+		// A modal dialog owns Escape while it is open, and this handler runs in
+		// the capture phase — swallowing the key here would keep it from ever
+		// reaching the dialog. The card stays open; the dialog closes first.
+		if (document.querySelector('dialog[open], [aria-modal="true"]')) return;
+		e.stopImmediatePropagation();
+		routeChooserOpen = false;
+		onToggle();
 	}
 
 	function onDocPointerDown(e: MouseEvent) {

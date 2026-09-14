@@ -1,7 +1,7 @@
 <script lang="ts">
 	import StationCard from './StationCard.svelte';
-	import { stationList } from '$lib/stores/stations';
 	import { getTacticalAlias } from '$lib/stores/tactical';
+	import { rosterScopedStations } from '$lib/stores/rosterScope';
 	import { stationKey } from '$lib/utils';
 
 	let {
@@ -11,6 +11,12 @@
 		onSelect?: (key: string) => void;
 		selectedKey?: string | null;
 	} = $props();
+
+	// The app-wide roster scope (#106): while a net is running and "Roster only" is
+	// on, this list shows exactly what the map shows. `hidden` drives the banner —
+	// a list that silently drops 288 stations mid-incident is worse than the bug.
+	let scope = $derived($rosterScopedStations);
+	let scopedStations = $derived(scope.stations);
 
 	let search = $state('');
 	// Empty string means "all transports". Otherwise holds a transport
@@ -43,14 +49,14 @@
 	// chip row only shows filters that can match something.
 	let availableSources = $derived.by(() => {
 		const seen = new Set<string>();
-		for (const s of $stationList) {
+		for (const s of scopedStations) {
 			for (const t of stationSources(s)) seen.add(t);
 		}
 		return Array.from(seen).sort();
 	});
 
 	let filteredStations = $derived.by(() => {
-		let list = $stationList;
+		let list = scopedStations;
 		if (sourceFilter) {
 			list = list.filter((s) => stationSources(s).includes(sourceFilter));
 		}
@@ -75,6 +81,12 @@
 			bind:value={search}
 		/>
 	</div>
+	{#if scope.scoped}
+		<p class="scope-note">
+			<span class="scope-tag">ROSTER ONLY</span>
+			<span>{scope.hidden} other station{scope.hidden === 1 ? '' : 's'} hidden</span>
+		</p>
+	{/if}
 	{#if availableSources.length > 1}
 		<div class="source-chips" role="group" aria-label="Filter by transport">
 			<button
@@ -146,6 +158,33 @@
 
 	input:focus {
 		border-color: var(--color-accent);
+	}
+
+	/* Roster-scope banner: text-first, never colour alone — it has to read in
+	   direct sun on a phone held one-handed. */
+	.scope-note {
+		display: flex;
+		align-items: center;
+		gap: var(--space-xs);
+		flex-wrap: wrap;
+		margin: 0;
+		padding: var(--space-xs) var(--space-md);
+		border-bottom: 1px solid var(--color-primary);
+		background: rgba(233, 69, 96, 0.12);
+		color: var(--color-text);
+		font-size: 0.75rem;
+		flex-shrink: 0;
+	}
+
+	.scope-tag {
+		padding: 0.1rem 0.4rem;
+		border: 1px solid var(--color-accent);
+		border-radius: var(--radius-sm);
+		color: var(--color-accent);
+		font-size: 0.68rem;
+		font-weight: 700;
+		letter-spacing: 0.04em;
+		white-space: nowrap;
 	}
 
 	.source-chips {

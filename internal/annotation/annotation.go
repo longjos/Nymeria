@@ -511,36 +511,6 @@ func (m *Manager) AllForNet(netID string) []Annotation {
 	return result
 }
 
-// CloseNetAnnotations moves all non-terminal net annotations to their terminal status.
-func (m *Manager) CloseNetAnnotations(netID string) error {
-	m.mu.RLock()
-	var toClose []Annotation
-	for _, a := range m.annotations {
-		if a.NetID == netID && !terminalStatuses[a.Status] {
-			toClose = append(toClose, a)
-		}
-	}
-	m.mu.RUnlock()
-
-	for _, a := range toClose {
-		// Determine the terminal status for this category.
-		terminal := "closed"
-		if categoryStatuses[a.Category] != nil {
-			if categoryStatuses[a.Category]["closed"] {
-				terminal = "closed"
-			} else if categoryStatuses[a.Category]["resolved"] {
-				terminal = "resolved"
-			} else if categoryStatuses[a.Category]["complete"] {
-				terminal = "complete"
-			} else if categoryStatuses[a.Category]["cleared"] {
-				terminal = "cleared"
-			}
-		}
-		m.ChangeStatus(a.ID, terminal)
-	}
-	return nil
-}
-
 // ImportItem represents a parsed GPX/KML waypoint or geometry for import.
 type ImportItem struct {
 	Name        string

@@ -53,7 +53,10 @@
 	import { initPathStore } from '$lib/stores/paths';
 	import { isLoggedIn, needsSetup, isApproved, isPending, isDenied, initSession, handleSessionEvent, currentUser, loadPendingRequests, canAdmin } from '$lib/stores/session';
 	import { mapSettings, AGE_FILTER_MS, TRACK_DURATION_MS } from '$lib/stores/mapSettings';
-	import { activeCheckIns } from '$lib/stores/netcontrol';
+	import {
+		rosterCallsigns, netIsOpen, rosterMappedCount, rosterFilterActive, isRosterStation,
+		rosterScopedStations
+	} from '$lib/stores/rosterScope';
 	import MapPalette from '$lib/components/MapPalette.svelte';
 	import {
 		selectedStation, panelMode, detailTab, searchOpen, sheetState,
@@ -93,76 +96,16 @@
 	let measureBand = $state<MeasureBand | null>(null);
 	let showNextStop = $state(true);
 
-	// Any check-in change (status, note, roll call, position update) re-emits
-	// $activeCheckIns, and a fresh Set here would change the identity of
-	// stationsWithPosition below, forcing the Map to rebuild every marker even
-	// though the callsign membership is usually unchanged. Return the cached Set
-	// when the contents are identical; it is only ever read via .has(), so a
-	// stable reference is indistinguishable from a fresh one.
-	//
-	// The roster is the checked-in operators PLUS the tracked devices linked to
-	// them: an operator checked in as W4ABC may have their position arriving from
-	// W4ABC-9. Tracked callsigns are stored verbatim (they may carry an SSID), so
-	// membership is tested against both the station key and its bare callsign.
-	//
-	// Scoped to the currently open net by id: the netcontrol store keeps the
-	// previous net's check-ins in $checkIns until the new net's data loads, so an
-	// unscoped roster would filter the map to the *last* net's operators.
-	let prevNetCallsigns: Set<string> | null = null;
-	let netCallsigns = $derived.by(() => {
-		const next = new Set<string>();
-		const openNetId = $activeNet?.status === 'open' ? $activeNet.id : null;
-		for (const ci of openNetId ? $activeCheckIns : []) {
-			if (ci.netId !== openNetId) continue;
-			next.add(ci.callsign);
-			for (const ts of ci.trackedStations ?? []) next.add(ts.callsign);
-		}
-		if (prevNetCallsigns && prevNetCallsigns.size === next.size) {
-			let same = true;
-			for (const c of next) {
-				if (!prevNetCallsigns.has(c)) { same = false; break; }
-			}
-			if (same) return prevNetCallsigns;
-		}
-		prevNetCallsigns = next;
-		return next;
-	});
-
+	// Roster membership, net-open state and the roster scope now live in
+	// $lib/stores/rosterScope — the same scope the station list, inline search and
+	// command palette read, so a filtered map can never disagree with them (#106).
 	let allStationsWithPosition = $derived(
 		$stationList.filter((s) => s.position)
 	);
 
-	// The roster filter only applies while a net is running with someone on it —
-	// otherwise the persisted toggle would blank the map on a later, netless day.
-	// Must test the status, not just for a net object: the netcontrol store keeps
-	// the closed net in $activeNet after a net_updated close event, so
-	// `$activeNet !== null` stays true and the map would stay filtered.
-	let netIsOpen = $derived($activeNet?.status === 'open');
-
-	// Availability counts what the filter would actually leave on the map, not
-	// raw check-ins: a roster of voice-only operators with no position anywhere
-	// passes a check-in count gate and then blanks the map.
-	let rosterMappedCount = $derived.by(() => {
-		if (!netIsOpen) return 0;
-		let n = 0;
-		for (const s of allStationsWithPosition) {
-			const key = s.ssid > 0 ? `${s.callsign}-${s.ssid}` : s.callsign;
-			if (netCallsigns.has(s.callsign) || netCallsigns.has(key)) n++;
-		}
-		// Check-ins placed manually draw on their own (unfiltered) operator
-		// layer, so they keep the map populated even with no roster station.
-		const openNetId = $activeNet?.id ?? null;
-		for (const ci of $operatorsWithPosition) {
-			if (ci.netId === openNetId) n++;
-		}
-		return n;
-	});
-	let rosterFilterAvailable = $derived(netIsOpen && rosterMappedCount > 0);
-	let rosterFilterActive = $derived($mapSettings.showRosterOnly && rosterFilterAvailable);
-
 	let stationsWithPosition = $derived.by(() => {
 		const cutoffMs = AGE_FILTER_MS[$mapSettings.stationAgeFilter];
-		const rosterOnly = rosterFilterActive;
+		const rosterOnly = $rosterFilterActive;
 		if (cutoffMs === Infinity && !rosterOnly) return allStationsWithPosition;
 		const now = Date.now();
 		const sel = $selectedStation;
@@ -172,7 +115,7 @@
 			// under the detail panel the user has open on it.
 			if (key === sel) return true;
 			// Always show roster stations (operators and their tracked devices)
-			if (netCallsigns.has(s.callsign) || netCallsigns.has(key)) return true;
+			if (isRosterStation($rosterCallsigns, s)) return true;
 			// Roster-only hides everything else outright, age irrelevant
 			if (rosterOnly) return false;
 			const age = now - new Date(s.lastHeard).getTime();
@@ -713,12 +656,12 @@
 	<!-- Map layers palette (bottom-left) -->
 	<!-- rosterCount is the count the filter actually gates on, not the raw roster
 	     size: a voice-only roster has check-ins but nothing on the map, and
-	     netCallsigns.size there would enable a checkbox that changes nothing. -->
+	     the raw roster size there would enable a checkbox that changes nothing. -->
 	<MapPalette
 		filteredCount={stationsWithPosition.length}
 		totalCount={allStationsWithPosition.length}
-		hasActiveNet={netIsOpen}
-		rosterCount={rosterMappedCount}
+		hasActiveNet={$netIsOpen}
+		rosterCount={$rosterMappedCount}
 		nextStopEnabled={showNextStop}
 		hasCourse={routeAnnotations.length > 0}
 		onNextStopToggle={toggleNextStopPill}
@@ -865,7 +808,7 @@
 					<button class="peek-status" onclick={openTransports} aria-label="Transport status — open transports">
 						<ConnectionStatus />
 					</button>
-					<span class="station-count">{$stationList.length} stations</span>
+					<span class="station-count">{$rosterScopedStations.scoped ? `${$rosterScopedStations.stations.length} on roster` : `${$stationList.length} stations`}</span>
 				</div>
 				<Toolbar
 					unreadCount={totalUnread}

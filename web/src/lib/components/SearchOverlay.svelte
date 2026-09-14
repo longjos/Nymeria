@@ -1,7 +1,7 @@
 <script lang="ts">
-	import { stationList } from '$lib/stores/stations';
 	import { stationKey as getStationKey } from '$lib/utils';
 	import { getTacticalAlias } from '$lib/stores/tactical';
+	import { rosterScopedStations } from '$lib/stores/rosterScope';
 
 	let {
 		onClose,
@@ -14,11 +14,15 @@
 	let query = $state('');
 	let inputEl: HTMLInputElement;
 
+	// Search obeys the app-wide roster scope (#106) so it can never surface a
+	// station the map and list are hiding.
+	let scope = $derived($rosterScopedStations);
+
 	let results = $derived.by(() => {
-		if (!query) return $stationList.slice(0, 20);
+		if (!query) return scope.stations.slice(0, 20);
 		const q = query.toUpperCase();
 		const lookup = $getTacticalAlias;
-		return $stationList
+		return scope.stations
 			.filter((s) =>
 				s.callsign.includes(q) ||
 				(s.comment ?? '').toUpperCase().includes(q) ||
@@ -54,6 +58,12 @@
 		/>
 		<button class="cancel-btn" onclick={onClose}>Cancel</button>
 	</div>
+	{#if scope.scoped}
+		<p class="scope-note">
+			<span class="scope-tag">ROSTER ONLY</span>
+			<span>{scope.hidden} other station{scope.hidden === 1 ? '' : 's'} hidden</span>
+		</p>
+	{/if}
 	<div class="search-results">
 		{#each results as station (station.callsign + '-' + station.ssid)}
 			{@const key = getStationKey(station)}
@@ -114,6 +124,32 @@
 		color: var(--color-accent);
 		font-size: 0.9rem;
 		cursor: pointer;
+	}
+
+	/* Roster-scope banner: text-first, never colour alone. */
+	.scope-note {
+		display: flex;
+		align-items: center;
+		gap: var(--space-xs);
+		flex-wrap: wrap;
+		margin: 0;
+		padding: var(--space-xs) var(--space-md);
+		border-bottom: 1px solid var(--color-primary);
+		background: rgba(233, 69, 96, 0.12);
+		color: var(--color-text);
+		font-size: 0.78rem;
+		flex-shrink: 0;
+	}
+
+	.scope-tag {
+		padding: 0.1rem 0.4rem;
+		border: 1px solid var(--color-accent);
+		border-radius: var(--radius-sm);
+		color: var(--color-accent);
+		font-size: 0.7rem;
+		font-weight: 700;
+		letter-spacing: 0.04em;
+		white-space: nowrap;
 	}
 
 	.search-results {

@@ -2329,3 +2329,82 @@ func TestCreateMissionAssigneePersistFailureIsReportedAsSkipped(t *testing.T) {
 		}
 	}
 }
+
+// TestOpenNetTimestamps covers the open-time integrity rules: the original
+// OpenedAt survives a re-open, and a re-opened net is never left with a
+// ClosedAt stamp (which would make it simultaneously open and closed).
+func TestOpenNetTimestamps(t *testing.T) {
+	tests := []struct {
+		name string
+		// prepare drives the net into the state under test before the
+		// OpenNet call being asserted.
+		prepare func(t *testing.T, mgr *Manager, id string)
+	}{
+		{
+			name:    "first open sets openedAt",
+			prepare: func(t *testing.T, mgr *Manager, id string) {},
+		},
+		{
+			name: "re-open preserves original openedAt",
+			prepare: func(t *testing.T, mgr *Manager, id string) {
+				if err := mgr.OpenNet(id); err != nil {
+					t.Fatalf("OpenNet failed: %v", err)
+				}
+			},
+		},
+		{
+			name: "re-open clears closedAt",
+			prepare: func(t *testing.T, mgr *Manager, id string) {
+				if err := mgr.OpenNet(id); err != nil {
+					t.Fatalf("OpenNet failed: %v", err)
+				}
+				if _, _, err := mgr.CloseNet(id); err != nil {
+					t.Fatalf("CloseNet failed: %v", err)
+				}
+			},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			mgr := newTestManager(t)
+			n, err := mgr.CreateNet(store.Net{Name: "Net", NCSCallsign: "KD7BBC"})
+			if err != nil {
+				t.Fatalf("CreateNet failed: %v", err)
+			}
+
+			tt.prepare(t, mgr, n.ID)
+
+			before, _ := mgr.GetNet(n.ID)
+			var priorOpenedAt *time.Time
+			if before.OpenedAt != nil {
+				v := *before.OpenedAt
+				priorOpenedAt = &v
+			}
+
+			// Real clocks are coarse; force a distinguishable second stamp.
+			time.Sleep(2 * time.Millisecond)
+
+			if err := mgr.OpenNet(n.ID); err != nil {
+				t.Fatalf("OpenNet failed: %v", err)
+			}
+
+			got, ok := mgr.GetNet(n.ID)
+			if !ok {
+				t.Fatal("net not found after open")
+			}
+			if got.Status != StatusOpen {
+				t.Errorf("status = %q, want %q", got.Status, StatusOpen)
+			}
+			if got.OpenedAt == nil {
+				t.Fatal("openedAt should be set after open")
+			}
+			if priorOpenedAt != nil && !got.OpenedAt.Equal(*priorOpenedAt) {
+				t.Errorf("openedAt = %v, want preserved %v", got.OpenedAt, priorOpenedAt)
+			}
+			if got.ClosedAt != nil {
+				t.Errorf("closedAt = %v, want nil on an open net", got.ClosedAt)
+			}
+		})
+	}
+}

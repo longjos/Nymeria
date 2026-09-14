@@ -10,6 +10,7 @@
 		trafficMeta, stationCategoryMeta,
 		type PaletteResult, type PaletteFilter
 	} from '$lib/stores/commandpalette';
+	import { rosterFilterActive, rosterScopedStations } from '$lib/stores/rosterScope';
 	import type { NoteCategory, NoteSeverity, TrafficType, StationCategory, NetMission, NetNote } from '$lib/types';
 
 	let {
@@ -46,7 +47,18 @@
 	let textareaRef = $state<HTMLTextAreaElement>();
 
 	// Derived
+	// The palette obeys the app-wide roster scope (#106). Check-ins are roster by
+	// definition; APRS station rows survive only if the roster claims them, which
+	// keeps tracked devices (W4ABC-9 for W4ABC) searchable. Scoping here rather
+	// than in the palette store leaves the user's own All/Roster/Tactical chips
+	// working unchanged when no net is scoping the app.
+	// The scope is applied inside the palette store, before its top-20 cut — see
+	// paletteResults. Filtering here as well would re-truncate an already
+	// truncated page and drop roster matches that ranked below 20.
 	let results = $derived($paletteResults);
+	// Counted app-wide, not from the palette's own capped result page, so every
+	// surface quotes the same number.
+	let scopeHidden = $derived($rosterScopedStations.hidden);
 	let empty = $derived($emptyStateData);
 	let net = $derived($activeNet);
 	let allMissions = $derived($missions);
@@ -390,6 +402,13 @@
 				<button class="cp-filter-btn" class:active={$paletteFilter === 'roster'} onclick={() => setFilter('roster')}>Roster</button>
 				<button class="cp-filter-btn" class:active={$paletteFilter === 'tactical'} onclick={() => setFilter('tactical')}>Tactical</button>
 			</div>
+
+			{#if $rosterFilterActive}
+				<p class="cp-scope-note">
+					<span class="cp-scope-tag">ROSTER ONLY</span>
+					<span>{scopeHidden} other station{scopeHidden === 1 ? '' : 's'} hidden</span>
+				</p>
+			{/if}
 
 			<!-- Results or empty state -->
 			<div class="cp-results">
@@ -890,6 +909,31 @@
 	.cp-filter-btn:hover:not(.active) {
 		border-color: rgba(255, 255, 255, 0.2);
 		color: var(--color-text);
+	}
+
+	/* Roster-scope banner: text-first, never colour alone. */
+	.cp-scope-note {
+		display: flex;
+		align-items: center;
+		gap: var(--space-xs);
+		flex-wrap: wrap;
+		margin: 0;
+		padding: var(--space-xs) var(--space-md);
+		border-bottom: 1px solid var(--color-primary);
+		background: rgba(233, 69, 96, 0.12);
+		color: var(--color-text);
+		font-size: 0.78rem;
+	}
+
+	.cp-scope-tag {
+		padding: 0.1rem 0.4rem;
+		border: 1px solid var(--color-accent);
+		border-radius: var(--radius-sm);
+		color: var(--color-accent);
+		font-size: 0.7rem;
+		font-weight: 700;
+		letter-spacing: 0.04em;
+		white-space: nowrap;
 	}
 
 	/* Results list */

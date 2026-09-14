@@ -1,5 +1,6 @@
 <script lang="ts">
 	import { stationList } from '$lib/stores/stations';
+	import { rosterScopedStations } from '$lib/stores/rosterScope';
 	import { stationKey as getStationKey } from '$lib/utils';
 	import { getTacticalAlias } from '$lib/stores/tactical';
 	import { activeNet, activeCheckIns } from '$lib/stores/netcontrol';
@@ -65,11 +66,17 @@
 	let searchQuery = $state('');
 	let inputEl = $state<HTMLInputElement>();
 
+	// The desktop inline search is a station surface like any other, so it obeys
+	// the app-wide roster scope (#106). SearchOverlay covers only the mobile
+	// layout, so without this the scope would be silently absent on desktop —
+	// the surface an NCS actually runs the net from.
+	let searchScope = $derived($rosterScopedStations);
+
 	let searchResults = $derived.by(() => {
 		if (!searchQuery) return [];
 		const q = searchQuery.toUpperCase();
 		const lookup = $getTacticalAlias;
-		return $stationList
+		return searchScope.stations
 			.filter((s) =>
 				s.callsign.includes(q) ||
 				(s.comment ?? '').toUpperCase().includes(q) ||
@@ -148,6 +155,11 @@
 					/>
 					{#if showDropdown}
 						<div class="search-results">
+							{#if searchScope.scoped}
+								<!-- A search that silently skips 288 heard stations during an
+								     incident is worse than an unscoped one. Say so. -->
+								<div class="search-scope-note">Roster only · {searchScope.hidden} hidden</div>
+							{/if}
 							{#each searchResults as station}
 								{@const key = getStationKey(station)}
 								{@const alias = $getTacticalAlias(key)}
@@ -485,6 +497,26 @@
 		box-shadow: inset -3px 0 0 var(--color-accent);
 	}
 
+	/* #109: the app-wide ring (accent, +2px offset) needs 4px of clearance the rail
+	   cannot give — the buttons sit 3.5px from the screen edge, and on the left the
+	   ring lands on the rail's own border-left. Draw it inside the button instead. */
+	.rail-btn:focus-visible {
+		outline: 2px solid var(--color-accent);
+		outline-offset: -2px;
+	}
+
+	/* An accent ring immediately beside the accent bar reads as one shape, so the
+	   open-panel button switches to the high-contrast text colour — focus stays
+	   legible and never impersonates "this panel is open". */
+	.rail-btn.active:focus-visible {
+		outline-color: var(--color-text);
+	}
+
+	/* The help glyph is half-opacity at rest; focus has to make it readable. */
+	.help-btn:focus-visible {
+		opacity: 1;
+	}
+
 	.pending-badge {
 		position: absolute;
 		top: 4px;
@@ -585,8 +617,22 @@
 		outline: none;
 	}
 
+	.search-popover input:focus-visible {
+		outline: 2px solid var(--color-accent);
+		outline-offset: -2px;
+	}
+
 	.search-popover input::placeholder {
 		color: var(--color-text-muted);
+	}
+
+	.search-scope-note {
+		padding: 6px 10px;
+		font-size: 0.68rem;
+		letter-spacing: 0.04em;
+		text-transform: uppercase;
+		color: var(--color-text-muted);
+		border-bottom: 1px solid var(--color-primary);
 	}
 
 	.search-results {
@@ -615,6 +661,11 @@
 
 	.search-result:hover {
 		background: var(--color-primary);
+	}
+
+	.search-result:focus-visible {
+		outline: 2px solid var(--color-accent);
+		outline-offset: -2px;
 	}
 
 	.result-call {
