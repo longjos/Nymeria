@@ -30,6 +30,10 @@ export interface WeatherReading {
 	luminosity?: number;
 }
 
+// UI label: "Reading thresholds" (not an NWS alert). internal/wxalert owns
+// the word "alert" everywhere else in this app; this type is unrelated
+// station-reading min/max highlighting and keeps its existing name and JSON
+// shape (`alerts`) to avoid an unrelated rename.
 export interface WeatherAlertThreshold {
 	min?: number;
 	max?: number;
@@ -39,6 +43,353 @@ export interface WeatherConfig {
 	retentionDays: number;
 	alerts?: Record<string, WeatherAlertThreshold>;
 	units: 'metric' | 'imperial';
+}
+
+// --- NWS Alerts (internal/wxalert) ---
+// Mirrors internal/wxalert types byte-for-byte (BUILD-PLAN.md §2). Times are
+// RFC 3339 strings. The word "alert" from here down means an NWS watch,
+// warning, advisory or statement, and nothing else in this app does.
+
+export type WxTier = 'warning' | 'watch' | 'advisory' | 'statement';
+export type WxSeverity = 'Extreme' | 'Severe' | 'Moderate' | 'Minor' | 'Unknown';
+export type WxCertainty = 'Observed' | 'Likely' | 'Possible' | 'Unlikely' | 'Unknown';
+export type WxUrgency = 'Immediate' | 'Expected' | 'Future' | 'Past' | 'Unknown';
+export type WxStatus = 'Actual' | 'Exercise' | 'System' | 'Test' | 'Draft';
+export type WxMessageType = 'Alert' | 'Update' | 'Cancel';
+/** 'far' is computed server-side but never sent on the wire (never broadcast/retained). */
+export type WxProximity = 'in' | 'near';
+export type WxNotifyClass = 'interrupt' | 'toast' | 'badge' | 'panel';
+export type WxNotifyReason = 'new' | 'update' | 'escalated' | 'ended' | 'none';
+export type WxAlertState = 'active' | 'expired' | 'cancelled' | 'dropped';
+export type WxEndedReason = 'expired' | 'cancelled' | 'dropped' | 'clock';
+export type WxGeometrySource = 'polygon' | 'zone' | 'none';
+export type WxLinkState = 'live' | 'stale' | 'down' | 'off';
+export type WxMapMode = 'off' | 'warnings' | 'watches' | 'all';
+export type WxZoneType = 'county' | 'forecast' | 'fire' | 'marine' | 'unknown';
+
+export interface WxLatLon {
+	lat: number;
+	lon: number;
+}
+
+/** GeoJSON geometry exactly as internal/wxalert.Geometry marshals it (lon, lat order) — byte-compatible with Leaflet. */
+export interface WxPolygonGeometry {
+	type: 'Polygon' | 'MultiPolygon';
+	coordinates: number[][][] | number[][][][];
+}
+
+/** One entry of the CAP supersession chain. */
+export interface WxReference {
+	id: string;
+	sent: string;
+}
+
+/** Contiguous vertex range of a route annotation that lies inside the alert (own-geometry fallback ribbon). */
+export interface WxRouteSpan {
+	annotationId: string;
+	startIndex: number;
+	endIndex: number;
+	ugc?: string;
+}
+
+/** One thing of ours an alert touches. */
+export interface WxAffectedItem {
+	kind: 'checkpoint' | 'location' | 'station' | 'own';
+	/** annotation id | callsign | "own" */
+	id: string;
+	/** Roster check-in id — station items only. */
+	checkInId?: string;
+	label: string;
+	shortName?: string;
+	/** Set only for checkpoints. */
+	seq?: number;
+	lat: number;
+	lon: number;
+	/** UGC of the zone this item resolved to (zone-only alerts). */
+	ugc?: string;
+}
+
+/** "What of ours it touches", computed server-side. */
+export interface WxAffects {
+	/** Server-built, <= 80 runes, e.g. "CP 4-CP 7 - Aid 2 - 3 stations"; "" when nothing. */
+	summary: string;
+	entireCourse: boolean;
+	routeMiles: number;
+	/** Never nil; sorted by seq. */
+	checkpoints: WxAffectedItem[];
+	locations: WxAffectedItem[];
+	/** Roster + tracked + own. */
+	stations: WxAffectedItem[];
+	/** [] or [lowest seq, highest seq] of touched checkpoints. */
+	checkpointSeqRange: number[];
+	routeSpans: WxRouteSpan[];
+}
+
+/** The NCS "ack for net" record — clears the banner for everyone (decision 5), not per-station proof of receipt. */
+export interface WxNetAck {
+	userId: string;
+	userName: string;
+	callsign: string;
+	at: string;
+}
+
+/** Lightweight reference to a zone — enough to render a chip without shipping the whole polygon. */
+export interface WxZoneRef {
+	ugc: string;
+	/** "" until cached. */
+	name: string;
+	state: string;
+	type: WxZoneType;
+	cached: boolean;
+}
+
+/** The alert plus everything derived for the requesting net's footprint (wxalert.MatchedAlert). */
+export interface WxAlert {
+	/** properties.id ("urn:oid:…"), never the feature URL. */
+	id: string;
+	provider: 'nws';
+	/** feature.id URL, for "Open on weather.gov". */
+	providerUrl: string;
+	/** NWS event name, verbatim ("Tornado Warning"). */
+	event: string;
+	/** "Flash Flood Emergency" / "Tornado Emergency" when applicable, else === event. */
+	effectiveEvent: string;
+	/** Server-derived; the client never re-derives this. */
+	tier: WxTier;
+	/** <= 14 chars, server-derived. */
+	shortCode: string;
+	headline: string;
+	description: string;
+	/** "" when NWS sends null. */
+	instruction: string;
+	response: string;
+	category: string;
+	severity: WxSeverity;
+	certainty: WxCertainty;
+	urgency: WxUrgency;
+	status: WxStatus;
+	messageType: WxMessageType;
+	sent: string;
+	effective: string;
+	onset?: string;
+	expires: string;
+	ends?: string;
+	/** "NWS Grand Rapids MI" */
+	senderName: string;
+	sender: string;
+	/** WFO id from VTEC, "KGRR" ("" if unknown). */
+	senderId: string;
+	areaDesc: string;
+	/** Never nil; dedup union of geocode.UGC and affectedZones. */
+	ugc: string[];
+	same: string[];
+	/** Never nil. */
+	references: WxReference[];
+	/** Never nil ({}); first value only in most client reads — see wxAlertMeta.param(). */
+	parameters: Record<string, string[]>;
+	/** Present only when NWS published a polygon. */
+	geometry?: WxPolygonGeometry;
+
+	state: WxAlertState;
+	endedAt?: string;
+	/** 'expired'|'cancelled'|'dropped'|'clock' */
+	endedReason?: WxEndedReason;
+	/** Resolved server-side: ends ?? parameters.eventEndingTime[0] ?? expires. The client never recomputes this. */
+	endsAt: string;
+	/** 'in'|'near' on the wire — 'far' is never sent. */
+	proximity: WxProximity;
+	/** Miles from footprint edge; 0 when IN. */
+	distanceMiles: number;
+	/** Degrees true, for NEAR only; 0 when IN. */
+	bearingDeg: number;
+	/** After settings, per-net mutes, allowlist AND the hard floor. */
+	notifyClass: WxNotifyClass;
+	/** What changed at the poll that produced this version. */
+	notifyReason: WxNotifyReason;
+	/** True when the hard floor (Extreme + Immediate + in-footprint) raised the class. */
+	floored: boolean;
+	affects: WxAffects;
+	geometrySource: WxGeometrySource;
+	/** Never nil; one per UGC. */
+	zones: WxZoneRef[];
+	replacedBy?: string;
+	ackedForNet?: WxNetAck;
+	/** Wall clock of the poll that produced this version. */
+	fetchedAt: string;
+	firstSeenAt: string;
+	/** Changes on every new version — the client's dedupe key. */
+	updatedAt: string;
+	/** "" = no-net footprint. */
+	netId: string;
+}
+
+export interface WxFootprintSummary {
+	/** "" when no net. */
+	netId: string;
+	bufferMiles: number;
+	routeMiles: number;
+	/** Point annotations incl. checkpoints. */
+	locationCount: number;
+	checkpointCount: number;
+	rosterPositions: number;
+	trackedPositions: number;
+	ownStation: 'gps' | 'config' | 'none';
+	/** 0 unless gps. */
+	ownStationAgeSec: number;
+	/** The IN set, never nil. */
+	zones: WxZoneRef[];
+	/** Never nil. */
+	nearZones: WxZoneRef[];
+	/** Never nil. */
+	extraZones: string[];
+	unresolvedSamples: number;
+	centroid?: WxLatLon;
+	/** Nothing to watch: no course, positions or own position. */
+	empty: boolean;
+	computedAt: string;
+}
+
+/**
+ * Why the link is `off`. `off` is a status, not a failure — each reason is a
+ * different fix, so the UI must not collapse them into "can't connect".
+ */
+export type WxLinkReason = 'disabled' | 'contactMissing' | 'initFailed' | 'noWatchArea';
+
+export interface WxLinkStatus {
+	state: WxLinkState;
+	/** Only set when state is 'off'. */
+	reason?: WxLinkReason;
+	enabled: boolean;
+	/** NWS requires a User-Agent with contact info and returns 403 without one. */
+	contactConfigured: boolean;
+	lastSuccessAt?: string;
+	lastAttemptAt?: string;
+	nextAttemptAt?: string;
+	/** Plain words: "HTTP 503", "DNS lookup failed", "timeout after 10 s". */
+	lastError?: string;
+	consecutiveFailures: number;
+	/** True until the first successful poll after boot (alerts came from SQLite). */
+	fromCache: boolean;
+	/** Alerts fetched for the area query. */
+	regionCount: number;
+	inAreaCount: number;
+	nearbyCount: number;
+	/** Footprint zones with a cached polygon. */
+	zonesCached: number;
+	zonesMissing: number;
+	/** Mirrored from settings. */
+	sounds: boolean;
+}
+
+/** The resolved (config + per-net) notification policy, echoed on every snapshot. */
+export interface WxEffectivePolicy {
+	netId: string;
+	bufferMiles: number;
+	interruptEvents: string[];
+	interruptCustom: boolean;
+	watchNotify: 'toast' | 'badge';
+	advisoryNotify: 'badge' | 'panel';
+	statementNotify: 'panel' | 'badge';
+	muteAdvisories: boolean;
+	/** === wxAlertMeta.FLOOR_TEXT. */
+	floorText: string;
+}
+
+/** Per-net watch settings (GET/PUT /nets/{id}/wxwatch). NCS/admin writable. */
+export interface WxNetWatch {
+	netId: string;
+	/** 0 = inherit config default. 2-50 otherwise. */
+	bufferMiles: number;
+	/** UGC codes, never nil. */
+	extraZones: string[];
+	/** Advisories AND statements → panel only for this net. */
+	muteAdvisories: boolean;
+	/** false = inherit config allowlist. */
+	interruptCustom: boolean;
+	/** Never nil; used only when interruptCustom. */
+	interruptEvents: string[];
+	/** Read-only echo; ignored on PUT. */
+	effective: WxEffectivePolicy;
+}
+
+export interface WxNetWatchZones {
+	/** From the footprint (the IN set). */
+	resolved: WxZoneRef[];
+	/** Adjacent zones union any extra zones — pre-listed as candidates. */
+	neighbors: WxZoneRef[];
+}
+
+/** Top-level payload of GET /wx/alerts and the wx_alerts WS event. */
+export interface WxSnapshot {
+	/** Never nil; IN + NEAR active, plus ended <= 60 min; server-sorted. */
+	alerts: WxAlert[];
+	status: WxLinkStatus;
+	/** null only before the first build. */
+	footprint: WxFootprintSummary | null;
+	policy: WxEffectivePolicy;
+}
+
+/** GET /wx/zones/{ugc}. */
+export interface WxZone {
+	ugc: string;
+	type: WxZoneType;
+	name: string;
+	state: string;
+	/** Polygon | MultiPolygon (GeometryCollection flattened to MultiPolygon). */
+	geometry: WxPolygonGeometry;
+	fetchedAt: string;
+}
+
+/** One row of GET /wx/event-types (the allowlist picker's data). */
+export interface WxEventType {
+	event: string;
+	tier: WxTier;
+}
+
+/** POST /wx/alerts/{id}/relay body. */
+export interface WxRelayRequest {
+	note: boolean;
+	bulletin: boolean;
+	messages: boolean;
+	/** <= 67 bytes; used for both the bulletin and the per-roster messages. */
+	text: string;
+}
+
+export interface WxRelayResult {
+	noteId?: string;
+	bulletinSent: boolean;
+	messagesSent: number;
+	messagesFailed: string[];
+}
+
+/** Admin settings (Settings › NWS Alerts). Part of SettingsResponse as `wxAlerts`. */
+export interface WxAlertsSettings {
+	enabled: boolean;
+	/** Go duration string, "60s". */
+	pollInterval: string;
+	contact: string;
+	baseUrl: string;
+	defaultBufferMiles: number;
+	defaultZones: string[];
+	/** Global default allowlist; per-net copies it on first edit. */
+	interruptEvents: string[];
+	watchNotify: 'toast' | 'badge';
+	advisoryNotify: 'badge' | 'panel';
+	statementNotify: 'panel' | 'badge';
+	sounds: boolean;
+	includeTest: boolean;
+	/** Server-supplied validation bounds — never hard-code these in a component. */
+	limits: WxAlertLimits;
+}
+
+/** Mirrors config.Validate's constraints so inputs enforce them at entry. */
+export interface WxAlertLimits {
+	bufferMilesMin: number;
+	bufferMilesMax: number;
+	/** Go duration strings, e.g. "30s" / "10m0s". */
+	pollIntervalMin: string;
+	pollIntervalMax: string;
+	notifyChoices: string[];
 }
 
 export interface DFData {
@@ -346,6 +697,14 @@ export interface Net {
 	opsViewLon?: number;
 	opsViewZoom?: number;
 	pinnedStations: string[];
+	/** NWS weather watch area (internal/wxalert), per net. 0 = inherit the config default. */
+	wxBufferMiles: number;
+	wxExtraZones: string[];
+	wxMuteAdvisories: boolean;
+	/** false = inherit the config allowlist. */
+	wxInterruptCustom: boolean;
+	/** Used only when wxInterruptCustom is true. */
+	wxInterruptEvents: string[];
 }
 
 export interface TrackedStation {
@@ -594,6 +953,7 @@ export interface SettingsResponse {
 	store: StoreSettings;
 	gps: GpsSettings;
 	what3words: What3WordsSettings;
+	wxAlerts: WxAlertsSettings;
 }
 
 export interface StationSettings {

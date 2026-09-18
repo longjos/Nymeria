@@ -5,9 +5,13 @@ export type DetailTab = 'info' | 'messages' | 'track';
 export type SheetState = 'peek' | 'half' | 'full';
 export type ConnectionState = 'connected' | 'disconnected' | 'reconnecting';
 
+export type WxPanelTab = 'stations' | 'alerts';
+
 export const selectedStation = writable<string | null>(null);
 export const panelMode = writable<PanelMode>('closed');
 export const detailTab = writable<DetailTab>('info');
+/** Which segment of the Weather panel is showing (Stations | NWS Alerts). */
+export const wxPanelTab = writable<WxPanelTab>('stations');
 export const searchOpen = writable<boolean>(false);
 export const searchQuery = writable<string>('');
 export const sheetState = writable<SheetState>('peek');
@@ -79,7 +83,9 @@ export function openBulletins(): void {
 	sheetState.set('half');
 }
 
-export function openWeather(): void {
+/** `tab` defaults to 'stations' so plain `togglePanel('weather')` is unchanged. */
+export function openWeather(tab: WxPanelTab = 'stations'): void {
+	wxPanelTab.set(tab);
 	panelMode.set('weather');
 	selectedStation.set(null);
 	sheetState.set('half');

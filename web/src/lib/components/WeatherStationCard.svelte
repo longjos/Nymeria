@@ -2,6 +2,9 @@
 	import type { Station, WeatherAlertThreshold } from '$lib/types';
 	import { isAlertTriggered, weatherUnits } from '$lib/stores/weather';
 	import { formatTempShort, formatWindSpeed, formatPressure, formatRain, pressureLabel } from '$lib/units';
+	import { wxAlertsForStation } from '$lib/stores/wxAlerts';
+	import { tierMeta } from '$lib/wxAlertMeta';
+	import WxTierGlyph from './WxTierGlyph.svelte';
 
 	let {
 		station,
@@ -37,6 +40,10 @@
 		return '#6b7280';
 	});
 
+	// Highest-sorted active IN alert naming this station (server-resolved via
+	// affects.stations) — the reading-threshold `alert` above is unrelated.
+	let wxAlert = $derived($wxAlertsForStation(station.callsign)[0] ?? null);
+
 	let hasAlert = $derived.by(() => {
 		if (!wx || !alerts) return false;
 		return isAlertTriggered('temperature', wx.temperature, alerts) ||
@@ -53,6 +60,12 @@
 <button class="wx-card" class:alert={hasAlert} onclick={() => onClick?.(key)}>
 	<div class="wx-card-header">
 		<span class="wx-callsign">{key}</span>
+		{#if wxAlert}
+			<span class="wx-in-alert wx-in-alert-{wxAlert.tier}">
+				<WxTierGlyph tier={wxAlert.tier} size={11} />
+				in {wxAlert.shortCode}
+			</span>
+		{/if}
 		<span class="wx-ago"><span class="wx-stale-indicator" style="background:{staleColor}"></span>{ago}</span>
 	</div>
 	<div class="wx-card-body">
@@ -122,6 +135,7 @@
 		display: flex;
 		justify-content: space-between;
 		align-items: center;
+		gap: 6px;
 	}
 
 	.wx-callsign {
@@ -130,6 +144,27 @@
 		font-size: 0.85rem;
 		color: var(--color-accent);
 	}
+
+	.wx-in-alert {
+		display: inline-flex;
+		align-items: center;
+		gap: 3px;
+		flex: 1;
+		min-width: 0;
+		font-size: 0.65rem;
+		font-weight: 600;
+		padding-left: 6px;
+		border-left: 2px solid var(--color-wx-statement);
+		color: var(--color-text-muted);
+		text-transform: uppercase;
+		white-space: nowrap;
+		overflow: hidden;
+		text-overflow: ellipsis;
+	}
+	.wx-in-alert-warning { border-left-color: var(--color-wx-warning); color: var(--color-wx-warning); }
+	.wx-in-alert-watch { border-left-color: var(--color-wx-watch); color: var(--color-wx-watch); }
+	.wx-in-alert-advisory { border-left-color: var(--color-wx-advisory); color: var(--color-wx-advisory); }
+	.wx-in-alert-statement { border-left-color: var(--color-wx-statement); }
 
 	.wx-ago {
 		display: inline-flex;

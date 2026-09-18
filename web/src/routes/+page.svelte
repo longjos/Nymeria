@@ -28,6 +28,8 @@
 	import CommandPalette from '$lib/components/CommandPalette.svelte';
 	import GpsFollowControl from '$lib/components/GpsFollowControl.svelte';
 	import GpsStatusPill from '$lib/components/GpsStatusPill.svelte';
+	import WxLinkPill from '$lib/components/WxLinkPill.svelte';
+	import WxInterruptBanner from '$lib/components/WxInterruptBanner.svelte';
 	import NextStopPill from '$lib/components/NextStopPill.svelte';
 	import type { MeasureBand, DistanceOrigin } from '$lib/components/NextStopPill.svelte';
 	import { STOP_CATEGORIES } from '$lib/routeDistance';
@@ -47,6 +49,13 @@
 	import { initTacticalStore } from '$lib/stores/tactical';
 	import { initBulletinStore } from '$lib/stores/bulletins';
 	import { initWeatherStore, weatherStations, selectedWeatherStation } from '$lib/stores/weather';
+	import {
+		initWxAlertStore, wxInAreaAlerts, wxNearbyAlerts, wxZoneGeometry, wxLinkStatus,
+		wxFootprint, wxFootprintPreview, wxFocusAlertId, wxSelectedAlertId, openWxAlert, wxMinute
+	} from '$lib/stores/wxAlerts';
+	import { tierMeta } from '$lib/wxAlertMeta';
+	import { countdown } from '$lib/wxAlertTime';
+	import WxTierGlyph from '$lib/components/WxTierGlyph.svelte';
 	import { dfStations } from '$lib/stores/df';
 	import { loadW3WStatus } from '$lib/stores/w3w';
 	import { initPacketStore } from '$lib/stores/packets';
@@ -155,6 +164,7 @@
 			initTacticalStore();
 			initBulletinStore();
 			initWeatherStore();
+			initWxAlertStore();
 			initPacketStore();
 			loadW3WStatus();
 			if ($canAdmin) {
@@ -302,6 +312,24 @@
 	let stopAnnotations = $derived(
 		$annotationList.filter((a) => (STOP_CATEGORIES as readonly string[]).includes(a.category))
 	);
+
+	// Active NWS alerts the map needs to draw — IN + NEAR only (FAR is never
+	// broadcast/retained, decision 3/BUILD-PLAN §3.1 cuts the outside-footprint view).
+	let wxMapAlerts = $derived([...$wxInAreaAlerts, ...$wxNearbyAlerts]);
+
+	// Mobile bottom-sheet peek strip (P1-2): the single highest-priority
+	// in-area alert. $wxInAreaAlerts is already sorted tier desc, severity
+	// desc, endsAt asc (see wxAlertMeta.ts alertCompare) — so its first entry
+	// already IS "warning before watch before advisory before statement;
+	// among equals, the soonest to expire." Must stay in the BottomSheet's
+	// PEEK_CONTENT_H budget below — grows/shrinks it via peekExtraH so the
+	// nav rail is never pushed off-screen.
+	const WX_PEEK_STRIP_H = 36;
+	let wxPeekAlert = $derived($wxInAreaAlerts[0] ?? null);
+	let wxPeekCountdown = $derived(wxPeekAlert ? countdown(wxPeekAlert.endsAt, $wxMinute * 60000) : null);
+	// Hidden entirely with no in-area alerts or when NWS alerts are off — never
+	// implies monitoring that isn't happening.
+	let showWxPeekStrip = $derived($wxLinkStatus.state !== 'off' && wxPeekAlert != null);
 
 	/**
 	 * Below this speed a GPS course-over-ground is noise, not a heading: NMEA
@@ -650,6 +678,15 @@
 				? { lat: distanceOrigin.lat, lon: distanceOrigin.lon }
 				: null}
 			measureBand={showNextStop ? measureBand : null}
+			wxAlerts={wxMapAlerts}
+			wxZoneGeometry={$wxZoneGeometry}
+			wxLinkState={$wxLinkStatus.state}
+			wxMapMode={$mapSettings.showWxAlerts}
+			wxFootprintCentroid={$wxFootprint?.centroid ?? null}
+			wxFootprintPreview={$wxFootprintPreview}
+			wxFocusAlertId={$wxFocusAlertId}
+			onWxAlertClick={openWxAlert}
+			onWxFocusConsumed={() => wxFocusAlertId.set(null)}
 		/>
 	</div>
 
@@ -670,6 +707,7 @@
 	<!-- Live GPS follow toggle + status -->
 	<GpsFollowControl oncenter={() => mapRef?.centerOnOwnPosition()} />
 	<GpsStatusPill />
+	<WxLinkPill />
 
 	<!-- Along-course distance readout (below the GPS status pill) -->
 	{#if showNextStop}
@@ -712,7 +750,8 @@
 		<SidePanel
 			open={panelIsOpen}
 			onClose={closePanel}
-			onBack={$panelMode === 'convo' ? openMessages : undefined}
+			onBack={$panelMode === 'convo' ? openMessages : ($panelMode === 'weather' && $wxSelectedAlertId) ? () => wxSelectedAlertId.set(null) : undefined}
+			backLabel={$panelMode === 'weather' ? 'Alerts' : 'Messages'}
 			onTransitionEnd={() => {}}
 		>
 			{#if $panelMode === 'stations'}
@@ -802,6 +841,7 @@
 		<BottomSheet
 			sheetLevel={$sheetState}
 			onStateChange={handleSheetStateChange}
+			peekExtraH={showWxPeekStrip ? WX_PEEK_STRIP_H : 0}
 		>
 			{#snippet peekContent()}
 				<div class="sheet-peek-row">
@@ -810,6 +850,23 @@
 					</button>
 					<span class="station-count">{$rosterScopedStations.scoped ? `${$rosterScopedStations.stations.length} on roster` : `${$stationList.length} stations`}</span>
 				</div>
+				{#if showWxPeekStrip && wxPeekAlert && wxPeekCountdown}
+					<button
+						class="wx-peek-strip"
+						style="border-left-color: var({tierMeta[wxPeekAlert.tier].colorVar})"
+						onclick={() => openWxAlert(wxPeekAlert!.id)}
+						aria-label={`${wxPeekAlert.event}, ${tierMeta[wxPeekAlert.tier].ariaWord}, ${wxPeekCountdown.text === 'expired' ? 'expired' : `ends in ${wxPeekCountdown.text}`}. Open alert.`}
+					>
+						<span class="wx-peek-glyph" style="color: var({tierMeta[wxPeekAlert.tier].colorVar})">
+							<WxTierGlyph tier={wxPeekAlert.tier} size={16} />
+						</span>
+						<span class="wx-peek-event">
+							{wxPeekAlert.event}{#if $wxInAreaAlerts.length > 1}<span class="wx-peek-more"> · {$wxInAreaAlerts.length - 1} more</span>{/if}
+						</span>
+						<span class="wx-peek-countdown">{wxPeekCountdown.text}</span>
+						<span class="wx-peek-chevron" aria-hidden="true">›</span>
+					</button>
+				{/if}
 				<Toolbar
 					unreadCount={totalUnread}
 					activeMode={$panelMode}
@@ -912,6 +969,9 @@
 		</BottomSheet>
 	{/if}
 
+	<!-- NWS interrupt-class alert — overlays sheet/panel, never inside them -->
+	<WxInterruptBanner />
+
 	<!-- Mobile: Search Overlay -->
 	{#if $searchOpen && !isDesktop}
 		<SearchOverlay
@@ -965,6 +1025,62 @@
 
 	.station-count {
 		font-size: 0.8rem;
+		color: var(--color-text-muted);
+	}
+
+	/* P1-2: soonest in-area alert + countdown, visible at every sheet height
+	   because peekContent renders above sheet-content regardless of level. */
+	.wx-peek-strip {
+		display: flex;
+		align-items: center;
+		gap: var(--space-xs);
+		width: 100%;
+		min-height: 36px;
+		box-sizing: border-box;
+		padding: 0 var(--space-sm);
+		background: var(--color-surface);
+		border: none;
+		border-left: 3px solid;
+		border-radius: var(--radius-sm);
+		color: var(--color-text);
+		text-align: left;
+		cursor: pointer;
+	}
+
+	.wx-peek-strip:hover,
+	.wx-peek-strip:focus-visible {
+		background: var(--color-primary);
+	}
+
+	.wx-peek-glyph {
+		flex-shrink: 0;
+		display: flex;
+		align-items: center;
+	}
+
+	.wx-peek-event {
+		flex: 1;
+		min-width: 0;
+		overflow: hidden;
+		text-overflow: ellipsis;
+		white-space: nowrap;
+		font-size: 0.8rem;
+	}
+
+	.wx-peek-more {
+		color: var(--color-text-muted);
+		font-weight: 400;
+	}
+
+	.wx-peek-countdown {
+		flex-shrink: 0;
+		font-size: 0.9rem;
+		font-weight: 700;
+		font-variant-numeric: tabular-nums;
+	}
+
+	.wx-peek-chevron {
+		flex-shrink: 0;
 		color: var(--color-text-muted);
 	}
 

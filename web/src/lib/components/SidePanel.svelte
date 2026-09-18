@@ -6,6 +6,7 @@
 		open = false,
 		onClose,
 		onBack,
+		backLabel = 'Messages',
 		onTransitionEnd,
 		children
 	}: {
@@ -13,6 +14,8 @@
 		onClose?: () => void;
 		/** When set, Escape and a header Back control return to the previous view instead of closing. */
 		onBack?: () => void;
+		/** Label shown next to the back chevron (e.g. "Alerts" when backing out of the NWS Alerts detail view). */
+		backLabel?: string;
 		onTransitionEnd?: () => void;
 		children?: Snippet;
 	} = $props();
@@ -43,11 +46,11 @@
 >
 	<div class="panel-header" class:has-back={!!onBack}>
 		{#if onBack}
-			<button class="back-btn" onclick={onBack} aria-label="Back to conversations">
+			<button class="back-btn" onclick={onBack} aria-label="Back to {backLabel}">
 				<svg width="16" height="16" viewBox="0 0 16 16" fill="none">
 					<path d="M10 12L6 8l4-4" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/>
 				</svg>
-				Messages
+				{backLabel}
 			</button>
 		{/if}
 		<CloseButton onClick={() => onClose?.()} label="Close panel" bordered />
@@ -96,7 +99,8 @@
 		display: flex;
 		align-items: center;
 		gap: 4px;
-		padding: 4px 8px 4px 2px;
+		min-height: 44px;
+		padding: 4px var(--space-sm) 4px var(--space-xs);
 		background: none;
 		border: none;
 		border-radius: var(--radius-sm);

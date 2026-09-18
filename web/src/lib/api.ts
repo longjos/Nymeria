@@ -9,7 +9,10 @@ import type {
 	SessionSettings, LoggingSettings, WeatherSettings, TileCacheSettings,
 	CheckpointWithPassages, CheckpointMeta, CheckpointPassage, CheckpointProgress,
 	ImportResult, BulkDeleteResult, RenameBatchResult, GpsStatus, GpsSettings,
-	W3WStatus, W3WResult, W3WSuggestResponse, What3WordsSettings
+	W3WStatus, W3WResult, W3WSuggestResponse, What3WordsSettings,
+	WxSnapshot, WxAlert, WxLinkStatus, WxFootprintSummary, WxPolygonGeometry,
+	WxZoneRef, WxZone, WxEventType, WxNetWatch, WxNetWatchZones, WxRelayRequest,
+	WxRelayResult, WxAlertsSettings
 } from './types';
 
 const BASE = '/api';
@@ -92,6 +95,8 @@ async function post<T>(path: string, body: unknown): Promise<T> {
 		body: JSON.stringify(body)
 	});
 	if (!res.ok) throw await failure(res);
+	// A 204 (e.g. POST /wx/alerts/{id}/ack) has no body to parse.
+	if (res.status === 204) return undefined as T;
 	return res.json();
 }
 
@@ -324,6 +329,25 @@ export const api = {
 		const qs = params ? '?' + new URLSearchParams(params).toString() : '';
 		return `${BASE}/ics309/export${qs}`;
 	},
+
+	// NWS Alerts (internal/wxalert)
+	wxAlerts: () => get<WxSnapshot>('/wx/alerts'),
+	wxAlert: (id: string) => get<{ alert: WxAlert; history: WxAlert[] }>(`/wx/alerts/${encodeURIComponent(id)}`),
+	ackWxAlert: (id: string) => post<void>(`/wx/alerts/${encodeURIComponent(id)}/ack`, {}),
+	ackWxAlertForNet: (id: string) => post<WxAlert>(`/wx/alerts/${encodeURIComponent(id)}/ack-net`, {}),
+	relayWxAlert: (id: string, req: WxRelayRequest) =>
+		post<WxRelayResult>(`/wx/alerts/${encodeURIComponent(id)}/relay`, req),
+	wxStatus: () => get<WxLinkStatus>('/wx/status'),
+	wxRefresh: () => post<WxLinkStatus>('/wx/refresh', {}),
+	wxFootprint: () => get<{ summary: WxFootprintSummary; outline: WxPolygonGeometry | null }>('/wx/footprint'),
+	wxZoneSearch: (q: string, state: string) =>
+		get<WxZoneRef[]>(`/wx/zones/search?q=${encodeURIComponent(q)}&state=${encodeURIComponent(state)}`),
+	wxZone: (ugc: string) => get<WxZone>(`/wx/zones/${encodeURIComponent(ugc)}`),
+	wxEventTypes: () => get<WxEventType[]>('/wx/event-types'),
+	getNetWxWatch: (netId: string) => get<WxNetWatch>(`/nets/${netId}/wxwatch`),
+	updateNetWxWatch: (netId: string, data: WxNetWatch) => put<WxNetWatch>(`/nets/${netId}/wxwatch`, data),
+	netWxWatchZones: (netId: string) => get<WxNetWatchZones>(`/nets/${netId}/wxwatch/zones`),
+	updateWxAlertsSettings: (data: WxAlertsSettings) => put<SettingsUpdateResponse>('/settings/wxalerts', data),
 
 	// Weather
 	weatherStations: () => get<WeatherReading[]>('/weather/stations'),

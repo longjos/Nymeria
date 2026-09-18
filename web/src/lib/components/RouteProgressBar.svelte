@@ -3,6 +3,8 @@
 	import { orderedCheckpoints, progressElements, hasCheckpoints } from '$lib/stores/netcontrol';
 	import { statusColor } from '$lib/annotationMeta';
 	import { timeAgo } from '$lib/utils';
+	import { wxInAreaAlerts } from '$lib/stores/wxAlerts';
+	import WxTierGlyph from './WxTierGlyph.svelte';
 
 	let {
 		onCheckpointClick,
@@ -11,6 +13,24 @@
 	} = $props();
 
 	let expandedCpId = $state<string | null>(null);
+
+	// Tier brackets over the affected checkpoint span (UX §8.6). Statements
+	// are excluded — too low-signal to earn a bracket on the route bar.
+	let wxBrackets = $derived(
+		$wxInAreaAlerts
+			.filter((a) => a.tier !== 'statement' && a.affects.checkpointSeqRange.length === 2)
+			.map((a) => {
+				const [loSeq, hiSeq] = a.affects.checkpointSeqRange;
+				const total = $orderedCheckpoints.length;
+				const loIdx = $orderedCheckpoints.findIndex((c) => c.meta.sequenceNumber === loSeq);
+				const hiIdx = $orderedCheckpoints.findIndex((c) => c.meta.sequenceNumber === hiSeq);
+				if (loIdx < 0 || hiIdx < 0) return null;
+				const pctStart = total > 1 ? (loIdx / (total - 1)) * 100 : 0;
+				const pctEnd = total > 1 ? (hiIdx / (total - 1)) * 100 : 100;
+				return { alert: a, pctStart, pctEnd, loSeq, hiSeq };
+			})
+			.filter((b): b is NonNullable<typeof b> => b !== null)
+	);
 
 	// Element colors by label.
 	const elementColors: Record<string, string> = {
@@ -45,7 +65,21 @@
 
 		<!-- Progress bar visualization -->
 		<div class="rp-bar-container">
-			<div class="rp-bar">
+			<div class="rp-bar" class:has-wx={wxBrackets.length > 0}>
+				<!-- NWS alert tier brackets over the affected checkpoint span -->
+				{#if wxBrackets.length > 0}
+					<div class="rp-wx-layer">
+						{#each wxBrackets as b, i (b.alert.id)}
+							<div
+								class="rp-wx"
+								style="left: {b.pctStart}%; width: {b.pctEnd - b.pctStart}%; top: {2 + i * 12}px; --wx: var(--color-wx-{b.alert.tier})"
+								title="{b.alert.event}: CP {b.loSeq}–CP {b.hiSeq}"
+							>
+								<span class="rp-wx-label"><WxTierGlyph tier={b.alert.tier} size={10} /> {b.alert.shortCode}</span>
+							</div>
+						{/each}
+					</div>
+				{/if}
 				<!-- Connecting line -->
 				<div class="rp-line"></div>
 
@@ -165,6 +199,39 @@
 		min-height: 72px;
 		min-width: 200px;
 		padding: 24px 16px 0;
+	}
+
+	.rp-bar.has-wx {
+		padding-top: 40px;
+	}
+
+	.rp-wx-layer {
+		position: absolute;
+		top: 0;
+		left: 16px;
+		right: 16px;
+		height: 40px;
+	}
+
+	.rp-wx {
+		position: absolute;
+		height: 8px;
+		border: 2px solid var(--wx);
+		border-bottom: none;
+		border-radius: 3px 3px 0 0;
+	}
+
+	.rp-wx-label {
+		position: absolute;
+		top: -12px;
+		left: 0;
+		display: inline-flex;
+		align-items: center;
+		gap: 2px;
+		font-size: 0.6rem;
+		font-weight: 700;
+		color: var(--wx);
+		white-space: nowrap;
 	}
 
 	.rp-line {

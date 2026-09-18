@@ -19,8 +19,12 @@
 	import type {
 		SettingsResponse, StationSettings, ServerSettings, BeaconSettings,
 		SessionSettings, LoggingSettings, TransportSettings, TileCacheSettings,
-		WeatherSettings, SerialPortInfo, SerialProfile, KissTncInfo, GpsSettings
+		WeatherSettings, SerialPortInfo, SerialProfile, KissTncInfo, GpsSettings,
+		WxEventType, WxZoneRef
 	} from '$lib/types';
+	import { wxLinkStatus } from '$lib/stores/wxAlerts';
+	import { FLOOR_TEXT } from '$lib/wxAlertMeta';
+	import { clockWithSeconds } from '$lib/wxAlertTime';
 
 	let loading = $state(true);
 	let error = $state<string | null>(null);
@@ -36,6 +40,7 @@
 		session: false,
 		logging: false,
 		weather: false,
+		wxalerts: false,
 		tilecache: false,
 		what3words: false,
 		server: false,
@@ -77,6 +82,7 @@
 		const section = get(settingsOpenSection);
 		if (section) {
 			openSections[section] = true;
+			if (section === 'wxalerts') loadWxEventTypes();
 			settingsOpenSection.set(null);
 			queueMicrotask(() => {
 				document.getElementById(`settings-section-${section}`)?.scrollIntoView({ block: 'start', behavior: 'smooth' });
@@ -92,6 +98,9 @@
 		}
 		if (section === 'gps' && openSections.gps && !serialListLoaded && !serialPortsLoading) {
 			loadSerialPorts();
+		}
+		if (section === 'wxalerts' && openSections.wxalerts) {
+			loadWxEventTypes();
 		}
 	}
 
@@ -240,6 +249,16 @@
 		}
 	}
 
+	/** Reading-threshold min/max editor (station-card highlighting, unrelated
+	 *  to NWS Alerts — see the "Reading thresholds" comment at the call site). */
+	function setThreshold(key: 'temperature' | 'windSpeed' | 'windGust', bound: 'min' | 'max', raw: string) {
+		if (!settings) return;
+		if (!settings.weather.alerts) settings.weather.alerts = {};
+		const n = raw === '' ? undefined : Number(raw);
+		const existing = settings.weather.alerts[key] ?? {};
+		settings.weather.alerts = { ...settings.weather.alerts, [key]: { ...existing, [bound]: n } };
+	}
+
 	async function saveWeather() {
 		if (!settings) return;
 		saving['weather'] = true;
@@ -257,6 +276,103 @@
 			showToast('weather', e.message || 'Save failed', 'error');
 		} finally {
 			saving['weather'] = false;
+		}
+	}
+
+	// --- NWS Alerts (internal/wxalert) --------------------------------------
+
+	let wxEventTypes = $state<WxEventType[]>([]);
+	let wxWarningEventTypes = $derived(wxEventTypes.filter((e) => e.tier === 'warning'));
+	let wxEventQuery = $state('');
+	let wxEventOptions = $derived(
+		settings
+			? wxWarningEventTypes.filter(
+					(e) => !settings!.wxAlerts.interruptEvents.includes(e.event) && e.event.toLowerCase().includes(wxEventQuery.toLowerCase())
+				)
+			: []
+	);
+
+	let wxZoneQuery = $state('');
+	let wxZoneResults = $state<WxZoneRef[]>([]);
+	let wxZoneSearchTimer: ReturnType<typeof setTimeout> | null = null;
+
+	function handleWxZoneQuery(q: string) {
+		wxZoneQuery = q;
+		if (wxZoneSearchTimer) clearTimeout(wxZoneSearchTimer);
+		if (q.trim().length < 2) {
+			wxZoneResults = [];
+			return;
+		}
+		wxZoneSearchTimer = setTimeout(async () => {
+			try {
+				wxZoneResults = await api.wxZoneSearch(q, '');
+			} catch {
+				wxZoneResults = [];
+			}
+		}, 300);
+	}
+
+	function addWxZone(ugc: string) {
+		if (!settings || settings.wxAlerts.defaultZones.includes(ugc)) return;
+		settings.wxAlerts.defaultZones = [...settings.wxAlerts.defaultZones, ugc];
+		wxZoneQuery = '';
+		wxZoneResults = [];
+	}
+
+	function removeWxZone(ugc: string) {
+		if (!settings) return;
+		settings.wxAlerts.defaultZones = settings.wxAlerts.defaultZones.filter((z) => z !== ugc);
+	}
+
+	function addWxInterruptEvent(event: string) {
+		if (!settings || settings.wxAlerts.interruptEvents.includes(event)) return;
+		settings.wxAlerts.interruptEvents = [...settings.wxAlerts.interruptEvents, event];
+		wxEventQuery = '';
+	}
+
+	function removeWxInterruptEvent(event: string) {
+		if (!settings) return;
+		settings.wxAlerts.interruptEvents = settings.wxAlerts.interruptEvents.filter((e) => e !== event);
+	}
+
+	async function loadWxEventTypes() {
+		if (wxEventTypes.length) return;
+		try {
+			wxEventTypes = await api.wxEventTypes();
+		} catch {
+			// The +/- add-event combobox is simply empty until this succeeds; the
+			// existing checklist rows still render from settings.wxAlerts itself.
+		}
+	}
+
+	// Bounds come from the server (config.Validate's own constants) so this
+	// can never drift from what a save will actually accept.
+	let wxBufferError = $derived.by(() => {
+		if (!settings) return '';
+		const lim = settings.wxAlerts.limits;
+		if (!lim) return '';
+		const v = settings.wxAlerts.defaultBufferMiles;
+		if (v === null || v === undefined || Number.isNaN(v)) return 'Enter a number.';
+		if (v < lim.bufferMilesMin || v > lim.bufferMilesMax) {
+			return `Must be between ${lim.bufferMilesMin} and ${lim.bufferMilesMax} miles.`;
+		}
+		return '';
+	});
+
+	async function saveWxAlerts() {
+		if (!settings) return;
+		if (wxBufferError) {
+			showToast('wxalerts', wxBufferError, 'error');
+			return;
+		}
+		saving['wxalerts'] = true;
+		try {
+			await api.updateWxAlertsSettings(settings.wxAlerts);
+			showToast('wxalerts', 'NWS Alerts settings saved', 'success');
+		} catch (e: any) {
+			showToast('wxalerts', e.message || 'Save failed', 'error');
+		} finally {
+			saving['wxalerts'] = false;
 		}
 	}
 
@@ -909,9 +1025,192 @@
 							<label for="wx-retention">Retention Days</label>
 							<input id="wx-retention" type="number" min="1" bind:value={settings.weather.retentionDays} />
 						</div>
+
+						<!-- Station-reading min/max highlighting (internal, unrelated to NWS
+						     Alerts below — decision 4 keeps the word "alert" meaning exactly
+						     one thing in this app, so the UI label here is "Reading thresholds". -->
+						<div class="field-subhead">Reading thresholds</div>
+						<div class="field-row half-pair">
+							<label for="wx-temp-min">Temperature threshold</label>
+							<input id="wx-temp-min" type="number" placeholder="Min °C" value={settings.weather.alerts?.temperature?.min ?? ''} oninput={(e) => setThreshold('temperature', 'min', (e.target as HTMLInputElement).value)} />
+							<input type="number" placeholder="Max °C" value={settings.weather.alerts?.temperature?.max ?? ''} oninput={(e) => setThreshold('temperature', 'max', (e.target as HTMLInputElement).value)} />
+						</div>
+						<div class="field-row half-pair">
+							<label for="wx-wind-min">Wind threshold</label>
+							<input id="wx-wind-min" type="number" placeholder="Min km/h" value={settings.weather.alerts?.windSpeed?.min ?? ''} oninput={(e) => setThreshold('windSpeed', 'min', (e.target as HTMLInputElement).value)} />
+							<input type="number" placeholder="Max km/h" value={settings.weather.alerts?.windSpeed?.max ?? ''} oninput={(e) => setThreshold('windSpeed', 'max', (e.target as HTMLInputElement).value)} />
+						</div>
+						<div class="field-row half-pair">
+							<label for="wx-gust-min">Gust threshold</label>
+							<input id="wx-gust-min" type="number" placeholder="Min km/h" value={settings.weather.alerts?.windGust?.min ?? ''} oninput={(e) => setThreshold('windGust', 'min', (e.target as HTMLInputElement).value)} />
+							<input type="number" placeholder="Max km/h" value={settings.weather.alerts?.windGust?.max ?? ''} oninput={(e) => setThreshold('windGust', 'max', (e.target as HTMLInputElement).value)} />
+						</div>
+						<p class="field-help">Readings outside these limits are highlighted on station cards.</p>
+
 						<div class="section-actions">
 							<button class="save-btn" onclick={saveWeather} disabled={saving['weather']}>
 								{saving['weather'] ? 'Saving...' : 'Save Weather'}
+							</button>
+						</div>
+					</div>
+				{/if}
+			</div>
+
+			<!-- NWS Alerts -->
+			<div class="section" id="settings-section-wxalerts" class:open={openSections.wxalerts}>
+				<button class="section-header" onclick={() => toggle('wxalerts')}>
+					<span class="section-title">NWS Alerts</span>
+					<span class="section-badge live">Live</span>
+					<svg class="chevron" width="14" height="14" viewBox="0 0 16 16" fill="none">
+						<path d="M4 6l4 4 4-4" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/>
+					</svg>
+				</button>
+				{#if openSections.wxalerts}
+					<div class="section-body">
+						<div class="field-row toggle-row">
+							<label for="wxa-enabled">Enabled</label>
+							<input id="wxa-enabled" type="checkbox" bind:checked={settings.wxAlerts.enabled} />
+						</div>
+						<p class="field-help">Applies immediately — no restart needed.</p>
+
+						<div class="field-row">
+							<label for="wxa-contact">Contact e-mail</label>
+							<input id="wxa-contact" type="text" placeholder="ops@example.org" bind:value={settings.wxAlerts.contact} required={settings.wxAlerts.enabled} />
+						</div>
+						<p class="field-help">NWS requires a contact in the User-Agent header and returns 403 without one.</p>
+
+						<div class="field-row">
+							<label for="wxa-poll">Poll interval</label>
+							<select id="wxa-poll" bind:value={settings.wxAlerts.pollInterval}>
+								<option value="30s">30s</option>
+								<option value="60s">60s</option>
+								<option value="120s">120s</option>
+								<option value="300s">300s</option>
+							</select>
+						</div>
+						<p class="field-help">
+							NWS asks for no more than one request every 30 s.
+							{#if settings.wxAlerts.limits}
+								Accepted range {settings.wxAlerts.limits.pollIntervalMin}–{settings.wxAlerts.limits.pollIntervalMax}.
+							{/if}
+						</p>
+
+						<div class="field-row">
+							<label for="wxa-buffer">
+								Default buffer (mi)
+								{#if settings.wxAlerts.limits}
+									<span class="field-range">{settings.wxAlerts.limits.bufferMilesMin}–{settings.wxAlerts.limits.bufferMilesMax}</span>
+								{/if}
+							</label>
+							<input
+								id="wxa-buffer"
+								type="number"
+								min={settings.wxAlerts.limits?.bufferMilesMin ?? 2}
+								max={settings.wxAlerts.limits?.bufferMilesMax ?? 50}
+								step="1"
+								aria-describedby="wxa-buffer-help"
+								aria-invalid={wxBufferError ? 'true' : 'false'}
+								class:input-invalid={!!wxBufferError}
+								bind:value={settings.wxAlerts.defaultBufferMiles}
+							/>
+						</div>
+						<p id="wxa-buffer-help" class="field-help" class:field-help-error={!!wxBufferError}>
+							{#if wxBufferError}
+								{wxBufferError}
+							{:else if settings.wxAlerts.limits}
+								How far past the watch area still counts as "in area". Accepted range
+								{settings.wxAlerts.limits.bufferMilesMin}–{settings.wxAlerts.limits.bufferMilesMax} miles.
+							{/if}
+						</p>
+
+						<div class="field-row toggle-row">
+							<label for="wxa-sounds">Sounds on interrupt</label>
+							<input id="wxa-sounds" type="checkbox" bind:checked={settings.wxAlerts.sounds} />
+						</div>
+
+						<div class="field-subhead">Home zones</div>
+						<p class="field-help">Always watched, even with no net open.</p>
+						<div class="wx-chip-list">
+							{#each settings.wxAlerts.defaultZones as ugc (ugc)}
+								<span class="wx-chip">
+									{ugc}
+									<button type="button" onclick={() => removeWxZone(ugc)} aria-label="Remove {ugc}">&times;</button>
+								</span>
+							{/each}
+						</div>
+						<input
+							class="field-search"
+							type="text"
+							placeholder="Search zones…"
+							value={wxZoneQuery}
+							oninput={(e) => handleWxZoneQuery((e.target as HTMLInputElement).value)}
+						/>
+						{#if wxZoneResults.length}
+							<div class="wx-chip-list">
+								{#each wxZoneResults as z (z.ugc)}
+									<button type="button" class="wx-chip wx-chip-add" onclick={() => addWxZone(z.ugc)}>+ {z.name} ({z.ugc})</button>
+								{/each}
+							</div>
+						{/if}
+
+						<div class="field-subhead">Default interrupt events</div>
+						<div class="wx-chip-list">
+							{#each settings.wxAlerts.interruptEvents as event (event)}
+								<span class="wx-chip">
+									{event}
+									<button type="button" onclick={() => removeWxInterruptEvent(event)} aria-label="Remove {event}">&times;</button>
+								</span>
+							{/each}
+						</div>
+						<input
+							class="field-search"
+							type="text"
+							placeholder="+ add event…"
+							value={wxEventQuery}
+							oninput={(e) => (wxEventQuery = (e.target as HTMLInputElement).value)}
+						/>
+						{#if wxEventQuery && wxEventOptions.length}
+							<div class="wx-chip-list">
+								{#each wxEventOptions.slice(0, 8) as e (e.event)}
+									<button type="button" class="wx-chip wx-chip-add" onclick={() => addWxInterruptEvent(e.event)}>+ {e.event}</button>
+								{/each}
+							</div>
+						{/if}
+
+						<div class="field-row">
+							<label for="wxa-watch-notify">Watches notify as</label>
+							<select id="wxa-watch-notify" bind:value={settings.wxAlerts.watchNotify}>
+								<option value="toast">Toast</option>
+								<option value="badge">Badge only</option>
+							</select>
+						</div>
+						<div class="field-row">
+							<label for="wxa-advisory-notify">Advisories notify as</label>
+							<select id="wxa-advisory-notify" bind:value={settings.wxAlerts.advisoryNotify}>
+								<option value="badge">Badge only</option>
+								<option value="panel">Panel only</option>
+							</select>
+						</div>
+						<div class="field-row">
+							<label for="wxa-statement-notify">Statements</label>
+							<input id="wxa-statement-notify" type="text" value="Panel only" disabled />
+						</div>
+
+						<p class="field-help wx-floor-text">{FLOOR_TEXT}</p>
+
+						<div class="wx-status-box">
+							NWS &middot;
+							{#if $wxLinkStatus.lastSuccessAt}
+								last successful fetch {clockWithSeconds($wxLinkStatus.lastSuccessAt)}
+							{:else}
+								no successful fetch yet
+							{/if}
+							&middot; {$wxLinkStatus.regionCount} alerts in region &middot; {$wxLinkStatus.inAreaCount} in watch area &middot; zones cached {$wxLinkStatus.zonesCached}
+						</div>
+
+						<div class="section-actions">
+							<button class="save-btn" onclick={saveWxAlerts} disabled={saving['wxalerts'] || !!wxBufferError}>
+								{saving['wxalerts'] ? 'Saving...' : 'Save NWS Alerts'}
 							</button>
 						</div>
 					</div>
@@ -1342,6 +1641,96 @@
 
 	.field-row.half {
 		flex: 1;
+	}
+
+	.field-row.half-pair {
+		display: flex;
+		align-items: flex-end;
+		gap: var(--space-sm);
+	}
+	.field-row.half-pair label {
+		flex: 0 0 100%;
+	}
+	.field-row.half-pair input {
+		flex: 1;
+	}
+
+	.field-search {
+		width: 100%;
+		padding: 6px 10px;
+		margin-bottom: var(--space-xs);
+		background: var(--color-primary);
+		border: 1px solid rgba(255, 255, 255, 0.08);
+		border-radius: var(--radius-sm);
+		color: var(--color-text);
+		font-size: 0.8rem;
+		font-family: inherit;
+		outline: none;
+	}
+
+	.wx-chip-list {
+		display: flex;
+		flex-wrap: wrap;
+		gap: 6px;
+		margin-bottom: var(--space-xs);
+	}
+
+	.wx-chip {
+		display: inline-flex;
+		align-items: center;
+		gap: 4px;
+		padding: 3px 8px;
+		background: var(--color-primary);
+		border: 1px solid rgba(255, 255, 255, 0.1);
+		border-radius: var(--radius-full);
+		font-size: 0.72rem;
+		color: var(--color-text);
+	}
+
+	.wx-chip button {
+		background: none;
+		border: none;
+		color: var(--color-text-muted);
+		cursor: pointer;
+		padding: 0;
+		font-size: 0.85rem;
+		line-height: 1;
+	}
+
+	.wx-chip.wx-chip-add {
+		cursor: pointer;
+		color: var(--color-accent);
+		border-color: var(--color-accent);
+	}
+
+	.field-range {
+		margin-left: var(--space-1);
+		font-size: var(--font-size-xs);
+		font-weight: 400;
+		color: var(--color-text-muted);
+	}
+	.input-invalid {
+		border-color: var(--color-error);
+	}
+	.field-help-error {
+		color: var(--color-error);
+	}
+
+	.wx-floor-text {
+		color: var(--color-text);
+		padding: var(--space-sm);
+		background: var(--color-primary);
+		border-radius: var(--radius-sm);
+	}
+
+	.wx-status-box {
+		margin-bottom: var(--space-sm);
+		padding: var(--space-sm);
+		background: var(--color-primary);
+		border-radius: var(--radius-sm);
+		font-size: 0.72rem;
+		color: var(--color-text-muted);
+		line-height: 1.5;
 	}
 
 	.toggle-row {

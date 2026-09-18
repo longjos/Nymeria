@@ -53,6 +53,37 @@
 	--color-connected: #4ade80;
 	--color-disconnected: #e74c3c;
 	--color-reconnecting: #f59e0b;
+
+	/* Info blue — promoted from the literal Toast.svelte used to hard-code. */
+	--color-info: #3b82f6;
+
+	/* NWS alert tiers (internal/wxalert) alias the semantic trio; deliberately
+	   NOT new hues. "wx-warning" is RED (--color-error). "--color-warning"
+	   (amber) is the WATCH tier. Always use the --color-wx-* aliases inside
+	   the NWS Alerts feature so the two scales are never confused. */
+	--color-wx-warning: var(--color-error);
+	--color-wx-watch: var(--color-warning);
+	--color-wx-advisory: var(--color-info);
+	--color-wx-statement: var(--color-text-muted);
+	--color-wx-expired: #6b7280; /* same gray the wx overlay uses for > 60 min stale */
+
+	/* Tier-tinted surfaces (row hover, instruction box, banner band). */
+	--color-wx-warning-soft: rgba(231, 76, 60, 0.12);
+	--color-wx-watch-soft: rgba(245, 158, 11, 0.12);
+	--color-wx-advisory-soft: rgba(59, 130, 246, 0.12);
+	--color-wx-statement-soft: rgba(170, 170, 170, 0.08);
+
+	/* Map stroke patterns — tier is legible without color (SVG dasharray). */
+	--wx-dash-warning: 10 6;
+	--wx-dash-watch: 4 6;
+	--wx-dash-advisory: 1 6;
+	--wx-dash-statement: 1 10;
+
+	/* 2 px light halo drawn under every NWS stroke for sunlight legibility. */
+	--wx-casing: rgba(255, 255, 255, 0.55);
+
+	/* Leaflet pane order: below overlayPane (400) so annotations, tracks and DR win. */
+	--z-wx-pane: 350;
 }
 
 * {

@@ -12,10 +12,14 @@
 	import { weatherUnits } from '$lib/stores/weather';
 	import { convertTemp, convertWindSpeed } from '$lib/units';
 	import type { UnitSystem } from '$lib/units';
-	import type { GpsFix } from '$lib/types';
+	import type { GpsFix, WxAlert, WxLinkState, WxMapMode, WxPolygonGeometry } from '$lib/types';
 	import { get } from 'svelte/store';
 	import L from 'leaflet';
 	import type { MeasureBand } from './NextStopPill.svelte';
+	import { readWxTokens, pathOptions, ringsOf, nearestVertex, chipHtml, drawOrder, fallbackLayers, pointInAlert, type WxTokens } from '$lib/wxAlertMap';
+	import { tierRank, zoneLabel } from '$lib/wxAlertMeta';
+	import { clock } from '$lib/wxAlertTime';
+	import { ensureZoneGeometry } from '$lib/stores/wxAlerts';
 
 	const DEFAULT_ANN_COLOR = '#e63946';
 
@@ -83,6 +87,15 @@
 		onDistanceOriginCleared,
 		distanceDraftPoint = null,
 		measureBand = null,
+		wxAlerts = [],
+		wxZoneGeometry = new Map(),
+		wxLinkState = 'off',
+		wxMapMode = 'watches',
+		wxFootprintCentroid = null,
+		wxFootprintPreview = null,
+		wxFocusAlertId = null,
+		onWxAlertClick,
+		onWxFocusConsumed,
 	}: {
 		stations?: Station[];
 		annotations?: Annotation[];
@@ -158,6 +171,20 @@
 		distanceDraftPoint?: { lat: number; lon: number } | null;
 		/** What the Next Stop card measured — drawn only while the card is open. */
 		measureBand?: MeasureBand | null;
+		/** Active IN + NEAR NWS alerts (FAR is never broadcast/retained — no outside-footprint view, BUILD-PLAN §3.1). */
+		wxAlerts?: WxAlert[];
+		/** Cached zone polygons by UGC, filled lazily by stores/wxAlerts.ts ensureZoneGeometry(). */
+		wxZoneGeometry?: Map<string, WxPolygonGeometry>;
+		wxLinkState?: WxLinkState;
+		wxMapMode?: WxMapMode;
+		/** Net footprint centroid — chip placement fallback and the "no geometry at all" case. */
+		wxFootprintCentroid?: { lat: number; lon: number } | null;
+		/** Non-null for ~10 s after "Show on map" in the watch-area sheet. */
+		wxFootprintPreview?: WxPolygonGeometry | null;
+		/** "Show on map" target from a row/detail/banner — fitBounds then onWxFocusConsumed(). */
+		wxFocusAlertId?: string | null;
+		onWxAlertClick?: (id: string) => void;
+		onWxFocusConsumed?: () => void;
 	} = $props();
 
 	let mapEl: HTMLDivElement;
@@ -232,6 +259,20 @@
 	let operatorHighlight: L.Layer | null = null;
 	// Weather overlay markers
 	let wxMarkers: Map<string, L.Marker> = new Map();
+	// NWS Alerts (internal/wxalert) — one L.LayerGroup + one chip marker per
+	// alert id (rebuilt whenever the alert set/link state/map mode changes;
+	// unlike stations this list is small, so a full clear+redraw is simplest
+	// and cheap — see the effect below for why this deliberately does not
+	// chase the spec's id+updatedAt diffing).
+	let wxAlertRenderer: L.SVG | null = null;
+	let wxAlertLayerGroups: Map<string, L.FeatureGroup> = new Map();
+	let wxAlertChips: Map<string, L.Marker> = new Map();
+	let wxFootprintPreviewLayer: L.Layer | null = null;
+	let wxChipTickTimer: ReturnType<typeof setInterval> | null = null;
+	// UGCs already requested this session — ensureZoneGeometry() is safe to
+	// call again, but there is no reason to spam it every effect re-run
+	// while the fetch is in flight.
+	const wxRequestedZones = new Set<string>();
 	// DF overlay layers
 	let dfLines: Map<string, L.Polyline> = new Map();
 	let dfRangeCircles: Map<string, L.Circle> = new Map();
@@ -312,6 +353,20 @@
 			attribution: '&copy; OpenStreetMap contributors',
 			maxZoom: 19,
 		}).addTo(map);
+
+		// NWS Alerts pane: z-index from --z-wx-pane (350) sits below Leaflet's
+		// own overlayPane (400, annotations/route line) and markerPane (600),
+		// so alert polygons draw under the route and every marker. A dedicated
+		// SVG renderer is required (not the default shared one) because the
+		// hatch fill references a <pattern> defined in the sibling .wx-defs
+		// <svg> below, which only a real SVG (not Canvas) can paint.
+		const wxPane = map.createPane('wxAlertPane');
+		wxPane.style.zIndex = readWxTokens().zPane;
+		wxAlertRenderer = L.svg({ pane: 'wxAlertPane' });
+		wxChipTickTimer = setInterval(() => refreshWxChipLabels(), 60_000);
+		// Chip visibility (hide < z8) is zoom-driven only — no need to rebuild
+		// the whole alert layer set for it.
+		map.on('zoomend', applyWxChipVisibility);
 
 		// Fix Leaflet icon path issue with bundlers
 		delete (L.Icon.Default.prototype as Record<string, unknown>)._getIconUrl;
@@ -457,6 +512,10 @@
 	onDestroy(() => {
 		if (drTimer) clearInterval(drTimer);
 		if (viewportTimer) clearTimeout(viewportTimer);
+		if (wxChipTickTimer) clearInterval(wxChipTickTimer);
+		for (const [, g] of wxAlertLayerGroups) g.remove();
+		for (const [, m] of wxAlertChips) m.remove();
+		wxFootprintPreviewLayer?.remove();
 		if (typeof document !== 'undefined') document.removeEventListener('visibilitychange', onVisibilityChange);
 		for (const [, layer] of drCones) layer.remove();
 		for (const [, layer] of drCenterLines) layer.remove();
@@ -1104,6 +1163,7 @@
 		const wxStations = weatherOverlay;
 		const units = get(weatherUnits) as UnitSystem;
 		if (!wxStations.length) return;
+		const wxTokensCache = readWxTokens();
 
 		for (const s of wxStations) {
 			if (!s.position || !s.weather) continue;
@@ -1133,7 +1193,13 @@
 				: '';
 			const windStr = windSpeed != null ? `${Math.round(convertWindSpeed(windSpeed, units))}` : '';
 
-			const html = `<div class="wx-marker-pill" style="border-color:${staleColor};opacity:${staleOpacity}">
+			// §7.5: a station inside an active (polygon-drawable) NWS alert gets a
+			// tier-colored left edge on its weather pill — redundant with the row
+			// chip in WeatherStationCard, cheap to compute per marker.
+			const wxHit = wxAlerts.find((a) => a.state === 'active' && pointInAlert(a, s.position!.lat, s.position!.lon));
+			const wxBorder = wxHit ? `border-left:3px solid ${wxTierColorFor(wxHit, wxTokensCache)};` : '';
+
+			const html = `<div class="wx-marker-pill" style="border-color:${staleColor};opacity:${staleOpacity};${wxBorder}">
 				<span class="wx-temp">${tempStr}</span>
 				${windArrow || windStr ? `<span class="wx-wind">${windArrow}${windStr}</span>` : ''}
 				<span class="wx-stale-dot" style="background:${staleColor}"></span>
@@ -2169,11 +2235,327 @@
 			}
 		}
 	}
+
+	// --- NWS Alerts (internal/wxalert) rendering ----------------------------
+	// See lib/wxAlertMap.ts for the pure geometry/style helpers this wires
+	// into real Leaflet layers. BUILD-PLAN.md §5 (Work packages, WP4).
+
+	function wxTierColorFor(alert: WxAlert, tokens: WxTokens): string {
+		switch (alert.tier) {
+			case 'warning': return tokens.warning;
+			case 'watch': return tokens.watch;
+			case 'advisory': return tokens.advisory;
+			default: return tokens.statement;
+		}
+	}
+
+	function wxMinTierRank(mode: WxMapMode): number {
+		switch (mode) {
+			case 'warnings': return tierRank('warning');
+			case 'watches': return tierRank('watch');
+			case 'all': return 0;
+			default: return Infinity; // 'off'
+		}
+	}
+
+	/** Mean position of an alert's affected items — the chip/fallback anchor when nothing else places it. */
+	function wxAffectsCentroid(alert: WxAlert): L.LatLngTuple | null {
+		const items = [...alert.affects.checkpoints, ...alert.affects.locations, ...alert.affects.stations];
+		if (!items.length) return null;
+		const lat = items.reduce((s, i) => s + i.lat, 0) / items.length;
+		const lon = items.reduce((s, i) => s + i.lon, 0) / items.length;
+		return [lat, lon];
+	}
+
+	/**
+	 * Hover tooltip for an alert's geometry. The event name leads, timing and
+	 * office sit under it, and the "no published polygon" honesty line is kept
+	 * visually distinct. Escaped: areaDesc/senderName are upstream NWS text.
+	 */
+	function wxTooltipHtml(alert: WxAlert, honesty: string): string {
+		const esc = (v: string) =>
+			v.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+		const office = alert.senderId || alert.senderName || '';
+		const meta: string[] = [`until ${esc(clock(alert.endsAt))}`];
+		if (office) meta.push(`NWS ${esc(office)}`);
+		return (
+			`<span class="wx-tt-title">${esc(alert.event)}</span>` +
+			`<span class="wx-tt-meta">${meta.join(' · ')}</span>` +
+			(alert.areaDesc ? `<span class="wx-tt-area">${esc(alert.areaDesc)}</span>` : '') +
+			(honesty ? `<span class="wx-tt-note">${esc(honesty)}</span>` : '')
+		);
+	}
+
+	/**
+	 * Builds one alert's map presence: a LayerGroup (fill/hatch/casing/stroke/
+	 * inner-line, plus the own-geometry fallback for a zone-only alert whose
+	 * zone is not cached) and the point a chip for this alert should sit at.
+	 * Geometry resolution order is BUILD-PLAN.md §5.4 / spec-frontend.md §5.4:
+	 * published polygon -> cached zone polygon(s) -> own-geometry fallback ->
+	 * chip only at the footprint centroid.
+	 */
+	function buildWxAlert(
+		alert: WxAlert,
+		zoneGeo: Map<string, WxPolygonGeometry>,
+		linkState: WxLinkState,
+		anns: Annotation[],
+		centroid: { lat: number; lon: number } | null,
+		tokens: WxTokens
+	): { group: L.FeatureGroup | null; chipPoint: L.LatLngTuple | null } {
+		if (!map || !wxAlertRenderer) return { group: null, chipPoint: null };
+		const renderer = wxAlertRenderer;
+		const opts = pathOptions(alert.tier, alert.severity, linkState, tokens);
+		const layers: L.Layer[] = [];
+		let rings: L.LatLngTuple[][] = [];
+		let honesty = '';
+		const filled = alert.tier === 'warning' || alert.tier === 'watch';
+
+		if (alert.geometry) {
+			rings = ringsOf(alert.geometry);
+		} else if (alert.geometrySource === 'zone') {
+			// Ask for every affected zone, not just the ones the server has
+			// already cached: GET /wx/zones/{ugc} resolves on demand
+			// (allowFetch=true). Gating on `cached` was a deadlock — the
+			// server's cache is warmed from the footprint, so a zone outside
+			// it stayed uncached forever and its polygon was never requested,
+			// leaving every zone-only alert (~85% of the feed) undrawable.
+			const cachedUgcs = alert.zones.map((z) => z.ugc);
+			const notYetFetched = cachedUgcs.filter((u) => !zoneGeo.has(u) && !wxRequestedZones.has(u));
+			if (notYetFetched.length) {
+				for (const u of notYetFetched) wxRequestedZones.add(u);
+				void ensureZoneGeometry(notYetFetched);
+			}
+			for (const ugc of cachedUgcs) {
+				const geo = zoneGeo.get(ugc);
+				if (geo) rings.push(...ringsOf(geo));
+			}
+			if (rings.length) {
+				honesty = `Zone-based alert (${zoneLabel(alert)}). NWS did not publish a polygon; this is the NWS zone outline.`;
+			}
+		}
+
+		if (rings.length) {
+			if (filled) {
+				layers.push(
+					L.polygon(rings, { pane: 'wxAlertPane', renderer, stroke: false, fillColor: opts.color, fillOpacity: opts.fillOpacity, interactive: false })
+				);
+				if (opts.hatch) {
+					const hatchId = linkState === 'stale' || linkState === 'down' ? 'wx-hatch-warning-stale' : 'wx-hatch-warning';
+					layers.push(
+						L.polygon(rings, { pane: 'wxAlertPane', renderer, stroke: false, fillColor: `url(#${hatchId})`, fillOpacity: 0.55, interactive: false })
+					);
+				}
+			}
+			// Casing under the tier stroke (a wider line in a near-white color) so the
+			// stroke reads against any basemap color.
+			layers.push(L.polyline(rings, { pane: 'wxAlertPane', renderer, color: opts.casing, weight: opts.weight + 2, opacity: 1, lineCap: 'round', interactive: false }));
+			const strokeLine = L.polyline(rings, {
+				pane: 'wxAlertPane', renderer, color: opts.color, weight: opts.weight, dashArray: opts.dashArray,
+				lineCap: alert.tier === 'advisory' ? 'round' : 'butt', opacity: opts.strokeOpacity, interactive: true
+			});
+			strokeLine.bindTooltip(wxTooltipHtml(alert, honesty), {
+				direction: 'top',
+				className: `wx-alert-tooltip wx-alert-tooltip-${alert.tier}`,
+				sticky: true,
+				opacity: 1
+			});
+			strokeLine.on('click', () => onWxAlertClick?.(alert.id));
+			layers.push(strokeLine);
+			if (alert.tier === 'warning') {
+				layers.push(L.polyline(rings, { pane: 'wxAlertPane', renderer, color: opts.color, weight: 1, opacity: 0.9, interactive: false }));
+			}
+		}
+
+		// Own-geometry fallback — a zone-only alert with at least one uncached
+		// zone gets the ribbon/halo treatment for the items in that zone,
+		// regardless of whether other zones on the same alert were cached above.
+		if (alert.geometrySource === 'zone' && alert.zones.some((z) => !z.cached)) {
+			const fb = fallbackLayers(
+				alert,
+				anns,
+				{
+					polyline: (latlngs, options) => L.polyline(latlngs, { ...options, pane: 'wxAlertPane', renderer }),
+					circleMarker: (latlng, options) => L.circleMarker(latlng, { ...options, pane: 'wxAlertPane', renderer })
+				},
+				tokens
+			);
+			for (const layer of fb) {
+				if ('on' in layer) (layer as L.Path).on('click', () => onWxAlertClick?.(alert.id));
+			}
+			layers.push(...fb);
+			if (!honesty) {
+				honesty = `Zone-based alert (${zoneLabel(alert)}). NWS did not publish a polygon and the zone outline is not cached; highlighted where your course passes through the zone.`;
+			}
+			if (!layers.some((l) => (l as L.Path).bindTooltip)) {
+				// No cached-zone stroke exists to carry the tooltip — give the
+				// fallback layers one each so the honesty line is still reachable.
+				for (const layer of fb) {
+					(layer as L.Path).bindTooltip(wxTooltipHtml(alert, honesty), {
+						direction: 'top',
+						className: `wx-alert-tooltip wx-alert-tooltip-${alert.tier}`,
+						sticky: true,
+						opacity: 1
+					});
+				}
+			}
+		}
+
+		// Chip anchor: nearest polygon/zone vertex to the footprint centroid,
+		// else the mean of the affected items (fallback case), else the raw
+		// centroid, else nothing (an IN alert with no drawable geometry and no
+		// footprint centroid is a server bug — never silently invisible).
+		let chipPoint: L.LatLngTuple | null = null;
+		if (rings.length) {
+			chipPoint = centroid ? nearestVertex(rings, centroid) : null;
+			if (!chipPoint) {
+				const c = L.polygon(rings).getBounds().getCenter();
+				chipPoint = [c.lat, c.lng];
+			}
+		} else {
+			chipPoint = wxAffectsCentroid(alert) ?? (centroid ? [centroid.lat, centroid.lon] : null);
+		}
+		if (!chipPoint && filled) {
+			console.warn(`wx alert ${alert.id} (${alert.event}) has no drawable geometry and no footprint centroid`);
+		}
+
+		if (!layers.length) return { group: null, chipPoint };
+		return { group: L.featureGroup(layers), chipPoint };
+	}
+
+	function wxChipMarkerFor(alert: WxAlert, point: L.LatLngTuple, linkState: WxLinkState): L.Marker {
+		const icon = L.divIcon({ className: 'wx-alert-chip-wrap', html: chipHtml(alert, linkState, Date.now()), iconSize: undefined, iconAnchor: [0, 12] });
+		const marker = L.marker(point, { icon, interactive: true, keyboard: false, zIndexOffset: -1000 });
+		marker.on('click', () => onWxAlertClick?.(alert.id));
+		return marker;
+	}
+
+	/** 60 s tick: refreshes each chip's countdown text without rebuilding the marker. */
+	function refreshWxChipLabels(): void {
+		const linkState = wxLinkState;
+		for (const alert of wxAlerts) {
+			const marker = wxAlertChips.get(alert.id);
+			if (!marker) continue;
+			marker.setIcon(L.divIcon({ className: 'wx-alert-chip-wrap', html: chipHtml(alert, linkState, Date.now()), iconSize: undefined, iconAnchor: [0, 12] }));
+		}
+	}
+
+	/** Chips within this many CSS pixels of an already-placed chip are skipped — only the higher-sorted (drawOrder-last) alert keeps its chip. */
+	const WX_CHIP_DEDUPE_PX = 24;
+
+	function applyWxChipVisibility(): void {
+		if (!map) return;
+		const hidden = wxMapMode === 'off' || map.getZoom() < 8;
+		for (const [, marker] of wxAlertChips) {
+			const el = marker.getElement();
+			if (el) el.style.display = hidden ? 'none' : '';
+		}
+	}
+
+	$effect(() => {
+		if (!map || !wxAlertRenderer) return;
+		const mode = wxMapMode;
+		const alerts = wxAlerts;
+		const zoneGeo = wxZoneGeometry;
+		const linkState = wxLinkState;
+		const centroid = wxFootprintCentroid;
+		const anns = annotations;
+		const tokens = readWxTokens();
+
+		for (const [, g] of wxAlertLayerGroups) g.remove();
+		wxAlertLayerGroups.clear();
+		for (const [, m] of wxAlertChips) m.remove();
+		wxAlertChips.clear();
+
+		if (mode === 'off') return;
+		const minRank = wxMinTierRank(mode);
+		const visible = alerts.filter((a) => tierRank(a.tier) >= minRank);
+
+		const placedChips: L.LatLngTuple[] = [];
+		for (const alert of drawOrder(visible)) {
+			const { group, chipPoint } = buildWxAlert(alert, zoneGeo, linkState, anns, centroid, tokens);
+			if (group) {
+				group.addTo(map);
+				wxAlertLayerGroups.set(alert.id, group);
+			}
+			if ((alert.tier === 'warning' || alert.tier === 'watch') && chipPoint) {
+				const tooClose = placedChips.some((p) => {
+					const a = map!.latLngToLayerPoint(p);
+					const b = map!.latLngToLayerPoint(chipPoint);
+					return a.distanceTo(b) < WX_CHIP_DEDUPE_PX;
+				});
+				if (!tooClose) {
+					placedChips.push(chipPoint);
+					const marker = wxChipMarkerFor(alert, chipPoint, linkState);
+					marker.addTo(map);
+					wxAlertChips.set(alert.id, marker);
+				}
+			}
+		}
+		applyWxChipVisibility();
+	});
+
+	// Footprint preview — the watch-area sheet's "Show on map" (~10 s outline).
+	$effect(() => {
+		if (!map || !wxAlertRenderer) return;
+		wxFootprintPreviewLayer?.remove();
+		wxFootprintPreviewLayer = null;
+		const geo = wxFootprintPreview;
+		if (!geo) return;
+		const rings = ringsOf(geo);
+		if (!rings.length) return;
+		const mutedColor =
+			(typeof getComputedStyle === 'function' && document.documentElement
+				? getComputedStyle(document.documentElement).getPropertyValue('--color-text-muted').trim()
+				: '') || '#aaaaaa';
+		wxFootprintPreviewLayer = L.polyline(rings, {
+			pane: 'wxAlertPane', renderer: wxAlertRenderer,
+			color: mutedColor,
+			weight: 1.5, dashArray: '2 6', interactive: false
+		}).addTo(map);
+	});
+
+	// "Show on map" focus — fits the alert's own layer bounds (or a small box
+	// around its chip) then hands control back via onWxFocusConsumed().
+	$effect(() => {
+		if (!map) return;
+		const id = wxFocusAlertId;
+		if (!id) return;
+		const group = wxAlertLayerGroups.get(id);
+		const chip = wxAlertChips.get(id);
+		let bounds: L.LatLngBounds | null = null;
+		if (group && group.getLayers().length) {
+			bounds = group.getBounds();
+		} else if (chip) {
+			const c = chip.getLatLng();
+			bounds = L.latLngBounds([c.lat - 0.02, c.lng - 0.02], [c.lat + 0.02, c.lng + 0.02]);
+		}
+		if (bounds && bounds.isValid()) {
+			programmaticMove = true;
+			map.fitBounds(bounds, { padding: [40, 40], maxZoom: 13 });
+			map.once('moveend', () => { programmaticMove = false; });
+		}
+		onWxFocusConsumed?.();
+	});
 </script>
 
 <svelte:window onkeydown={handleKeyDown} />
 
 <div class="map-container" class:drawing={drawingMode !== null} class:placing={placingOperator !== null || placingAnnotation !== null} bind:this={mapEl}></div>
+
+<!-- Hatch patterns for warning-tier Severe/Extreme NWS alert polygons. A
+     sibling of the map container by design: fragment-id references
+     (fill="url(#wx-hatch-warning)") resolve document-wide, so Leaflet's own
+     <svg> inside .wxAlertPane can reference a pattern defined out here. -->
+<svg class="wx-defs" width="0" height="0" aria-hidden="true" focusable="false">
+	<defs>
+		<pattern id="wx-hatch-warning" patternUnits="userSpaceOnUse" width="6" height="6" patternTransform="rotate(45)">
+			<line x1="0" y1="0" x2="0" y2="6" stroke-width="1.5" style="stroke: var(--color-wx-warning)" />
+		</pattern>
+		<pattern id="wx-hatch-warning-stale" patternUnits="userSpaceOnUse" width="6" height="6" patternTransform="rotate(45)">
+			<line x1="0" y1="0" x2="0" y2="6" stroke-width="1.5" style="stroke: var(--color-wx-expired)" />
+		</pattern>
+	</defs>
+</svg>
 
 {#if drawingMode}
 	<div class="draw-hint">
@@ -2514,5 +2896,92 @@
 	}
 	:global(.own-pos-tooltip) {
 		font-size: 11px;
+	}
+
+	/* NWS Alerts (internal/wxalert) — see lib/wxAlertMap.ts chipHtml() for the markup this styles. */
+	.wx-defs {
+		position: absolute;
+		width: 0;
+		height: 0;
+		overflow: hidden;
+	}
+
+	:global(.wx-alert-chip-wrap) { background: none !important; border: none !important; }
+	:global(.wx-alert-chip) {
+		display: inline-flex;
+		align-items: center;
+		gap: 4px;
+		background: rgba(10, 15, 30, 0.82);
+		border: 1px solid rgba(255, 255, 255, 0.15);
+		border-left: 3px solid var(--color-wx-statement);
+		border-radius: 10px;
+		padding: 2px 7px 2px 6px;
+		font-size: 11px;
+		font-weight: 600;
+		color: var(--color-text);
+		white-space: nowrap;
+		font-variant-numeric: tabular-nums;
+		pointer-events: auto;
+		cursor: pointer;
+	}
+	:global(.wx-alert-chip-warning) { border-left-color: var(--color-wx-warning); }
+	:global(.wx-alert-chip-watch) { border-left-color: var(--color-wx-watch); }
+	:global(.wx-alert-chip svg) { color: inherit; }
+	:global(.wx-alert-chip-warning svg) { color: var(--color-wx-warning); }
+	:global(.wx-alert-chip-watch svg) { color: var(--color-wx-watch); }
+	:global(.wx-alert-chip .wx-chip-ttl) { color: var(--color-text-muted); }
+	/* Leaflet's default tooltip is a light chip with nowrap text — unreadable
+	   in this theme and prone to running past its own box. Own the whole box. */
+	:global(.wx-alert-tooltip) {
+		display: flex;
+		flex-direction: column;
+		gap: 2px;
+		/* A Leaflet tooltip is absolutely positioned, so it is shrink-to-fit:
+		   its width comes from the content's min/max-content size. `width:
+		   max-content` makes it lay out at its natural single-line width and
+		   only then get clamped by max-width. Without it the box collapses
+		   toward min-content — and `overflow-wrap: anywhere` (unlike
+		   `break-word`) counts toward min-content, which collapsed it to
+		   about one character per line. */
+		width: max-content;
+		max-width: min(280px, 70vw);
+		padding: var(--space-sm) var(--space-md);
+		white-space: normal;
+		overflow-wrap: break-word;
+		background: var(--color-surface);
+		color: var(--color-text);
+		border: 1px solid rgba(255, 255, 255, 0.12);
+		border-left: 3px solid var(--color-text-muted);
+		border-radius: var(--radius-md);
+		box-shadow: var(--shadow-md);
+		font-size: 0.75rem;
+		line-height: 1.4;
+	}
+	:global(.wx-alert-tooltip::before) { display: none; }
+	:global(.wx-alert-tooltip-warning) { border-left-color: var(--color-wx-warning); }
+	:global(.wx-alert-tooltip-watch) { border-left-color: var(--color-wx-watch); }
+	:global(.wx-alert-tooltip-advisory) { border-left-color: var(--color-wx-advisory); }
+	:global(.wx-alert-tooltip-statement) { border-left-color: var(--color-wx-statement); }
+	:global(.wx-alert-tooltip .wx-tt-title) {
+		font-weight: 600;
+		font-size: 0.8rem;
+	}
+	:global(.wx-alert-tooltip .wx-tt-meta),
+	:global(.wx-alert-tooltip .wx-tt-area) {
+		color: var(--color-text-muted);
+	}
+	:global(.wx-alert-tooltip .wx-tt-area) {
+		display: -webkit-box;
+		-webkit-line-clamp: 2;
+		line-clamp: 2;
+		-webkit-box-orient: vertical;
+		overflow: hidden;
+	}
+	:global(.wx-alert-tooltip .wx-tt-note) {
+		margin-top: 2px;
+		padding-top: 4px;
+		border-top: 1px solid rgba(255, 255, 255, 0.1);
+		color: var(--color-text-muted);
+		font-style: italic;
 	}
 </style>

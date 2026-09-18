@@ -43,6 +43,10 @@
 	import { gpsStatus } from '$lib/stores/gps';
 	import LocationManager from './LocationManager.svelte';
 	import SituationBoard from './SituationBoard.svelte';
+	import WxWatchAreaSheet from './WxWatchAreaSheet.svelte';
+	import WxTierGlyph from './WxTierGlyph.svelte';
+	import { wxActiveWarningIn, wxUnackedWarningsIn, wxIsNcs, openWxAlert, weatherCheckInIds, wxClock } from '$lib/stores/wxAlerts';
+	import { clock, countdown } from '$lib/wxAlertTime';
 
 	let {
 		onFlyTo,
@@ -269,6 +273,8 @@
 	let lifecycleOpen = $state(false);
 	let moreOpen = $state(false);
 	let showCloseDialog = $state(false);
+	/** Replaces the panel content with WxWatchAreaSheet (NCS/admin, ⋯ menu). */
+	let showWxWatchSheet = $state(false);
 	let stateChipEl = $state<HTMLButtonElement | null>(null);
 	let moreBtnEl = $state<HTMLButtonElement | null>(null);
 	let popTop = $state(0);
@@ -333,7 +339,8 @@
 		mission_updated: '✅',
 		rollcall: '📢',
 		note: '📝',
-		ncs_transfer: '🔀'
+		ncs_transfer: '🔀',
+		wx_alert: '🌩'
 	};
 
 	onMount(() => {
@@ -2300,6 +2307,7 @@
 				if (timelineFilter === 'missions' && e.type !== 'mission_created' && e.type !== 'mission_updated') return false;
 				if (timelineFilter === 'rollcalls' && e.type !== 'rollcall') return false;
 				if (timelineFilter === 'notes' && e.type !== 'note') return false;
+				if (timelineFilter === 'weather' && e.type !== 'wx_alert') return false;
 			}
 			if (timelineCallsignFilter.trim()) {
 				const q = timelineCallsignFilter.trim().toUpperCase();
@@ -2323,7 +2331,9 @@
 <svelte:window onkeydown={handleWindowKeydown} />
 
 <div class="net-panel" bind:this={panelRootEl} tabindex="-1">
-	{#if !$activeNet}
+	{#if showWxWatchSheet && $activeNet}
+		<WxWatchAreaSheet netId={$activeNet.id} onClose={() => (showWxWatchSheet = false)} />
+	{:else if !$activeNet}
 		<!-- No active net -->
 		<div class="panel-header">
 			<span class="title">Net Control</span>
@@ -2425,6 +2435,18 @@
 							<path d="M2 4l3 3 3-3" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/>
 						</svg>
 					</button>
+					{#if $wxActiveWarningIn}
+						{@const wxWarn = $wxActiveWarningIn}
+						<button
+							class="wx-header-chip"
+							onclick={() => openWxAlert(wxWarn.id)}
+							aria-label="{wxWarn.event} in watch area, ends {clock(wxWarn.endsAt)}. Open alert."
+						>
+							<WxTierGlyph tier="warning" size={12} />
+							{wxWarn.shortCode}
+							<span class="wx-header-ttl">{countdown(wxWarn.endsAt, $wxClock).text}</span>
+						</button>
+					{/if}
 				</div>
 				{#if $activeNet.frequency}
 					<span class="frequency">{$activeNet.frequency}</span>
@@ -2553,6 +2575,15 @@
 					<span>Agency View</span>
 					<span class="pop-hint" aria-hidden="true">↗</span>
 				</a>
+
+				{#if $wxIsNcs}
+					<button class="pop-row" role="menuitem" onclick={() => { showWxWatchSheet = true; closePopovers(); }}>
+						<svg width="16" height="16" viewBox="0 0 16 16" fill="none" aria-hidden="true">
+							<path d="M8 1L2 4v4c0 4 2.5 6.5 6 7 3.5-.5 6-3 6-7V4L8 1z" stroke="currentColor" stroke-width="1.5" stroke-linejoin="round"/>
+						</svg>
+						<span>Weather watch area…</span>
+					</button>
+				{/if}
 			</div>
 		{/if}
 
@@ -2639,7 +2670,7 @@
 		<div class="tabs" role="tablist" aria-label="Net control sections">
 			<button class="tab" role="tab" aria-selected={currentTab === 'situation'} class:active={currentTab === 'situation'} onclick={() => { currentTab = 'situation'; metricsFilter = null; }}>
 				<span class="tab-label">SitBoard</span>
-				{#if $attentionItems.length > 0}<span class="tab-count tab-count-alert" aria-label="{$attentionItems.length} items need attention">{$attentionItems.length}</span>{/if}
+				{#if $attentionItems.length + $wxUnackedWarningsIn.length > 0}<span class="tab-count tab-count-alert" aria-label="{$attentionItems.length + $wxUnackedWarningsIn.length} items need attention">{$attentionItems.length + $wxUnackedWarningsIn.length}</span>{/if}
 			</button>
 			<button class="tab" role="tab" aria-selected={currentTab === 'roster'} class:active={currentTab === 'roster'} onclick={() => { currentTab = 'roster'; metricsFilter = null; }}>
 				<span class="tab-label">Roster</span>
@@ -2822,10 +2853,13 @@
 				<div class="roster">
 					{#each displayedCheckIns as ci (ci.id)}
 						<div class="operator-card" data-callsign={ci.callsign} class:released={ci.status === 'released'} class:highlighted={highlightedCheckInId === ci.id} class:mission-highlighted={$highlightedCheckIns.has(ci.id)}>
-							<div class="op-status-bar" style="background: {statusColors[ci.status]}"></div>
+							<div class="op-status-bar" class:wx-warning={$weatherCheckInIds.has(ci.id)} style="background: {statusColors[ci.status]}"></div>
 							<div class="op-main">
 								<div class="op-header">
 									<span class="op-callsign">{ci.callsign}</span>
+									{#if $weatherCheckInIds.has(ci.id)}
+										<WxTierGlyph tier="warning" size={11} title="Inside an active NWS warning" />
+									{/if}
 									{#if ci.tacticalCall}
 										<span class="op-tactical">"{ci.tacticalCall}"</span>
 									{/if}
@@ -3748,7 +3782,7 @@
 
 				<!-- Timeline filters -->
 				<div class="timeline-filters">
-					{#each [['all', 'All'], ['checkins', 'Check-ins'], ['assignments', 'Status'], ['missions', 'Missions'], ['notes', 'Notes'], ['rollcalls', 'Roll Calls']] as [value, label]}
+					{#each [['all', 'All'], ['checkins', 'Check-ins'], ['assignments', 'Status'], ['missions', 'Missions'], ['notes', 'Notes'], ['rollcalls', 'Roll Calls'], ['weather', 'Weather']] as [value, label]}
 						<button
 							class="filter-chip"
 							class:active={timelineFilter === value}
@@ -3948,6 +3982,27 @@
 	.chip-caret {
 		flex-shrink: 0;
 		color: var(--color-text-muted);
+	}
+
+	.wx-header-chip {
+		display: inline-flex;
+		align-items: center;
+		gap: 4px;
+		flex-shrink: 0;
+		height: 24px;
+		padding: 0 8px;
+		background: var(--color-wx-warning-soft);
+		border: 1px solid var(--color-wx-warning);
+		border-radius: var(--radius-full);
+		font-size: 0.7rem;
+		font-weight: 700;
+		color: var(--color-wx-warning);
+		cursor: pointer;
+	}
+
+	.wx-header-ttl {
+		font-variant-numeric: tabular-nums;
+		opacity: 0.85;
 	}
 
 	.frequency {
@@ -4731,6 +4786,10 @@
 	.op-status-bar {
 		width: 4px;
 		flex-shrink: 0;
+	}
+
+	.op-status-bar.wx-warning {
+		box-shadow: inset 0 -4px 0 var(--color-wx-warning);
 	}
 
 	.op-main {

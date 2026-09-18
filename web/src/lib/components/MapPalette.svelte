@@ -1,9 +1,10 @@
 <script lang="ts">
 	import {
 		mapSettings, updateMapSetting,
-		AGE_FILTER_LABELS, TRACK_DURATION_LABELS,
+		AGE_FILTER_LABELS, TRACK_DURATION_LABELS, WX_MAP_MODE_LABELS,
 		type StationAgeFilter, type TrackDuration
 	} from '$lib/stores/mapSettings';
+	import type { WxMapMode } from '$lib/types';
 
 	let {
 		filteredCount = 0,
@@ -51,7 +52,8 @@
 		$mapSettings.showWeatherOverlay ||
 		$mapSettings.showDFOverlay ||
 		!nextStopEnabled ||
-		$mapSettings.trackDuration !== 'all'
+		$mapSettings.trackDuration !== 'all' ||
+		$mapSettings.showWxAlerts !== 'watches'
 	);
 
 	function toggle() {
@@ -213,6 +215,20 @@
 						DF overlay
 					</label>
 				</div>
+				<div class="palette-row">
+					<label class="palette-label" for="wx-alerts-mode">NWS alerts</label>
+					<select
+						id="wx-alerts-mode"
+						class="palette-select"
+						value={$mapSettings.showWxAlerts}
+						onchange={(e) => updateMapSetting('showWxAlerts', (e.target as HTMLSelectElement).value as WxMapMode)}
+					>
+						{#each Object.entries(WX_MAP_MODE_LABELS) as [value, label]}
+							<option {value}>{label}</option>
+						{/each}
+					</select>
+				</div>
+				<div class="palette-info">Map only — never changes notifications</div>
 				<div class="palette-row">
 					<label class="palette-checkbox" class:is-disabled={nextStopDisabled}>
 						<input

@@ -6,6 +6,8 @@
 		tempUnit, windUnit, pressureUnit, pressureLabel, rainUnit } from '$lib/units';
 	import type { UnitSystem } from '$lib/units';
 	import WeatherChart from './WeatherChart.svelte';
+	import WxTierGlyph from './WxTierGlyph.svelte';
+	import { wxAlertsForStation, openWxAlert } from '$lib/stores/wxAlerts';
 
 	let {
 		station,
@@ -22,6 +24,8 @@
 	let wx = $derived(station.weather);
 	let key = $derived(station.ssid > 0 ? `${station.callsign}-${station.ssid}` : station.callsign);
 	let units = $derived((config.units || 'metric') as UnitSystem);
+	// Highest-sorted active IN alert naming this station (server-resolved via affects.stations).
+	let wxAlert = $derived($wxAlertsForStation(station.callsign)[0] ?? null);
 
 	let timeRange = $state<'24h' | '7d'>('24h');
 
@@ -73,6 +77,14 @@
 			</button>
 		{/if}
 	</div>
+
+	{#if wxAlert}
+		<button class="wx-alert-link" onclick={() => openWxAlert(wxAlert.id)}>
+			<WxTierGlyph tier={wxAlert.tier} size={14} />
+			<span class="wx-alert-link-name wx-in-alert-{wxAlert.tier}">in {wxAlert.shortCode}</span>
+			<span class="wx-alert-link-cta">View alert ›</span>
+		</button>
+	{/if}
 
 	<!-- Current conditions -->
 	<div class="wx-current">
@@ -217,6 +229,36 @@
 		font-weight: 700;
 		font-size: 1rem;
 		flex: 1;
+	}
+
+	.wx-alert-link {
+		display: flex;
+		align-items: center;
+		gap: 6px;
+		min-height: 36px;
+		width: 100%;
+		padding: 6px 10px;
+		background: var(--color-primary);
+		border: none;
+		border-radius: var(--radius-sm);
+		cursor: pointer;
+		text-align: left;
+	}
+
+	.wx-alert-link-name {
+		font-size: 0.75rem;
+		font-weight: 700;
+		text-transform: uppercase;
+		flex: 1;
+	}
+	.wx-alert-link-name.wx-in-alert-warning { color: var(--color-wx-warning); }
+	.wx-alert-link-name.wx-in-alert-watch { color: var(--color-wx-watch); }
+	.wx-alert-link-name.wx-in-alert-advisory { color: var(--color-wx-advisory); }
+	.wx-alert-link-name.wx-in-alert-statement { color: var(--color-wx-statement); }
+
+	.wx-alert-link-cta {
+		font-size: 0.7rem;
+		color: var(--color-text-muted);
 	}
 
 	.wx-current {

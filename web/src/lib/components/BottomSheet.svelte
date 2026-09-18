@@ -6,19 +6,28 @@
 	// Hoisted so the snap arithmetic and the published CSS token can never drift apart.
 	// Measured, not budgeted: at 112 the status row's real 32px min-height pushed
 	// the rail 10px past the viewport and clipped the bottom of every FAB.
-	const PEEK_CONTENT_H = 122;
+	const PEEK_CONTENT_BASE_H = 122;
 
 	let {
 		sheetLevel = 'peek' as SheetState,
 		onStateChange,
 		peekContent,
-		children
+		children,
+		peekExtraH = 0
 	}: {
 		sheetLevel?: SheetState;
 		onStateChange?: (s: SheetState) => void;
 		peekContent?: Snippet;
 		children?: Snippet;
+		/** Extra px to reserve at peek height when peekContent renders more than
+		 * the baseline status row (e.g. the NWS "soonest alert" strip) — so that
+		 * content isn't pushed off-screen and the nav rail below it stays put. */
+		peekExtraH?: number;
 	} = $props();
+
+	// Reactive so a caller can grow/shrink peekContent (e.g. the wx alert strip
+	// mounting/unmounting) without a full remount of the sheet.
+	let PEEK_CONTENT_H = $derived(PEEK_CONTENT_BASE_H + peekExtraH);
 
 	// env(safe-area-inset-bottom) is only legible to CSS, but the snap arithmetic is
 	// in JS — so measure it off a throwaway probe instead of guessing 34px. Without

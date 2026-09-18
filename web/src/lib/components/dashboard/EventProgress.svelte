@@ -1,16 +1,37 @@
 <script lang="ts">
-	import type { CheckpointWithPassages, ProgressElement } from '$lib/types';
+	import type { CheckpointWithPassages, ProgressElement, WxAlert } from '$lib/types';
 	import { statusColor } from '$lib/annotationMeta';
+	import WxTierGlyph from '../WxTierGlyph.svelte';
 
 	let {
 		checkpoints,
 		elements,
 		presentationMode = false,
+		wxAlerts = [],
 	}: {
 		checkpoints: CheckpointWithPassages[];
 		elements: ProgressElement[];
 		presentationMode?: boolean;
+		/** Active IN alerts — the dashboard keeps its own snapshot (no shared session with the main app). */
+		wxAlerts?: WxAlert[];
 	} = $props();
+
+	// Tier brackets over the affected checkpoint span — mirrors RouteProgressBar.svelte §8.6.
+	let wxBrackets = $derived(
+		wxAlerts
+			.filter((a) => a.tier !== 'statement' && a.affects.checkpointSeqRange.length === 2)
+			.map((a) => {
+				const [loSeq, hiSeq] = a.affects.checkpointSeqRange;
+				const total = checkpoints.length;
+				const loIdx = checkpoints.findIndex((c) => c.meta.sequenceNumber === loSeq);
+				const hiIdx = checkpoints.findIndex((c) => c.meta.sequenceNumber === hiSeq);
+				if (loIdx < 0 || hiIdx < 0) return null;
+				const pctStart = total > 1 ? (loIdx / (total - 1)) * 100 : 0;
+				const pctEnd = total > 1 ? (hiIdx / (total - 1)) * 100 : 100;
+				return { alert: a, pctStart, pctEnd, loSeq, hiSeq };
+			})
+			.filter((b): b is NonNullable<typeof b> => b !== null)
+	);
 
 	const elementColors: Record<string, string> = {
 		lead: '#22c55e',
@@ -41,7 +62,20 @@
 		<h2 class="section-title">Event Progress</h2>
 
 		<div class="progress-container">
-			<div class="progress-bar">
+			<div class="progress-bar" class:has-wx={wxBrackets.length > 0}>
+				{#if wxBrackets.length > 0}
+					<div class="wx-layer">
+						{#each wxBrackets as b, i (b.alert.id)}
+							<div
+								class="wx-bracket"
+								style="left: {b.pctStart}%; width: {b.pctEnd - b.pctStart}%; top: {2 + i * 14}px; --wx: var(--color-wx-{b.alert.tier})"
+								title="{b.alert.event}: CP {b.loSeq}–CP {b.hiSeq}"
+							>
+								<span class="wx-bracket-label"><WxTierGlyph tier={b.alert.tier} size={presentationMode ? 13 : 10} /> {b.alert.shortCode}</span>
+							</div>
+						{/each}
+					</div>
+				{/if}
 				<div class="progress-line"></div>
 
 				<!-- Element position markers above the line -->
@@ -123,6 +157,45 @@
 	.presentation .progress-bar {
 		min-height: 110px;
 		padding: 36px 24px 0;
+	}
+
+	.progress-bar.has-wx {
+		padding-top: 46px;
+	}
+	.presentation .progress-bar.has-wx {
+		padding-top: 54px;
+	}
+
+	.wx-layer {
+		position: absolute;
+		top: 0;
+		left: 20px;
+		right: 20px;
+		height: 46px;
+	}
+
+	.wx-bracket {
+		position: absolute;
+		height: 8px;
+		border: 2px solid var(--wx);
+		border-bottom: none;
+		border-radius: 3px 3px 0 0;
+	}
+
+	.wx-bracket-label {
+		position: absolute;
+		top: -13px;
+		left: 0;
+		display: inline-flex;
+		align-items: center;
+		gap: 2px;
+		font-size: 0.6rem;
+		font-weight: 700;
+		color: var(--wx);
+		white-space: nowrap;
+	}
+	.presentation .wx-bracket-label {
+		font-size: 0.75rem;
 	}
 
 	.progress-line {

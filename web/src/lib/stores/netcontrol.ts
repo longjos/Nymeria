@@ -245,7 +245,14 @@ export const pinnedNotes = derived(notes, ($notes) =>
 
 // --- Situation Board derived stores ---
 
-export type AttentionReason = 'missing' | 'emergency' | 'stale' | 'rollcall';
+// 'weather' items (a roster station inside an active warning-tier IN NWS
+// alert) are produced by stores/wxAlerts.ts (wxWeatherAttentionItems), not
+// here — this store would otherwise have to import from wxAlerts.ts, which
+// already imports activeNet from here, and a bidirectional store import is a
+// real TDZ crash risk in a cyclic ES module graph, not just a lint nit.
+// Callers that render "Needs Attention" (SituationBoard.svelte) merge the
+// two lists using ATTENTION_REASON_ORDER below.
+export type AttentionReason = 'missing' | 'emergency' | 'weather' | 'stale' | 'rollcall';
 
 export interface AttentionItem {
 	checkIn: NetCheckIn;
@@ -253,6 +260,10 @@ export interface AttentionItem {
 	detail: string; // human-readable explanation
 	action: string; // primary action label
 }
+
+export const ATTENTION_REASON_ORDER: Record<AttentionReason, number> = {
+	missing: 0, emergency: 1, weather: 2, stale: 3, rollcall: 4
+};
 
 export const attentionItems = derived(checkIns, ($cis): AttentionItem[] => {
 	const now = Date.now();
@@ -278,9 +289,8 @@ export const attentionItems = derived(checkIns, ($cis): AttentionItem[] => {
 			items.push({ checkIn: ci, reason: 'rollcall', detail: `${ci.missedRollCalls} missed roll calls`, action: 'Call' });
 		}
 	}
-	// Sort: missing first, then emergency, stale, rollcall
-	const reasonOrder: Record<AttentionReason, number> = { missing: 0, emergency: 1, stale: 2, rollcall: 3 };
-	items.sort((a, b) => reasonOrder[a.reason] - reasonOrder[b.reason]);
+	// Sort: missing first, then emergency, (weather — merged in by callers), stale, rollcall
+	items.sort((a, b) => ATTENTION_REASON_ORDER[a.reason] - ATTENTION_REASON_ORDER[b.reason]);
 	return items;
 });
 

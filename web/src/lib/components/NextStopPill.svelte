@@ -63,6 +63,8 @@
 		TOL_OFF_COURSE_M, ON_COURSE_M, STOP_SNAP_M
 	} from '$lib/routeDistance';
 	import type { RouteIndex, Candidate, Stop } from '$lib/routeDistance';
+	import { wxInAreaAlerts } from '$lib/stores/wxAlerts';
+	import WxTierGlyph from './WxTierGlyph.svelte';
 
 	let {
 		origin = null,
@@ -94,6 +96,8 @@
 		originChainage: number | null;
 		originOffTrack: number;
 		destName: string;
+		/** Stop annotation id, '' when the destination is the bare end of the line (no stop annotation). */
+		destId: string;
 		destMeters: number | undefined;
 		kind: 'road' | 'direct';
 		stops: StopRow[];
@@ -328,6 +332,7 @@
 				originChainage: null,
 				originOffTrack: chosen.cands[0].offTrackMeters,
 				destName: '',
+				destId: '',
 				destMeters: undefined,
 				kind: 'direct',
 				stops: [],
@@ -432,6 +437,7 @@
 			originChainage,
 			originOffTrack: offTrack,
 			destName,
+			destId: target?.id ?? '',
 			destMeters: meters,
 			kind,
 			stops: ahead.map((s) => ({
@@ -476,6 +482,7 @@
 			originChainage: null,
 			originOffTrack: Infinity,
 			destName: shortLabel(best.ann),
+			destId: best.ann.id,
 			destMeters: best.m,
 			kind: 'direct',
 			stops: [],
@@ -557,6 +564,14 @@
 	let displayName = $derived.by(() => {
 		const n = (answer?.destName || '').toUpperCase();
 		return n.length > 14 ? n.slice(0, 13) + '…' : n;
+	});
+
+	// The next stop's checkpoint id inside an active warning-tier IN alert
+	// (server-resolved via affects.checkpoints), UX §8.7.
+	let wxStopAlert = $derived.by(() => {
+		const id = answer?.destId;
+		if (!id) return null;
+		return $wxInAreaAlerts.find((a) => a.tier === 'warning' && a.affects.checkpoints.some((c) => c.id === id)) ?? null;
 	});
 
 	let distanceText = $derived(
@@ -673,9 +688,13 @@
 						style="border-color: {stale ? 'var(--color-warning)' : modeColor};"
 						aria-expanded={expanded}
 						aria-label={spoken}
+						title={wxStopAlert ? `${spoken} · inside ${wxStopAlert.event}` : spoken}
 						onclick={onToggle}
 					>
 						<span class="ns-name">{displayName}</span>
+						{#if wxStopAlert}
+							<span class="nsp-wx"> · <WxTierGlyph tier="warning" size={10} /> {wxStopAlert.shortCode}</span>
+						{/if}
 						<span class="ns-dist" aria-live="polite">
 							{distanceText}{#if ageText}<span class="ns-age"> · {ageText}</span>{/if}
 						</span>
@@ -823,6 +842,16 @@
 		overflow: hidden;
 		text-overflow: ellipsis;
 		white-space: nowrap;
+	}
+
+	.nsp-wx {
+		display: inline-flex;
+		align-items: center;
+		gap: 2px;
+		font-size: 11px;
+		font-weight: 700;
+		color: var(--color-wx-warning);
+		flex-shrink: 0;
 	}
 
 	.ns-dist {

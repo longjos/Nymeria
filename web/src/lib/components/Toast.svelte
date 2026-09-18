@@ -1,6 +1,7 @@
 <script lang="ts">
-	import { toasts, dismissToast, pauseToast, resumeToast } from '$lib/stores/toast';
+	import { toasts, dismissToast, pauseToast, resumeToast, liveAnnouncement } from '$lib/stores/toast';
 	import { fly } from 'svelte/transition';
+	import WxTierGlyph from './WxTierGlyph.svelte';
 
 	function runAction(id: string, run: () => void) {
 		dismissToast(id);
@@ -16,6 +17,7 @@
 				class:has-action={!!toast.action}
 				role="group"
 				aria-label="Notification"
+				style={toast.type === 'wx' && toast.tier ? `--toast-tier: var(--color-wx-${toast.tier})` : undefined}
 				transition:fly={{ x: 80, duration: 250, easing: t => t < 0.5 ? 4 * t * t * t : 1 - Math.pow(-2 * t + 2, 3) / 2 }}
 				onmouseenter={() => pauseToast(toast.id)}
 				onmouseleave={() => resumeToast(toast.id)}
@@ -23,7 +25,9 @@
 				onfocusout={() => resumeToast(toast.id)}
 			>
 				<span class="toast-icon">
-					{#if toast.type === 'success'}&#10003;{:else if toast.type === 'error'}&#10007;{:else}&#8505;{/if}
+					{#if toast.type === 'wx' && toast.tier}
+						<WxTierGlyph tier={toast.tier} size={16} />
+					{:else if toast.type === 'success'}&#10003;{:else if toast.type === 'error'}&#10007;{:else}&#8505;{/if}
 				</span>
 				<span class="toast-message">{toast.message}</span>
 				{#if toast.action}
@@ -41,6 +45,10 @@
 		{/each}
 	</div>
 {/if}
+
+<!-- Announcements with no visible toast of their own (e.g. an NWS link state
+     transition) — see stores/toast.ts announce(). -->
+<div class="sr-only" aria-live="polite">{$liveAnnouncement}</div>
 
 <style>
 	.toast-container {
@@ -72,18 +80,23 @@
 
 	.toast-success { border-left-color: #22c55e; }
 	.toast-error   { border-left-color: #ef4444; }
-	.toast-info    { border-left-color: #3b82f6; }
+	.toast-info    { border-left-color: var(--color-info); }
+	.toast-wx      { border-left-color: var(--toast-tier); }
 
 	.toast-icon {
 		flex-shrink: 0;
 		width: 18px;
 		text-align: center;
 		font-weight: 700;
+		display: flex;
+		align-items: center;
+		justify-content: center;
 	}
 
 	.toast-success .toast-icon { color: #22c55e; }
 	.toast-error   .toast-icon { color: #ef4444; }
-	.toast-info    .toast-icon { color: #3b82f6; }
+	.toast-info    .toast-icon { color: var(--color-info); }
+	.toast-wx      .toast-icon { color: var(--toast-tier); }
 
 	.toast-message {
 		flex: 1;
@@ -107,7 +120,8 @@
 
 	.toast-success .toast-action { color: #22c55e; }
 	.toast-error   .toast-action { color: #ef4444; }
-	.toast-info    .toast-action { color: #3b82f6; }
+	.toast-info    .toast-action { color: var(--color-info); }
+	.toast-wx      .toast-action { color: var(--toast-tier); }
 
 	.toast-action:hover {
 		background: rgba(255, 255, 255, 0.1);
@@ -153,5 +167,19 @@
 			min-height: 44px;
 			padding: 0 var(--space-md);
 		}
+	}
+
+	/* Visually hidden but announced — the shared polite live region for
+	   sentences with no toast card of their own (§11.4). */
+	.sr-only {
+		position: absolute;
+		width: 1px;
+		height: 1px;
+		padding: 0;
+		margin: -1px;
+		overflow: hidden;
+		clip: rect(0, 0, 0, 0);
+		white-space: nowrap;
+		border: 0;
 	}
 </style>

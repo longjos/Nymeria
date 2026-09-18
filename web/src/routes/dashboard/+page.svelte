@@ -10,7 +10,7 @@
 	} from '$lib/stores/session';
 	import type {
 		Net, NetCheckIn, NetMission, NetEvent, Annotation,
-		CheckpointWithPassages, CheckpointPassage, ProgressElement
+		CheckpointWithPassages, CheckpointPassage, ProgressElement, WxSnapshot
 	} from '$lib/types';
 	import DashboardLogin from '$lib/components/dashboard/DashboardLogin.svelte';
 	import AgencyHeader from '$lib/components/dashboard/AgencyHeader.svelte';
@@ -18,6 +18,7 @@
 	import ResourceSummary from '$lib/components/dashboard/ResourceSummary.svelte';
 	import IncidentFeed from '$lib/components/dashboard/IncidentFeed.svelte';
 	import EventProgress from '$lib/components/dashboard/EventProgress.svelte';
+	import WxDashboardBanner from '$lib/components/dashboard/WxDashboardBanner.svelte';
 
 	// --- Local state (not shared with main app stores) ---
 	let sessionReady = $state(false);
@@ -30,6 +31,10 @@
 	let wsConnected = $state(false);
 	let presentationMode = $state(false);
 	let loadError = $state('');
+	// The dashboard has no shared session with the main app (own WSClient,
+	// own auth) so it cannot reuse stores/wxAlerts.ts — it keeps its own tiny
+	// snapshot instead, refreshed by the initial fetch and the wx_alerts WS event.
+	let wxSnapshot = $state<WxSnapshot | null>(null);
 
 	let ws: WSClient | null = null;
 
@@ -97,6 +102,12 @@
 		return [...elemMap.values()].sort((a, b) => b.lastCheckpointSeq - a.lastCheckpointSeq);
 	});
 
+	// Highest-sorted active warning-tier IN alert — the only case the
+	// dashboard banner renders for (observers get no ack controls).
+	let wxActiveWarningIn = $derived(
+		(wxSnapshot?.alerts ?? []).find((a) => a.tier === 'warning' && a.proximity === 'in' && a.state === 'active') ?? null
+	);
+
 	// --- Lifecycle ---
 	// Synchronous on purpose: Svelte only honours the returned destroy callback
 	// for a sync onMount. As an async function the cleanup was discarded, so
@@ -150,6 +161,13 @@
 				checkpoints = await api.getCheckpoints(netId);
 			} catch {
 				checkpoints = [];
+			}
+
+			// NWS Alerts — absent (503) when the server has no wx manager configured.
+			try {
+				wxSnapshot = await api.wxAlerts();
+			} catch {
+				wxSnapshot = null;
 			}
 		} catch (err) {
 			loadError = err instanceof Error ? err.message : 'Failed to load data';
@@ -213,6 +231,13 @@
 					latestPassage: passage.passageTime,
 				};
 			});
+			lastUpdated = new Date();
+		});
+
+		ws.on('wx_alerts', (msg) => {
+			const snap = msg.data as WxSnapshot | null;
+			if (!snap) return;
+			wxSnapshot = snap;
 			lastUpdated = new Date();
 		});
 
@@ -295,6 +320,9 @@
 		/>
 
 		<div class="dashboard-content">
+			{#if wxActiveWarningIn}
+				<WxDashboardBanner alert={wxActiveWarningIn} {presentationMode} />
+			{/if}
 			<div class="map-area">
 				<AgencyMap
 					operators={opsWithPosition}
@@ -314,6 +342,7 @@
 					<EventProgress
 						checkpoints={orderedCheckpoints}
 						elements={progressElements}
+						wxAlerts={(wxSnapshot?.alerts ?? []).filter((a) => a.state === 'active' && a.proximity === 'in')}
 						{presentationMode}
 					/>
 				{/if}
@@ -415,6 +444,11 @@
 	.map-area {
 		min-height: 0;
 		position: relative;
+	}
+
+	/* WxDashboardBanner's own root — full-width across both grid columns. */
+	.dashboard-content :global(.wx-dashboard-banner) {
+		grid-column: 1 / -1;
 	}
 
 	.sidebar-area {

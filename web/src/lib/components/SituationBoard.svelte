@@ -5,10 +5,15 @@
 	import {
 		activeNet, checkIns,
 		attentionItems, activeMissions, recentSignificantEvents,
-		pinnedNotes, hasCheckpoints,
+		pinnedNotes, hasCheckpoints, ATTENTION_REASON_ORDER,
 	} from '$lib/stores/netcontrol';
 	import type { AttentionItem } from '$lib/stores/netcontrol';
+	import { wxInAreaAlerts, wxIsAcked, wxMuted, wxLinkStatus, wxWeatherAttentionItems, ackAlert, openWxAlert } from '$lib/stores/wxAlerts';
+	import { tierRank } from '$lib/wxAlertMeta';
+	import { clock } from '$lib/wxAlertTime';
 	import RouteProgressBar from './RouteProgressBar.svelte';
+	import WxAlertRow from './WxAlertRow.svelte';
+	import WxTierGlyph from './WxTierGlyph.svelte';
 
 	let {
 		onNavigateTab,
@@ -28,9 +33,24 @@
 	const reasonIcons: Record<string, string> = {
 		missing: '\u{1F534}',   // red circle
 		emergency: '\u{1F534}', // red circle
+		weather: '\u{1F329}',   // cloud with lightning
 		stale: '\u{26A0}\u{FE0F}',      // warning
 		rollcall: '\u{26A0}\u{FE0F}',   // warning
 	};
+
+	// Merges netcontrol's roster reasons with the weather reason computed in
+	// stores/wxAlerts.ts (kept there to avoid a circular store import — see
+	// that file's comment on wxWeatherAttentionItems).
+	let mergedAttention = $derived(
+		[...$attentionItems, ...$wxWeatherAttentionItems].sort(
+			(a, b) => ATTENTION_REASON_ORDER[a.reason] - ATTENTION_REASON_ORDER[b.reason]
+		)
+	);
+
+	// Advisory and up, IN the watch area — the standalone Weather section
+	// below "Needs Attention" (UX §8.2). Statements are noise for a net.
+	let wxRows = $derived($wxInAreaAlerts.filter((a) => tierRank(a.tier) <= tierRank('advisory')));
+	let wxHasWarning = $derived(wxRows.some((a) => a.tier === 'warning'));
 
 	function missionElapsed(m: NetMission): string {
 		const start = new Date(m.createdAt).getTime();
@@ -58,6 +78,12 @@
 				break;
 			case 'emergency':
 				onNavigateTab('roster', 'missing');
+				break;
+			case 'weather':
+				if (ci.lat != null && ci.lon != null) {
+					onFlyTo?.(ci.lat, ci.lon);
+				}
+				onNavigateTab('roster');
 				break;
 			case 'stale':
 				onNavigateTab('roster', 'stale');
@@ -92,22 +118,23 @@
 		rollcall: '\u{1F4E2}',
 		note: '\u{1F4DD}',
 		ncs_transfer: '\u{1F500}',
+		wx_alert: '\u{1F329}',
 	};
 </script>
 
 <div class="sitboard">
 	<!-- NEEDS ATTENTION -->
-	{#if $attentionItems.length > 0}
+	{#if mergedAttention.length > 0}
 		<section class="sb-section sb-attention">
 			<h3 class="sb-heading sb-heading-alert">
 				<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5">
 					<path d="M12 2L2 20h20L12 2zM12 10v4M12 17h.01"/>
 				</svg>
 				Needs Attention
-				<span class="sb-count">{$attentionItems.length}</span>
+				<span class="sb-count">{mergedAttention.length}</span>
 			</h3>
 			<div class="sb-items">
-				{#each $attentionItems as item (item.checkIn.id + item.reason)}
+				{#each mergedAttention as item (item.checkIn.id + item.reason)}
 					<div class="attn-item" class:attn-critical={item.reason === 'missing' || item.reason === 'emergency'}>
 						<span class="attn-icon">{reasonIcons[item.reason]}</span>
 						<div class="attn-info">
@@ -132,6 +159,28 @@
 					<polyline points="22 4 12 14.01 9 11.01"/>
 				</svg>
 				<span>All clear</span>
+			</div>
+		</section>
+	{/if}
+
+	<!-- WEATHER -->
+	{#if wxRows.length > 0 || $wxLinkStatus.state === 'down'}
+		<section class="sb-section sb-weather">
+			<h3 class="sb-heading" class:sb-heading-alert={wxHasWarning}>
+				<WxTierGlyph tier={wxHasWarning ? 'warning' : 'watch'} size={14} />
+				Weather &middot; NWS &middot; {clock($wxLinkStatus.lastSuccessAt)}
+				<span class="sb-count">{wxRows.length}</span>
+			</h3>
+			<div class="sb-items" role="list">
+				{#if $wxLinkStatus.state === 'down'}
+					<div class="attn-item attn-critical">
+						<span class="attn-icon">{'\u{1F329}'}</span>
+						<span class="attn-detail">NWS link down since {clock($wxLinkStatus.lastSuccessAt)} — new warnings will NOT arrive</span>
+					</div>
+				{/if}
+				{#each wxRows as a (a.id)}
+					<WxAlertRow alert={a} acked={$wxIsAcked(a)} muted={$wxMuted.has(a.id)} compact onOpen={openWxAlert} onAck={ackAlert} />
+				{/each}
 			</div>
 		</section>
 	{/if}
@@ -226,7 +275,7 @@
 	{/if}
 
 	<!-- Empty state when net is open but nothing is happening yet -->
-	{#if $attentionItems.length === 0 && $activeMissions.length === 0 && $pinnedNotes.length === 0 && $recentSignificantEvents.length === 0 && $checkIns.filter(ci => ci.status !== 'released').length === 0}
+	{#if mergedAttention.length === 0 && wxRows.length === 0 && $wxLinkStatus.state !== 'down' && $activeMissions.length === 0 && $pinnedNotes.length === 0 && $recentSignificantEvents.length === 0 && $checkIns.filter(ci => ci.status !== 'released').length === 0}
 		<div class="sb-empty">
 			<p>No activity yet. Check in operators to get started.</p>
 		</div>

@@ -1,5 +1,6 @@
 import { writable } from 'svelte/store';
 import { browser } from '$app/environment';
+import type { WxMapMode } from '$lib/types';
 
 export type StationAgeFilter = 'all' | '15m' | '30m' | '1h' | '2h' | '4h' | '8h';
 export type TrackDuration = '30m' | '1h' | '2h' | '5h' | '12h' | '24h' | 'all';
@@ -13,6 +14,8 @@ export interface MapSettings {
 	showRosterOnly: boolean;
 	showWeatherOverlay: boolean;
 	showDFOverlay: boolean;
+	/** NWS Alerts map rendering — map only, never changes what notifies (§10.3). */
+	showWxAlerts: WxMapMode;
 }
 
 const DEFAULTS: MapSettings = {
@@ -24,6 +27,7 @@ const DEFAULTS: MapSettings = {
 	showRosterOnly: false,
 	showWeatherOverlay: false,
 	showDFOverlay: false,
+	showWxAlerts: 'watches',
 };
 
 const STORAGE_KEY = 'nymeria_map_settings';
@@ -90,4 +94,11 @@ export const TRACK_DURATION_LABELS: Record<TrackDuration, string> = {
 	'12h': '12 hours',
 	'24h': '24 hours',
 	'all': 'Full history',
+};
+
+export const WX_MAP_MODE_LABELS: Record<WxMapMode, string> = {
+	off: 'Off',
+	warnings: 'Warnings',
+	watches: 'Warnings + watches',
+	all: 'All',
 };
