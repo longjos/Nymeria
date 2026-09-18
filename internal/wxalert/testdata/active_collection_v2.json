@@ -1,0 +1,418 @@
+{
+  "type": "FeatureCollection",
+  "updated": "2026-09-18T03:01:00+00:00",
+  "title": "Current watches, warnings, and advisories for wxalert test fixtures (v2)",
+  "features": [
+    {
+      "id": "https://api.weather.gov/alerts/urn:oid:urn:oid:2.49.0.1.840.0.1c8973854eca5dd9b43de6a39a2e8df328acae4e999.2",
+      "type": "Feature",
+      "geometry": {
+        "type": "Polygon",
+        "coordinates": [
+          [
+            [
+              -107.22,
+              36.22
+            ],
+            [
+              -107.23,
+              36.18
+            ],
+            [
+              -107.27,
+              36.11
+            ],
+            [
+              -107.34,
+              36.07
+            ],
+            [
+              -107.39,
+              36.08
+            ],
+            [
+              -107.41,
+              36.14
+            ],
+            [
+              -107.39,
+              36.15
+            ],
+            [
+              -107.38,
+              36.19
+            ],
+            [
+              -107.35,
+              36.22
+            ],
+            [
+              -107.22,
+              36.22
+            ]
+          ]
+        ]
+      },
+      "properties": {
+        "id": "urn:oid:2.49.0.1.840.0.1c8973854eca5dd9b43de6a39a2e8df328acae4e999.2",
+        "areaDesc": "Sandoval, NM",
+        "geocode": {
+          "SAME": [
+            "035043"
+          ],
+          "UGC": [
+            "NMC043"
+          ]
+        },
+        "affectedZones": [
+          "https://api.weather.gov/zones/county/NMC043"
+        ],
+        "references": [
+          {
+            "@id": "https://api.weather.gov/alerts/urn:oid:2.49.0.1.840.0.1c8973854eca5dd9b43de6a39a2e8df328acae4e.001.1",
+            "identifier": "urn:oid:2.49.0.1.840.0.1c8973854eca5dd9b43de6a39a2e8df328acae4e.001.1",
+            "sender": "w-nws.webmaster@noaa.gov",
+            "sent": "2026-09-17T19:38:00-06:00"
+          }
+        ],
+        "sent": "2026-09-17T19:48:00-06:00",
+        "effective": "2026-09-17T19:38:00-06:00",
+        "onset": "2026-09-17T19:38:00-06:00",
+        "expires": "2026-09-17T22:00:00-06:00",
+        "ends": "2026-09-17T22:00:00-06:00",
+        "status": "Actual",
+        "messageType": "Update",
+        "category": "Met",
+        "severity": "Severe",
+        "certainty": "Likely",
+        "urgency": "Immediate",
+        "event": "Flash Flood Warning",
+        "sender": "w-nws.webmaster@noaa.gov",
+        "senderName": "NWS Albuquerque NM",
+        "headline": "Flash Flood Warning issued September 17 at 7:38PM MDT until September 17 at 10:00PM MDT by NWS Albuquerque NM",
+        "description": "At 738 PM MDT, Doppler radar indicated thunderstorms producing heavy\nrain across the warned area. Between 1.25 and 2.25 inches of rain\nhave fallen. Additional r\u2026",
+        "instruction": "Turn around, don't drown when encountering flooded roads. Most flood\ndeaths occur in vehicles.\n\nBe especially cautious a\u2026",
+        "response": "Avoid",
+        "note": null,
+        "parameters": {
+          "NWSheadline": [
+            "FLASH FLOOD WARNING REMAINS IN EFFECT UNTIL 10 PM MDT THIS EVENING FOR NORTHERN SANDOVAL COUNTY"
+          ],
+          "flashFloodDamageThreat": [
+            "CONSIDERABLE"
+          ],
+          "VTEC": [
+            "/O.CON.KABQ.FF.W.0150.000000T0000Z-260918T0400Z/"
+          ],
+          "eventEndingTime": [
+            "2026-09-17T22:00:00-06:00"
+          ]
+        },
+        "scope": "Public",
+        "code": "IPAWSv1.0",
+        "language": "en-US",
+        "web": "http://www.weather.gov"
+      }
+    },
+    {
+      "id": "https://api.weather.gov/alerts/urn:oid:2.49.0.1.840.0.f5f886949fdcea7766d4e1428c4daa861d7d44f6.001.1",
+      "type": "Feature",
+      "geometry": null,
+      "properties": {
+        "id": "urn:oid:2.49.0.1.840.0.f5f886949fdcea7766d4e1428c4daa861d7d44f6.001.1",
+        "areaDesc": "Crittenden; DeSoto; Shelby",
+        "geocode": {
+          "SAME": [
+            "005035",
+            "028033",
+            "047157"
+          ],
+          "UGC": [
+            "ARZ036",
+            "MSZ001",
+            "TNZ088"
+          ]
+        },
+        "affectedZones": [
+          "https://api.weather.gov/zones/forecast/ARZ036",
+          "https://api.weather.gov/zones/forecast/MSZ001",
+          "https://api.weather.gov/zones/forecast/TNZ088"
+        ],
+        "references": [],
+        "sent": "2026-09-17T20:00:00-05:00",
+        "effective": "2026-09-17T20:00:00-05:00",
+        "onset": "2026-09-17T20:00:00-05:00",
+        "expires": "2026-09-18T17:30:00-05:00",
+        "ends": null,
+        "status": "Actual",
+        "messageType": "Alert",
+        "category": "Met",
+        "severity": "Unknown",
+        "certainty": "Unknown",
+        "urgency": "Unknown",
+        "event": "Air Quality Alert",
+        "sender": "w-nws.webmaster@noaa.gov",
+        "senderName": "NWS Memphis TN",
+        "headline": "Air Quality Alert issued September 17 at 8:00PM CDT by NWS Memphis TN",
+        "description": "AQAMEG\n\nThe Shelby County Health Department has issued a Code Orange Ozone\nForecast effective for Shelby County Tennessee, Crittenden County\nArkansas, and DeSot\u2026",
+        "instruction": null,
+        "response": "Monitor",
+        "note": "Non-Weather Emergency Message. Not sent to IPAWS.",
+        "parameters": {
+          "NWSheadline": [
+            "CODE ORANGE OZONE FORECAST FOR FRIDAY"
+          ]
+        },
+        "scope": "Public",
+        "code": "IPAWSv1.0",
+        "language": "en-US",
+        "web": "http://www.weather.gov"
+      }
+    },
+    {
+      "id": "https://api.weather.gov/alerts/urn:oid:2.49.0.1.840.0.f317026bd063ac767c9d21d71dd043ff79e8589b.001.1",
+      "type": "Feature",
+      "geometry": null,
+      "properties": {
+        "id": "urn:oid:2.49.0.1.840.0.f317026bd063ac767c9d21d71dd043ff79e8589b.001.1",
+        "areaDesc": "City and Borough of Yakutat; Municipality of Skagway; Haines Borough and Klukwan; Glacier Bay; Eastern Chichagof Island; Cape Fairweather to Lisianski Strait; City and Borough of Sitka; Admiralty Island; City and Borough of Juneau; Petersburg Borough; Western Kupreanof and Kuiu Island",
+        "geocode": {
+          "SAME": [
+            "002282",
+            "002230",
+            "002100",
+            "002105",
+            "002220"
+          ],
+          "UGC": [
+            "AKZ317",
+            "AKZ318",
+            "AKZ319",
+            "AKZ320",
+            "AKZ321",
+            "AKZ322",
+            "AKZ323",
+            "AKZ324",
+            "AKZ325",
+            "AKZ326",
+            "AKZ327"
+          ]
+        },
+        "affectedZones": [
+          "https://api.weather.gov/zones/forecast/AKZ317",
+          "https://api.weather.gov/zones/forecast/AKZ318",
+          "https://api.weather.gov/zones/forecast/AKZ319",
+          "https://api.weather.gov/zones/forecast/AKZ320",
+          "https://api.weather.gov/zones/forecast/AKZ321"
+        ],
+        "references": [],
+        "sent": "2026-09-17T11:37:00-08:00",
+        "effective": "2026-09-17T11:37:00-08:00",
+        "onset": "2026-09-17T11:37:00-08:00",
+        "expires": "2026-09-17T19:45:00-08:00",
+        "ends": null,
+        "status": "Actual",
+        "messageType": "Alert",
+        "category": "Met",
+        "severity": "Moderate",
+        "certainty": "Observed",
+        "urgency": "Expected",
+        "event": "Special Weather Statement",
+        "sender": "w-nws.webmaster@noaa.gov",
+        "senderName": "NWS Juneau AK",
+        "headline": "Special Weather Statement issued September 17 at 11:37AM AKDT by NWS Juneau AK",
+        "description": "Heavy rain and strong winds are expected to start Friday and last\nthrough the weekend as multiple strong low pressure systems move\ninto the northern gulf. These\u2026",
+        "instruction": null,
+        "response": "Execute",
+        "note": null,
+        "parameters": {
+          "NWSheadline": [
+            "STRONG WINDS AND HEAVY RAIN IN STORE FOR THIS WEEKEND"
+          ]
+        },
+        "scope": "Public",
+        "code": "IPAWSv1.0",
+        "language": "en-US",
+        "web": "http://www.weather.gov",
+        "_affectedZonesTrimmed": "_trimmed_from_11"
+      }
+    },
+    {
+      "id": "https://api.weather.gov/alerts/urn:oid:2.49.0.1.840.0.synthetictor0000000000000000000001.001.1",
+      "type": "Feature",
+      "geometry": {
+        "type": "Polygon",
+        "coordinates": [
+          [
+            [
+              -85.8,
+              42.9
+            ],
+            [
+              -85.5,
+              42.9
+            ],
+            [
+              -85.5,
+              43.05
+            ],
+            [
+              -85.8,
+              43.05
+            ],
+            [
+              -85.8,
+              42.9
+            ]
+          ]
+        ]
+      },
+      "properties": {
+        "id": "urn:oid:2.49.0.1.840.0.synthetictor0000000000000000000001.001.1",
+        "areaDesc": "Kent, MI; Ottawa, MI",
+        "geocode": {
+          "SAME": [
+            "026081",
+            "026139"
+          ],
+          "UGC": [
+            "MIC081",
+            "MIC139"
+          ]
+        },
+        "affectedZones": [
+          "https://api.weather.gov/zones/county/MIC081",
+          "https://api.weather.gov/zones/county/MIC139"
+        ],
+        "references": [],
+        "sent": "2026-09-17T16:00:00-04:00",
+        "effective": "2026-09-17T16:00:00-04:00",
+        "onset": "2026-09-17T16:00:00-04:00",
+        "expires": "2026-09-17T16:45:00-04:00",
+        "ends": "2026-09-17T16:45:00-04:00",
+        "status": "Actual",
+        "messageType": "Alert",
+        "category": "Met",
+        "severity": "Extreme",
+        "certainty": "Observed",
+        "urgency": "Immediate",
+        "event": "Tornado Warning",
+        "sender": "w-nws.webmaster@noaa.gov",
+        "senderName": "NWS Grand Rapids MI",
+        "headline": "Tornado Warning issued September 17 at 4:00PM EDT until September 17 at 4:45PM EDT by NWS Grand Rapids MI",
+        "description": "SYNTHETIC TEST FIXTURE. At 400 PM EDT, a confirmed tornado was located near downtown Grand Rapids, moving northeast at 35 mph. This is a synthetic fixture built from a real TOR template for wxalert tests; it does not describe a real event.",
+        "instruction": "TAKE COVER NOW! Move to a basement or an interior room on the lowest floor of a sturdy building. This is a synthetic test fixture.",
+        "response": "Shelter",
+        "parameters": {
+          "VTEC": [
+            "/O.NEW.KGRR.TO.W.0007.260917T2000Z-260917T2045Z/"
+          ],
+          "NWSheadline": [
+            "TORNADO WARNING FOR KENT AND OTTAWA COUNTIES"
+          ],
+          "tornadoDetection": [
+            "OBSERVED"
+          ],
+          "tornadoDamageThreat": [
+            "CATASTROPHIC"
+          ],
+          "eventEndingTime": [
+            "2026-09-17T16:45:00-04:00"
+          ]
+        },
+        "scope": "Public",
+        "code": "IPAWSv1.0",
+        "language": "en-US",
+        "web": "http://www.weather.gov"
+      }
+    },
+    {
+      "id": "https://api.weather.gov/alerts/urn:oid:2.49.0.1.840.0.synthetictest00000000000000001.001.1",
+      "type": "Feature",
+      "geometry": null,
+      "properties": {
+        "id": "urn:oid:2.49.0.1.840.0.synthetictest00000000000000001.001.1",
+        "areaDesc": "Kent, MI",
+        "geocode": {
+          "SAME": [
+            "026081"
+          ],
+          "UGC": [
+            "MIC081"
+          ]
+        },
+        "affectedZones": [
+          "https://api.weather.gov/zones/county/MIC081"
+        ],
+        "references": [],
+        "sent": "2026-09-17T12:00:00-04:00",
+        "effective": "2026-09-17T12:00:00-04:00",
+        "onset": "2026-09-17T12:00:00-04:00",
+        "expires": "2026-09-17T13:00:00-04:00",
+        "ends": null,
+        "status": "Test",
+        "messageType": "Alert",
+        "category": "Met",
+        "severity": "Unknown",
+        "certainty": "Unknown",
+        "urgency": "Unknown",
+        "event": "Test",
+        "sender": "w-nws.webmaster@noaa.gov",
+        "senderName": "NWS Grand Rapids MI",
+        "headline": "This is a test message. Please disregard.",
+        "description": "SYNTHETIC TEST FIXTURE. Routine weekly test of the IPAWS pipeline.",
+        "instruction": null,
+        "response": "None",
+        "parameters": {},
+        "scope": "Public",
+        "code": "IPAWSv1.0",
+        "language": "en-US",
+        "web": "http://www.weather.gov"
+      }
+    },
+    {
+      "id": "https://api.weather.gov/alerts/urn:oid:2.49.0.1.840.0.synthetictorexercise0000001.001.1",
+      "type": "Feature",
+      "geometry": null,
+      "properties": {
+        "id": "urn:oid:2.49.0.1.840.0.synthetictorexercise0000001.001.1",
+        "areaDesc": "Kent, MI",
+        "geocode": {
+          "SAME": [
+            "026081"
+          ],
+          "UGC": [
+            "MIC081"
+          ]
+        },
+        "affectedZones": [
+          "https://api.weather.gov/zones/county/MIC081"
+        ],
+        "references": [],
+        "sent": "2026-09-17T09:00:00-04:00",
+        "effective": "2026-09-17T09:00:00-04:00",
+        "onset": "2026-09-17T09:00:00-04:00",
+        "expires": "2026-09-17T10:00:00-04:00",
+        "ends": null,
+        "status": "Exercise",
+        "messageType": "Alert",
+        "category": "Met",
+        "severity": "Extreme",
+        "certainty": "Observed",
+        "urgency": "Immediate",
+        "event": "Tornado Warning",
+        "sender": "w-nws.webmaster@noaa.gov",
+        "senderName": "NWS Grand Rapids MI",
+        "headline": "THIS IS AN EXERCISE. Tornado Warning drill.",
+        "description": "SYNTHETIC TEST FIXTURE. Scheduled county EOC exercise; not a real tornado warning.",
+        "instruction": null,
+        "response": "Monitor",
+        "parameters": {},
+        "scope": "Public",
+        "code": "IPAWSv1.0",
+        "language": "en-US",
+        "web": "http://www.weather.gov"
+      }
+    }
+  ]
+}

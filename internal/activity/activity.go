@@ -13,17 +13,17 @@ import (
 type Action = string
 
 const (
-	ActionMessageSent         Action = "message_sent"
-	ActionMessageClaimed      Action = "message_claimed"
-	ActionObjectCreated       Action = "object_created"
-	ActionObjectKilled        Action = "object_killed"
-	ActionAnnotationCreated   Action = "annotation_created"
-	ActionAnnotationDeleted   Action = "annotation_deleted"
-	ActionConfigChanged       Action = "config_changed"
-	ActionSessionStarted      Action = "session_started"
-	ActionSessionEnded        Action = "session_ended"
-	ActionBeaconSent          Action = "beacon_sent"
-	ActionTransportConnect    Action = "transport_connect"
+	ActionMessageSent              Action = "message_sent"
+	ActionMessageClaimed           Action = "message_claimed"
+	ActionObjectCreated            Action = "object_created"
+	ActionObjectKilled             Action = "object_killed"
+	ActionAnnotationCreated        Action = "annotation_created"
+	ActionAnnotationDeleted        Action = "annotation_deleted"
+	ActionConfigChanged            Action = "config_changed"
+	ActionSessionStarted           Action = "session_started"
+	ActionSessionEnded             Action = "session_ended"
+	ActionBeaconSent               Action = "beacon_sent"
+	ActionTransportConnect         Action = "transport_connect"
 	ActionTransportDisconnect      Action = "transport_disconnect"
 	ActionAnnotationStatusChanged  Action = "annotation_status_changed"
 	ActionAnnotationTransmitted    Action = "annotation_transmitted"
@@ -31,6 +31,20 @@ const (
 	ActionAnnotationsImported      Action = "annotations_imported"
 	ActionAnnotationsBatchDeleted  Action = "annotations_batch_deleted"
 	ActionAnnotationsBatchRestored Action = "annotations_batch_restored"
+
+	// NWS weather watches/warnings/advisories (internal/wxalert). NetAcked
+	// is distinct from Acknowledged: the former is NCS's "ack for net" that
+	// clears the banner for everyone (decision 5); the latter is a local,
+	// per-device acknowledgement with no server-side proof-of-receipt.
+	ActionWxAlertReceived     Action = "wx_alert_received"
+	ActionWxAlertUpdated      Action = "wx_alert_updated"
+	ActionWxAlertExpired      Action = "wx_alert_expired"
+	ActionWxAlertCancelled    Action = "wx_alert_cancelled"
+	ActionWxAlertAcknowledged Action = "wx_alert_acknowledged"
+	ActionWxAlertNetAcked     Action = "wx_alert_net_acked"
+	ActionWxAlertRelayed      Action = "wx_alert_relayed"
+	ActionWxLinkDown          Action = "wx_link_down"
+	ActionWxLinkRestored      Action = "wx_link_restored"
 )
 
 // Entry represents a single activity log entry.

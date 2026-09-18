@@ -30,21 +30,31 @@ type ActivityFilter struct {
 
 // Net represents a net control session.
 type Net struct {
-	ID           string     `json:"id"`
-	Name         string     `json:"name"`
-	Type         string     `json:"type"`
-	Frequency    string     `json:"frequency"`
-	NCSCallsign  string     `json:"ncsCallsign"`
-	NCSUserID    string     `json:"ncsUserId"`
-	Status       string     `json:"status"`
-	OpenedAt     *time.Time `json:"openedAt,omitempty"`
-	ClosedAt     *time.Time `json:"closedAt,omitempty"`
-	Notes        string     `json:"notes"`
-	MissionBrief string     `json:"missionBrief"`
-	OpsViewLat     *float64  `json:"opsViewLat,omitempty"`
-	OpsViewLon     *float64  `json:"opsViewLon,omitempty"`
-	OpsViewZoom    *float64  `json:"opsViewZoom,omitempty"`
-	PinnedStations []string  `json:"pinnedStations"`
+	ID             string     `json:"id"`
+	Name           string     `json:"name"`
+	Type           string     `json:"type"`
+	Frequency      string     `json:"frequency"`
+	NCSCallsign    string     `json:"ncsCallsign"`
+	NCSUserID      string     `json:"ncsUserId"`
+	Status         string     `json:"status"`
+	OpenedAt       *time.Time `json:"openedAt,omitempty"`
+	ClosedAt       *time.Time `json:"closedAt,omitempty"`
+	Notes          string     `json:"notes"`
+	MissionBrief   string     `json:"missionBrief"`
+	OpsViewLat     *float64   `json:"opsViewLat,omitempty"`
+	OpsViewLon     *float64   `json:"opsViewLon,omitempty"`
+	OpsViewZoom    *float64   `json:"opsViewZoom,omitempty"`
+	PinnedStations []string   `json:"pinnedStations"`
+
+	// NWS weather watch area (internal/wxalert), per net. WxBufferMiles 0
+	// means "inherit the config default"; WxInterruptEvents is used only
+	// when WxInterruptCustom is true (false means "inherit the config
+	// allowlist"). The two slices are never nil ('[]' SQL default).
+	WxBufferMiles     float64  `json:"wxBufferMiles"`
+	WxExtraZones      []string `json:"wxExtraZones"`
+	WxMuteAdvisories  bool     `json:"wxMuteAdvisories"`
+	WxInterruptCustom bool     `json:"wxInterruptCustom"`
+	WxInterruptEvents []string `json:"wxInterruptEvents"`
 }
 
 // TrackedStation represents a device linked to a checked-in operator.
@@ -77,12 +87,12 @@ type NetCheckIn struct {
 
 // NetMission represents a task assigned during a net.
 type NetMission struct {
-	ID          string     `json:"id"`
-	NetID       string     `json:"netId"`
-	Title       string     `json:"title"`
-	Description string     `json:"description"`
-	Priority    string     `json:"priority"`
-	Status      string     `json:"status"`
+	ID          string `json:"id"`
+	NetID       string `json:"netId"`
+	Title       string `json:"title"`
+	Description string `json:"description"`
+	Priority    string `json:"priority"`
+	Status      string `json:"status"`
 	// Deprecated: superseded by NetCheckIn.MissionIDs. Accepted as a
 	// create-time assignee input only; never persisted, always "" on load.
 	AssignedTo  string     `json:"assignedTo"`
@@ -180,19 +190,19 @@ type AnnotationFilter struct {
 
 // WeatherReading represents a single weather observation stored in the database.
 type WeatherReading struct {
-	ID          int64      `json:"id"`
-	Callsign    string     `json:"callsign"`
-	Timestamp   time.Time  `json:"timestamp"`
-	Temperature *float64   `json:"temperature,omitempty"`
-	WindDir     *float64   `json:"windDir,omitempty"`
-	WindSpeed   *float64   `json:"windSpeed,omitempty"`
-	WindGust    *float64   `json:"windGust,omitempty"`
-	Humidity    *int       `json:"humidity,omitempty"`
-	Pressure    *float64   `json:"pressure,omitempty"`
-	Rain1h      *float64   `json:"rain1h,omitempty"`
-	Rain24h     *float64   `json:"rain24h,omitempty"`
-	RainToday   *float64   `json:"rainToday,omitempty"`
-	Luminosity  *int       `json:"luminosity,omitempty"`
+	ID          int64     `json:"id"`
+	Callsign    string    `json:"callsign"`
+	Timestamp   time.Time `json:"timestamp"`
+	Temperature *float64  `json:"temperature,omitempty"`
+	WindDir     *float64  `json:"windDir,omitempty"`
+	WindSpeed   *float64  `json:"windSpeed,omitempty"`
+	WindGust    *float64  `json:"windGust,omitempty"`
+	Humidity    *int      `json:"humidity,omitempty"`
+	Pressure    *float64  `json:"pressure,omitempty"`
+	Rain1h      *float64  `json:"rain1h,omitempty"`
+	Rain24h     *float64  `json:"rain24h,omitempty"`
+	RainToday   *float64  `json:"rainToday,omitempty"`
+	Luminosity  *int      `json:"luminosity,omitempty"`
 }
 
 // WeatherFilter controls weather reading queries.
@@ -205,16 +215,16 @@ type WeatherFilter struct {
 
 // TelemetryReading represents a single telemetry observation stored in the database.
 type TelemetryReading struct {
-	ID        int64      `json:"id"`
-	Callsign  string     `json:"callsign"`
-	Timestamp time.Time  `json:"timestamp"`
-	Seq       int        `json:"seq"`
-	Analog1   float64    `json:"analog1"`
-	Analog2   float64    `json:"analog2"`
-	Analog3   float64    `json:"analog3"`
-	Analog4   float64    `json:"analog4"`
-	Analog5   float64    `json:"analog5"`
-	Digital   int        `json:"digital"`
+	ID        int64     `json:"id"`
+	Callsign  string    `json:"callsign"`
+	Timestamp time.Time `json:"timestamp"`
+	Seq       int       `json:"seq"`
+	Analog1   float64   `json:"analog1"`
+	Analog2   float64   `json:"analog2"`
+	Analog3   float64   `json:"analog3"`
+	Analog4   float64   `json:"analog4"`
+	Analog5   float64   `json:"analog5"`
+	Digital   int       `json:"digital"`
 }
 
 // TelemetryFilter controls telemetry reading queries.
@@ -245,6 +255,43 @@ type CheckpointPassage struct {
 	Direction    string    `json:"direction"`
 	ReportedBy   string    `json:"reportedBy"`
 	Notes        string    `json:"notes,omitempty"`
+}
+
+// WxAlertRow is the persisted audit record of one NWS alert
+// (internal/wxalert.MatchedAlert), keyed by its CAP id. It is a plain
+// bookkeeping row, not a wire type — it never serializes directly to the
+// frontend (Data does, as opaque JSON the caller already marshalled), so it
+// carries no json tags. The scalar columns exist for indexed queries
+// (state/net/updated_at); Data is the full record for exact restore/display.
+type WxAlertRow struct {
+	ID             string
+	NetID          string
+	Event          string
+	Tier           string
+	State          string // active|expired|cancelled|dropped|superseded
+	Proximity      string // in|near|far
+	NotifyClass    string
+	Sent           time.Time
+	Expires        time.Time
+	EndsAt         time.Time
+	ReplacedBy     string
+	NetAckCallsign string
+	NetAckAt       *time.Time
+	FetchedAt      time.Time
+	FirstSeenAt    time.Time
+	UpdatedAt      time.Time
+	Data           string // full MatchedAlert, JSON-encoded by the caller
+}
+
+// WxPointZone caches one lat/lon grid cell's zone resolution so repeated
+// footprint rebuilds do not re-hit NWS /points for the same neighborhood.
+// The cell key is two integer columns (floor(lat*100), floor(lon*100)) —
+// never a formatted float string, which sorts and compares unambiguously.
+type WxPointZone struct {
+	CellLat   int
+	CellLon   int
+	UGC       []string // never nil
+	ExpiresAt time.Time
 }
 
 // Store provides persistent storage for stations, messages, and configuration.
@@ -356,4 +403,16 @@ type Store interface {
 	LoadCheckpointPassages(netID string) ([]CheckpointPassage, error)
 	LoadCheckpointPassagesForCheckpoint(checkpointID string) ([]CheckpointPassage, error)
 	DeleteCheckpointPassages(netID string) error
+
+	// NWS Weather Alerts (internal/wxalert)
+	SaveWxAlert(a WxAlertRow) error
+	LoadWxAlerts(includeInactive bool) ([]WxAlertRow, error)
+	UpdateWxAlertNetAck(id, callsign string, at time.Time, data string) error
+	PurgeWxAlerts(olderThan time.Time) (int64, error)
+
+	SaveWxPointZone(z WxPointZone) error
+	LoadWxPointZones() ([]WxPointZone, error)
+
+	GetWxMeta(key string) (string, bool, error)
+	SetWxMeta(key, value string) error
 }

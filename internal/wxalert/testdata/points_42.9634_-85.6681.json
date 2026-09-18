@@ -1,0 +1,8 @@
+{
+  "properties": {
+    "cwa": "GRR",
+    "forecastZone": "https://api.weather.gov/zones/forecast/MIZ057",
+    "county": "https://api.weather.gov/zones/county/MIC081",
+    "fireWeatherZone": "https://api.weather.gov/zones/fire/MIZ057"
+  }
+}

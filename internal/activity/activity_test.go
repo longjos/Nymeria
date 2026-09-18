@@ -260,6 +260,15 @@ func TestActionConstants(t *testing.T) {
 		ActionBeaconSent,
 		ActionTransportConnect,
 		ActionTransportDisconnect,
+		ActionWxAlertReceived,
+		ActionWxAlertUpdated,
+		ActionWxAlertExpired,
+		ActionWxAlertCancelled,
+		ActionWxAlertAcknowledged,
+		ActionWxAlertNetAcked,
+		ActionWxAlertRelayed,
+		ActionWxLinkDown,
+		ActionWxLinkRestored,
 	}
 
 	for _, a := range actions {
@@ -275,5 +284,34 @@ func TestActionConstants(t *testing.T) {
 			t.Errorf("duplicate action: %q", a)
 		}
 		seen[a] = true
+	}
+}
+
+// TestWxAlertActionsSurviveCSVExport confirms the 9 wx_* actions (distinct
+// from the pre-existing weather-station-reading path — see
+// config.WeatherReadingThreshold) round-trip through ExportCSV like any
+// other action, including the NCS "ack for net" action.
+func TestWxAlertActionsSurviveCSVExport(t *testing.T) {
+	now := time.Now().Truncate(time.Second).UTC()
+	entries := []Entry{
+		{Timestamp: now, UserName: "NCS", Action: ActionWxAlertReceived, Target: "urn:oid:1", Details: "Tornado Warning"},
+		{Timestamp: now, UserName: "NCS", Action: ActionWxAlertNetAcked, Target: "urn:oid:1", Details: "acked for net"},
+		{Timestamp: now, UserName: "NCS", Action: ActionWxAlertRelayed, Target: "urn:oid:1", Details: "BLN0"},
+		{Timestamp: now, Action: ActionWxLinkDown, Details: "nws unreachable"},
+		{Timestamp: now, Action: ActionWxLinkRestored, Details: "nws reachable"},
+	}
+
+	var buf bytes.Buffer
+	if err := ExportCSV(&buf, entries); err != nil {
+		t.Fatalf("ExportCSV failed: %v", err)
+	}
+
+	output := buf.String()
+	for _, want := range []string{
+		"wx_alert_received", "wx_alert_net_acked", "wx_alert_relayed", "wx_link_down", "wx_link_restored",
+	} {
+		if !strings.Contains(output, want) {
+			t.Errorf("CSV output missing action %q:\n%s", want, output)
+		}
 	}
 }

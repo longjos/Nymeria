@@ -9,6 +9,7 @@ import (
 	"net/http"
 	"path/filepath"
 	"regexp"
+	"sort"
 	"strconv"
 	"strings"
 	"time"
@@ -134,6 +135,27 @@ func (s *Server) routes() {
 			// Checkpoint progress — read endpoints (observer+)
 			r.Get("/nets/{id}/checkpoints", s.handleGetCheckpoints)
 			r.Get("/nets/{id}/progress", s.handleGetProgress)
+
+			// NWS weather alerts — per-net watch area (observer+)
+			r.Get("/nets/{id}/wxwatch", s.handleGetNetWxWatch)
+			r.Get("/nets/{id}/wxwatch/zones", s.handleGetNetWxWatchZones)
+		})
+
+		// NWS weather alerts — read endpoints (observer+). All wx routes
+		// answer 503 {"error":"nws alerts not available"} when the feature
+		// was never enabled (tile-cache pattern). /wx/zones/search is
+		// registered before /wx/zones/{ugc} so "search" is never captured
+		// as a UGC path param.
+		r.Group(func(r chi.Router) {
+			r.Use(RequireRole(session.RoleObserver))
+			r.Get("/wx/alerts", s.handleGetWxAlerts)
+			r.Get("/wx/alerts/{id}", s.handleGetWxAlert)
+			r.Get("/wx/status", s.handleGetWxStatus)
+			r.Get("/wx/footprint", s.handleGetWxFootprint)
+			r.Get("/wx/event-types", s.handleGetWxEventTypes)
+			r.Get("/wx/zones/search", s.handleSearchWxZones)
+			r.Get("/wx/zones/{ugc}", s.handleGetWxZone)
+			r.Post("/wx/alerts/{id}/ack", s.handleAckWxAlert)
 		})
 
 		// Net Control — write endpoints (operator+)
@@ -166,6 +188,18 @@ func (s *Server) routes() {
 			r.Post("/nets/{id}/pin/{callsign}", s.handlePinStation)
 			r.Delete("/nets/{id}/pin/{callsign}", s.handleUnpinStation)
 			r.Put("/nets/{id}/pins", s.handleReorderPins)
+
+			// NWS weather alerts — changing the watch area is net-control
+			// work, gated the same as ending/handing over the net.
+			r.Put("/nets/{id}/wxwatch", s.handleUpdateNetWxWatch)
+		})
+
+		// NWS weather alerts — write endpoints (operator+)
+		r.Group(func(r chi.Router) {
+			r.Use(RequireRole(session.RoleOperator))
+			r.Post("/wx/alerts/{id}/ack-net", s.handleAckWxAlertForNet)
+			r.Post("/wx/alerts/{id}/relay", s.handleRelayWxAlert)
+			r.Post("/wx/refresh", s.handleWxRefresh)
 		})
 
 		// Tile cache — preload/estimate (operator+)
@@ -217,6 +251,7 @@ func (s *Server) routes() {
 			r.Put("/settings/tilecache", s.handleUpdateTileCache)
 			r.Put("/settings/what3words", s.handleUpdateWhat3Words)
 			r.Delete("/settings/what3words/key", s.handleDeleteWhat3WordsKey)
+			r.Put("/settings/wxalerts", s.handleUpdateWxAlerts)
 		})
 	})
 
@@ -1705,7 +1740,7 @@ func (s *Server) handleExportActivityCSV(w http.ResponseWriter, r *http.Request)
 // --- ICS-309 handlers ---
 
 func (s *Server) handleGetICS309(w http.ResponseWriter, r *http.Request) {
-	if s.msgEngine == nil {
+	if s.msgEngine == nil && s.actLogger == nil {
 		writeJSON(w, http.StatusOK, ics309.Report{})
 		return
 	}
@@ -1739,14 +1774,43 @@ func (s *Server) handleGetICS309(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	msgs := s.msgEngine.Messages("")
-	rows := ics309.BuildFromMessages(msgs, header.DateFrom, header.DateTo, q.Get("method"))
+	rows := s.buildICS309Rows(header.DateFrom, header.DateTo, q.Get("method"))
 
 	writeJSON(w, http.StatusOK, ics309.Report{Header: header, Rows: rows})
 }
 
+// buildICS309Rows merges APRS message rows and relayed-NWS-alert rows into
+// one chronological communications log — the log records every way traffic
+// moved, not just APRS.
+func (s *Server) buildICS309Rows(from, to time.Time, method string) []ics309.Row {
+	var rows []ics309.Row
+	if s.msgEngine != nil {
+		msgs := s.msgEngine.Messages("")
+		rows = append(rows, ics309.BuildFromMessages(msgs, from, to, method)...)
+	}
+	rows = append(rows, s.wxRelayICS309Rows(from, to)...)
+	sort.Slice(rows, func(i, j int) bool { return rows[i].DateTime.Before(rows[j].DateTime) })
+	return rows
+}
+
+// wxRelayICS309Rows returns ICS-309 rows for every NWS alert relayed to the
+// net in [from, to], or nil when no activity logger is wired.
+func (s *Server) wxRelayICS309Rows(from, to time.Time) []ics309.Row {
+	if s.actLogger == nil {
+		return nil
+	}
+	entries, _, err := s.actLogger.Query(activity.Filter{
+		Since: &from, Until: &to, Action: activity.ActionWxAlertRelayed,
+	})
+	if err != nil {
+		log.Printf("[server] query wx relay activity for ics-309: %v", err)
+		return nil
+	}
+	return ics309.BuildFromWxRelays(entries, from, to)
+}
+
 func (s *Server) handleExportICS309CSV(w http.ResponseWriter, r *http.Request) {
-	if s.msgEngine == nil {
+	if s.msgEngine == nil && s.actLogger == nil {
 		http.Error(w, "message engine not available", http.StatusServiceUnavailable)
 		return
 	}
@@ -1779,8 +1843,7 @@ func (s *Server) handleExportICS309CSV(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	msgs := s.msgEngine.Messages("")
-	rows := ics309.BuildFromMessages(msgs, header.DateFrom, header.DateTo, q.Get("method"))
+	rows := s.buildICS309Rows(header.DateFrom, header.DateTo, q.Get("method"))
 
 	report := ics309.Report{Header: header, Rows: rows}
 

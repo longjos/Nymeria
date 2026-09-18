@@ -1,0 +1,18 @@
+{
+  "type": "FeatureCollection",
+  "updated": "2026-09-18T02:51:00+00:00",
+  "title": "Current watches, warnings, and advisories for wxalert test fixtures",
+  "features": [
+    {
+      "id": "https://api.weather.gov/alerts/urn:oid:2.49.0.1.840.0.1c8973854eca5dd9b43de6a39a2e8df328acae4e.001.1",
+      "type": "Feature",
+      "geometry": {
+        "type": "Polygon",
+        "coordinates": [
+          [
+            [
+              -107.22,
+              36.22
+            ],
+            [
+          

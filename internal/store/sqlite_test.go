@@ -605,8 +605,8 @@ func TestV2SchemaVersion(t *testing.T) {
 	if err != nil {
 		t.Fatalf("query schema_version: %v", err)
 	}
-	if version != 23 {
-		t.Errorf("expected schema version 23, got %d", version)
+	if version != 24 {
+		t.Errorf("expected schema version 24, got %d", version)
 	}
 }
 
@@ -1105,8 +1105,8 @@ func TestV3SchemaVersion(t *testing.T) {
 	if err != nil {
 		t.Fatalf("query schema_version: %v", err)
 	}
-	if version != 23 {
-		t.Errorf("expected schema version 23, got %d", version)
+	if version != 24 {
+		t.Errorf("expected schema version 24, got %d", version)
 	}
 }
 
@@ -1726,8 +1726,8 @@ func TestV5MigrationAddsTrackedStationsColumn(t *testing.T) {
 
 	var version int
 	s.db.QueryRow("SELECT version FROM schema_version LIMIT 1").Scan(&version)
-	if version != 23 {
-		t.Errorf("expected schema version 23, got %d", version)
+	if version != 24 {
+		t.Errorf("expected schema version 24, got %d", version)
 	}
 }
 
@@ -1833,8 +1833,8 @@ func TestV6MigrationCreatesTacticalAliasesTable(t *testing.T) {
 
 	var version int
 	s.db.QueryRow("SELECT version FROM schema_version LIMIT 1").Scan(&version)
-	if version != 23 {
-		t.Errorf("expected schema version 23, got %d", version)
+	if version != 24 {
+		t.Errorf("expected schema version 24, got %d", version)
 	}
 }
 
@@ -2001,8 +2001,8 @@ func TestV7MigrationAddsAnnotationColumns(t *testing.T) {
 
 	var version int
 	s.db.QueryRow("SELECT version FROM schema_version LIMIT 1").Scan(&version)
-	if version != 23 {
-		t.Errorf("expected schema version 23, got %d", version)
+	if version != 24 {
+		t.Errorf("expected schema version 24, got %d", version)
 	}
 }
 
@@ -2304,8 +2304,8 @@ func TestMigrateV8CreatesOperationsTable(t *testing.T) {
 
 	var version int
 	s.db.QueryRow("SELECT version FROM schema_version LIMIT 1").Scan(&version)
-	if version != 23 {
-		t.Errorf("expected schema version 23, got %d", version)
+	if version != 24 {
+		t.Errorf("expected schema version 24, got %d", version)
 	}
 
 	// Verify operations table exists by doing a query.
@@ -2324,8 +2324,8 @@ func TestMigrateV11AddsOpsViewColumns(t *testing.T) {
 
 	var version int
 	s.db.QueryRow("SELECT version FROM schema_version LIMIT 1").Scan(&version)
-	if version != 23 {
-		t.Errorf("expected schema version 23, got %d", version)
+	if version != 24 {
+		t.Errorf("expected schema version 24, got %d", version)
 	}
 
 	// Verify ops_view columns exist.
@@ -2714,8 +2714,8 @@ func TestMigrateV13CreatesTelemetryReadingsTable(t *testing.T) {
 
 	var version int
 	s.db.QueryRow("SELECT version FROM schema_version LIMIT 1").Scan(&version)
-	if version != 23 {
-		t.Errorf("expected schema version 23, got %d", version)
+	if version != 24 {
+		t.Errorf("expected schema version 24, got %d", version)
 	}
 }
 
@@ -2958,8 +2958,8 @@ func TestMigrateV16(t *testing.T) {
 	if err != nil {
 		t.Fatalf("query schema_version: %v", err)
 	}
-	if version != 23 {
-		t.Errorf("expected schema version 23, got %d", version)
+	if version != 24 {
+		t.Errorf("expected schema version 24, got %d", version)
 	}
 }
 
@@ -3239,8 +3239,8 @@ func TestMigrateV19CreatesCheckpointTables(t *testing.T) {
 	if err := s.db.QueryRow("SELECT version FROM schema_version LIMIT 1").Scan(&version); err != nil {
 		t.Fatalf("read schema_version: %v", err)
 	}
-	if version != 23 {
-		t.Errorf("expected schema version 23, got %d", version)
+	if version != 24 {
+		t.Errorf("expected schema version 24, got %d", version)
 	}
 
 	// Verify tables exist.
@@ -3352,8 +3352,8 @@ func TestMigrateV20NormalizesLegacySources(t *testing.T) {
 	if err := s.db.QueryRow("SELECT version FROM schema_version LIMIT 1").Scan(&version); err != nil {
 		t.Fatalf("read schema_version: %v", err)
 	}
-	if version != 23 {
-		t.Errorf("expected schema version 23, got %d", version)
+	if version != 24 {
+		t.Errorf("expected schema version 24, got %d", version)
 	}
 
 	// sources column must exist.
@@ -3525,8 +3525,8 @@ func TestMigrateV21CreatesConversationReadsTable(t *testing.T) {
 	if err := s.db.QueryRow("SELECT version FROM schema_version LIMIT 1").Scan(&version); err != nil {
 		t.Fatalf("read schema_version: %v", err)
 	}
-	if version != 23 {
-		t.Errorf("expected schema version 23, got %d", version)
+	if version != 24 {
+		t.Errorf("expected schema version 24, got %d", version)
 	}
 
 	var count int
@@ -3774,8 +3774,8 @@ func TestMigrateV22AddsAnnotationBatchColumns(t *testing.T) {
 	if err := s.db.QueryRow("SELECT version FROM schema_version LIMIT 1").Scan(&version); err != nil {
 		t.Fatalf("read schema_version: %v", err)
 	}
-	if version != 23 {
-		t.Errorf("expected schema version 23, got %d", version)
+	if version != 24 {
+		t.Errorf("expected schema version 24, got %d", version)
 	}
 
 	cols := map[string]bool{}
@@ -4102,7 +4102,7 @@ func preV23Fixture(t *testing.T, checkIns []string, missions []string) string {
 	return path
 }
 
-func v23Version(t *testing.T, s *SQLiteStore) int {
+func currentVersion(t *testing.T, s *SQLiteStore) int {
 	t.Helper()
 	var version int
 	if err := s.db.QueryRow("SELECT version FROM schema_version LIMIT 1").Scan(&version); err != nil {
@@ -4134,8 +4134,8 @@ func TestMigrateV23BackfillsAssignedTo(t *testing.T) {
 	}
 	defer s.Close()
 
-	if v := v23Version(t, s); v != 23 {
-		t.Errorf("expected schema version 23, got %d", v)
+	if v := currentVersion(t, s); v != 24 {
+		t.Errorf("expected schema version 24, got %d", v)
 	}
 	if got := v23MissionIDs(t, s, "ci-1"); got != `["m-1"]` {
 		t.Errorf("mission_ids: got %s, want [\"m-1\"]", got)
@@ -4170,8 +4170,8 @@ func TestMigrateV23OrphanCallsignDoesNotFail(t *testing.T) {
 	}
 	defer s.Close()
 
-	if v := v23Version(t, s); v != 23 {
-		t.Errorf("expected schema version 23, got %d", v)
+	if v := currentVersion(t, s); v != 24 {
+		t.Errorf("expected schema version 24, got %d", v)
 	}
 	if got := v23MissionIDs(t, s, "ci-1"); got != `[]` {
 		t.Errorf("mission_ids: got %s, want []", got)
@@ -4253,7 +4253,401 @@ func TestMigrateV23WithoutMissionTables(t *testing.T) {
 	}
 	defer s.Close()
 
-	if v := v23Version(t, s); v != 23 {
-		t.Errorf("expected schema version 23, got %d", v)
+	if v := currentVersion(t, s); v != 24 {
+		t.Errorf("expected schema version 24, got %d", v)
+	}
+}
+
+// --- v24: internal/wxalert tables + per-net weather-watch columns ---
+
+// TestInitStampsCurrentSchemaVersion guards migrateV1's hardcoded stamp: a
+// brand-new database must always end up at currentSchemaVersion, however
+// many migrations exist, so this assertion never needs hand-updating again
+// the way the thirteen "!= N" call sites above did every time N changed.
+func TestInitStampsCurrentSchemaVersion(t *testing.T) {
+	s, _ := newTestStore(t)
+	defer s.Close()
+
+	if v := currentVersion(t, s); v != currentSchemaVersion {
+		t.Errorf("fresh init schema version = %d, want currentSchemaVersion (%d)", v, currentSchemaVersion)
+	}
+}
+
+func TestMigrateV24CreatesWxTables(t *testing.T) {
+	s, _ := newTestStore(t)
+	defer s.Close()
+
+	for _, table := range []string{"wx_alerts", "wx_point_zones", "wx_alert_meta"} {
+		var present int
+		if err := s.db.QueryRow(
+			`SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name=?`, table,
+		).Scan(&present); err != nil {
+			t.Fatalf("check table %s: %v", table, err)
+		}
+		if present != 1 {
+			t.Errorf("table %s not created by migrateV24", table)
+		}
+	}
+
+	// The five wx_* columns on nets should exist and accept writes.
+	if _, err := s.db.Exec(
+		`UPDATE nets SET wx_buffer_miles = 0, wx_extra_zones = '[]', wx_mute_advisories = 0,
+		   wx_interrupt_custom = 0, wx_interrupt_events = '[]' WHERE 1=0`); err != nil {
+		t.Errorf("wx_* columns not added to nets: %v", err)
+	}
+}
+
+// preV24Fixture hand-builds a v23-shaped nets table (the full column set a
+// real pre-upgrade database has, unlike preV23Fixture's minimal id/name
+// stand-in) plus schema_version=23, so Init's migrateV24 runs its ALTER
+// TABLE path against a table shaped like a genuine upgrade.
+func preV24Fixture(t *testing.T) string {
+	t.Helper()
+	path := filepath.Join(t.TempDir(), "pre-v24.db")
+	db, err := sql.Open("sqlite", path)
+	if err != nil {
+		t.Fatalf("open raw db: %v", err)
+	}
+	stmts := []string{
+		`CREATE TABLE schema_version (version INTEGER NOT NULL)`,
+		`INSERT INTO schema_version (version) VALUES (23)`,
+		`CREATE TABLE nets (
+			id TEXT PRIMARY KEY, name TEXT NOT NULL, type TEXT NOT NULL DEFAULT '',
+			frequency TEXT NOT NULL DEFAULT '', ncs_callsign TEXT NOT NULL DEFAULT '',
+			ncs_user_id TEXT NOT NULL DEFAULT '', status TEXT NOT NULL DEFAULT 'draft',
+			opened_at DATETIME, closed_at DATETIME, notes TEXT NOT NULL DEFAULT '',
+			mission_brief TEXT NOT NULL DEFAULT '', ops_view_lat REAL, ops_view_lon REAL,
+			ops_view_zoom REAL, pinned_stations TEXT NOT NULL DEFAULT '[]'
+		)`,
+		`INSERT INTO nets (id, name) VALUES ('net-1', 'Ridge Run 100')`,
+	}
+	for _, stmt := range stmts {
+		if _, err := db.Exec(stmt); err != nil {
+			db.Close()
+			t.Fatalf("setup stmt %q: %v", stmt, err)
+		}
+	}
+	if err := db.Close(); err != nil {
+		t.Fatalf("close raw db: %v", err)
+	}
+	return path
+}
+
+func TestMigrateV24FromV23Fixture(t *testing.T) {
+	path := preV24Fixture(t)
+
+	s := NewSQLiteStore(path)
+	if err := s.Init(); err != nil {
+		t.Fatalf("Init failed: %v", err)
+	}
+	defer s.Close()
+
+	if v := currentVersion(t, s); v != 24 {
+		t.Errorf("expected schema version 24, got %d", v)
+	}
+
+	n, err := s.LoadNet("net-1")
+	if err != nil {
+		t.Fatalf("LoadNet: %v", err)
+	}
+	if n.WxExtraZones == nil {
+		t.Error("WxExtraZones = nil, want non-nil empty slice")
+	}
+	if len(n.WxExtraZones) != 0 {
+		t.Errorf("WxExtraZones = %v, want empty", n.WxExtraZones)
+	}
+	if n.WxInterruptEvents == nil {
+		t.Error("WxInterruptEvents = nil, want non-nil empty slice")
+	}
+	if n.WxBufferMiles != 0 {
+		t.Errorf("WxBufferMiles = %v, want 0", n.WxBufferMiles)
+	}
+	if n.WxMuteAdvisories || n.WxInterruptCustom {
+		t.Errorf("wx bool defaults not false: mute=%v custom=%v", n.WxMuteAdvisories, n.WxInterruptCustom)
+	}
+}
+
+func TestMigrateV24Idempotent(t *testing.T) {
+	s, _ := newTestStore(t)
+	defer s.Close()
+
+	if err := s.migrateV24(); err != nil {
+		t.Fatalf("first rerun of migrateV24 failed: %v", err)
+	}
+	if err := s.migrateV24(); err != nil {
+		t.Fatalf("second rerun of migrateV24 failed: %v", err)
+	}
+
+	if v := currentVersion(t, s); v != 24 {
+		t.Errorf("expected schema version 24, got %d", v)
+	}
+}
+
+// TestSaveAndLoadNetWxSettingsRoundtrip covers both LoadNet and LoadNets —
+// the two read paths that must agree on the five wx_* fields.
+func TestSaveAndLoadNetWxSettingsRoundtrip(t *testing.T) {
+	s, _ := newTestStore(t)
+	defer s.Close()
+
+	n := Net{
+		ID:                "net-wx-1",
+		Name:              "Ridge Run 100",
+		Status:            "open",
+		PinnedStations:    []string{},
+		WxBufferMiles:     15,
+		WxExtraZones:      []string{"MIZ056", "MIC081"},
+		WxMuteAdvisories:  true,
+		WxInterruptCustom: true,
+		WxInterruptEvents: []string{"Tornado Warning", "Severe Thunderstorm Warning"},
+	}
+	if err := s.SaveNet(n); err != nil {
+		t.Fatalf("SaveNet: %v", err)
+	}
+
+	loaded, err := s.LoadNet("net-wx-1")
+	if err != nil {
+		t.Fatalf("LoadNet: %v", err)
+	}
+	if loaded.WxBufferMiles != 15 {
+		t.Errorf("LoadNet WxBufferMiles = %v, want 15", loaded.WxBufferMiles)
+	}
+	if len(loaded.WxExtraZones) != 2 || loaded.WxExtraZones[0] != "MIZ056" {
+		t.Errorf("LoadNet WxExtraZones = %v", loaded.WxExtraZones)
+	}
+	if !loaded.WxMuteAdvisories || !loaded.WxInterruptCustom {
+		t.Errorf("LoadNet wx bools not round-tripped: %+v", loaded)
+	}
+	if len(loaded.WxInterruptEvents) != 2 || loaded.WxInterruptEvents[1] != "Severe Thunderstorm Warning" {
+		t.Errorf("LoadNet WxInterruptEvents = %v", loaded.WxInterruptEvents)
+	}
+
+	nets, err := s.LoadNets()
+	if err != nil {
+		t.Fatalf("LoadNets: %v", err)
+	}
+	var found *Net
+	for i := range nets {
+		if nets[i].ID == "net-wx-1" {
+			found = &nets[i]
+		}
+	}
+	if found == nil {
+		t.Fatal("LoadNets did not return net-wx-1")
+	}
+	if found.WxBufferMiles != 15 || len(found.WxExtraZones) != 2 || !found.WxMuteAdvisories {
+		t.Errorf("LoadNets wx fields mismatch LoadNet: %+v", found)
+	}
+
+	// A net saved with nil wx slices (the zero-value case a fresh CreateNet
+	// produces) must load back as non-nil empty slices, never nil — the
+	// project's JSON-slice-column rule.
+	bare := Net{ID: "net-wx-2", Name: "Bare", Status: "draft", PinnedStations: []string{}}
+	if err := s.SaveNet(bare); err != nil {
+		t.Fatalf("SaveNet(bare): %v", err)
+	}
+	loadedBare, err := s.LoadNet("net-wx-2")
+	if err != nil {
+		t.Fatalf("LoadNet(bare): %v", err)
+	}
+	if loadedBare.WxExtraZones == nil || loadedBare.WxInterruptEvents == nil {
+		t.Errorf("bare net wx slices are nil: extraZones=%v interruptEvents=%v",
+			loadedBare.WxExtraZones, loadedBare.WxInterruptEvents)
+	}
+}
+
+func TestSaveAndLoadWxAlertsRoundtrip(t *testing.T) {
+	s, _ := newTestStore(t)
+	defer s.Close()
+
+	now := time.Now().Truncate(time.Second).UTC()
+	a := WxAlertRow{
+		ID:          "urn:oid:test.1",
+		NetID:       "net-1",
+		Event:       "Tornado Warning",
+		Tier:        "warning",
+		State:       "active",
+		Proximity:   "in",
+		NotifyClass: "interrupt",
+		Sent:        now,
+		Expires:     now.Add(45 * time.Minute),
+		// EndsAt deliberately left zero — an alert with no Ends/eventEndingTime
+		// yet; must round-trip as a zero time.Time, not a parse error.
+		FetchedAt:   now,
+		FirstSeenAt: now,
+		UpdatedAt:   now,
+		Data:        `{"id":"urn:oid:test.1","event":"Tornado Warning"}`,
+	}
+	if err := s.SaveWxAlert(a); err != nil {
+		t.Fatalf("SaveWxAlert: %v", err)
+	}
+
+	loaded, err := s.LoadWxAlerts(true)
+	if err != nil {
+		t.Fatalf("LoadWxAlerts: %v", err)
+	}
+	if len(loaded) != 1 {
+		t.Fatalf("LoadWxAlerts = %d rows, want 1", len(loaded))
+	}
+	if !loaded[0].EndsAt.IsZero() {
+		t.Errorf("EndsAt = %v, want zero", loaded[0].EndsAt)
+	}
+	if loaded[0].NetAckAt != nil {
+		t.Errorf("NetAckAt = %v, want nil", loaded[0].NetAckAt)
+	}
+	if loaded[0].Data != a.Data {
+		t.Errorf("Data = %q, want %q", loaded[0].Data, a.Data)
+	}
+
+	// Upsert: saving the same id again replaces the row rather than erroring
+	// or duplicating it.
+	a.State = "expired"
+	a.Data = `{"id":"urn:oid:test.1","event":"Tornado Warning","state":"expired"}`
+	if err := s.SaveWxAlert(a); err != nil {
+		t.Fatalf("SaveWxAlert (upsert): %v", err)
+	}
+	loaded, err = s.LoadWxAlerts(true)
+	if err != nil {
+		t.Fatalf("LoadWxAlerts after upsert: %v", err)
+	}
+	if len(loaded) != 1 {
+		t.Fatalf("LoadWxAlerts after upsert = %d rows, want 1 (upsert, not insert)", len(loaded))
+	}
+	if loaded[0].State != "expired" {
+		t.Errorf("State after upsert = %q, want expired", loaded[0].State)
+	}
+
+	// LoadWxAlerts(false) excludes the now-inactive row.
+	active, err := s.LoadWxAlerts(false)
+	if err != nil {
+		t.Fatalf("LoadWxAlerts(false): %v", err)
+	}
+	if len(active) != 0 {
+		t.Errorf("LoadWxAlerts(false) = %d rows, want 0 (row is expired)", len(active))
+	}
+
+	// UpdateWxAlertNetAck sets the ack columns and refreshes Data.
+	ackAt := now.Add(time.Minute)
+	newData := `{"id":"urn:oid:test.1","ackedForNet":{"callsign":"W8ABC"}}`
+	if err := s.UpdateWxAlertNetAck(a.ID, "W8ABC", ackAt, newData); err != nil {
+		t.Fatalf("UpdateWxAlertNetAck: %v", err)
+	}
+	loaded, err = s.LoadWxAlerts(true)
+	if err != nil {
+		t.Fatalf("LoadWxAlerts after ack: %v", err)
+	}
+	if loaded[0].NetAckCallsign != "W8ABC" {
+		t.Errorf("NetAckCallsign = %q, want W8ABC", loaded[0].NetAckCallsign)
+	}
+	if loaded[0].NetAckAt == nil || !loaded[0].NetAckAt.Equal(ackAt) {
+		t.Errorf("NetAckAt = %v, want %v", loaded[0].NetAckAt, ackAt)
+	}
+	if loaded[0].Data != newData {
+		t.Errorf("Data after ack = %q, want %q", loaded[0].Data, newData)
+	}
+
+	// UpdateWxAlertNetAck on an unknown id errors instead of silently no-op'ing.
+	if err := s.UpdateWxAlertNetAck("no-such-id", "W8ABC", ackAt, newData); err == nil {
+		t.Error("UpdateWxAlertNetAck(unknown id) = nil error, want error")
+	}
+
+	// Age the now-expired row past the purge cutoff (its updated_at is
+	// otherwise "now" from the ack step above, i.e. not old at all).
+	a.UpdatedAt = now.Add(-2 * time.Hour)
+	if err := s.SaveWxAlert(a); err != nil {
+		t.Fatalf("SaveWxAlert (age for purge): %v", err)
+	}
+
+	// PurgeWxAlerts keeps active rows regardless of age, and removes
+	// inactive rows older than the cutoff.
+	activeRow := WxAlertRow{
+		ID: "still-active", State: "active", UpdatedAt: now.Add(-24 * time.Hour), Data: "{}",
+	}
+	if err := s.SaveWxAlert(activeRow); err != nil {
+		t.Fatalf("SaveWxAlert(activeRow): %v", err)
+	}
+	n, err := s.PurgeWxAlerts(now.Add(-time.Hour))
+	if err != nil {
+		t.Fatalf("PurgeWxAlerts: %v", err)
+	}
+	if n != 1 {
+		t.Errorf("PurgeWxAlerts removed %d rows, want 1 (the expired one, not the old-but-active one)", n)
+	}
+	remaining, err := s.LoadWxAlerts(true)
+	if err != nil {
+		t.Fatalf("LoadWxAlerts after purge: %v", err)
+	}
+	if len(remaining) != 1 || remaining[0].ID != "still-active" {
+		t.Errorf("LoadWxAlerts after purge = %+v, want only still-active", remaining)
+	}
+}
+
+func TestSaveAndLoadWxPointZonesRoundtrip(t *testing.T) {
+	s, _ := newTestStore(t)
+	defer s.Close()
+
+	now := time.Now().Truncate(time.Second).UTC()
+	z := WxPointZone{CellLat: 4296, CellLon: -8567, UGC: []string{"MIZ056", "MIC081"}, ExpiresAt: now.Add(30 * 24 * time.Hour)}
+	if err := s.SaveWxPointZone(z); err != nil {
+		t.Fatalf("SaveWxPointZone: %v", err)
+	}
+
+	loaded, err := s.LoadWxPointZones()
+	if err != nil {
+		t.Fatalf("LoadWxPointZones: %v", err)
+	}
+	if len(loaded) != 1 {
+		t.Fatalf("LoadWxPointZones = %d rows, want 1", len(loaded))
+	}
+	if loaded[0].CellLat != 4296 || loaded[0].CellLon != -8567 {
+		t.Errorf("cell = (%d,%d), want (4296,-8567)", loaded[0].CellLat, loaded[0].CellLon)
+	}
+	if len(loaded[0].UGC) != 2 || loaded[0].UGC[0] != "MIZ056" {
+		t.Errorf("UGC = %v", loaded[0].UGC)
+	}
+
+	// Re-saving the same cell replaces it rather than duplicating (PRIMARY
+	// KEY (cell_lat, cell_lon)).
+	z.UGC = []string{"MIZ057"}
+	if err := s.SaveWxPointZone(z); err != nil {
+		t.Fatalf("SaveWxPointZone (replace): %v", err)
+	}
+	loaded, err = s.LoadWxPointZones()
+	if err != nil {
+		t.Fatalf("LoadWxPointZones after replace: %v", err)
+	}
+	if len(loaded) != 1 {
+		t.Fatalf("LoadWxPointZones after replace = %d rows, want 1", len(loaded))
+	}
+	if len(loaded[0].UGC) != 1 || loaded[0].UGC[0] != "MIZ057" {
+		t.Errorf("UGC after replace = %v, want [MIZ057]", loaded[0].UGC)
+	}
+}
+
+func TestWxMetaRoundtrip(t *testing.T) {
+	s, _ := newTestStore(t)
+	defer s.Close()
+
+	if _, ok, err := s.GetWxMeta("registry_snapshot"); err != nil || ok {
+		t.Fatalf("GetWxMeta before set = (ok=%v, err=%v), want (false, nil)", ok, err)
+	}
+
+	if err := s.SetWxMeta("registry_snapshot", `{"active":[]}`); err != nil {
+		t.Fatalf("SetWxMeta: %v", err)
+	}
+	v, ok, err := s.GetWxMeta("registry_snapshot")
+	if err != nil {
+		t.Fatalf("GetWxMeta: %v", err)
+	}
+	if !ok || v != `{"active":[]}` {
+		t.Errorf("GetWxMeta = (%q, %v), want ({\"active\":[]}, true)", v, ok)
+	}
+
+	// Overwrite (upsert), not insert-fails-on-duplicate.
+	if err := s.SetWxMeta("registry_snapshot", `{"active":[1]}`); err != nil {
+		t.Fatalf("SetWxMeta (overwrite): %v", err)
+	}
+	v, ok, err = s.GetWxMeta("registry_snapshot")
+	if err != nil || !ok || v != `{"active":[1]}` {
+		t.Errorf("GetWxMeta after overwrite = (%q, %v, %v)", v, ok, err)
 	}
 }

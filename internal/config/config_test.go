@@ -3,6 +3,7 @@ package config
 import (
 	"os"
 	"path/filepath"
+	"reflect"
 	"strings"
 	"testing"
 	"time"
@@ -772,5 +773,228 @@ what3words:
 	}
 	if cfg.What3Words.BaseURL != "https://file.example/v3" {
 		t.Errorf("base url = %q, want https://file.example/v3", cfg.What3Words.BaseURL)
+	}
+}
+
+// ── NWS weather alerts (internal/wxalert) ──────────────────────────────
+
+func TestDefaultConfigWxAlerts(t *testing.T) {
+	cfg := DefaultConfig()
+	wx := cfg.WxAlerts
+
+	if wx.Enabled {
+		t.Error("WxAlerts.Enabled = true, want false (never phones home unconfigured)")
+	}
+	if wx.PollInterval != 60*time.Second {
+		t.Errorf("WxAlerts.PollInterval = %v, want 60s", wx.PollInterval)
+	}
+	if wx.DefaultBufferMiles != 10 {
+		t.Errorf("WxAlerts.DefaultBufferMiles = %v, want 10", wx.DefaultBufferMiles)
+	}
+	if wx.WatchNotify != "toast" {
+		t.Errorf("WxAlerts.WatchNotify = %q, want toast", wx.WatchNotify)
+	}
+	if wx.AdvisoryNotify != "badge" {
+		t.Errorf("WxAlerts.AdvisoryNotify = %q, want badge", wx.AdvisoryNotify)
+	}
+	if wx.StatementNotify != "panel" {
+		t.Errorf("WxAlerts.StatementNotify = %q, want panel", wx.StatementNotify)
+	}
+	if !wx.Sounds {
+		t.Error("WxAlerts.Sounds = false, want true")
+	}
+	if wx.IncludeTest {
+		t.Error("WxAlerts.IncludeTest = true, want false")
+	}
+	wantEvents := []string{
+		"Tornado Warning", "Flash Flood Emergency", "Severe Thunderstorm Warning", "Flash Flood Warning",
+		"Extreme Wind Warning", "Ice Storm Warning", "Blizzard Warning",
+	}
+	if !reflect.DeepEqual(wx.InterruptEvents, wantEvents) {
+		t.Errorf("WxAlerts.InterruptEvents = %v, want %v (order matters)", wx.InterruptEvents, wantEvents)
+	}
+}
+
+// TestDefaultWxInterruptEventsIsIndependentCopy guards the append([]string{}, ...)
+// in DefaultConfig: two calls must not share backing arrays, or mutating one
+// net's allowlist would corrupt every other net's "inherit" default.
+func TestDefaultWxInterruptEventsIsIndependentCopy(t *testing.T) {
+	a := DefaultConfig()
+	b := DefaultConfig()
+	a.WxAlerts.InterruptEvents[0] = "Mutated"
+	if b.WxAlerts.InterruptEvents[0] == "Mutated" {
+		t.Error("DefaultConfig().WxAlerts.InterruptEvents shares backing array across calls")
+	}
+}
+
+func TestValidateWxAlerts(t *testing.T) {
+	valid := func(c *Config) {
+		c.WxAlerts.Enabled = true
+		c.WxAlerts.Contact = "ops@example.com"
+		c.WxAlerts.PollInterval = time.Minute
+		c.WxAlerts.DefaultBufferMiles = 10
+		c.WxAlerts.InterruptEvents = []string{"Tornado Warning"}
+		c.WxAlerts.WatchNotify = "toast"
+		c.WxAlerts.AdvisoryNotify = "badge"
+		c.WxAlerts.StatementNotify = "panel"
+	}
+
+	tests := []struct {
+		name    string
+		modify  func(*Config)
+		wantErr bool
+	}{
+		{"disabled with garbage is valid", func(c *Config) { c.WxAlerts = WxAlertsConfig{Enabled: false} }, false},
+		{"valid enabled config", valid, false},
+		{"poll interval too short", func(c *Config) { valid(c); c.WxAlerts.PollInterval = 29 * time.Second }, true},
+		{"poll interval too long", func(c *Config) { valid(c); c.WxAlerts.PollInterval = 11 * time.Minute }, true},
+		{"poll interval at floor (30s) is valid", func(c *Config) { valid(c); c.WxAlerts.PollInterval = 30 * time.Second }, false},
+		{"poll interval at ceiling (10m) is valid", func(c *Config) { valid(c); c.WxAlerts.PollInterval = 10 * time.Minute }, false},
+		{"buffer too small", func(c *Config) { valid(c); c.WxAlerts.DefaultBufferMiles = 1 }, true},
+		{"buffer too large", func(c *Config) { valid(c); c.WxAlerts.DefaultBufferMiles = 51 }, true},
+		{"buffer at floor (2) is valid", func(c *Config) { valid(c); c.WxAlerts.DefaultBufferMiles = 2 }, false},
+		{"buffer at ceiling (50) is valid", func(c *Config) { valid(c); c.WxAlerts.DefaultBufferMiles = 50 }, false},
+		{"empty contact when enabled", func(c *Config) { valid(c); c.WxAlerts.Contact = "" }, true},
+		{"whitespace-only contact when enabled", func(c *Config) { valid(c); c.WxAlerts.Contact = "   " }, true},
+		{"contact too long", func(c *Config) { valid(c); c.WxAlerts.Contact = strings.Repeat("a", 121) }, true},
+		{"contact at 120 runes is valid", func(c *Config) { valid(c); c.WxAlerts.Contact = strings.Repeat("a", 120) }, false},
+		{"contact with newline", func(c *Config) { valid(c); c.WxAlerts.Contact = "ops@example.com\nInjected" }, true},
+		{"invalid default zone UGC", func(c *Config) { valid(c); c.WxAlerts.DefaultZones = []string{"not-a-zone"} }, true},
+		{"valid default zone UGC", func(c *Config) { valid(c); c.WxAlerts.DefaultZones = []string{"MIC081", "MIZ056"} }, false},
+		{"invalid watch notify", func(c *Config) { valid(c); c.WxAlerts.WatchNotify = "panel" }, true},
+		{"invalid advisory notify", func(c *Config) { valid(c); c.WxAlerts.AdvisoryNotify = "toast" }, true},
+		{"invalid statement notify", func(c *Config) { valid(c); c.WxAlerts.StatementNotify = "toast" }, true},
+		{"empty interrupt events", func(c *Config) { valid(c); c.WxAlerts.InterruptEvents = nil }, true},
+		{"blank interrupt event name", func(c *Config) { valid(c); c.WxAlerts.InterruptEvents = []string{"  "} }, true},
+		{"duplicate interrupt event (case-insensitive)", func(c *Config) {
+			valid(c)
+			c.WxAlerts.InterruptEvents = []string{"Tornado Warning", "tornado warning"}
+		}, true},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			cfg := DefaultConfig()
+			tt.modify(&cfg)
+			err := cfg.Validate()
+			if (err != nil) != tt.wantErr {
+				t.Errorf("Validate() error = %v, wantErr %v", err, tt.wantErr)
+			}
+		})
+	}
+}
+
+func TestWxAlertsYAMLRoundTrip(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "test.yaml")
+
+	yamlData := `
+server:
+  listen: ":8080"
+station:
+  callsign: "N0CALL"
+wx_alerts:
+  enabled: true
+  contact: "ops@example.com"
+  base_url: "https://mock.example"
+  poll_interval: 45s
+  default_buffer_miles: 15
+  default_zones: ["MIC081"]
+  interrupt_events: ["Tornado Warning", "Flash Flood Warning"]
+  watch_notify: badge
+  advisory_notify: panel
+  statement_notify: badge
+  sounds: false
+  include_test: true
+`
+	if err := os.WriteFile(path, []byte(yamlData), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	cfg, err := Load(path)
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+
+	wx := cfg.WxAlerts
+	if !wx.Enabled || wx.Contact != "ops@example.com" || wx.BaseURL != "https://mock.example" {
+		t.Errorf("wx_alerts core fields = %+v", wx)
+	}
+	if wx.PollInterval != 45*time.Second {
+		t.Errorf("PollInterval = %v, want 45s", wx.PollInterval)
+	}
+	if wx.DefaultBufferMiles != 15 {
+		t.Errorf("DefaultBufferMiles = %v, want 15", wx.DefaultBufferMiles)
+	}
+	if len(wx.DefaultZones) != 1 || wx.DefaultZones[0] != "MIC081" {
+		t.Errorf("DefaultZones = %v", wx.DefaultZones)
+	}
+	if len(wx.InterruptEvents) != 2 || wx.InterruptEvents[1] != "Flash Flood Warning" {
+		t.Errorf("InterruptEvents = %v", wx.InterruptEvents)
+	}
+	if wx.WatchNotify != "badge" || wx.AdvisoryNotify != "panel" || wx.StatementNotify != "badge" {
+		t.Errorf("notify classes = watch=%q advisory=%q statement=%q", wx.WatchNotify, wx.AdvisoryNotify, wx.StatementNotify)
+	}
+	if wx.Sounds {
+		t.Error("Sounds = true, want false")
+	}
+	if !wx.IncludeTest {
+		t.Error("IncludeTest = false, want true")
+	}
+}
+
+func TestWxContactEnvOverride(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "test.yaml")
+	if err := os.WriteFile(path, []byte("server:\n  listen: \":8080\"\nstation:\n  callsign: \"N0CALL\"\n"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("NYMERIA_WX_CONTACT", "env-contact@example.com")
+
+	cfg, err := Load(path)
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	if cfg.WxAlerts.Contact != "env-contact@example.com" {
+		t.Errorf("WxAlerts.Contact = %q, want env-contact@example.com", cfg.WxAlerts.Contact)
+	}
+}
+
+// TestWeatherThresholdsYAMLKeyUnchanged is the WeatherAlertThreshold ->
+// WeatherReadingThreshold rename's contract test: the yaml/json key stays
+// "alerts" (config.WeatherConfig.Thresholds), so an existing config file's
+// weather.alerts block, and anything already saved through the settings
+// API, keeps parsing unchanged.
+func TestWeatherThresholdsYAMLKeyUnchanged(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "test.yaml")
+
+	yamlData := `
+server:
+  listen: ":8080"
+station:
+  callsign: "N0CALL"
+weather:
+  retention_days: 14
+  units: imperial
+  alerts:
+    temperature:
+      min: -10
+      max: 100
+`
+	if err := os.WriteFile(path, []byte(yamlData), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	cfg, err := Load(path)
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	th, ok := cfg.Weather.Thresholds["temperature"]
+	if !ok {
+		t.Fatalf("Weather.Thresholds missing 'temperature': %v", cfg.Weather.Thresholds)
+	}
+	if th.Min == nil || *th.Min != -10 || th.Max == nil || *th.Max != 100 {
+		t.Errorf("temperature threshold = %+v, want min=-10 max=100", th)
 	}
 }

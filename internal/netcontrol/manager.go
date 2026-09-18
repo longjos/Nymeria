@@ -97,6 +97,16 @@ func (m *Manager) CreateNet(n store.Net) (*store.Net, error) {
 	if n.Status == "" {
 		n.Status = StatusDraft
 	}
+	// A fresh net's JSON slice fields must never be nil — a client that
+	// omitted them in the create request would otherwise get `null` back on
+	// this response and on every GET /nets until the process restarts and
+	// reloads from SQLite (whose LoadNet/LoadNets already normalize).
+	if n.WxExtraZones == nil {
+		n.WxExtraZones = []string{}
+	}
+	if n.WxInterruptEvents == nil {
+		n.WxInterruptEvents = []string{}
+	}
 
 	if err := m.store.SaveNet(n); err != nil {
 		return nil, fmt.Errorf("persist net: %w", err)
@@ -1362,6 +1372,51 @@ func (m *Manager) ReorderPins(netID string, callsigns []string) (*store.Net, err
 	}
 
 	n.PinnedStations = normalized
+	m.nets[netID] = n
+	m.mu.Unlock()
+
+	if err := m.store.SaveNet(n); err != nil {
+		return nil, fmt.Errorf("persist net: %w", err)
+	}
+
+	m.emit(Event{Type: EventNetUpdated, Data: n})
+
+	return &n, nil
+}
+
+// AddTimelineEvent is the exported form of logEvent for other packages
+// (internal/server's wx alert handlers and manager bridge) that need to add
+// a net timeline entry without owning the rest of net control. Unlike the
+// internal logEvent call sites, which always run right after confirming the
+// net exists as part of some other mutation, this validates netID itself.
+func (m *Manager) AddTimelineEvent(netID, eventType, callsign, summary string) error {
+	m.mu.RLock()
+	_, ok := m.nets[netID]
+	m.mu.RUnlock()
+	if !ok {
+		return fmt.Errorf("net %q not found", netID)
+	}
+	m.logEvent(netID, eventType, callsign, summary)
+	return nil
+}
+
+// SetWxWatch persists a net's NWS weather-watch settings (buffer, extra
+// zones, mute-advisories, and the custom interrupt allowlist) — see
+// store.Net's five Wx* fields and internal/wxalert. Mirrors SetOpsView:
+// mutate the cached copy under lock, persist, then emit for the WS bridge.
+func (m *Manager) SetWxWatch(netID string, bufferMiles float64, extraZones []string, muteAdvisories, interruptCustom bool, interruptEvents []string) (*store.Net, error) {
+	m.mu.Lock()
+	n, ok := m.nets[netID]
+	if !ok {
+		m.mu.Unlock()
+		return nil, fmt.Errorf("net %q not found", netID)
+	}
+
+	n.WxBufferMiles = bufferMiles
+	n.WxExtraZones = append([]string{}, extraZones...)
+	n.WxMuteAdvisories = muteAdvisories
+	n.WxInterruptCustom = interruptCustom
+	n.WxInterruptEvents = append([]string{}, interruptEvents...)
 	m.nets[netID] = n
 	m.mu.Unlock()
 

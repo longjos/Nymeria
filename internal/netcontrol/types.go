@@ -56,10 +56,15 @@ const (
 	EventNetUpdated     = "net_updated"
 	EventCheckInCreated = "checkin_created"
 	EventCheckInUpdated = "checkin_updated"
-	EventMissionCreated    = "mission_created"
-	EventMissionUpdated    = "mission_updated"
-	EventTimelineEntry = "net_timeline_entry"
+	EventMissionCreated = "mission_created"
+	EventMissionUpdated = "mission_updated"
+	EventTimelineEntry  = "net_timeline_entry"
 )
+
+// EventWxAlert is the timeline entry type for NWS weather alert activity
+// (received in-area, acknowledged for the net, relayed, ended) — logged via
+// AddTimelineEvent by internal/server's wx alert handlers and manager bridge.
+const EventWxAlert = "wx_alert"
 
 // Event represents a net control event for WebSocket broadcast.
 type Event struct {
@@ -69,10 +74,10 @@ type Event struct {
 
 // NetSummary is returned when a net is closed, summarizing its activity.
 type NetSummary struct {
-	NetID         string `json:"netId"`
-	Name          string `json:"name"`
-	Duration      string `json:"duration"`
-	TotalCheckIns int    `json:"totalCheckIns"`
-	TotalMissions int    `json:"totalMissions"`
+	NetID         string         `json:"netId"`
+	Name          string         `json:"name"`
+	Duration      string         `json:"duration"`
+	TotalCheckIns int            `json:"totalCheckIns"`
+	TotalMissions int            `json:"totalMissions"`
 	TrafficCounts map[string]int `json:"trafficCounts"`
 }

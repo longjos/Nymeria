@@ -29,6 +29,7 @@ import (
 	"github.com/narvel/nymeria/internal/store"
 	"github.com/narvel/nymeria/internal/tilecache"
 	"github.com/narvel/nymeria/internal/transport"
+	"github.com/narvel/nymeria/internal/wxalert"
 	nweb "github.com/narvel/nymeria/web"
 )
 
@@ -55,17 +56,49 @@ type Server struct {
 	weatherCfg config.WeatherConfig
 	w3w        *w3w.Client
 	w3wMu      sync.RWMutex
+
+	// NWS weather alerts (internal/wxalert). wxMgr is hot-swappable: enabling
+	// wx_alerts, or changing its contact/base URL/data dir, needs a fresh
+	// Manager (its HTTP client is fixed at construction), which app.go's
+	// config.Manager.OnChange callback builds and installs via
+	// SetWxAlertManager with no server restart. wxBaseConfig is that
+	// manager's own config, carried forward so the per-net-refresh path
+	// (buffer/interrupt/mute overrides) can rebuild it without knowing
+	// connection details it was never given.
+	wxMu         sync.RWMutex
+	wxMgr        *wxalert.Manager
+	wxMgrStop    chan struct{}
+	wxBaseConfig wxalert.Config
+
+	// wxSeen dedupes activity-log/timeline entries derived from polled
+	// snapshots: a MatchedAlert's UpdatedAt changes exactly when the Manager
+	// just recomputed its notify class in reaction to a real change, so
+	// "have we logged this UpdatedAt for this id yet" is a reliable,
+	// Manager-API-only way to log each transition exactly once without the
+	// Events() channel exposing the underlying Change list itself.
+	wxSeenMu sync.Mutex
+	wxSeen   map[string]time.Time
+
+	wxLinkMu      sync.Mutex
+	wxLinkWasDown bool
+
+	// wxFootprintDirty debounces footprint recomputation: annotation/roster/
+	// GPS/net-lifecycle changes all send here (non-blocking), and a single
+	// background loop coalesces bursts into one refreshWxFootprint call a
+	// few seconds later instead of one per event.
+	wxFootprintDirty chan struct{}
 }
 
 // New creates a new Server.
 func New(tracker station.Tracker, tm *transport.Manager, eng message.Engine, db store.Store, opts ...Option) *Server {
 	s := &Server{
-		router:     chi.NewRouter(),
-		hub:        ws.NewHub(),
-		tracker:    tracker,
-		transports: tm,
-		msgEngine:  eng,
-		store:      db,
+		router:           chi.NewRouter(),
+		hub:              ws.NewHub(),
+		tracker:          tracker,
+		transports:       tm,
+		msgEngine:        eng,
+		store:            db,
+		wxFootprintDirty: make(chan struct{}, 1),
 	}
 	for _, opt := range opts {
 		opt(s)
@@ -116,6 +149,11 @@ func New(tracker station.Tracker, tm *transport.Manager, eng message.Engine, db 
 	if s.gpsMgr != nil {
 		go s.bridgeGPS()
 	}
+	if s.wxMgr != nil {
+		s.wxMgrStop = make(chan struct{})
+		go s.bridgeWxAlertEvents(s.wxMgr, s.wxMgrStop)
+	}
+	go s.wxFootprintDebounceLoop()
 
 	return s
 }
@@ -204,6 +242,18 @@ func WithWeatherConfig(cfg config.WeatherConfig) Option {
 func WithConfigManager(mgr *config.Manager) Option {
 	return func(s *Server) {
 		s.configMgr = mgr
+	}
+}
+
+// WithWxAlertManager sets the initial NWS weather alert manager (nil is
+// valid — every wx route then answers 503, the tile-cache-style pattern).
+// baseConfig is the exact Config the manager was constructed with; the
+// per-net footprint refresh path rebuilds Config from it plus a net's
+// overrides rather than guessing connection details.
+func WithWxAlertManager(mgr *wxalert.Manager, baseConfig wxalert.Config) Option {
+	return func(s *Server) {
+		s.wxMgr = mgr
+		s.wxBaseConfig = baseConfig
 	}
 }
 
@@ -408,6 +458,7 @@ func (s *Server) bridgeAnnotationEvents() {
 			continue
 		}
 		s.hub.Broadcast(data)
+		s.TriggerWxFootprintRefresh()
 
 		// Sync annotation status change → mission status.
 		if evt.Type == annotation.EventAnnotationStatusChanged && s.netMgr != nil && len(evt.Data.MissionIDs) > 0 {
@@ -460,6 +511,7 @@ func (s *Server) bridgeNetControlEvents() {
 			continue
 		}
 		s.hub.Broadcast(data)
+		s.TriggerWxFootprintRefresh()
 
 		// Closing a net deliberately does NOT touch its annotations. Bulk-resolving
 		// them stamped a ResolvedAt nobody earned, destroyed the record of what was
@@ -594,6 +646,71 @@ func (s *Server) bridgeTileCacheEvents() {
 	}
 }
 
+// WxAlertManager returns the live NWS weather alert manager, or nil when the
+// feature has never been enabled. Every wx route reads through this rather
+// than a captured field, so a hot-swap (SetWxAlertManager) takes effect on
+// the very next request.
+func (s *Server) WxAlertManager() *wxalert.Manager {
+	s.wxMu.RLock()
+	defer s.wxMu.RUnlock()
+	return s.wxMgr
+}
+
+// WxBaseConfig returns the config the live manager was constructed with
+// (zero value when there is none), for the per-net-refresh path to rebuild
+// Config from without needing its own copy of connection details.
+func (s *Server) WxBaseConfig() wxalert.Config {
+	s.wxMu.RLock()
+	defer s.wxMu.RUnlock()
+	return s.wxBaseConfig
+}
+
+// SetWxAlertManager hot-swaps the live manager: app.go's config.Manager.
+// OnChange callback calls this whenever enabling/disabling wx alerts, or a
+// contact/base URL/data dir change, requires building a fresh Manager (its
+// HTTP client and zone cache are fixed at construction — see
+// wxalert.Manager.UpdateConfig's own doc comment). The previous manager's
+// event bridge goroutine is stopped so it cannot leak; mgr may be nil to
+// disable the feature entirely.
+func (s *Server) SetWxAlertManager(mgr *wxalert.Manager, baseConfig wxalert.Config) {
+	s.wxMu.Lock()
+	oldStop := s.wxMgrStop
+	s.wxMgr = mgr
+	s.wxBaseConfig = baseConfig
+	var stop chan struct{}
+	if mgr != nil {
+		stop = make(chan struct{})
+	}
+	s.wxMgrStop = stop
+	s.wxMu.Unlock()
+
+	if oldStop != nil {
+		close(oldStop)
+	}
+	s.wxSeenMu.Lock()
+	s.wxSeen = nil
+	s.wxSeenMu.Unlock()
+	if mgr != nil {
+		go s.bridgeWxAlertEvents(mgr, stop)
+	}
+}
+
+// bridgeWxAlertEvents reads one manager instance's events until either its
+// channel closes or stop fires (the manager was swapped out from under it).
+func (s *Server) bridgeWxAlertEvents(mgr *wxalert.Manager, stop <-chan struct{}) {
+	for {
+		select {
+		case evt, ok := <-mgr.Events():
+			if !ok {
+				return
+			}
+			s.handleWxAlertEvent(mgr, evt)
+		case <-stop:
+			return
+		}
+	}
+}
+
 // bridgeSessionEvents reads session lifecycle events and broadcasts/sends via WebSocket.
 func (s *Server) bridgeSessionEvents() {
 	for evt := range s.sessions.Events() {
@@ -615,6 +732,47 @@ func (s *Server) bridgeSessionEvents() {
 		default:
 			// access_request: broadcast to all (admins filter on frontend)
 			s.hub.Broadcast(data)
+		}
+	}
+}
+
+// TriggerWxFootprintRefresh queues a debounced weather-watch-footprint
+// recompute. Safe to call from anywhere (a full buffer just means a refresh
+// is already queued) and safe when wx alerts was never enabled (the loop's
+// refreshWxFootprint call is then a no-op).
+func (s *Server) TriggerWxFootprintRefresh() {
+	select {
+	case s.wxFootprintDirty <- struct{}{}:
+	default:
+	}
+}
+
+// wxFootprintDebounceLoop coalesces bursts of footprint-affecting changes
+// (an annotation import, a roster of check-ins arriving, GPS ticks) into one
+// refreshWxFootprint call a few seconds after the burst quiets down, plus an
+// unconditional periodic sweep so a change with no dedicated trigger (e.g. a
+// checkpoint sequence edit) still converges eventually.
+func (s *Server) wxFootprintDebounceLoop() {
+	const debounce = 3 * time.Second
+	const safetyNet = 5 * time.Minute
+
+	ticker := time.NewTicker(safetyNet)
+	defer ticker.Stop()
+
+	for {
+		select {
+		case <-s.wxFootprintDirty:
+			time.Sleep(debounce)
+			for drained := false; !drained; {
+				select {
+				case <-s.wxFootprintDirty:
+				default:
+					drained = true
+				}
+			}
+			s.refreshWxFootprint("footprint")
+		case <-ticker.C:
+			s.refreshWxFootprint("footprint")
 		}
 	}
 }

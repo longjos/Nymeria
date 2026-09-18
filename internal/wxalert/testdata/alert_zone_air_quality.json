@@ -1,0 +1,55 @@
+{
+  "id": "https://api.weather.gov/alerts/urn:oid:2.49.0.1.840.0.f5f886949fdcea7766d4e1428c4daa861d7d44f6.001.1",
+  "type": "Feature",
+  "geometry": null,
+  "properties": {
+    "id": "urn:oid:2.49.0.1.840.0.f5f886949fdcea7766d4e1428c4daa861d7d44f6.001.1",
+    "areaDesc": "Crittenden; DeSoto; Shelby",
+    "geocode": {
+      "SAME": [
+        "005035",
+        "028033",
+        "047157"
+      ],
+      "UGC": [
+        "ARZ036",
+        "MSZ001",
+        "TNZ088"
+      ]
+    },
+    "affectedZones": [
+      "https://api.weather.gov/zones/forecast/ARZ036",
+      "https://api.weather.gov/zones/forecast/MSZ001",
+      "https://api.weather.gov/zones/forecast/TNZ088"
+    ],
+    "references": [],
+    "sent": "2026-09-17T20:00:00-05:00",
+    "effective": "2026-09-17T20:00:00-05:00",
+    "onset": "2026-09-17T20:00:00-05:00",
+    "expires": "2026-09-18T17:30:00-05:00",
+    "ends": null,
+    "status": "Actual",
+    "messageType": "Alert",
+    "category": "Met",
+    "severity": "Unknown",
+    "certainty": "Unknown",
+    "urgency": "Unknown",
+    "event": "Air Quality Alert",
+    "sender": "w-nws.webmaster@noaa.gov",
+    "senderName": "NWS Memphis TN",
+    "headline": "Air Quality Alert issued September 17 at 8:00PM CDT by NWS Memphis TN",
+    "description": "AQAMEG\n\nThe Shelby County Health Department has issued a Code Orange Ozone\nForecast effective for Shelby County Tennessee, Crittenden County\nArkansas, and DeSot…",
+    "instruction": null,
+    "response": "Monitor",
+    "note": "Non-Weather Emergency Message. Not sent to IPAWS.",
+    "parameters": {
+      "NWSheadline": [
+        "CODE ORANGE OZONE FORECAST FOR FRIDAY"
+      ]
+    },
+    "scope": "Public",
+    "code": "IPAWSv1.0",
+    "language": "en-US",
+    "web": "http://www.weather.gov"
+  }
+}

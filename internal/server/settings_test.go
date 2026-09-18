@@ -133,6 +133,39 @@ func TestGetSettingsRedactsPasscodes(t *testing.T) {
 	}
 }
 
+// TestGetSettingsWxAlertsSlicesNeverNil pins a fresh install: config.
+// DefaultConfig() leaves WxAlerts.DefaultZones nil (no default_zones in
+// YAML is the common case — see nymeria.example.yaml, where the key is
+// commented out). toWxAlertsDTO must still hand the client a `[]`, never a
+// `null`, or the Settings › NWS Alerts panel throws immediately on render:
+// SettingsPanel.svelte does `settings.wxAlerts.defaultZones.includes(ugc)`
+// and `{#each settings.wxAlerts.defaultZones as ugc}` with no null guard,
+// matching TS's non-optional `defaultZones: string[]`.
+func TestGetSettingsWxAlertsSlicesNeverNil(t *testing.T) {
+	srv, sessMgr, _, _ := newTestSettingsServer(t)
+	token := adminToken(sessMgr)
+
+	w := doRequest(srv, "GET", "/api/settings", nil, token)
+	if w.Code != http.StatusOK {
+		t.Fatalf("GET settings: %d", w.Code)
+	}
+
+	var raw map[string]json.RawMessage
+	if err := json.Unmarshal(w.Body.Bytes(), &raw); err != nil {
+		t.Fatalf("unmarshal settings: %v", err)
+	}
+	var wx map[string]json.RawMessage
+	if err := json.Unmarshal(raw["wxAlerts"], &wx); err != nil {
+		t.Fatalf("unmarshal wxAlerts: %v", err)
+	}
+	for _, field := range []string{"defaultZones", "interruptEvents"} {
+		got := string(wx[field])
+		if got == "null" {
+			t.Errorf("wxAlerts.%s = null, want a JSON array (never nil)", field)
+		}
+	}
+}
+
 func TestUpdateStation(t *testing.T) {
 	srv, sessMgr, cfgMgr, cfgPath := newTestSettingsServer(t)
 	token := adminToken(sessMgr)
@@ -872,3 +905,62 @@ func TestUpdateGPSBadDuration(t *testing.T) {
 
 // Suppress unused import warning — context is used in session.Start but our test doesn't call it.
 var _ = context.Background
+
+// The UI must not hard-code the validator's numbers. GET /settings ships the
+// limits alongside the values so the input and config.Validate cannot drift.
+func TestGetSettingsShipsWxAlertLimits(t *testing.T) {
+	srv, sessMgr, _, _ := newTestSettingsServer(t)
+	_, token := userWithRole(t, sessMgr, "ADM", session.RoleAdmin)
+
+	w := doRequest(srv, "GET", "/api/settings", nil, token)
+	if w.Code != 200 {
+		t.Fatalf("GET /api/settings = %d (body %s)", w.Code, w.Body.String())
+	}
+
+	var body struct {
+		WxAlerts struct {
+			Limits struct {
+				BufferMilesMin  float64  `json:"bufferMilesMin"`
+				BufferMilesMax  float64  `json:"bufferMilesMax"`
+				PollIntervalMin string   `json:"pollIntervalMin"`
+				PollIntervalMax string   `json:"pollIntervalMax"`
+				NotifyChoices   []string `json:"notifyChoices"`
+			} `json:"limits"`
+		} `json:"wxAlerts"`
+	}
+	if err := json.Unmarshal(w.Body.Bytes(), &body); err != nil {
+		t.Fatalf("decode: %v (body %s)", err, w.Body.String())
+	}
+
+	lim := body.WxAlerts.Limits
+	if lim.BufferMilesMin != config.WxMinBufferMiles || lim.BufferMilesMax != config.WxMaxBufferMiles {
+		t.Errorf("buffer limits = %v-%v, want %v-%v",
+			lim.BufferMilesMin, lim.BufferMilesMax, config.WxMinBufferMiles, config.WxMaxBufferMiles)
+	}
+	if lim.PollIntervalMin != config.WxMinPollInterval.String() {
+		t.Errorf("pollIntervalMin = %q, want %q", lim.PollIntervalMin, config.WxMinPollInterval.String())
+	}
+	if lim.PollIntervalMax != config.WxMaxPollInterval.String() {
+		t.Errorf("pollIntervalMax = %q, want %q", lim.PollIntervalMax, config.WxMaxPollInterval.String())
+	}
+	if len(lim.NotifyChoices) == 0 {
+		t.Error("notifyChoices is empty; the UI has nothing to build a select from")
+	}
+}
+
+// The validator's message must name the range, since it surfaces verbatim
+// in a toast when someone edits nymeria.yaml by hand.
+func TestValidateBufferMilesMessageNamesRange(t *testing.T) {
+	cfg := config.DefaultConfig()
+	cfg.WxAlerts.Enabled = true
+	cfg.WxAlerts.Contact = "ops@example.com"
+	cfg.WxAlerts.DefaultBufferMiles = 100
+
+	err := cfg.Validate()
+	if err == nil {
+		t.Fatal("Validate() = nil, want an error for 100 miles")
+	}
+	if !strings.Contains(err.Error(), "2") || !strings.Contains(err.Error(), "50") {
+		t.Errorf("error %q does not name the 2-50 range", err.Error())
+	}
+}

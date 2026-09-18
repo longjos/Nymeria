@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"net/url"
 	"os"
+	"regexp"
 	"strings"
 	"time"
 
@@ -65,17 +66,73 @@ type TileCacheConfig struct {
 	MaxZoom int    `yaml:"max_zoom" json:"maxZoom"`
 }
 
-// WeatherAlertThreshold defines min/max alert thresholds for a weather metric.
-type WeatherAlertThreshold struct {
+// WeatherReadingThreshold defines min/max thresholds for a weather station
+// reading metric. Renamed from WeatherAlertThreshold: since internal/wxalert
+// shipped, "alert" means exactly one thing in this app — an NWS watch,
+// warning or advisory — and this has always been about flagging an out-of-
+// range sensor reading, not that. The UI label is "Reading thresholds"
+// (never "alert"). The yaml/json key deliberately stays "alerts" so existing
+// config files and the settings API round-trip unchanged; this is a Go
+// identifier rename only.
+type WeatherReadingThreshold struct {
 	Min *float64 `yaml:"min" json:"min,omitempty"`
 	Max *float64 `yaml:"max" json:"max,omitempty"`
 }
 
 // WeatherConfig holds weather dashboard settings.
 type WeatherConfig struct {
-	RetentionDays int                              `yaml:"retention_days" json:"retentionDays"`
-	Alerts        map[string]WeatherAlertThreshold `yaml:"alerts" json:"alerts"`
-	Units         string                           `yaml:"units" json:"units"`
+	RetentionDays int                                `yaml:"retention_days" json:"retentionDays"`
+	Thresholds    map[string]WeatherReadingThreshold `yaml:"alerts" json:"alerts"`
+	Units         string                             `yaml:"units" json:"units"`
+}
+
+// wxZoneUGCPattern matches an NWS UGC zone/county code (e.g. "MIZ056",
+// "MIC081"): two-letter state, C(ounty) or Z(one), three digits. Mirrors
+// internal/wxalert's own pattern as a literal — config stays a leaf package
+// and does not import wxalert.
+var wxZoneUGCPattern = regexp.MustCompile(`^[A-Z]{2}[CZ][0-9]{3}$`)
+
+// DefaultWxInterruptEvents is the seed interrupt allowlist copied into
+// WxAlertsConfig by DefaultConfig. It mirrors wxalert.DefaultInterruptEvents
+// (BUILD-PLAN §4.2) as a literal, in the same order, for the same
+// leaf-package reason; config_test.go asserts the two lists stay identical.
+var DefaultWxInterruptEvents = []string{
+	"Tornado Warning", "Flash Flood Emergency", "Severe Thunderstorm Warning", "Flash Flood Warning",
+	"Extreme Wind Warning", "Ice Storm Warning", "Blizzard Warning",
+}
+
+// WxAlertsConfig holds NWS weather watch/warning/advisory settings. Disabled
+// by default; enabling it requires a contact (NWS User-Agent policy) but
+// takes effect live, no restart (config.Manager.OnChange → wxalert.Manager.
+// UpdateConfig).
+// Validation limits for wx_alerts. Exported so the settings API can ship
+// them to the UI: the input constraints and Validate() below must never
+// drift apart.
+const (
+	WxMinBufferMiles = 2.0
+	WxMaxBufferMiles = 50.0
+
+	WxMinPollInterval = 30 * time.Second
+	WxMaxPollInterval = 10 * time.Minute
+)
+
+// WxNotifyChoices lists the accepted notification classes, quietest last.
+var WxNotifyChoices = []string{"toast", "badge", "panel"}
+
+type WxAlertsConfig struct {
+	Enabled            bool          `yaml:"enabled" json:"enabled"`
+	PollInterval       time.Duration `yaml:"poll_interval" json:"pollInterval"`
+	Contact            string        `yaml:"contact" json:"contact"` // e.g. an email or callsign+website; goes in the User-Agent
+	BaseURL            string        `yaml:"base_url" json:"baseUrl"`
+	DataDir            string        `yaml:"data_dir" json:"dataDir"` // zone polygon disk cache; "" = <store dir>/wxalerts
+	DefaultBufferMiles float64       `yaml:"default_buffer_miles" json:"defaultBufferMiles"`
+	DefaultZones       []string      `yaml:"default_zones" json:"defaultZones"`
+	InterruptEvents    []string      `yaml:"interrupt_events" json:"interruptEvents"`
+	WatchNotify        string        `yaml:"watch_notify" json:"watchNotify"`         // "toast" | "badge"
+	AdvisoryNotify     string        `yaml:"advisory_notify" json:"advisoryNotify"`   // "badge" | "panel"
+	StatementNotify    string        `yaml:"statement_notify" json:"statementNotify"` // "panel" | "badge"
+	Sounds             bool          `yaml:"sounds" json:"sounds"`
+	IncludeTest        bool          `yaml:"include_test" json:"includeTest"`
 }
 
 // What3WordsConfig holds the what3words geocoding proxy settings. The
@@ -103,6 +160,7 @@ type Config struct {
 	Weather    WeatherConfig               `yaml:"weather" json:"weather"`
 	GPS        GPSConfig                   `yaml:"gps" json:"gps"`
 	What3Words What3WordsConfig            `yaml:"what3words" json:"what3words"`
+	WxAlerts   WxAlertsConfig              `yaml:"wx_alerts" json:"wxAlerts"`
 }
 
 // ServerConfig holds HTTP server settings.
@@ -174,6 +232,18 @@ func DefaultConfig() Config {
 		Weather: WeatherConfig{
 			RetentionDays: 7,
 			Units:         "metric",
+		},
+		WxAlerts: WxAlertsConfig{
+			// Off by default and contact-gated: an install that never opts in
+			// never sends a single request to api.weather.gov (row 29).
+			Enabled:            false,
+			PollInterval:       60 * time.Second,
+			DefaultBufferMiles: 10,
+			InterruptEvents:    append([]string{}, DefaultWxInterruptEvents...),
+			WatchNotify:        "toast",
+			AdvisoryNotify:     "badge",
+			StatementNotify:    "panel",
+			Sounds:             true,
 		},
 		GPS: GPSConfig{
 			Enabled:      false,
@@ -351,6 +421,62 @@ func (c *Config) Validate() error {
 		}
 	}
 
+	if c.WxAlerts.Enabled {
+		if c.WxAlerts.PollInterval < WxMinPollInterval || c.WxAlerts.PollInterval > WxMaxPollInterval {
+			return fmt.Errorf("wx_alerts.poll_interval is %s; must be %s-%s",
+				c.WxAlerts.PollInterval, WxMinPollInterval, WxMaxPollInterval)
+		}
+		if c.WxAlerts.DefaultBufferMiles < WxMinBufferMiles || c.WxAlerts.DefaultBufferMiles > WxMaxBufferMiles {
+			return fmt.Errorf("wx_alerts.default_buffer_miles is %g; must be %g-%g",
+				c.WxAlerts.DefaultBufferMiles, WxMinBufferMiles, WxMaxBufferMiles)
+		}
+		contact := strings.TrimSpace(c.WxAlerts.Contact)
+		if contact == "" {
+			return fmt.Errorf("wx_alerts.contact is required when wx_alerts.enabled")
+		}
+		if len([]rune(contact)) > 120 || strings.ContainsAny(contact, "\r\n") {
+			return fmt.Errorf("wx_alerts.contact must be <= 120 characters with no line breaks")
+		}
+		for _, z := range c.WxAlerts.DefaultZones {
+			if !wxZoneUGCPattern.MatchString(strings.ToUpper(strings.TrimSpace(z))) {
+				return fmt.Errorf("wx_alerts.default_zones: invalid UGC code %q", z)
+			}
+		}
+		switch c.WxAlerts.WatchNotify {
+		case "toast", "badge":
+		default:
+			return fmt.Errorf("wx_alerts.watch_notify must be toast or badge")
+		}
+		switch c.WxAlerts.AdvisoryNotify {
+		case "badge", "panel":
+		default:
+			return fmt.Errorf("wx_alerts.advisory_notify must be badge or panel")
+		}
+		switch c.WxAlerts.StatementNotify {
+		case "panel", "badge":
+		default:
+			return fmt.Errorf("wx_alerts.statement_notify must be panel or badge")
+		}
+		// Shape only: names are checked against the 111-event catalog by
+		// wxalert.ValidateInterruptEvents at the PUT /settings/wxalerts and
+		// PUT /nets/{id}/wxwatch handlers (config is a leaf package and
+		// cannot import wxalert to do that check itself).
+		if len(c.WxAlerts.InterruptEvents) == 0 {
+			return fmt.Errorf("wx_alerts.interrupt_events must not be empty")
+		}
+		seen := map[string]bool{}
+		for _, ev := range c.WxAlerts.InterruptEvents {
+			if strings.TrimSpace(ev) == "" {
+				return fmt.Errorf("wx_alerts.interrupt_events: empty event name")
+			}
+			key := strings.ToLower(ev)
+			if seen[key] {
+				return fmt.Errorf("wx_alerts.interrupt_events: duplicate %q", ev)
+			}
+			seen[key] = true
+		}
+	}
+
 	return nil
 }
 
@@ -373,5 +499,8 @@ func applyEnvOverrides(cfg *Config) {
 	}
 	if v := os.Getenv("NYMERIA_W3W_BASE_URL"); v != "" {
 		cfg.What3Words.BaseURL = v
+	}
+	if v := os.Getenv("NYMERIA_WX_CONTACT"); v != "" {
+		cfg.WxAlerts.Contact = v
 	}
 }

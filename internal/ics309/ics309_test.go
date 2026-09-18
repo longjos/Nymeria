@@ -2,10 +2,12 @@ package ics309
 
 import (
 	"bytes"
+	"encoding/json"
 	"strings"
 	"testing"
 	"time"
 
+	"github.com/narvel/nymeria/internal/activity"
 	"github.com/narvel/nymeria/internal/message"
 )
 
@@ -165,6 +167,56 @@ func TestExportCSV(t *testing.T) {
 	}
 	if !strings.Contains(csv, "All clear sector 3") {
 		t.Error("CSV missing second data row")
+	}
+}
+
+func TestBuildFromWxRelays(t *testing.T) {
+	now := time.Now()
+
+	mk := func(office, to, callsign, subject string, at time.Time) activity.Entry {
+		d, _ := json.Marshal(WxRelayDetails{Office: office, To: to, Callsign: callsign, Subject: subject})
+		return activity.Entry{
+			Timestamp: at, Action: activity.ActionWxAlertRelayed, Details: string(d),
+		}
+	}
+
+	entries := []activity.Entry{
+		mk("KGRR", "Situation Board, BLN0, W1AW", "W8ABC", "Tornado Warning", now.Add(-2*time.Minute)),
+		mk("", "Situation Board", "N0CALL", "Flood Watch", now.Add(-1*time.Minute)),
+		// Wrong action — must be skipped.
+		{Timestamp: now, Action: activity.ActionWxAlertReceived, Details: `{"office":"KGRR"}`},
+		// Out of range — must be skipped.
+		mk("KGRR", "BLN0", "W8ABC", "Severe Thunderstorm Warning", now.Add(-time.Hour)),
+		// Malformed JSON — must be skipped, not crash.
+		{Timestamp: now, Action: activity.ActionWxAlertRelayed, Details: "not json"},
+	}
+
+	from := now.Add(-10 * time.Minute)
+	to := now
+
+	rows := BuildFromWxRelays(entries, from, to)
+	if len(rows) != 2 {
+		t.Fatalf("expected 2 rows, got %d: %+v", len(rows), rows)
+	}
+
+	// Chronological order.
+	if rows[0].Subject != "Tornado Warning" || rows[1].Subject != "Flood Watch" {
+		t.Errorf("rows not chronological: %+v", rows)
+	}
+
+	if rows[0].From != "NWS KGRR" {
+		t.Errorf("From = %q, want %q", rows[0].From, "NWS KGRR")
+	}
+	if rows[0].To != "Situation Board, BLN0, W1AW" {
+		t.Errorf("To = %q", rows[0].To)
+	}
+	if rows[0].Method != "NWS via Internet, relayed by W8ABC" {
+		t.Errorf("Method = %q", rows[0].Method)
+	}
+
+	// Missing office falls back to plain "NWS".
+	if rows[1].From != "NWS" {
+		t.Errorf("From (no office) = %q, want %q", rows[1].From, "NWS")
 	}
 }
 

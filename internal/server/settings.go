@@ -12,6 +12,7 @@ import (
 	"github.com/narvel/nymeria/internal/transport"
 	"github.com/narvel/nymeria/internal/transport/kisstcp"
 	"github.com/narvel/nymeria/internal/transport/serial"
+	"github.com/narvel/nymeria/internal/wxalert"
 )
 
 // --- DTO types for duration serialization ---
@@ -107,10 +108,41 @@ type what3wordsDTO struct {
 	Results          int    `json:"results"`
 }
 
+// wxAlertsDTO is config.WxAlertsConfig minus DataDir (an install-time detail,
+// never accepted from the client) with PollInterval as a duration string —
+// same convention as every other settings DTO in this file.
+// wxAlertLimitsDTO ships config.Validate's constraints to the client so the
+// inputs can advertise and enforce them at the point of entry, instead of
+// the operator discovering them from a rejected save.
+type wxAlertLimitsDTO struct {
+	BufferMilesMin  float64  `json:"bufferMilesMin"`
+	BufferMilesMax  float64  `json:"bufferMilesMax"`
+	PollIntervalMin string   `json:"pollIntervalMin"`
+	PollIntervalMax string   `json:"pollIntervalMax"`
+	NotifyChoices   []string `json:"notifyChoices"`
+}
+
+type wxAlertsDTO struct {
+	Enabled            bool     `json:"enabled"`
+	PollInterval       string   `json:"pollInterval"`
+	Contact            string   `json:"contact"`
+	BaseURL            string   `json:"baseUrl"`
+	DefaultBufferMiles float64  `json:"defaultBufferMiles"`
+	DefaultZones       []string `json:"defaultZones"`
+	InterruptEvents    []string `json:"interruptEvents"`
+	WatchNotify        string   `json:"watchNotify"`
+	AdvisoryNotify     string   `json:"advisoryNotify"`
+	StatementNotify    string   `json:"statementNotify"`
+	Sounds             bool     `json:"sounds"`
+	IncludeTest        bool     `json:"includeTest"`
+
+	Limits wxAlertLimitsDTO `json:"limits"`
+}
+
 type weatherDTO struct {
-	RetentionDays int                                     `json:"retentionDays"`
-	Alerts        map[string]config.WeatherAlertThreshold `json:"alerts,omitempty"`
-	Units         string                                  `json:"units"`
+	RetentionDays int                                       `json:"retentionDays"`
+	Alerts        map[string]config.WeatherReadingThreshold `json:"alerts,omitempty"`
+	Units         string                                    `json:"units"`
 }
 
 type settingsResponse struct {
@@ -125,6 +157,7 @@ type settingsResponse struct {
 	Store      storeDTO       `json:"store"`
 	GPS        gpsDTO         `json:"gps"`
 	What3Words what3wordsDTO  `json:"what3words"`
+	WxAlerts   wxAlertsDTO    `json:"wxAlerts"`
 }
 
 type updateResponse struct {
@@ -369,7 +402,7 @@ func fromTileCacheDTO(d tileCacheDTO) config.TileCacheConfig {
 func toWeatherDTO(c config.WeatherConfig) weatherDTO {
 	return weatherDTO{
 		RetentionDays: c.RetentionDays,
-		Alerts:        c.Alerts,
+		Alerts:        c.Thresholds,
 		Units:         c.Units,
 	}
 }
@@ -381,9 +414,49 @@ func fromWeatherDTO(d weatherDTO) config.WeatherConfig {
 	}
 	return config.WeatherConfig{
 		RetentionDays: d.RetentionDays,
-		Alerts:        d.Alerts,
+		Thresholds:    d.Alerts,
 		Units:         units,
 	}
+}
+
+func toWxAlertsDTO(c config.WxAlertsConfig) wxAlertsDTO {
+	defaultZones := c.DefaultZones
+	if defaultZones == nil {
+		defaultZones = []string{}
+	}
+	interruptEvents := c.InterruptEvents
+	if interruptEvents == nil {
+		interruptEvents = []string{}
+	}
+	return wxAlertsDTO{
+		Enabled: c.Enabled, PollInterval: c.PollInterval.String(), Contact: c.Contact, BaseURL: c.BaseURL,
+		DefaultBufferMiles: c.DefaultBufferMiles, DefaultZones: defaultZones, InterruptEvents: interruptEvents,
+		WatchNotify: c.WatchNotify, AdvisoryNotify: c.AdvisoryNotify, StatementNotify: c.StatementNotify,
+		Sounds: c.Sounds, IncludeTest: c.IncludeTest,
+		Limits: wxAlertLimitsDTO{
+			BufferMilesMin:  config.WxMinBufferMiles,
+			BufferMilesMax:  config.WxMaxBufferMiles,
+			PollIntervalMin: config.WxMinPollInterval.String(),
+			PollIntervalMax: config.WxMaxPollInterval.String(),
+			NotifyChoices:   append([]string{}, config.WxNotifyChoices...),
+		},
+	}
+}
+
+// fromWxAlertsDTO never accepts DataDir from the client — it always carries
+// existing.DataDir forward (an install-time detail set only via YAML/env).
+func fromWxAlertsDTO(d wxAlertsDTO, existing config.WxAlertsConfig) (config.WxAlertsConfig, error) {
+	interval, err := time.ParseDuration(d.PollInterval)
+	if err != nil && d.PollInterval != "" {
+		return config.WxAlertsConfig{}, err
+	}
+	return config.WxAlertsConfig{
+		Enabled: d.Enabled, PollInterval: interval, Contact: d.Contact, BaseURL: d.BaseURL,
+		DataDir:            existing.DataDir,
+		DefaultBufferMiles: d.DefaultBufferMiles, DefaultZones: d.DefaultZones, InterruptEvents: d.InterruptEvents,
+		WatchNotify: d.WatchNotify, AdvisoryNotify: d.AdvisoryNotify, StatementNotify: d.StatementNotify,
+		Sounds: d.Sounds, IncludeTest: d.IncludeTest,
+	}, nil
 }
 
 func toWhat3WordsDTO(c config.What3WordsConfig) what3wordsDTO {
@@ -452,6 +525,7 @@ func (s *Server) handleGetSettings(w http.ResponseWriter, _ *http.Request) {
 		Store:      storeDTO{Path: cfg.Store.Path},
 		GPS:        toGPSDTO(cfg.GPS),
 		What3Words: toWhat3WordsDTO(cfg.What3Words),
+		WxAlerts:   toWxAlertsDTO(cfg.WxAlerts),
 	}
 
 	writeJSON(w, http.StatusOK, resp)
@@ -763,6 +837,45 @@ func (s *Server) handleUpdateWhat3Words(w http.ResponseWriter, r *http.Request) 
 	if c := s.w3wClient(); c != nil {
 		c.SetAPIKey(w3wCfg.APIKey)
 		c.SetEnabled(w3wCfg.Enabled)
+	}
+
+	writeJSON(w, http.StatusOK, updateResponse{RestartRequired: false})
+}
+
+// handleUpdateWxAlerts is live, no restart (decision: "Enabled toggle:
+// live"): configMgr.Update fires cfgMgr.OnChange, whose callback in app.go
+// rebuilds or hot-swaps the wx alert manager as needed (SetWxAlertManager)
+// when Enabled/Contact/BaseURL changed, or just calls UpdateConfig for a
+// policy-only edit (buffer/interrupt events/notify classes/sounds).
+func (s *Server) handleUpdateWxAlerts(w http.ResponseWriter, r *http.Request) {
+	if s.configMgr == nil {
+		writeJSON(w, http.StatusServiceUnavailable, map[string]string{"error": "config manager not available"})
+		return
+	}
+
+	var dto wxAlertsDTO
+	if err := json.NewDecoder(r.Body).Decode(&dto); err != nil {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid request body"})
+		return
+	}
+
+	cfg := s.configMgr.Get()
+	wxCfg, err := fromWxAlertsDTO(dto, cfg.WxAlerts)
+	if err != nil {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
+		return
+	}
+	canon, err := wxalert.ValidateInterruptEvents(wxCfg.InterruptEvents)
+	if err != nil {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
+		return
+	}
+	wxCfg.InterruptEvents = canon
+
+	cfg.WxAlerts = wxCfg
+	if err := s.configMgr.Update(cfg); err != nil {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
+		return
 	}
 
 	writeJSON(w, http.StatusOK, updateResponse{RestartRequired: false})

@@ -2,11 +2,14 @@ package ics309
 
 import (
 	"encoding/csv"
+	"encoding/json"
 	"fmt"
 	"io"
 	"sort"
+	"strings"
 	"time"
 
+	"github.com/narvel/nymeria/internal/activity"
 	"github.com/narvel/nymeria/internal/message"
 )
 
@@ -54,6 +57,63 @@ func BuildFromMessages(msgs []message.Message, from, to time.Time, defaultMethod
 			From:     m.From,
 			To:       m.To,
 			Subject:  m.Body,
+			Method:   method,
+		})
+	}
+
+	sort.Slice(rows, func(i, j int) bool {
+		return rows[i].DateTime.Before(rows[j].DateTime)
+	})
+
+	return rows
+}
+
+// WxRelayDetails is the JSON shape internal/server's relay handler writes
+// into activity.Entry.Details for activity.ActionWxAlertRelayed, so
+// BuildFromWxRelays can reconstruct an exact ICS-309 row from the activity
+// log alone rather than re-deriving it from the (by-then possibly changed)
+// alert record.
+type WxRelayDetails struct {
+	Office   string `json:"office"`   // sender/WFO, e.g. "KGRR"; "" when the alert carried none
+	To       string `json:"to"`       // comma-joined destinations, e.g. "Situation Board, BLN0, W1AW"
+	Callsign string `json:"callsign"` // relaying NCS's callsign
+	Subject  string `json:"subject"`  // the alert's headline/event, for the Subject column
+}
+
+// BuildFromWxRelays converts activity log entries for relayed NWS alerts
+// into ICS-309 rows, filtered by time range and sorted chronologically —
+// the same contract as BuildFromMessages, so a caller can concatenate both
+// row sets and re-sort once (see server's ICS-309 handlers). Entries whose
+// Details is not a WxRelayDetails JSON blob (or that are not
+// ActionWxAlertRelayed) are skipped rather than emitted as a garbled row.
+func BuildFromWxRelays(entries []activity.Entry, from, to time.Time) []Row {
+	var rows []Row
+	for _, e := range entries {
+		if e.Action != activity.ActionWxAlertRelayed {
+			continue
+		}
+		if e.Timestamp.Before(from) || e.Timestamp.After(to) {
+			continue
+		}
+		var d WxRelayDetails
+		if err := json.Unmarshal([]byte(e.Details), &d); err != nil {
+			continue
+		}
+
+		fromField := "NWS"
+		if office := strings.TrimSpace(d.Office); office != "" {
+			fromField = "NWS " + office
+		}
+		method := "NWS via Internet"
+		if d.Callsign != "" {
+			method = fmt.Sprintf("NWS via Internet, relayed by %s", d.Callsign)
+		}
+
+		rows = append(rows, Row{
+			DateTime: e.Timestamp,
+			From:     fromField,
+			To:       d.To,
+			Subject:  d.Subject,
 			Method:   method,
 		})
 	}

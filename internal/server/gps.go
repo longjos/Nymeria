@@ -93,6 +93,7 @@ func (s *Server) bridgeGPS() {
 		}
 		s.hub.Broadcast(data)
 		lastSent, lastAt, pending = sig, time.Now(), false
+		s.TriggerWxFootprintRefresh()
 	}
 
 	for {

@@ -1,0 +1,68 @@
+{
+  "id": "https://api.weather.gov/alerts/urn:oid:2.49.0.1.840.0.f317026bd063ac767c9d21d71dd043ff79e8589b.001.1",
+  "type": "Feature",
+  "geometry": null,
+  "properties": {
+    "id": "urn:oid:2.49.0.1.840.0.f317026bd063ac767c9d21d71dd043ff79e8589b.001.1",
+    "areaDesc": "City and Borough of Yakutat; Municipality of Skagway; Haines Borough and Klukwan; Glacier Bay; Eastern Chichagof Island; Cape Fairweather to Lisianski Strait; City and Borough of Sitka; Admiralty Island; City and Borough of Juneau; Petersburg Borough; Western Kupreanof and Kuiu Island",
+    "geocode": {
+      "SAME": [
+        "002282",
+        "002230",
+        "002100",
+        "002105",
+        "002220"
+      ],
+      "UGC": [
+        "AKZ317",
+        "AKZ318",
+        "AKZ319",
+        "AKZ320",
+        "AKZ321",
+        "AKZ322",
+        "AKZ323",
+        "AKZ324",
+        "AKZ325",
+        "AKZ326",
+        "AKZ327"
+      ]
+    },
+    "affectedZones": [
+      "https://api.weather.gov/zones/forecast/AKZ317",
+      "https://api.weather.gov/zones/forecast/AKZ318",
+      "https://api.weather.gov/zones/forecast/AKZ319",
+      "https://api.weather.gov/zones/forecast/AKZ320",
+      "https://api.weather.gov/zones/forecast/AKZ321"
+    ],
+    "references": [],
+    "sent": "2026-09-17T11:37:00-08:00",
+    "effective": "2026-09-17T11:37:00-08:00",
+    "onset": "2026-09-17T11:37:00-08:00",
+    "expires": "2026-09-17T19:45:00-08:00",
+    "ends": null,
+    "status": "Actual",
+    "messageType": "Alert",
+    "category": "Met",
+    "severity": "Moderate",
+    "certainty": "Observed",
+    "urgency": "Expected",
+    "event": "Special Weather Statement",
+    "sender": "w-nws.webmaster@noaa.gov",
+    "senderName": "NWS Juneau AK",
+    "headline": "Special Weather Statement issued September 17 at 11:37AM AKDT by NWS Juneau AK",
+    "description": "Heavy rain and strong winds are expected to start Friday and last\nthrough the weekend as multiple strong low pressure systems move\ninto the northern gulf. These\u2026",
+    "instruction": null,
+    "response": "Execute",
+    "note": null,
+    "parameters": {
+      "NWSheadline": [
+        "STRONG WINDS AND HEAVY RAIN IN STORE FOR THIS WEEKEND"
+      ]
+    },
+    "scope": "Public",
+    "code": "IPAWSv1.0",
+    "language": "en-US",
+    "web": "http://www.weather.gov",
+    "_affectedZonesTrimmed": "_trimmed_from_11"
+  }
+}

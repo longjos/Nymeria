@@ -1,0 +1,58 @@
+{
+  "id": "https://api.weather.gov/alerts/urn:oid:2.49.0.1.840.0.synthetictor0000000000000000000001.001.1",
+  "type": "Feature",
+  "geometry": {
+    "type": "Polygon",
+    "coordinates": [
+      [
+        [-85.80, 42.90],
+        [-85.50, 42.90],
+        [-85.50, 43.05],
+        [-85.80, 43.05],
+        [-85.80, 42.90]
+      ]
+    ]
+  },
+  "properties": {
+    "id": "urn:oid:2.49.0.1.840.0.synthetictor0000000000000000000001.001.1",
+    "areaDesc": "Kent, MI; Ottawa, MI",
+    "geocode": {
+      "SAME": ["026081", "026139"],
+      "UGC": ["MIC081", "MIC139"]
+    },
+    "affectedZones": [
+      "https://api.weather.gov/zones/county/MIC081",
+      "https://api.weather.gov/zones/county/MIC139"
+    ],
+    "references": [],
+    "sent": "2026-09-17T16:00:00-04:00",
+    "effective": "2026-09-17T16:00:00-04:00",
+    "onset": "2026-09-17T16:00:00-04:00",
+    "expires": "2026-09-17T16:45:00-04:00",
+    "ends": "2026-09-17T16:45:00-04:00",
+    "status": "Actual",
+    "messageType": "Alert",
+    "category": "Met",
+    "severity": "Extreme",
+    "certainty": "Observed",
+    "urgency": "Immediate",
+    "event": "Tornado Warning",
+    "sender": "w-nws.webmaster@noaa.gov",
+    "senderName": "NWS Grand Rapids MI",
+    "headline": "Tornado Warning issued September 17 at 4:00PM EDT until September 17 at 4:45PM EDT by NWS Grand Rapids MI",
+    "description": "SYNTHETIC TEST FIXTURE. At 400 PM EDT, a confirmed tornado was located near downtown Grand Rapids, moving northeast at 35 mph. This is a synthetic fixture built from a real TOR template for wxalert tests; it does not describe a real event.",
+    "instruction": "TAKE COVER NOW! Move to a basement or an interior room on the lowest floor of a sturdy building. This is a synthetic test fixture.",
+    "response": "Shelter",
+    "parameters": {
+      "VTEC": ["/O.NEW.KGRR.TO.W.0007.260917T2000Z-260917T2045Z/"],
+      "NWSheadline": ["TORNADO WARNING FOR KENT AND OTTAWA COUNTIES"],
+      "tornadoDetection": ["OBSERVED"],
+      "tornadoDamageThreat": ["CATASTROPHIC"],
+      "eventEndingTime": ["2026-09-17T16:45:00-04:00"]
+    },
+    "scope": "Public",
+    "code": "IPAWSv1.0",
+    "language": "en-US",
+    "web": "http://www.weather.gov"
+  }
+}

@@ -1,0 +1,50 @@
+{
+  "id": "https://api.weather.gov/alerts/urn:oid:2.49.0.1.840.0.synthetictorcancel000000000001.001.1",
+  "type": "Feature",
+  "geometry": null,
+  "properties": {
+    "id": "urn:oid:2.49.0.1.840.0.synthetictorcancel000000000001.001.1",
+    "areaDesc": "Kent, MI; Ottawa, MI",
+    "geocode": {
+      "SAME": ["026081", "026139"],
+      "UGC": ["MIC081", "MIC139"]
+    },
+    "affectedZones": [
+      "https://api.weather.gov/zones/county/MIC081",
+      "https://api.weather.gov/zones/county/MIC139"
+    ],
+    "references": [
+      {
+        "@id": "https://api.weather.gov/alerts/urn:oid:2.49.0.1.840.0.synthetictor0000000000000000000001.001.1",
+        "identifier": "urn:oid:2.49.0.1.840.0.synthetictor0000000000000000000001.001.1",
+        "sender": "w-nws.webmaster@noaa.gov",
+        "sent": "2026-09-17T16:00:00-04:00"
+      }
+    ],
+    "sent": "2026-09-17T16:20:00-04:00",
+    "effective": "2026-09-17T16:20:00-04:00",
+    "onset": "2026-09-17T16:20:00-04:00",
+    "expires": "2026-09-17T16:20:00-04:00",
+    "ends": null,
+    "status": "Actual",
+    "messageType": "Cancel",
+    "category": "Met",
+    "severity": "Extreme",
+    "certainty": "Observed",
+    "urgency": "Past",
+    "event": "Tornado Warning",
+    "sender": "w-nws.webmaster@noaa.gov",
+    "senderName": "NWS Grand Rapids MI",
+    "headline": "Tornado Warning cancelled by NWS Grand Rapids MI",
+    "description": "SYNTHETIC TEST FIXTURE. The tornado warning has been cancelled.",
+    "instruction": null,
+    "response": "Monitor",
+    "parameters": {
+      "VTEC": ["/O.CAN.KGRR.TO.W.0007.000000T0000Z-260917T2045Z/"]
+    },
+    "scope": "Public",
+    "code": "IPAWSv1.0",
+    "language": "en-US",
+    "web": "http://www.weather.gov"
+  }
+}

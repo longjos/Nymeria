@@ -2,6 +2,7 @@ package app
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"log"
 	"net/http"
@@ -29,6 +30,7 @@ import (
 	"github.com/narvel/nymeria/internal/transport/aprsis"
 	"github.com/narvel/nymeria/internal/transport/kisstcp"
 	"github.com/narvel/nymeria/internal/transport/serial"
+	"github.com/narvel/nymeria/internal/wxalert"
 )
 
 // Options configures New.
@@ -343,6 +345,26 @@ func New(opts Options) (*App, error) {
 	// Create config manager for settings API
 	cfgMgr := config.NewManager(opts.ConfigPath, cfg)
 
+	// Create the NWS weather alert manager — only when enabled, so an
+	// unconfigured install never sends a single request to api.weather.gov
+	// and s.wxMgr stays nil (the tile-cache pattern every wx route's 503
+	// gate relies on). A construction failure (e.g. a malformed contact
+	// that slipped past config.Validate) is logged and treated as "not
+	// configured" rather than failing boot — this is an optional feature,
+	// the same tolerance tile cache init gets below.
+	wxCfg := toWxAlertConfig(cfg.WxAlerts, cfg.Store.Path, version)
+	var wxMgr *wxalert.Manager
+	if cfg.WxAlerts.Enabled {
+		var err error
+		wxMgr, err = wxalert.NewManager(wxCfg)
+		if err != nil {
+			log.Printf("warning: wx alerts manager init failed: %v", err)
+			wxMgr = nil
+		} else {
+			hydrateWxAlerts(db, wxMgr)
+		}
+	}
+
 	// Register config change callbacks for live reload
 	cfgMgr.OnChange(func(old, newCfg config.Config) {
 		// Beacon: update config and restart if needed
@@ -440,7 +462,55 @@ func New(opts Options) (*App, error) {
 		serverOpts = append(serverOpts, server.WithGPSManager(gpsMgr))
 	}
 	serverOpts = append(serverOpts, server.WithWhat3Words(w3wClient))
+	serverOpts = append(serverOpts, server.WithWxAlertManager(wxMgr, wxCfg))
 	srv := server.New(tracker, tm, msgEngine, db, serverOpts...)
+
+	if wxMgr != nil {
+		wxMgr.Start(ctx)
+		log.Printf("wx alerts enabled (poll %s, buffer %g mi)", wxCfg.PollInterval, wxCfg.DefaultBufferMiles)
+	}
+	// Populate the watch footprint (own position, plus any open net's
+	// course/roster) and regionally scope the poller before its first tick.
+	srv.TriggerWxFootprintRefresh()
+
+	// wx alerts settings changed live: a connection-detail change
+	// (enabled/contact/base URL/data dir/poll interval/sounds — all fixed
+	// at Manager/Poller construction, see wxalert.Manager.UpdateConfig's own
+	// doc comment) rebuilds and hot-swaps the manager with no restart;
+	// anything else is a policy-only change refreshWxFootprint's
+	// UpdateConfig call already picks up live.
+	cfgMgr.OnChange(func(old, newCfg config.Config) {
+		needsRebuild := old.WxAlerts.Enabled != newCfg.WxAlerts.Enabled ||
+			old.WxAlerts.Contact != newCfg.WxAlerts.Contact ||
+			old.WxAlerts.BaseURL != newCfg.WxAlerts.BaseURL ||
+			old.WxAlerts.DataDir != newCfg.WxAlerts.DataDir ||
+			old.WxAlerts.PollInterval != newCfg.WxAlerts.PollInterval ||
+			old.WxAlerts.Sounds != newCfg.WxAlerts.Sounds
+		if !needsRebuild {
+			if newCfg.WxAlerts.Enabled {
+				srv.TriggerWxFootprintRefresh()
+			}
+			return
+		}
+
+		newWxCfg := toWxAlertConfig(newCfg.WxAlerts, newCfg.Store.Path, version)
+		var newMgr *wxalert.Manager
+		if newCfg.WxAlerts.Enabled {
+			var err error
+			newMgr, err = wxalert.NewManager(newWxCfg)
+			if err != nil {
+				log.Printf("[config] wx alerts rebuild failed: %v", err)
+				return
+			}
+			hydrateWxAlerts(db, newMgr)
+		}
+		srv.SetWxAlertManager(newMgr, newWxCfg)
+		if newMgr != nil {
+			newMgr.Start(ctx)
+		}
+		srv.TriggerWxFootprintRefresh()
+		log.Printf("[config] wx alerts manager rebuilt (enabled=%v)", newCfg.WxAlerts.Enabled)
+	})
 
 	fanoutDone := make(chan struct{})
 	// Frame processing loop: parse frames → tracker + message engine + object manager + tactical
@@ -582,6 +652,58 @@ func toSmartConfig(c *config.SmartBeaconConfig) *beacon.SmartConfig {
 		}
 	}
 	return sb
+}
+
+// toWxAlertConfig adapts config.WxAlertsConfig (YAML/JSON settings) to
+// wxalert.Config (wxalert never imports internal/config — see its own
+// package doc). storePath's directory is the default zone-cache location
+// (<store dir>/wxalerts) when DataDir is unset; version+contact become the
+// NWS-policy-required User-Agent ("Nymeria/<version> (<contact>)").
+func toWxAlertConfig(c config.WxAlertsConfig, storePath, version string) wxalert.Config {
+	dataDir := c.DataDir
+	if dataDir == "" {
+		dataDir = filepath.Join(filepath.Dir(storePath), "wxalerts")
+	}
+	ua := ""
+	if c.Contact != "" {
+		ua = fmt.Sprintf("Nymeria/%s (%s)", version, c.Contact)
+	}
+	return wxalert.Config{
+		Enabled: c.Enabled, UserAgent: ua, BaseURL: c.BaseURL, PollInterval: c.PollInterval,
+		ZoneDataDir: dataDir, DefaultBufferMiles: c.DefaultBufferMiles,
+		InterruptEvents: append([]string{}, c.InterruptEvents...),
+		WatchNotify:     wxalert.NotifyClass(c.WatchNotify),
+		AdvisoryNotify:  wxalert.NotifyClass(c.AdvisoryNotify),
+		StatementNotify: wxalert.NotifyClass(c.StatementNotify),
+		Sounds:          c.Sounds,
+	}
+}
+
+// hydrateWxAlerts restores the registry across a restart from the last
+// snapshot internal/server's manager event bridge persisted. It round-trips
+// through encoding/json even though RegistrySnapshot's element type is
+// unexported — reflection only cares that the fields it walks are exported,
+// which Active/Ended's MatchedAlert/PrevID are. A missing or corrupt
+// snapshot (including a brand-new database) just starts empty, same as
+// today with the feature off.
+func hydrateWxAlerts(db store.Store, mgr *wxalert.Manager) {
+	blob, ok, err := db.GetWxMeta("registry_snapshot")
+	if err != nil {
+		log.Printf("warning: read wx alerts registry snapshot: %v", err)
+		return
+	}
+	if !ok || blob == "" {
+		return
+	}
+	var snap wxalert.RegistrySnapshot
+	if err := json.Unmarshal([]byte(blob), &snap); err != nil {
+		log.Printf("warning: parse wx alerts registry snapshot: %v", err)
+		return
+	}
+	mgr.RestoreRegistry(snap)
+	if n := len(snap.Active); n > 0 {
+		log.Printf("restored %d active wx alert(s) from database", n)
+	}
 }
 
 // stationPath parses a configured TNC2 path. Invalid values fall back to WIDE1-1,WIDE2-1

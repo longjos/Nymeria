@@ -113,3 +113,34 @@ what3words:
   results: 5          # autosuggest rows (1-10)
   forward_ttl: 24h    # cache for words->coords and coords->words
   suggest_ttl: 5m     # cache for autosuggest
+
+# NWS weather watches, warnings and advisories (api.weather.gov). Off by
+# default; enabling requires a contact (NWS User-Agent policy — see
+# https://www.weather.gov/documentation/services-web-api), an email or a
+# callsign+website both work. Everything here is live-reloadable, no restart.
+# This is NOT the weather-station reading thresholds below (weather.alerts) —
+# "alert" here means an actual NWS watch/warning/advisory.
+wx_alerts:
+  enabled: false
+  contact: ""                        # or NYMERIA_WX_CONTACT; required when enabled
+  base_url: ""                       # override to point at a mock (default https://api.weather.gov)
+  poll_interval: 60s                 # 30s-10m
+  default_buffer_miles: 10           # 2-50; how far "near" extends past the watch area
+  # default_zones: ["MIC081"]        # extra always-watched UGC zone codes
+  # NCS-editable per net (Net Control → weather watch area); this is the
+  # seed allowlist for a fresh net. Extreme+Immediate+in-area alerts always
+  # show at least a toast regardless of this list — that floor cannot be
+  # turned off.
+  interrupt_events:
+    - "Tornado Warning"
+    - "Flash Flood Emergency"
+    - "Severe Thunderstorm Warning"
+    - "Flash Flood Warning"
+    - "Extreme Wind Warning"
+    - "Ice Storm Warning"
+    - "Blizzard Warning"
+  watch_notify: toast       # toast | badge
+  advisory_notify: badge    # badge | panel
+  statement_notify: panel   # panel | badge
+  sounds: true
+  include_test: false       # include CAP status=Test/Exercise/System alerts (never Actual)

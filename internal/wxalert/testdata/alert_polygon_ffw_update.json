@@ -1,0 +1,111 @@
+{
+  "id": "https://api.weather.gov/alerts/urn:oid:2.49.0.1.840.0.1c8973854eca5dd9b43de6a39a2e8df328acae4e.001.1",
+  "type": "Feature",
+  "geometry": {
+    "type": "Polygon",
+    "coordinates": [
+      [
+        [
+          -107.22,
+          36.22
+        ],
+        [
+          -107.23,
+          36.18
+        ],
+        [
+          -107.27,
+          36.11
+        ],
+        [
+          -107.34,
+          36.07
+        ],
+        [
+          -107.39,
+          36.08
+        ],
+        [
+          -107.41,
+          36.14
+        ],
+        [
+          -107.39,
+          36.15
+        ],
+        [
+          -107.38,
+          36.19
+        ],
+        [
+          -107.35,
+          36.22
+        ],
+        [
+          -107.22,
+          36.22
+        ]
+      ]
+    ]
+  },
+  "properties": {
+    "id": "urn:oid:2.49.0.1.840.0.1c8973854eca5dd9b43de6a39a2e8df328acae4e.001.1",
+    "areaDesc": "Sandoval, NM",
+    "geocode": {
+      "SAME": [
+        "035043"
+      ],
+      "UGC": [
+        "NMC043"
+      ]
+    },
+    "affectedZones": [
+      "https://api.weather.gov/zones/county/NMC043"
+    ],
+    "references": [
+      {
+        "@id": "https://api.weather.gov/alerts/urn:oid:2.49.0.1.840.0.5a8c6a5fdc002f708a88d986554ce8e91f2e5ebc.001.1",
+        "identifier": "urn:oid:2.49.0.1.840.0.5a8c6a5fdc002f708a88d986554ce8e91f2e5ebc.001.1",
+        "sender": "w-nws.webmaster@noaa.gov",
+        "sent": "2026-09-17T19:03:00-06:00"
+      }
+    ],
+    "sent": "2026-09-17T19:38:00-06:00",
+    "effective": "2026-09-17T19:38:00-06:00",
+    "onset": "2026-09-17T19:38:00-06:00",
+    "expires": "2026-09-17T22:00:00-06:00",
+    "ends": "2026-09-17T22:00:00-06:00",
+    "status": "Actual",
+    "messageType": "Update",
+    "category": "Met",
+    "severity": "Severe",
+    "certainty": "Likely",
+    "urgency": "Immediate",
+    "event": "Flash Flood Warning",
+    "sender": "w-nws.webmaster@noaa.gov",
+    "senderName": "NWS Albuquerque NM",
+    "headline": "Flash Flood Warning issued September 17 at 7:38PM MDT until September 17 at 10:00PM MDT by NWS Albuquerque NM",
+    "description": "At 738 PM MDT, Doppler radar indicated thunderstorms producing heavy\nrain across the warned area. Between 1.25 and 2.25 inches of rain\nhave fallen. Additional r…",
+    "instruction": "Turn around, don't drown when encountering flooded roads. Most flood\ndeaths occur in vehicles.\n\nBe especially cautious a…",
+    "response": "Avoid",
+    "note": null,
+    "parameters": {
+      "NWSheadline": [
+        "FLASH FLOOD WARNING REMAINS IN EFFECT UNTIL 10 PM MDT THIS EVENING FOR NORTHERN SANDOVAL COUNTY"
+      ],
+      "flashFloodDamageThreat": [
+        "CONSIDERABLE"
+      ],
+      "VTEC": [
+        "/O.CON.KABQ.FF.W.0150.000000T0000Z-260918T0400Z/"
+      ],
+      "eventEndingTime": [
+        "2026-09-17T22:00:00-06:00"
+      ]
+    },
+    "scope": "Public",
+    "code": "IPAWSv1.0",
+    "language": "en-US",
+    "web": "http://www.weather.gov"
+  }
+}

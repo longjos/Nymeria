@@ -135,6 +135,44 @@ func TestCreateNetValidation(t *testing.T) {
 	}
 }
 
+// TestCreateNetWxSlicesNeverNil: a create request that (as every real one
+// does — the "new net" form has no weather-watch fields) leaves
+// WxExtraZones/WxInterruptEvents unset must not hand the caller `null` for
+// either. Unlike SetWxWatch (which already normalizes with
+// append([]string{}, ...)), CreateNet used to return and cache the raw
+// zero-value nil slices verbatim — GetNet/GetNets read straight from that
+// same in-memory cache, so every GET /nets and GET /nets/{id} would echo
+// `null` for the life of the process, until a restart reloaded from SQLite
+// (whose LoadNet/LoadNets already normalize). TS declares both fields
+// non-optional string[].
+func TestCreateNetWxSlicesNeverNil(t *testing.T) {
+	mgr := newTestManager(t)
+
+	n, err := mgr.CreateNet(store.Net{Name: "Test Net"})
+	if err != nil {
+		t.Fatalf("CreateNet: %v", err)
+	}
+	if n.WxExtraZones == nil {
+		t.Error("CreateNet result: WxExtraZones = nil, want non-nil empty slice")
+	}
+	if n.WxInterruptEvents == nil {
+		t.Error("CreateNet result: WxInterruptEvents = nil, want non-nil empty slice")
+	}
+
+	// The bug was specifically that the in-memory cache (read by GetNet/
+	// GetNets, not just the create response) kept the nil slices.
+	cached, ok := mgr.GetNet(n.ID)
+	if !ok {
+		t.Fatal("GetNet: not found")
+	}
+	if cached.WxExtraZones == nil {
+		t.Error("GetNet: WxExtraZones = nil, want non-nil empty slice")
+	}
+	if cached.WxInterruptEvents == nil {
+		t.Error("GetNet: WxInterruptEvents = nil, want non-nil empty slice")
+	}
+}
+
 func TestCheckInBasic(t *testing.T) {
 	mgr := newTestManager(t)
 
@@ -198,8 +236,8 @@ func TestCheckInAutoPopulateFromTracker(t *testing.T) {
 
 	// Add a station to the tracker.
 	mgr.tracker.Update(station.Station{
-		Callsign: "KD7BBC",
-		SSID:     0,
+		Callsign:  "KD7BBC",
+		SSID:      0,
 		LastHeard: time.Now(),
 		Position: &station.Position{
 			Lat: 34.0522,
@@ -429,7 +467,7 @@ func TestSearchOperators(t *testing.T) {
 		want  int
 	}{
 		{"KD7", 1},
-		{"YFA", 1},  // Substring match, not just prefix.
+		{"YFA", 1}, // Substring match, not just prefix.
 		{"W1AW", 1},
 		{"", 0},
 		{"ZZZZZ", 0},
@@ -755,15 +793,15 @@ func TestUnassignAllMissions(t *testing.T) {
 func TestExportRosterCSV(t *testing.T) {
 	checkIns := []store.NetCheckIn{
 		{
-			Callsign:    "KD7BBC",
+			Callsign:     "KD7BBC",
 			TacticalCall: "Shelter-1",
 			OperatorName: "Bob",
-			Status:      "available",
-			Traffic:     "routine",
-			Source:      "aprs",
-			Location:    "Downtown",
-			CheckedInAt: time.Date(2024, 1, 1, 12, 0, 0, 0, time.UTC),
-			LastHeard:   time.Date(2024, 1, 1, 12, 30, 0, 0, time.UTC),
+			Status:       "available",
+			Traffic:      "routine",
+			Source:       "aprs",
+			Location:     "Downtown",
+			CheckedInAt:  time.Date(2024, 1, 1, 12, 0, 0, 0, time.UTC),
+			LastHeard:    time.Date(2024, 1, 1, 12, 30, 0, 0, time.UTC),
 		},
 	}
 
@@ -1472,6 +1510,98 @@ func TestSetOpsViewNetNotFound(t *testing.T) {
 	}
 }
 
+func TestSetWxWatch(t *testing.T) {
+	mgr := newTestManager(t)
+
+	n, _ := mgr.CreateNet(store.Net{Name: "Wx Watch Net"})
+	drainEvents(mgr)
+
+	updated, err := mgr.SetWxWatch(n.ID, 15, []string{"MIZ056", "MIC081"}, true, true, []string{"Tornado Warning"})
+	if err != nil {
+		t.Fatalf("SetWxWatch failed: %v", err)
+	}
+	if updated.WxBufferMiles != 15 {
+		t.Errorf("WxBufferMiles = %v, want 15", updated.WxBufferMiles)
+	}
+	if len(updated.WxExtraZones) != 2 {
+		t.Errorf("WxExtraZones = %v, want 2 entries", updated.WxExtraZones)
+	}
+	if !updated.WxMuteAdvisories || !updated.WxInterruptCustom {
+		t.Errorf("wx bools not set: %+v", updated)
+	}
+	if len(updated.WxInterruptEvents) != 1 || updated.WxInterruptEvents[0] != "Tornado Warning" {
+		t.Errorf("WxInterruptEvents = %v", updated.WxInterruptEvents)
+	}
+
+	// Reflected via GetNet (the in-memory cache SetWxWatch mutated).
+	cached, ok := mgr.GetNet(n.ID)
+	if !ok {
+		t.Fatal("net not found after SetWxWatch")
+	}
+	if cached.WxBufferMiles != 15 {
+		t.Errorf("GetNet WxBufferMiles = %v, want 15", cached.WxBufferMiles)
+	}
+
+	select {
+	case evt := <-mgr.Events():
+		if evt.Type != EventNetUpdated {
+			t.Errorf("expected %s event, got %s", EventNetUpdated, evt.Type)
+		}
+	default:
+		t.Error("expected EventNetUpdated to be emitted")
+	}
+}
+
+func TestSetWxWatchNetNotFound(t *testing.T) {
+	mgr := newTestManager(t)
+
+	if _, err := mgr.SetWxWatch("nonexistent", 10, nil, false, false, nil); err == nil {
+		t.Error("expected error for nonexistent net")
+	}
+}
+
+func TestAddTimelineEvent(t *testing.T) {
+	mgr := newTestManager(t)
+
+	n, _ := mgr.CreateNet(store.Net{Name: "Timeline Net"})
+	drainEvents(mgr)
+
+	if err := mgr.AddTimelineEvent(n.ID, EventWxAlert, "W8ABC", "Tornado Warning received IN"); err != nil {
+		t.Fatalf("AddTimelineEvent failed: %v", err)
+	}
+
+	events, err := mgr.GetEvents(n.ID)
+	if err != nil {
+		t.Fatalf("GetEvents: %v", err)
+	}
+	found := false
+	for _, e := range events {
+		if e.Type == EventWxAlert && e.Callsign == "W8ABC" {
+			found = true
+		}
+	}
+	if !found {
+		t.Errorf("wx_alert timeline event not persisted: %+v", events)
+	}
+
+	select {
+	case evt := <-mgr.Events():
+		if evt.Type != EventTimelineEntry {
+			t.Errorf("expected %s event, got %s", EventTimelineEntry, evt.Type)
+		}
+	default:
+		t.Error("expected EventTimelineEntry to be emitted")
+	}
+}
+
+func TestAddTimelineEventNetNotFound(t *testing.T) {
+	mgr := newTestManager(t)
+
+	if err := mgr.AddTimelineEvent("nonexistent", EventWxAlert, "W8ABC", "should not persist"); err == nil {
+		t.Error("expected error for nonexistent net")
+	}
+}
+
 func TestToggleNotePin(t *testing.T) {
 	mgr := newTestManager(t)
 
@@ -1841,7 +1971,6 @@ func TestPinnedPersistence(t *testing.T) {
 
 	s.Close()
 }
-
 
 // --- Mission create-with-assignees tests (#unify-mission-assignment) ---
 

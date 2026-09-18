@@ -17,7 +17,7 @@ import (
 	_ "modernc.org/sqlite"
 )
 
-const currentSchemaVersion = 23
+const currentSchemaVersion = 24
 
 // SQLiteStore implements Store using modernc.org/sqlite.
 type SQLiteStore struct {
@@ -212,6 +212,12 @@ func (s *SQLiteStore) migrate() error {
 	if version < 23 {
 		if err := s.migrateV23(); err != nil {
 			return fmt.Errorf("migrate v23: %w", err)
+		}
+	}
+
+	if version < 24 {
+		if err := s.migrateV24(); err != nil {
+			return fmt.Errorf("migrate v24: %w", err)
 		}
 	}
 
@@ -1084,13 +1090,32 @@ func (s *SQLiteStore) SaveNet(n Net) error {
 		pinnedJSON = string(b)
 	}
 
+	wxExtraZonesJSON := "[]"
+	if len(n.WxExtraZones) > 0 {
+		b, err := json.Marshal(n.WxExtraZones)
+		if err != nil {
+			return fmt.Errorf("marshal wx_extra_zones: %w", err)
+		}
+		wxExtraZonesJSON = string(b)
+	}
+	wxInterruptEventsJSON := "[]"
+	if len(n.WxInterruptEvents) > 0 {
+		b, err := json.Marshal(n.WxInterruptEvents)
+		if err != nil {
+			return fmt.Errorf("marshal wx_interrupt_events: %w", err)
+		}
+		wxInterruptEventsJSON = string(b)
+	}
+
 	_, err := s.db.Exec(`
 		INSERT OR REPLACE INTO nets
-			(id, name, type, frequency, ncs_callsign, ncs_user_id, status, opened_at, closed_at, notes, mission_brief, ops_view_lat, ops_view_lon, ops_view_zoom, pinned_stations)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+			(id, name, type, frequency, ncs_callsign, ncs_user_id, status, opened_at, closed_at, notes, mission_brief, ops_view_lat, ops_view_lon, ops_view_zoom, pinned_stations,
+			 wx_buffer_miles, wx_extra_zones, wx_mute_advisories, wx_interrupt_custom, wx_interrupt_events)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
 		n.ID, n.Name, n.Type, n.Frequency, n.NCSCallsign, n.NCSUserID,
 		n.Status, openedAt, closedAt, n.Notes, n.MissionBrief,
 		n.OpsViewLat, n.OpsViewLon, n.OpsViewZoom, pinnedJSON,
+		n.WxBufferMiles, wxExtraZonesJSON, n.WxMuteAdvisories, n.WxInterruptCustom, wxInterruptEventsJSON,
 	)
 	if err != nil {
 		return fmt.Errorf("save net: %w", err)
@@ -1102,16 +1127,18 @@ func (s *SQLiteStore) LoadNet(id string) (*Net, error) {
 	var n Net
 	var openedAt, closedAt sql.NullString
 	var opsLat, opsLon, opsZoom sql.NullFloat64
-	var pinnedJSON string
+	var pinnedJSON, wxExtraZonesJSON, wxInterruptEventsJSON string
 
 	err := s.db.QueryRow(`
 		SELECT id, name, type, frequency, ncs_callsign, ncs_user_id,
 		       status, opened_at, closed_at, notes, mission_brief,
-		       ops_view_lat, ops_view_lon, ops_view_zoom, pinned_stations
+		       ops_view_lat, ops_view_lon, ops_view_zoom, pinned_stations,
+		       wx_buffer_miles, wx_extra_zones, wx_mute_advisories, wx_interrupt_custom, wx_interrupt_events
 		FROM nets WHERE id = ?`, id).Scan(
 		&n.ID, &n.Name, &n.Type, &n.Frequency, &n.NCSCallsign, &n.NCSUserID,
 		&n.Status, &openedAt, &closedAt, &n.Notes, &n.MissionBrief,
 		&opsLat, &opsLon, &opsZoom, &pinnedJSON,
+		&n.WxBufferMiles, &wxExtraZonesJSON, &n.WxMuteAdvisories, &n.WxInterruptCustom, &wxInterruptEventsJSON,
 	)
 	if err != nil {
 		if err == sql.ErrNoRows {
@@ -1148,6 +1175,14 @@ func (s *SQLiteStore) LoadNet(id string) (*Net, error) {
 	if pinnedJSON != "" && pinnedJSON != "[]" {
 		json.Unmarshal([]byte(pinnedJSON), &n.PinnedStations)
 	}
+	n.WxExtraZones = []string{}
+	if wxExtraZonesJSON != "" && wxExtraZonesJSON != "[]" {
+		json.Unmarshal([]byte(wxExtraZonesJSON), &n.WxExtraZones)
+	}
+	n.WxInterruptEvents = []string{}
+	if wxInterruptEventsJSON != "" && wxInterruptEventsJSON != "[]" {
+		json.Unmarshal([]byte(wxInterruptEventsJSON), &n.WxInterruptEvents)
+	}
 
 	return &n, nil
 }
@@ -1156,7 +1191,8 @@ func (s *SQLiteStore) LoadNets() ([]Net, error) {
 	rows, err := s.db.Query(`
 		SELECT id, name, type, frequency, ncs_callsign, ncs_user_id,
 		       status, opened_at, closed_at, notes, mission_brief,
-		       ops_view_lat, ops_view_lon, ops_view_zoom, pinned_stations
+		       ops_view_lat, ops_view_lon, ops_view_zoom, pinned_stations,
+		       wx_buffer_miles, wx_extra_zones, wx_mute_advisories, wx_interrupt_custom, wx_interrupt_events
 		FROM nets ORDER BY rowid ASC`)
 	if err != nil {
 		return nil, fmt.Errorf("query nets: %w", err)
@@ -1168,12 +1204,13 @@ func (s *SQLiteStore) LoadNets() ([]Net, error) {
 		var n Net
 		var openedAt, closedAt sql.NullString
 		var opsLat, opsLon, opsZoom sql.NullFloat64
-		var pinnedJSON string
+		var pinnedJSON, wxExtraZonesJSON, wxInterruptEventsJSON string
 
 		if err := rows.Scan(
 			&n.ID, &n.Name, &n.Type, &n.Frequency, &n.NCSCallsign, &n.NCSUserID,
 			&n.Status, &openedAt, &closedAt, &n.Notes, &n.MissionBrief,
 			&opsLat, &opsLon, &opsZoom, &pinnedJSON,
+			&n.WxBufferMiles, &wxExtraZonesJSON, &n.WxMuteAdvisories, &n.WxInterruptCustom, &wxInterruptEventsJSON,
 		); err != nil {
 			return nil, fmt.Errorf("scan net: %w", err)
 		}
@@ -1205,6 +1242,14 @@ func (s *SQLiteStore) LoadNets() ([]Net, error) {
 		n.PinnedStations = []string{}
 		if pinnedJSON != "" && pinnedJSON != "[]" {
 			json.Unmarshal([]byte(pinnedJSON), &n.PinnedStations)
+		}
+		n.WxExtraZones = []string{}
+		if wxExtraZonesJSON != "" && wxExtraZonesJSON != "[]" {
+			json.Unmarshal([]byte(wxExtraZonesJSON), &n.WxExtraZones)
+		}
+		n.WxInterruptEvents = []string{}
+		if wxInterruptEventsJSON != "" && wxInterruptEventsJSON != "[]" {
+			json.Unmarshal([]byte(wxInterruptEventsJSON), &n.WxInterruptEvents)
 		}
 
 		nets = append(nets, n)
@@ -2798,6 +2843,81 @@ func (s *SQLiteStore) migrateV23() error {
 	return nil
 }
 
+// migrateV24 adds internal/wxalert's tables and per-net weather-watch
+// columns. The present-table guard on `nets` mirrors migrateV22/V23: narrow
+// migration-test fixtures hand-build only the tables their own migration
+// touches.
+func (s *SQLiteStore) migrateV24() error {
+	var netsPresent int
+	if err := s.db.QueryRow(
+		`SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name='nets'`,
+	).Scan(&netsPresent); err != nil {
+		return fmt.Errorf("migrate v24 check nets table: %w", err)
+	}
+	if netsPresent == 1 {
+		for _, stmt := range []string{
+			`ALTER TABLE nets ADD COLUMN wx_buffer_miles REAL NOT NULL DEFAULT 0`,
+			`ALTER TABLE nets ADD COLUMN wx_extra_zones TEXT NOT NULL DEFAULT '[]'`,
+			`ALTER TABLE nets ADD COLUMN wx_mute_advisories INTEGER NOT NULL DEFAULT 0`,
+			`ALTER TABLE nets ADD COLUMN wx_interrupt_custom INTEGER NOT NULL DEFAULT 0`,
+			`ALTER TABLE nets ADD COLUMN wx_interrupt_events TEXT NOT NULL DEFAULT '[]'`,
+		} {
+			if _, err := s.db.Exec(stmt); err != nil && !isDuplicateColumnError(err) {
+				return fmt.Errorf("migrate v24 alter nets: %w", err)
+			}
+		}
+	}
+
+	ddl := `
+CREATE TABLE IF NOT EXISTS wx_alerts (
+    id TEXT PRIMARY KEY,
+    net_id TEXT NOT NULL DEFAULT '',
+    event TEXT NOT NULL DEFAULT '',
+    tier TEXT NOT NULL DEFAULT '',
+    state TEXT NOT NULL DEFAULT '',
+    proximity TEXT NOT NULL DEFAULT '',
+    notify_class TEXT NOT NULL DEFAULT '',
+    sent DATETIME,
+    expires DATETIME,
+    ends_at DATETIME,
+    replaced_by TEXT NOT NULL DEFAULT '',
+    net_ack_callsign TEXT NOT NULL DEFAULT '',
+    net_ack_at DATETIME,
+    fetched_at DATETIME,
+    first_seen_at DATETIME,
+    updated_at DATETIME NOT NULL,
+    data TEXT NOT NULL DEFAULT ''
+);
+CREATE INDEX IF NOT EXISTS idx_wx_alerts_state ON wx_alerts(state);
+CREATE INDEX IF NOT EXISTS idx_wx_alerts_net ON wx_alerts(net_id);
+CREATE INDEX IF NOT EXISTS idx_wx_alerts_updated ON wx_alerts(updated_at);
+
+CREATE TABLE IF NOT EXISTS wx_point_zones (
+    cell_lat INTEGER NOT NULL,
+    cell_lon INTEGER NOT NULL,
+    ugc TEXT NOT NULL DEFAULT '[]',
+    expires_at DATETIME NOT NULL,
+    PRIMARY KEY (cell_lat, cell_lon)
+);
+
+CREATE TABLE IF NOT EXISTS wx_alert_meta (
+    key TEXT PRIMARY KEY,
+    value TEXT NOT NULL DEFAULT ''
+);
+`
+	if _, err := s.db.Exec(ddl); err != nil {
+		return fmt.Errorf("migrate v24 create wx tables: %w", err)
+	}
+
+	if _, err := s.db.Exec(`DELETE FROM schema_version`); err != nil {
+		return fmt.Errorf("clear schema version: %w", err)
+	}
+	if _, err := s.db.Exec(`INSERT INTO schema_version (version) VALUES (?)`, 24); err != nil {
+		return fmt.Errorf("set schema version: %w", err)
+	}
+	return nil
+}
+
 // backfillConversationReads seeds an "everything so far is read" marker for
 // every conversation that already has inbound messages.
 //
@@ -2910,6 +3030,217 @@ func (s *SQLiteStore) LoadConversationReads() (map[string]time.Time, error) {
 	}
 
 	return reads, nil
+}
+
+// --- NWS Weather Alerts CRUD ---
+
+func (s *SQLiteStore) SaveWxAlert(a WxAlertRow) error {
+	_, err := s.db.Exec(`
+		INSERT INTO wx_alerts
+			(id, net_id, event, tier, state, proximity, notify_class, sent, expires, ends_at,
+			 replaced_by, net_ack_callsign, net_ack_at, fetched_at, first_seen_at, updated_at, data)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+		ON CONFLICT(id) DO UPDATE SET
+			net_id = excluded.net_id, event = excluded.event, tier = excluded.tier,
+			state = excluded.state, proximity = excluded.proximity, notify_class = excluded.notify_class,
+			sent = excluded.sent, expires = excluded.expires, ends_at = excluded.ends_at,
+			replaced_by = excluded.replaced_by, net_ack_callsign = excluded.net_ack_callsign,
+			net_ack_at = excluded.net_ack_at, fetched_at = excluded.fetched_at,
+			first_seen_at = excluded.first_seen_at, updated_at = excluded.updated_at, data = excluded.data`,
+		a.ID, a.NetID, a.Event, a.Tier, a.State, a.Proximity, a.NotifyClass,
+		nullTimeVal(a.Sent), nullTimeVal(a.Expires), nullTimeVal(a.EndsAt),
+		a.ReplacedBy, a.NetAckCallsign, nullTimePtr(a.NetAckAt),
+		nullTimeVal(a.FetchedAt), nullTimeVal(a.FirstSeenAt), a.UpdatedAt.UTC(), a.Data,
+	)
+	if err != nil {
+		return fmt.Errorf("save wx alert: %w", err)
+	}
+	return nil
+}
+
+// nullTimeVal is nullTimePtr's by-value counterpart: a zero time.Time (never
+// set — e.g. an alert with no Ends before EndsAt is resolved) stores as SQL
+// NULL rather than SQLite's "0001-01-01..." text, so LoadWxAlerts round-trips
+// it back to a zero time.Time instead of a parse error.
+func nullTimeVal(t time.Time) any {
+	if t.IsZero() {
+		return nil
+	}
+	return t.UTC()
+}
+
+func (s *SQLiteStore) LoadWxAlerts(includeInactive bool) ([]WxAlertRow, error) {
+	query := `
+		SELECT id, net_id, event, tier, state, proximity, notify_class, sent, expires, ends_at,
+		       replaced_by, net_ack_callsign, net_ack_at, fetched_at, first_seen_at, updated_at, data
+		FROM wx_alerts`
+	if !includeInactive {
+		query += ` WHERE state = 'active'`
+	}
+	query += ` ORDER BY updated_at ASC`
+
+	rows, err := s.db.Query(query)
+	if err != nil {
+		return nil, fmt.Errorf("query wx alerts: %w", err)
+	}
+	defer rows.Close()
+
+	var out []WxAlertRow
+	for rows.Next() {
+		var a WxAlertRow
+		var sent, expires, endsAt, netAckAt, fetchedAt, firstSeenAt sql.NullString
+		var updatedAt string
+		if err := rows.Scan(
+			&a.ID, &a.NetID, &a.Event, &a.Tier, &a.State, &a.Proximity, &a.NotifyClass,
+			&sent, &expires, &endsAt, &a.ReplacedBy, &a.NetAckCallsign, &netAckAt,
+			&fetchedAt, &firstSeenAt, &updatedAt, &a.Data,
+		); err != nil {
+			return nil, fmt.Errorf("scan wx alert: %w", err)
+		}
+		if a.Sent, err = parseNullTime(sent); err != nil {
+			return nil, fmt.Errorf("parse wx alert sent: %w", err)
+		}
+		if a.Expires, err = parseNullTime(expires); err != nil {
+			return nil, fmt.Errorf("parse wx alert expires: %w", err)
+		}
+		if a.EndsAt, err = parseNullTime(endsAt); err != nil {
+			return nil, fmt.Errorf("parse wx alert ends_at: %w", err)
+		}
+		if a.FetchedAt, err = parseNullTime(fetchedAt); err != nil {
+			return nil, fmt.Errorf("parse wx alert fetched_at: %w", err)
+		}
+		if a.FirstSeenAt, err = parseNullTime(firstSeenAt); err != nil {
+			return nil, fmt.Errorf("parse wx alert first_seen_at: %w", err)
+		}
+		if netAckAt.Valid {
+			t, err := parseTime(netAckAt.String)
+			if err != nil {
+				return nil, fmt.Errorf("parse wx alert net_ack_at: %w", err)
+			}
+			a.NetAckAt = &t
+		}
+		if a.UpdatedAt, err = parseTime(updatedAt); err != nil {
+			return nil, fmt.Errorf("parse wx alert updated_at: %w", err)
+		}
+		out = append(out, a)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("iterate wx alerts: %w", err)
+	}
+	return out, nil
+}
+
+// parseNullTime returns the zero time.Time for a NULL column (mirrors
+// nullTimeVal on the write side) instead of erroring.
+func parseNullTime(s sql.NullString) (time.Time, error) {
+	if !s.Valid || s.String == "" {
+		return time.Time{}, nil
+	}
+	return parseTime(s.String)
+}
+
+func (s *SQLiteStore) UpdateWxAlertNetAck(id, callsign string, at time.Time, data string) error {
+	res, err := s.db.Exec(`
+		UPDATE wx_alerts SET net_ack_callsign = ?, net_ack_at = ?, data = ?, updated_at = ?
+		WHERE id = ?`,
+		callsign, at.UTC(), data, at.UTC(), id,
+	)
+	if err != nil {
+		return fmt.Errorf("update wx alert net ack: %w", err)
+	}
+	n, err := res.RowsAffected()
+	if err != nil {
+		return fmt.Errorf("update wx alert net ack rows affected: %w", err)
+	}
+	if n == 0 {
+		return fmt.Errorf("wx alert %q not found", id)
+	}
+	return nil
+}
+
+// PurgeWxAlerts deletes rows that are not active and were last updated
+// before olderThan. Active alerts are never purged regardless of age — the
+// registry, not a purge sweep, decides when something stops being active.
+func (s *SQLiteStore) PurgeWxAlerts(olderThan time.Time) (int64, error) {
+	res, err := s.db.Exec(
+		`DELETE FROM wx_alerts WHERE state != 'active' AND updated_at < ?`, olderThan.UTC())
+	if err != nil {
+		return 0, fmt.Errorf("purge wx alerts: %w", err)
+	}
+	return res.RowsAffected()
+}
+
+func (s *SQLiteStore) SaveWxPointZone(z WxPointZone) error {
+	ugcJSON := "[]"
+	if len(z.UGC) > 0 {
+		b, err := json.Marshal(z.UGC)
+		if err != nil {
+			return fmt.Errorf("marshal wx point zone ugc: %w", err)
+		}
+		ugcJSON = string(b)
+	}
+	_, err := s.db.Exec(`
+		INSERT OR REPLACE INTO wx_point_zones (cell_lat, cell_lon, ugc, expires_at)
+		VALUES (?, ?, ?, ?)`,
+		z.CellLat, z.CellLon, ugcJSON, z.ExpiresAt.UTC(),
+	)
+	if err != nil {
+		return fmt.Errorf("save wx point zone: %w", err)
+	}
+	return nil
+}
+
+func (s *SQLiteStore) LoadWxPointZones() ([]WxPointZone, error) {
+	rows, err := s.db.Query(`SELECT cell_lat, cell_lon, ugc, expires_at FROM wx_point_zones`)
+	if err != nil {
+		return nil, fmt.Errorf("query wx point zones: %w", err)
+	}
+	defer rows.Close()
+
+	var out []WxPointZone
+	for rows.Next() {
+		var z WxPointZone
+		var ugcJSON, expiresAt string
+		if err := rows.Scan(&z.CellLat, &z.CellLon, &ugcJSON, &expiresAt); err != nil {
+			return nil, fmt.Errorf("scan wx point zone: %w", err)
+		}
+		z.UGC = []string{}
+		if ugcJSON != "" && ugcJSON != "[]" {
+			json.Unmarshal([]byte(ugcJSON), &z.UGC)
+		}
+		if z.ExpiresAt, err = parseTime(expiresAt); err != nil {
+			return nil, fmt.Errorf("parse wx point zone expires_at: %w", err)
+		}
+		out = append(out, z)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("iterate wx point zones: %w", err)
+	}
+	return out, nil
+}
+
+func (s *SQLiteStore) GetWxMeta(key string) (string, bool, error) {
+	var value string
+	err := s.db.QueryRow(`SELECT value FROM wx_alert_meta WHERE key = ?`, key).Scan(&value)
+	if err == sql.ErrNoRows {
+		return "", false, nil
+	}
+	if err != nil {
+		return "", false, fmt.Errorf("get wx meta %q: %w", key, err)
+	}
+	return value, true, nil
+}
+
+func (s *SQLiteStore) SetWxMeta(key, value string) error {
+	_, err := s.db.Exec(`
+		INSERT INTO wx_alert_meta (key, value) VALUES (?, ?)
+		ON CONFLICT(key) DO UPDATE SET value = excluded.value`,
+		key, value,
+	)
+	if err != nil {
+		return fmt.Errorf("set wx meta %q: %w", key, err)
+	}
+	return nil
 }
 
 // Compile-time check that SQLiteStore implements Store.

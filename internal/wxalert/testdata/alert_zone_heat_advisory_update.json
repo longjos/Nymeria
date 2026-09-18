@@ -1,0 +1,103 @@
+{
+  "id": "https://api.weather.gov/alerts/urn:oid:2.49.0.1.840.0.d8bb10f7b66e2591ea2b8c2d4920c549e2b1f5f5.001.1",
+  "type": "Feature",
+  "geometry": null,
+  "properties": {
+    "id": "urn:oid:2.49.0.1.840.0.d8bb10f7b66e2591ea2b8c2d4920c549e2b1f5f5.001.1",
+    "areaDesc": "Stewart; Montgomery; Robertson; Sumner; Macon; Clay; Houston; Humphreys; Dickson; Cheatham; Davidson; Wilson; Trousdale; Smith; Jackson; Putnam; Overton; Perry; Hickman; Lewis; Williamson; Maury; Marshall; Rutherford; Cannon; De Kalb; White; Bedford; Coffee; Warren; Wayne; Lawrence; Giles",
+    "geocode": {
+      "SAME": [
+        "047161",
+        "047125",
+        "047147",
+        "047165",
+        "047111"
+      ],
+      "UGC": [
+        "TNZ005",
+        "TNZ006",
+        "TNZ007",
+        "TNZ008",
+        "TNZ009",
+        "TNZ010",
+        "TNZ023",
+        "TNZ024",
+        "TNZ025",
+        "TNZ026",
+        "TNZ027",
+        "TNZ028",
+        "TNZ029",
+        "TNZ030",
+        "TNZ031",
+        "TNZ032",
+        "TNZ033",
+        "TNZ056",
+        "TNZ057",
+        "TNZ058",
+        "TNZ059",
+        "TNZ060",
+        "TNZ061",
+        "TNZ062",
+        "TNZ063",
+        "TNZ064",
+        "TNZ065",
+        "TNZ075",
+        "TNZ077",
+        "TNZ078",
+        "TNZ093",
+        "TNZ094",
+        "TNZ095"
+      ]
+    },
+    "affectedZones": [
+      "https://api.weather.gov/zones/forecast/TNZ005",
+      "https://api.weather.gov/zones/forecast/TNZ006",
+      "https://api.weather.gov/zones/forecast/TNZ007",
+      "https://api.weather.gov/zones/forecast/TNZ008",
+      "https://api.weather.gov/zones/forecast/TNZ009"
+    ],
+    "references": [
+      {
+        "@id": "https://api.weather.gov/alerts/urn:oid:2.49.0.1.840.0.4647e8cc0327b9021c9e704883ec3e274fd2e6b1.001.1",
+        "identifier": "urn:oid:2.49.0.1.840.0.4647e8cc0327b9021c9e704883ec3e274fd2e6b1.001.1",
+        "sender": "w-nws.webmaster@noaa.gov",
+        "sent": "2026-09-16T22:24:00-05:00"
+      }
+    ],
+    "sent": "2026-09-17T21:51:00-05:00",
+    "effective": "2026-09-17T21:51:00-05:00",
+    "onset": "2026-09-17T21:51:00-05:00",
+    "expires": "2026-09-19T00:00:00-05:00",
+    "ends": "2026-09-20T19:00:00-05:00",
+    "status": "Actual",
+    "messageType": "Update",
+    "category": "Met",
+    "severity": "Moderate",
+    "certainty": "Likely",
+    "urgency": "Expected",
+    "event": "Heat Advisory",
+    "sender": "w-nws.webmaster@noaa.gov",
+    "senderName": "NWS Nashville TN",
+    "headline": "Heat Advisory issued September 17 at 9:51PM CDT until September 20 at 7:00PM CDT by NWS Nashville TN",
+    "description": "* WHAT...Heat index values up to 108 expected.\n\n* WHERE...Across Middle Tennessee.\n\n* WHEN...Until 7 PM CDT Sunday.\n\n* IMPACTS...Hot temperatures and high humid\u2026",
+    "instruction": "Drink plenty of fluids, stay in an air-conditioned room, stay out of\nthe sun, and check up on relatives and neighbors.\n\n\u2026",
+    "response": "Execute",
+    "note": null,
+    "parameters": {
+      "NWSheadline": [
+        "HEAT ADVISORY NOW IN EFFECT UNTIL 7 PM CDT SUNDAY"
+      ],
+      "VTEC": [
+        "/O.EXT.KOHX.HT.Y.0009.000000T0000Z-260921T0000Z/"
+      ],
+      "eventEndingTime": [
+        "2026-09-20T19:00:00-05:00"
+      ]
+    },
+    "scope": "Public",
+    "code": "IPAWSv1.0",
+    "language": "en-US",
+    "web": "http://www.weather.gov",
+    "_affectedZonesTrimmed": "_trimmed_from_33"
+  }
+}
