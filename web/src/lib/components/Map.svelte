@@ -343,11 +343,50 @@
 		emergency: '#ef4444'
 	};
 
+	const MAP_VIEW_KEY = 'nymeria_map_view';
+	let saveViewTimer: ReturnType<typeof setTimeout> | null = null;
+
+	/** Reads the persisted camera. Returns null if absent, unusable or unreadable. */
+	function loadMapView(): { lat: number; lon: number; zoom: number } | null {
+		try {
+			const raw = localStorage.getItem(MAP_VIEW_KEY);
+			if (!raw) return null;
+			const v = JSON.parse(raw) as { lat?: unknown; lon?: unknown; zoom?: unknown };
+			const lat = Number(v.lat), lon = Number(v.lon), zoom = Number(v.zoom);
+			if (!Number.isFinite(lat) || !Number.isFinite(lon) || !Number.isFinite(zoom)) return null;
+			if (lat < -90 || lat > 90 || lon < -180 || lon > 180 || zoom < 0 || zoom > 22) return null;
+			return { lat, lon, zoom };
+		} catch {
+			// Private mode / blocked storage — fall back to the default view.
+			return null;
+		}
+	}
+
+	/** Coalesces a pan/zoom burst into one write. */
+	function scheduleSaveMapView(): void {
+		if (saveViewTimer) clearTimeout(saveViewTimer);
+		saveViewTimer = setTimeout(() => {
+			saveViewTimer = null;
+			if (!map) return;
+			try {
+				const c = map.getCenter();
+				localStorage.setItem(MAP_VIEW_KEY, JSON.stringify({ lat: c.lat, lon: c.lng, zoom: map.getZoom() }));
+			} catch {
+				// Ignore — losing the remembered view is not worth an error.
+			}
+		}, 400);
+	}
+
 	onMount(() => {
+		const saved = loadMapView();
 		map = L.map(mapEl, {
 			zoomControl: true,
 			attributionControl: true,
-		}).setView([39.8283, -98.5795], 4);
+		}).setView(saved ? [saved.lat, saved.lon] : [39.8283, -98.5795], saved ? saved.zoom : 4);
+
+		// Remember where the operator was looking. A hard refresh in the field
+		// should not throw away the pan and zoom they just set up.
+		map.on('moveend zoomend', scheduleSaveMapView);
 
 		L.tileLayer('/tiles/{z}/{x}/{y}.png', {
 			attribution: '&copy; OpenStreetMap contributors',
@@ -512,6 +551,7 @@
 	onDestroy(() => {
 		if (drTimer) clearInterval(drTimer);
 		if (viewportTimer) clearTimeout(viewportTimer);
+		if (saveViewTimer) clearTimeout(saveViewTimer);
 		if (wxChipTickTimer) clearInterval(wxChipTickTimer);
 		for (const [, g] of wxAlertLayerGroups) g.remove();
 		for (const [, m] of wxAlertChips) m.remove();
@@ -2267,6 +2307,9 @@
 		return [lat, lon];
 	}
 
+	/** Invisible hover/tap target width, in px, around an alert's outline. */
+	const WX_HIT_WEIGHT = 18;
+
 	/**
 	 * Hover tooltip for an alert's geometry. The event name leads, timing and
 	 * office sit under it, and the "no published polygon" honesty line is kept
@@ -2353,14 +2396,32 @@
 				pane: 'wxAlertPane', renderer, color: opts.color, weight: opts.weight, dashArray: opts.dashArray,
 				lineCap: alert.tier === 'advisory' ? 'round' : 'butt', opacity: opts.strokeOpacity, interactive: true
 			});
-			strokeLine.bindTooltip(wxTooltipHtml(alert, honesty), {
+			layers.push(strokeLine);
+			// A tier stroke is 1.5-3px wide — a hard target to hover, especially
+			// on a touch screen. An invisible fat line along the same rings
+			// carries the tooltip and the click instead. `pointer-events: stroke`
+			// (set in CSS) makes it hit-test regardless of paint, so opacity 0
+			// stays genuinely invisible. Added last so it sits on top.
+			const hitLine = L.polyline(rings, {
+				pane: 'wxAlertPane',
+				renderer,
+				color: opts.color,
+				weight: WX_HIT_WEIGHT,
+				opacity: 0,
+				fill: false,
+				lineCap: 'round',
+				lineJoin: 'round',
+				interactive: true,
+				className: 'wx-alert-hit'
+			});
+			hitLine.bindTooltip(wxTooltipHtml(alert, honesty), {
 				direction: 'top',
 				className: `wx-alert-tooltip wx-alert-tooltip-${alert.tier}`,
 				sticky: true,
 				opacity: 1
 			});
-			strokeLine.on('click', () => onWxAlertClick?.(alert.id));
-			layers.push(strokeLine);
+			hitLine.on('click', () => onWxAlertClick?.(alert.id));
+			layers.push(hitLine);
 			if (alert.tier === 'warning') {
 				layers.push(L.polyline(rings, { pane: 'wxAlertPane', renderer, color: opts.color, weight: 1, opacity: 0.9, interactive: false }));
 			}
@@ -2958,6 +3019,11 @@
 		line-height: 1.4;
 	}
 	:global(.wx-alert-tooltip::before) { display: none; }
+	/* Hit-test on the stroke area even though the line paints nothing. */
+	:global(path.wx-alert-hit) {
+		pointer-events: stroke;
+		cursor: pointer;
+	}
 	:global(.wx-alert-tooltip-warning) { border-left-color: var(--color-wx-warning); }
 	:global(.wx-alert-tooltip-watch) { border-left-color: var(--color-wx-watch); }
 	:global(.wx-alert-tooltip-advisory) { border-left-color: var(--color-wx-advisory); }
