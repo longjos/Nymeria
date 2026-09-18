@@ -222,6 +222,36 @@
 		cursor: pointer;
 	}
 
+	/* Mobile review P1-2: 32px chips are under Apple's 44px minimum for a
+	   field operator tapping one-handed. Gated to the phone breakpoint (the
+	   same one that switches BottomSheet/SidePanel — see app.css
+	   .mobile-only/.desktop-only) rather than `pointer: coarse`, so a
+	   touchscreen desktop/laptop viewport never picks this up and desktop
+	   density is untouched. */
+	@media (max-width: 768px) {
+		/* One scrollable row, not two wrapped rows. At 44px-per-chip the wrap
+		   cost ~200px of a 852px screen — enough that the sheet at `half`
+		   showed a single alert. Same horizontal-scroll pattern the mobile
+		   toolbar already uses. */
+		.wx-filter-bar {
+			flex-wrap: nowrap;
+			overflow-x: auto;
+			overscroll-behavior-x: contain;
+			scroll-snap-type: x proximity;
+			scrollbar-width: none;
+			-webkit-overflow-scrolling: touch;
+		}
+		.wx-filter-bar::-webkit-scrollbar {
+			display: none;
+		}
+		.wx-filter-chip {
+			flex: 0 0 auto;
+			scroll-snap-align: start;
+			min-height: 44px;
+			padding: 0 var(--space-md);
+		}
+	}
+
 	.wx-filter-chip.active {
 		background: var(--color-accent);
 		border-color: var(--color-accent);
@@ -292,6 +322,21 @@
 
 	summary.wx-group-heading {
 		cursor: pointer;
+	}
+
+	/* Mobile review P1-2: the <summary> is the ONLY way to open "Nearby" /
+	   "Expired · last hour" and measured 13px tall — worst tap target in the
+	   panel. min-height on the already-flex heading grows the whole row
+	   (summary is a block-level flex item stretched to the group's width, so
+	   the full width becomes tappable, not just the glyph). The plain <h3>
+	   heading picks up the same rule so the two heading styles keep the same
+	   height. Phone-only, same rationale as .wx-filter-chip above. */
+	@media (max-width: 768px) {
+		.wx-group-heading {
+			min-height: 44px;
+			padding: 0 var(--space-xs);
+			border-radius: var(--radius-sm);
+		}
 	}
 
 	.wx-group-count {

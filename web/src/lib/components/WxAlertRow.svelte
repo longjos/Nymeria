@@ -303,6 +303,32 @@
 		white-space: nowrap;
 	}
 
+	/* Mobile review P1-8: at phone width the where-line had ~143px against up
+	   to 910px of areaDesc text, so it ellipsised almost immediately — the
+	   exact fact (distinguishing simultaneous same-event alerts by area) the
+	   line exists to show. Let it wrap to two lines instead, and drop the
+	   "ends h:mm" line (the countdown itself carries the urgency; the clock
+	   time is one tap away in the detail view) to make room. `.wx-row-time`
+	   stays `flex-shrink: 0` on the row (unchanged below), so the countdown
+	   can never be pushed off by a long area name — only the where-line
+	   grows, and it grows downward, not sideways. Phone-only breakpoint,
+	   same rationale as the tap-target fixes above. */
+	@media (max-width: 768px) {
+		.wx-row-where {
+			white-space: normal;
+			text-overflow: clip;
+			display: -webkit-box;
+			-webkit-line-clamp: 2;
+			line-clamp: 2;
+			-webkit-box-orient: vertical;
+			overflow: hidden;
+		}
+
+		.wx-row-ends {
+			display: none;
+		}
+	}
+
 	/* Countdown promoted to the row's second-strongest element: bold, the
 	   text color (not muted), and the size that rhymes with the detail
 	   view's timing hero — the two views should visually agree. */

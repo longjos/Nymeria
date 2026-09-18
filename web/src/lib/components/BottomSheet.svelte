@@ -50,6 +50,23 @@
 	// (orientation) and the published token must always equal the rendered height.
 	let PEEK_H = $derived(PEEK_CONTENT_H + safeBottom);
 
+	// P0-3 / P1-5: below this height, fractional snap points (half=50vh, full=10vh)
+	// leave the sheet mostly off the bottom of a landscape phone (852x393 → full at
+	// y=39, i.e. almost the whole sheet). Short viewports get absolute snap points
+	// instead. Keep in sync with the (min-height: 500px) breakpoints in app.css and
+	// +page.svelte's isDesktop matchMedia query — all three define the same
+	// "is this a phone-height viewport" line.
+	const SHORT_VH_BREAKPOINT = 500;
+
+	// P1-5: snapY() used to read window.innerHeight directly inside a $derived, and
+	// the only resize listener refreshed safeBottom — so neither Safari's URL-bar
+	// collapse nor a rotation (same safe-area inset, different height) invalidated
+	// the snap math, leaving a stale translateY. vh is now its own reactive value,
+	// refreshed alongside safeBottom off the same listener. visualViewport is
+	// preferred where available — it tracks the true visible height (e.g. a
+	// collapsing URL bar) more closely than innerHeight.
+	let vh = $state(window.visualViewport?.height ?? window.innerHeight);
+
 	let dragging = $state(false);
 	let startY = $state(0);
 	let startTranslate = $state(0);
@@ -58,10 +75,17 @@
 	let sheetEl: HTMLDivElement;
 
 	$effect(() => {
-		safeBottom = measureSafeBottom();
-		const onResize = () => { safeBottom = measureSafeBottom(); };
-		window.addEventListener('resize', onResize);
-		return () => window.removeEventListener('resize', onResize);
+		const read = () => {
+			vh = window.visualViewport?.height ?? window.innerHeight;
+			safeBottom = measureSafeBottom();
+		};
+		read();
+		window.addEventListener('resize', read);
+		window.visualViewport?.addEventListener('resize', read);
+		return () => {
+			window.removeEventListener('resize', read);
+			window.visualViewport?.removeEventListener('resize', read);
+		};
 	});
 
 	// Publish the peek height as a CSS token at runtime so overlays that sit above
@@ -79,16 +103,30 @@
 		};
 	});
 
+	// P0-3: on a short viewport (landscape phone), fractional snap points collapse
+	// into each other — full=10vh on a 393px-tall screen leaves 40px of content.
+	// Absolute snap points instead, clamped so peek >= half >= full always holds
+	// (peekY floors at halfY rather than ever going negative when PEEK_H > vh).
 	function snapY(s: SheetState): number {
-		const vh = window.innerHeight;
+		const short = vh < SHORT_VH_BREAKPOINT;
+		const fullY = short ? 40 : vh * 0.1;
+		const halfY = short ? Math.max(fullY, vh - 200) : vh * 0.5;
+		const peekY = Math.max(halfY, vh - PEEK_H);
 		switch (s) {
-			case 'peek': return vh - PEEK_H;
-			case 'half': return vh * 0.5;
-			case 'full': return vh * 0.1;
+			case 'peek': return peekY;
+			case 'half': return halfY;
+			case 'full': return fullY;
 		}
 	}
 
 	let translateY = $derived(dragging ? currentTranslate : snapY(sheetLevel));
+
+	// P0-1: the sheet's rendered height follows the *resolved* snap point, not the
+	// live drag position — recomputing height (a layout property) on every
+	// touchmove would fight the transform-only drag for the compositor. The box is
+	// therefore correct at rest and only slightly stale for the duration of a drag,
+	// which is intentional (see BottomSheet in the mobile review, P0-1).
+	let heightSnapPx = $derived(snapY(sheetLevel));
 
 	function onTouchStart(e: TouchEvent) {
 		dragging = true;
@@ -102,8 +140,7 @@
 		if (!dragging) return;
 		const dy = e.touches[0].clientY - startY;
 		const next = startTranslate + dy;
-		const vh = window.innerHeight;
-		currentTranslate = Math.max(vh * 0.1, Math.min(vh - 20, next));
+		currentTranslate = Math.max(snapY('full'), Math.min(vh - 20, next));
 	}
 
 	function onTouchEnd(e: TouchEvent) {
@@ -121,10 +158,9 @@
 			newLevel = dy > 0 ? 'peek' : 'full';
 		} else {
 			// Snap to nearest
-			const vh = window.innerHeight;
-			const peekY = vh - PEEK_H;
-			const halfY = vh * 0.5;
-			const fullY = vh * 0.1;
+			const peekY = snapY('peek');
+			const halfY = snapY('half');
+			const fullY = snapY('full');
 			const y = currentTranslate;
 
 			const dPeek = Math.abs(y - peekY);
@@ -143,7 +179,11 @@
 <div
 	class="bottom-sheet mobile-only"
 	bind:this={sheetEl}
-	style="transform: translateY({translateY}px); transition: {dragging ? 'none' : `transform var(--duration-slow) var(--ease-out)`}"
+	style="transform: translateY({translateY}px);
+		height: calc(100dvh - {heightSnapPx}px);
+		transition: {dragging
+		? 'none'
+		: `transform var(--duration-slow) var(--ease-out), height var(--duration-slow) var(--ease-out)`}"
 >
 	<!-- svelte-ignore a11y_no_static_element_interactions -->
 	<div
@@ -169,11 +209,25 @@
 <style>
 	.bottom-sheet {
 		position: fixed;
-		bottom: 0;
+		/* P0-1: top: 0 (not bottom: 0) is load-bearing now that height is variable.
+		   translateY(snapY) is the sole positioning mechanism — it assumes the
+		   box's untransformed top is 0 and height spans exactly the visible
+		   remainder (100dvh - snapY), so the transform lands the visible top at
+		   snapY and the visible bottom flush with the viewport. Anchoring with
+		   bottom: 0 instead would let height changes ALSO reposition the box
+		   (bottom-anchored boxes grow/shrink from the bottom, moving their top),
+		   double-counting the offset already applied by the transform — the
+		   sheet ends up translated by 2x snapY, i.e. entirely off-screen. */
+		top: 0;
 		left: 0;
 		right: 0;
-		height: 100vh;
-		height: 100dvh;
+		/* height is set inline from the resolved snap point (heightSnapPx), so the
+		   sheet only ever occupies the space it visibly draws into — a footer or
+		   any other bottom-anchored control inside .sheet-content can never
+		   resolve past the real bottom edge again. min-height is only the
+		   drag-time floor before the first inline height is computed. */
+		min-height: var(--sheet-peek);
+		max-height: 100dvh;
 		background: var(--color-bg);
 		border-top-left-radius: var(--radius-lg);
 		border-top-right-radius: var(--radius-lg);

@@ -116,12 +116,45 @@ a {
 	}
 }
 
-/* Responsive utilities */
-@media (max-width: 768px) {
+/* Responsive utilities.
+   P0-3: width alone let a landscape phone (e.g. 852x393) through as "desktop" —
+   SidePanel/ActivityRail have no design for a 393px-tall viewport. "Desktop"
+   now requires width AND height; a short viewport gets the mobile layout
+   regardless of width. Keep the 500px height line in sync with +page.svelte's
+   isDesktop matchMedia query and SHORT_VH_BREAKPOINT in BottomSheet.svelte. */
+@media (max-width: 768px), (max-height: 499px) {
 	.desktop-only { display: none !important; }
 }
-@media (min-width: 769px) {
+@media (min-width: 769px) and (min-height: 500px) {
 	.mobile-only { display: none !important; }
+}
+
+/* P0-2: WeatherPanel's own header ("☼ Weather") duplicates the bottom sheet's
+   context bar title on mobile/landscape-phone and was consuming ~42px of an
+   already chrome-heavy panel at 'half'/'full'. The context bar carries the
+   title there instead. Scoped globally rather than in WeatherPanel.svelte
+   itself so the desktop SidePanel (which has no context bar) keeps its
+   header untouched. */
+@media (max-width: 768px), (max-height: 499px) {
+	/* !important: WeatherPanel.svelte's own scoped rule is `.wx-panel-header.svelte-*`
+	   — two classes (specificity 0,2,0) beats this plain one-class override
+	   (0,1,0) regardless of media query, same reason .desktop-only/.mobile-only
+	   above need it. */
+	.wx-panel-header { display: none !important; }
+}
+
+/* Found while proving P0-1/P0-2 measurements: MapPalette's FAB sits at a fixed
+   bottom:30px, which on mobile lands underneath the bottom sheet's peek row
+   (the sheet's z-index is higher) — elementFromPoint on the FAB's center hit
+   the sheet's search button instead. Lift it clear of the sheet using the
+   same --sheet-peek token BottomSheet.svelte publishes at runtime, the same
+   recipe WxInterruptBanner already uses for the same problem. Global rather
+   than in MapPalette.svelte so desktop (no sheet, no --sheet-peek) is
+   untouched. */
+@media (max-width: 768px), (max-height: 499px) {
+	.map-palette-wrapper {
+		bottom: calc(var(--sheet-peek) + var(--space-md) + env(safe-area-inset-bottom)) !important;
+	}
 }
 
 /* Print: hide everything except the ICS-309 panel */

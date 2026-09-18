@@ -19,6 +19,7 @@
 	import { clock, clockWithSeconds, countdown, countdownTone, progress } from '$lib/wxAlertTime';
 	import WxTierGlyph from './WxTierGlyph.svelte';
 	import WxRelayComposer from './WxRelayComposer.svelte';
+	import { nwsBlocks, previewBlocks, type WxBlock } from '$lib/wxAlertText';
 
 	let { alert, onBack, onFlyTo }: { alert: WxAlert; onBack: () => void; onFlyTo?: (lat: number, lon: number) => void } = $props();
 
@@ -43,6 +44,17 @@
 	let showingPrevious = $state<WxAlert | null>(null);
 
 	let displayed = $derived(showingPrevious ?? alert);
+
+	// NWS text normalisation (mobile review P1-1): the raw instruction/
+	// description are hard-wrapped at ~68 columns. nwsBlocks() joins only
+	// those wrap artifacts and keeps the structural line breaks (bullets,
+	// sub-bullets, label lines, terminators, gauge tables) intact.
+	let instructionBlocks = $derived(displayed.instruction ? nwsBlocks(displayed.instruction) : []);
+	let headlineBlocks = $derived(displayed.headline ? nwsBlocks(displayed.headline) : []);
+	let descriptionBlocks = $derived(nwsBlocks(displayed.description));
+	let descriptionPreview = $derived(previewBlocks(descriptionBlocks));
+	let descriptionHasMore = $derived(descriptionPreview.length < descriptionBlocks.length);
+	let descriptionShown = $derived(showMoreDescription || !descriptionHasMore ? descriptionBlocks : descriptionPreview);
 
 	// Close the footer "more actions" menu on outside click, and on Escape —
 	// captured before SidePanel's bubble-phase Escape handler sees it, so
@@ -123,6 +135,20 @@
 	}
 </script>
 
+{#snippet nwsBlockList(blocks: WxBlock[])}
+	{#each blocks as block}
+		{#if block.kind === 'pre'}
+			<pre class="wx-table">{block.text}</pre>
+		{:else if block.kind === 'item'}
+			<p class="wx-item" class:sub={block.sub}>
+				{#if block.label}<span class="wx-item-label">{block.label}</span>{/if}{block.text}
+			</p>
+		{:else}
+			<p class="wx-p">{block.text}</p>
+		{/if}
+	{/each}
+{/snippet}
+
 <div class="wx-detail">
 	{#if showingPrevious}
 		<div class="wx-detail-breadcrumb">
@@ -175,7 +201,7 @@
 		{#if displayed.instruction}
 			<div class="wx-instruction" style="background: var({meta.softVar}); border-left-color: var({meta.colorVar})">
 				<h3 class="wx-section-title" style="color: var({meta.colorVar})">Instruction</h3>
-				<p class="wx-pre">{displayed.instruction}</p>
+				{@render nwsBlockList(instructionBlocks)}
 			</div>
 		{/if}
 
@@ -233,16 +259,18 @@
 		{#if displayed.headline}
 			<div class="wx-section">
 				<h3 class="wx-section-title">Headline</h3>
-				<p class="wx-pre">{displayed.headline}</p>
+				{@render nwsBlockList(headlineBlocks)}
 			</div>
 		{/if}
 
 		<div class="wx-section">
 			<h3 class="wx-section-title">Description</h3>
-			<pre class="wx-desc" class:clamped={!showMoreDescription}>{displayed.description}</pre>
-			<button class="wx-show-more" aria-expanded={showMoreDescription} onclick={() => (showMoreDescription = !showMoreDescription)}>
-				{showMoreDescription ? 'Show less' : 'Show more'}
-			</button>
+			{@render nwsBlockList(descriptionShown)}
+			{#if descriptionHasMore}
+				<button class="wx-show-more" aria-expanded={showMoreDescription} onclick={() => (showMoreDescription = !showMoreDescription)}>
+					{showMoreDescription ? 'Show less' : 'Show more'}
+				</button>
+			{/if}
 		</div>
 
 		<div class="wx-section">
@@ -271,7 +299,8 @@
 	</div>
 
 	<div class="wx-detail-footer">
-		<button class="wx-footer-btn" onclick={() => showAlertOnMap(alert.id)}>Show on map</button>
+		<button class="wx-footer-btn wx-footer-back" onclick={onBack} aria-label="Back to alert list">‹ Alerts</button>
+		<button class="wx-footer-btn wx-footer-showmap" onclick={() => showAlertOnMap(alert.id)}>Show on map</button>
 		{#if acked}
 			<span class="wx-footer-acked">Acknowledged{ackedAt ? ` ${clock(ackedAt)}` : ''}</span>
 		{:else}
@@ -279,7 +308,7 @@
 		{/if}
 		{#if $wxIsNcs}
 			{#if alert.ackedForNet}
-				<span class="wx-footer-acked">Acked for net</span>
+				<span class="wx-footer-acked wx-footer-acked-net">Acked for net</span>
 			{:else}
 				<button class="wx-footer-btn" onclick={handleAckForNet}>Ack for net</button>
 			{/if}
@@ -521,25 +550,40 @@
 		border-radius: var(--radius-sm);
 	}
 
-	.wx-pre {
-		font: inherit;
-		white-space: pre-line;
-		font-size: 0.85rem;
+	.wx-p,
+	.wx-item {
+		font-size: 0.9rem;
+		line-height: 1.45;
+		margin: 0 0 var(--space-sm);
 	}
 
-	.wx-desc {
-		font: inherit;
-		white-space: pre-wrap;
-		font-size: 0.85rem;
-		margin: 0;
+	.wx-item-label {
+		display: block;
+		font-size: 0.7rem;
+		font-weight: 700;
+		letter-spacing: 0.03em;
+		color: var(--color-text-muted);
 	}
 
-	.wx-desc.clamped {
-		display: -webkit-box;
-		-webkit-line-clamp: 4;
-		line-clamp: 4;
-		-webkit-box-orient: vertical;
-		overflow: hidden;
+	.wx-item.sub {
+		padding-left: var(--space-md);
+		position: relative;
+	}
+
+	.wx-item.sub::before {
+		content: '–';
+		position: absolute;
+		left: 4px;
+		color: var(--color-text-muted);
+	}
+
+	.wx-table {
+		font-family: ui-monospace, monospace;
+		font-size: 0.7rem;
+		line-height: 1.4;
+		overflow-x: auto;
+		white-space: pre;
+		margin: 0 0 var(--space-sm);
 	}
 
 	.wx-show-more {
@@ -613,6 +657,13 @@
 		color: var(--color-accent);
 	}
 
+	/* Mobile-only "back" affordance in the footer's last row (P1-7 — the
+	   header .wx-back at the top of the sheet is out of one-handed reach).
+	   Hidden on desktop: the header back control already covers it there. */
+	.wx-footer-back {
+		display: none;
+	}
+
 	.wx-footer-acked {
 		display: flex;
 		align-items: center;
@@ -663,25 +714,85 @@
 	}
 
 	@media (max-width: 480px) {
+		/* Flexbox + `order`, not CSS grid auto-flow: with a variable number of
+		   buttons (NCS role adds two), grid auto-placement wrapped the menu
+		   trigger into column 1 of its own row, so `right: 0` measured from
+		   the wrong box and the menu rendered off the left edge of the
+		   screen. `order` groups tiers regardless of how many buttons are
+		   present, and each tier's basis sums to ~100% so it always wraps to
+		   its own row: accent/acked (tier 1, full width) → NCS ack/relay
+		   (tier 2, halves) → back/show-on-map/menu (tier 3, the reachable
+		   last row — P1-7). */
 		.wx-detail-footer {
-			display: grid;
-			grid-template-columns: 1fr 1fr auto;
+			display: flex;
+			flex-wrap: wrap;
 			gap: var(--space-xs);
 		}
 
-		.wx-footer-btn-accent {
-			grid-column: 1 / -1;
-			order: -1;
+		.wx-footer-btn {
+			order: 2;
+			flex: 1 1 calc(50% - var(--space-xs) / 2);
 		}
 
+		.wx-footer-btn.wx-footer-btn-accent,
 		.wx-footer-acked {
-			grid-column: 1 / -1;
+			order: 1;
+			flex: 1 1 100%;
 			justify-content: center;
-			order: -1;
+		}
+
+		.wx-footer-acked.wx-footer-acked-net {
+			order: 2;
+			flex: 1 1 calc(50% - var(--space-xs) / 2);
+		}
+
+		.wx-footer-btn.wx-footer-back,
+		.wx-footer-btn.wx-footer-showmap {
+			display: inline-flex;
+			order: 3;
+			flex: 1 1 calc((100% - 44px - var(--space-xs) * 2) / 2);
 		}
 
 		.wx-footer-menu-wrap {
+			order: 3;
 			margin-left: 0;
+			flex: 0 0 44px;
+		}
+
+		/* P1-2: the ⋯ trigger was 31px wide (44px tall only). */
+		.wx-icon-btn {
+			width: 44px;
+			padding: 0;
+		}
+
+		/* P1-6: anchor the menu to the wrap's real right edge now that the
+		   wrap is reliably the last cell of the last row, with a fallback
+		   cap so it can never run past the viewport edge either. */
+		.wx-footer-menu {
+			right: 0;
+			left: auto;
+			max-width: calc(100vw - 2 * var(--space-md));
+		}
+
+		/* P1-2: sub-44px touch targets inside the detail view. Scoped to
+		   mobile widths only so desktop density is unaffected. */
+		.wx-show-more {
+			display: block;
+			width: 100%;
+			min-height: 44px;
+			text-align: left;
+			padding: 0 var(--space-xs);
+			margin-top: var(--space-xs);
+		}
+
+		.wx-replaces {
+			min-height: 44px;
+			padding: 0 var(--space-md);
+		}
+
+		.wx-chip-btn {
+			min-height: 44px;
+			padding: 0 var(--space-md);
 		}
 	}
 </style>

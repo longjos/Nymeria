@@ -2,7 +2,6 @@
 	import { activeNet, activeCheckIns } from '$lib/stores/netcontrol';
 	import { wxUnackedCount, wxActiveWarningIn } from '$lib/stores/wxAlerts';
 	import { canAdmin } from '$lib/stores/session';
-	import { sheetState } from '$lib/stores/ui';
 	import type { PanelMode } from '$lib/stores/ui';
 
 	let {
@@ -37,19 +36,15 @@
 
 	let netActive = $derived($activeNet?.status === 'open');
 	let netOpCount = $derived($activeCheckIns.length);
-
-	// At 'peek' the rail is one scrollable row because that is all the 58px of peek
-	// budget allows. Above peek there is room for every destination at once, so the
-	// rail becomes a wrapped grid — no hidden targets, no horizontal hunting.
-	// Read from the store rather than a prop: +page.svelte owns the prop signature.
-	let expanded = $derived($sheetState !== 'peek');
 </script>
 
-<!-- Mobile navigation rail: lives in the bottom sheet's always-visible peek area,
-     so no target can ever be occluded by the sheet painting over it. -->
+<!-- Mobile navigation rail: lives in the bottom sheet's peek area only (P0-2 —
+     +page.svelte renders this snippet exclusively at sheetState 'peek'; above
+     peek the user has already chosen a destination and the sheet shows a
+     context bar instead), so no target can ever be occluded by the sheet
+     painting over it. -->
 <div
 	class="mobile-toolbar mobile-only"
-	class:expanded
 	role="navigation"
 	aria-label="Panels"
 >
@@ -229,32 +224,6 @@
 	}
 
 	.mobile-toolbar::-webkit-scrollbar { display: none; }
-
-	/* Sheet above peek: every destination on screen at once. auto-fit lands on 4
-	   columns at 390px and 5 on wider phones, so the row count follows the device
-	   instead of a hardcoded breakpoint. */
-	.mobile-toolbar.expanded {
-		display: grid;
-		grid-template-columns: repeat(auto-fit, minmax(76px, 1fr));
-		/* The rail lives in .sheet-peek, which is flex-shrink: 0 ABOVE the
-		   scrollable .sheet-content — so an unbounded grid pushes the panel it
-		   navigates to off the bottom of the screen. Two rows is the most it may
-		   take; past that the rail scrolls itself rather than eating the panel.
-		   Landscape (844x390) lands on 9 columns and so still wraps to two, which
-		   this cap accommodates rather than fights. */
-		max-height: calc(2 * 58px + var(--space-xs));
-		overflow-y: auto;
-		overflow-x: visible;
-		touch-action: auto;
-		mask-image: none;
-		-webkit-mask-image: none;
-	}
-
-	.mobile-toolbar.expanded .fab { width: auto; }
-
-	/* Nothing scrolls away in grid mode, so the pinned Search slot is pointless
-	   and sticky positioning would only fight the grid's own placement. */
-	.mobile-toolbar.expanded .fab.search-fab { position: static; }
 
 	.fab {
 		flex: 0 0 auto;

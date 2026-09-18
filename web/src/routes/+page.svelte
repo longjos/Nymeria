@@ -51,7 +51,8 @@
 	import { initWeatherStore, weatherStations, selectedWeatherStation } from '$lib/stores/weather';
 	import {
 		initWxAlertStore, wxInAreaAlerts, wxNearbyAlerts, wxZoneGeometry, wxLinkStatus,
-		wxFootprint, wxFootprintPreview, wxFocusAlertId, wxSelectedAlertId, openWxAlert, wxMinute
+		wxFootprint, wxFootprintPreview, wxFocusAlertId, wxSelectedAlertId, openWxAlert, wxMinute,
+		wxAlertsById
 	} from '$lib/stores/wxAlerts';
 	import { tierMeta } from '$lib/wxAlertMeta';
 	import { countdown } from '$lib/wxAlertTime';
@@ -188,7 +189,12 @@
 		} catch {
 			// default on
 		}
-		const mq = window.matchMedia('(min-width: 769px)');
+		// P0-3: width alone put a landscape phone (e.g. 852x393) on the desktop
+		// layout — SidePanel + ActivityRail have no design for a 393px-tall
+		// viewport. Desktop now requires height too; keep this in sync with the
+		// (min-width: 769px) and (min-height: 500px) breakpoints in app.css and
+		// the SHORT_VH_BREAKPOINT in BottomSheet.svelte.
+		const mq = window.matchMedia('(min-width: 769px) and (min-height: 500px)');
 		isDesktop = mq.matches;
 		const handler = (e: MediaQueryListEvent) => { isDesktop = e.matches; };
 		mq.addEventListener('change', handler);
@@ -327,9 +333,63 @@
 	const WX_PEEK_STRIP_H = 36;
 	let wxPeekAlert = $derived($wxInAreaAlerts[0] ?? null);
 	let wxPeekCountdown = $derived(wxPeekAlert ? countdown(wxPeekAlert.endsAt, $wxMinute * 60000) : null);
-	// Hidden entirely with no in-area alerts or when NWS alerts are off — never
-	// implies monitoring that isn't happening.
-	let showWxPeekStrip = $derived($wxLinkStatus.state !== 'off' && wxPeekAlert != null);
+	// Hidden entirely with no in-area alerts, when NWS alerts are off, or when the
+	// strip's own alert is already the open detail below it (P0-2 finding 4 — the
+	// strip only ever renders at 'peek' now, but the open detail can survive a
+	// drag back down to peek, so the guard stays even though it's rarely hit).
+	let showWxPeekStrip = $derived(
+		$wxLinkStatus.state !== 'off' &&
+			wxPeekAlert != null &&
+			!($panelMode === 'weather' && $wxSelectedAlertId === wxPeekAlert?.id)
+	);
+
+	// P0-2: the sheet's peekContent used to render the same nav rail at every
+	// sheet level, which is what pushed the actual panel content off the bottom
+	// of the screen at 'half' and left 'full' mostly chrome. Above 'peek' the
+	// user has already picked a destination, so the rail is replaced by this
+	// ~44px context bar (title + close) instead — see peekContent below.
+	const PANEL_TITLES: Record<PanelMode, string> = {
+		closed: '',
+		stations: 'Stations',
+		detail: 'Station',
+		messages: 'Messages',
+		convo: 'Conversation',
+		transports: 'Transports',
+		activity: 'Activity',
+		annotations: 'Annotations',
+		netcontrol: 'Net Control',
+		bulletins: 'Bulletins',
+		ics309: 'ICS-309',
+		weather: 'Weather',
+		telemetry: 'Telemetry',
+		df: 'Direction Finding',
+		packets: 'Packets',
+		settings: 'Settings'
+	};
+
+	let selectedAlertEvent = $derived.by(() => {
+		const id = $wxSelectedAlertId;
+		if (!id) return null;
+		return $wxAlertsById.get(id)?.effectiveEvent ?? null;
+	});
+
+	let panelTitle = $derived.by(() => {
+		if (($panelMode === 'detail' || $panelMode === 'convo') && $selectedStation) return $selectedStation;
+		if ($panelMode === 'weather' && selectedAlertEvent) return selectedAlertEvent;
+		return PANEL_TITLES[$panelMode] ?? '';
+	});
+
+	// Small live-link dot in the context bar for the Weather panel only — the
+	// context bar replaces the provenance strip's real estate at half/full, so
+	// this is the one glanceable signal that survives.
+	let wxContextDotColor = $derived.by(() => {
+		switch ($wxLinkStatus.state) {
+			case 'live': return 'var(--color-success)';
+			case 'stale': return 'var(--color-warning)';
+			case 'down': return 'var(--color-error)';
+			default: return 'var(--color-text-muted)';
+		}
+	});
 
 	/**
 	 * Below this speed a GPS course-over-ground is noise, not a heading: NMEA
@@ -844,44 +904,56 @@
 			peekExtraH={showWxPeekStrip ? WX_PEEK_STRIP_H : 0}
 		>
 			{#snippet peekContent()}
-				<div class="sheet-peek-row">
-					<button class="peek-status" onclick={openTransports} aria-label="Transport status — open transports">
-						<ConnectionStatus />
-					</button>
-					<span class="station-count">{$rosterScopedStations.scoped ? `${$rosterScopedStations.stations.length} on roster` : `${$stationList.length} stations`}</span>
-				</div>
-				{#if showWxPeekStrip && wxPeekAlert && wxPeekCountdown}
-					<button
-						class="wx-peek-strip"
-						style="border-left-color: var({tierMeta[wxPeekAlert.tier].colorVar})"
-						onclick={() => openWxAlert(wxPeekAlert!.id)}
-						aria-label={`${wxPeekAlert.event}, ${tierMeta[wxPeekAlert.tier].ariaWord}, ${wxPeekCountdown.text === 'expired' ? 'expired' : `ends in ${wxPeekCountdown.text}`}. Open alert.`}
-					>
-						<span class="wx-peek-glyph" style="color: var({tierMeta[wxPeekAlert.tier].colorVar})">
-							<WxTierGlyph tier={wxPeekAlert.tier} size={16} />
-						</span>
-						<span class="wx-peek-event">
-							{wxPeekAlert.event}{#if $wxInAreaAlerts.length > 1}<span class="wx-peek-more"> · {$wxInAreaAlerts.length - 1} more</span>{/if}
-						</span>
-						<span class="wx-peek-countdown">{wxPeekCountdown.text}</span>
-						<span class="wx-peek-chevron" aria-hidden="true">›</span>
-					</button>
+				{#if $sheetState === 'peek'}
+					<div class="sheet-peek-row">
+						<button class="peek-status" onclick={openTransports} aria-label="Transport status — open transports">
+							<ConnectionStatus />
+						</button>
+						<span class="station-count">{$rosterScopedStations.scoped ? `${$rosterScopedStations.stations.length} on roster` : `${$stationList.length} stations`}</span>
+					</div>
+					{#if showWxPeekStrip && wxPeekAlert && wxPeekCountdown}
+						<button
+							class="wx-peek-strip"
+							style="border-left-color: var({tierMeta[wxPeekAlert.tier].colorVar})"
+							onclick={() => openWxAlert(wxPeekAlert!.id)}
+							aria-label={`${wxPeekAlert.event}, ${tierMeta[wxPeekAlert.tier].ariaWord}, ${wxPeekCountdown.text === 'expired' ? 'expired' : `ends in ${wxPeekCountdown.text}`}. Open alert.`}
+						>
+							<span class="wx-peek-glyph" style="color: var({tierMeta[wxPeekAlert.tier].colorVar})">
+								<WxTierGlyph tier={wxPeekAlert.tier} size={16} />
+							</span>
+							<span class="wx-peek-event">
+								{wxPeekAlert.event}{#if $wxInAreaAlerts.length > 1}<span class="wx-peek-more"> · {$wxInAreaAlerts.length - 1} more</span>{/if}
+							</span>
+							<span class="wx-peek-countdown">{wxPeekCountdown.text}</span>
+							<span class="wx-peek-chevron" aria-hidden="true">›</span>
+						</button>
+					{/if}
+					<Toolbar
+						unreadCount={totalUnread}
+						activeMode={$panelMode}
+						onSearchOpen={() => searchOpen.set(true)}
+						onMessagesOpen={openMessages}
+						onBulletinsOpen={openBulletins}
+						onTransportsOpen={openTransports}
+						onAnnotationsOpen={openAnnotations}
+						onNetControlOpen={openNetControl}
+						onWeatherOpen={openWeather}
+						onDFOpen={openDF}
+						onPacketsOpen={openPackets}
+						onSettingsOpen={openSettings}
+						onCommandPalette={toggleCommandPalette}
+					/>
+				{:else}
+					<!-- P0-2: above 'peek' the user has already chosen a destination —
+					     hand the vertical space back to the panel instead of the rail. -->
+					<div class="sheet-context">
+						<button class="sheet-context-close" onclick={closePanel} aria-label="Close panel">×</button>
+						<span class="sheet-context-title">{panelTitle}</span>
+						{#if $panelMode === 'weather'}
+							<span class="sheet-context-dot" style="background: {wxContextDotColor}" aria-hidden="true"></span>
+						{/if}
+					</div>
 				{/if}
-				<Toolbar
-					unreadCount={totalUnread}
-					activeMode={$panelMode}
-					onSearchOpen={() => searchOpen.set(true)}
-					onMessagesOpen={openMessages}
-					onBulletinsOpen={openBulletins}
-					onTransportsOpen={openTransports}
-					onAnnotationsOpen={openAnnotations}
-					onNetControlOpen={openNetControl}
-					onWeatherOpen={openWeather}
-					onDFOpen={openDF}
-					onPacketsOpen={openPackets}
-					onSettingsOpen={openSettings}
-					onCommandPalette={toggleCommandPalette}
-				/>
 			{/snippet}
 
 			{#if $panelMode === 'closed' || $panelMode === 'stations'}
@@ -1028,8 +1100,58 @@
 		color: var(--color-text-muted);
 	}
 
-	/* P1-2: soonest in-area alert + countdown, visible at every sheet height
-	   because peekContent renders above sheet-content regardless of level. */
+	/* P0-2: replaces the status row / wx strip / nav rail above 'peek' — a single
+	   draggable-height context bar (close · title · link dot) so the panel gets
+	   the vertical space instead of chrome it no longer needs once the user has
+	   already picked a destination. */
+	.sheet-context {
+		display: flex;
+		align-items: center;
+		gap: var(--space-sm);
+		min-height: 44px;
+	}
+
+	.sheet-context-close {
+		flex-shrink: 0;
+		width: 44px;
+		height: 44px;
+		display: flex;
+		align-items: center;
+		justify-content: center;
+		background: none;
+		border: none;
+		color: var(--color-text);
+		font-size: 1.25rem;
+		line-height: 1;
+		border-radius: var(--radius-sm);
+		cursor: pointer;
+	}
+
+	.sheet-context-close:hover,
+	.sheet-context-close:focus-visible {
+		background: var(--color-surface);
+	}
+
+	.sheet-context-title {
+		flex: 1;
+		min-width: 0;
+		font-size: 0.95rem;
+		font-weight: 700;
+		overflow: hidden;
+		text-overflow: ellipsis;
+		white-space: nowrap;
+	}
+
+	.sheet-context-dot {
+		flex-shrink: 0;
+		width: 8px;
+		height: 8px;
+		border-radius: var(--radius-full);
+		margin-right: var(--space-sm);
+	}
+
+	/* P1-2: soonest in-area alert + countdown. Only rendered at 'peek' now (see
+	   peekContent) — above peek the context bar takes over. */
 	.wx-peek-strip {
 		display: flex;
 		align-items: center;

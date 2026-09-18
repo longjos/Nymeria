@@ -80,6 +80,16 @@
 		cursor: pointer;
 	}
 
+	/* Mobile review P1-2: this strip is also the retry affordance (tap to
+	   expand, then "Retry now") and measured 36px tall. Phone-only breakpoint
+	   — same rationale as WxAlertPanel's chips/headings — so the desktop
+	   side panel keeps its current density. */
+	@media (max-width: 768px) {
+		.wx-prov-btn {
+			min-height: 44px;
+		}
+	}
+
 	.wx-prov-dot {
 		flex-shrink: 0;
 		width: 6px;
