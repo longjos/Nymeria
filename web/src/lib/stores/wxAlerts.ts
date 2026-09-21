@@ -11,7 +11,7 @@ import type { AttentionItem } from './netcontrol';
 import { currentUser, canAdmin } from './session';
 import { showToast, announce } from './toast';
 import { openWeather, wxPanelTab, panelMode } from './ui';
-import type { WxAlert, WxLinkStatus, WxFootprintSummary, WxEffectivePolicy, WxPolygonGeometry, WxNetAck } from '$lib/types';
+import type { WxAlert, WxLinkStatus, WxFootprintSummary, WxEffectivePolicy, WxPolygonGeometry, WxNetAck, WxAffects } from '$lib/types';
 import { tierRank, toastLine, sortAlerts } from '$lib/wxAlertMeta';
 import { clock } from '$lib/wxAlertTime';
 
@@ -223,6 +223,45 @@ function showWxToast(a: WxAlert): void {
 const seenVersions = new Map<string, string>();
 
 /**
+ * Belt-and-braces against a Go nil slice arriving as JSON `null`. Every array
+ * here is documented "never nil" on the wire and is read with `.length` /
+ * `.map` downstream — one null throws mid-render, which in Svelte 5 breaks the
+ * reactive graph and freezes the entire UI (clicks land, nothing re-renders).
+ * The server is the fix; this makes the class of bug non-fatal.
+ */
+const EMPTY_AFFECTS: WxAffects = {
+	summary: '',
+	entireCourse: false,
+	routeMiles: 0,
+	checkpoints: [],
+	locations: [],
+	stations: [],
+	checkpointSeqRange: [],
+	routeSpans: []
+};
+
+export function normalizeAlert(a: WxAlert): WxAlert {
+	const affects = a.affects ?? EMPTY_AFFECTS;
+	return {
+		...a,
+		ugc: a.ugc ?? [],
+		same: a.same ?? [],
+		references: a.references ?? [],
+		zones: a.zones ?? [],
+		parameters: a.parameters ?? {},
+		affects: {
+			...EMPTY_AFFECTS,
+			...affects,
+			checkpoints: affects.checkpoints ?? [],
+			locations: affects.locations ?? [],
+			stations: affects.stations ?? [],
+			checkpointSeqRange: affects.checkpointSeqRange ?? [],
+			routeSpans: affects.routeSpans ?? []
+		}
+	};
+}
+
+/**
  * The notification engine: dedupes by `updatedAt`, applies the restore rule
  * (never toast history except an unacked interrupt re-arming), the mute rule
  * (suppresses non-escalated updates only), and coalesces a multi-alert batch
@@ -236,7 +275,7 @@ export function applyAlerts(
 	policy: WxEffectivePolicy,
 	reason: WxApplyReason
 ): void {
-	const list = alerts ?? [];
+	const list = (alerts ?? []).map(normalizeAlert);
 	const next = new Map(list.map((a) => [a.id, a] as const));
 
 	wxAlertsById.set(next);

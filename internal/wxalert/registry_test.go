@@ -424,3 +424,30 @@ func TestRegistryPersistRoundTrip(t *testing.T) {
 		t.Fatalf("restored ack = %v, want %v", restored, orig)
 	}
 }
+
+// Alerts persisted before Classify normalised Affects come back off disk with
+// nil slices. Active ones are re-classified on the next poll, but ended ones
+// never are — they would keep serving JSON nulls forever and freeze the alert
+// detail when opened from the expired group.
+func TestRestoreNormalisesAffects(t *testing.T) {
+	r := NewRegistry()
+	nilAffects := Affects{Summary: "somewhere"}
+	r.Restore(RegistrySnapshot{
+		Active: []snapshotRecord{{Alert: MatchedAlert{Alert: Alert{ID: "active-1"}, State: AlertStateActive, Affects: nilAffects}}},
+		Ended:  []snapshotRecord{{Alert: MatchedAlert{Alert: Alert{ID: "ended-1"}, State: AlertStateExpired, Affects: nilAffects}}},
+	})
+
+	got := r.Active()
+	for _, e := range r.Ended() {
+		got = append(got, e.Alert)
+	}
+	for _, got := range got {
+		if got.Affects.Checkpoints == nil || got.Affects.Locations == nil || got.Affects.Stations == nil ||
+			got.Affects.CheckpointSeqRange == nil || got.Affects.RouteSpans == nil {
+			t.Errorf("Restore(%s): Affects still has nil slices: %+v", got.ID, got.Affects)
+		}
+		if got.Affects.Summary != "somewhere" {
+			t.Errorf("Restore(%s): Summary = %q, want it preserved", got.ID, got.Affects.Summary)
+		}
+	}
+}

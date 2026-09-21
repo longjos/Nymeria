@@ -12,7 +12,8 @@
 		ackAlertForNet,
 		muteAlert,
 		unmuteAlert,
-		showAlertOnMap
+		showAlertOnMap,
+		normalizeAlert
 	} from '$lib/stores/wxAlerts';
 	import { showToast } from '$lib/stores/toast';
 	import { tierMeta, zoneLabel, toastLine } from '$lib/wxAlertMeta';
@@ -87,8 +88,9 @@
 		historyLoading = true;
 		try {
 			const res = await api.wxAlert(alert.id);
-			history = res.history;
-			showingPrevious = res.history[0] ?? null;
+			// History bypasses applyAlerts, so normalise it here too.
+			history = (res.history ?? []).map(normalizeAlert);
+			showingPrevious = history[0] ?? null;
 		} catch {
 			showToast('Could not load the earlier version.', 'error');
 		} finally {

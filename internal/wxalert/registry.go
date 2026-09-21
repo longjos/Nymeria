@@ -414,10 +414,15 @@ func (r *Registry) Restore(snap RegistrySnapshot) {
 	defer r.mu.Unlock()
 	r.active = map[string]*record{}
 	r.ended = map[string]*record{}
+	// Snapshots written before Classify normalised Affects carry nil slices.
+	// Active alerts are re-classified on the next poll; ended ones never are,
+	// so normalise both here rather than serving JSON nulls.
 	for _, sr := range snap.Active {
+		sr.Alert.Affects = sr.Alert.Affects.nonNil()
 		r.active[sr.Alert.ID] = &record{alert: sr.Alert, prevID: sr.PrevID}
 	}
 	for _, sr := range snap.Ended {
+		sr.Alert.Affects = sr.Alert.Affects.nonNil()
 		rec := &record{alert: sr.Alert, prevID: sr.PrevID}
 		if sr.Alert.EndedReason == "cancelled" && sr.Alert.EndedAt != nil {
 			rec.cancelledAt = *sr.Alert.EndedAt

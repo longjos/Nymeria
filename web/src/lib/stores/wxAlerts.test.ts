@@ -205,3 +205,51 @@ describe('wxUnackedCount', () => {
 		expect(get(wxUnackedCount)).toBe(2);
 	});
 });
+
+describe('applyAlerts hardening against nil-slice payloads', () => {
+	it('fills the "never nil" arrays a Go nil slice sends as null', () => {
+		// A NEAR alert used to arrive with every affects array as null; the
+		// detail reads .length on them, which threw mid-render and froze the
+		// whole UI (clicks acknowledged, nothing re-rendered).
+		const broken = base('near-1', '2026-09-21T18:00:00Z');
+		const wire = {
+			...broken,
+			ugc: null,
+			same: null,
+			references: null,
+			zones: null,
+			parameters: null,
+			affects: {
+				summary: '',
+				entireCourse: false,
+				routeMiles: 0,
+				checkpoints: null,
+				locations: null,
+				stations: null,
+				checkpointSeqRange: null,
+				routeSpans: null
+			}
+		} as unknown as WxAlert;
+
+		applyAlerts([wire], STATUS, null, POLICY, 'poll');
+
+		const a = get(wxAlertsById).get('near-1');
+		expect(a).toBeDefined();
+		expect(a!.affects.checkpoints).toEqual([]);
+		expect(a!.affects.locations).toEqual([]);
+		expect(a!.affects.stations).toEqual([]);
+		expect(a!.affects.checkpointSeqRange).toEqual([]);
+		expect(a!.affects.routeSpans).toEqual([]);
+		expect(a!.ugc).toEqual([]);
+		expect(a!.same).toEqual([]);
+		expect(a!.references).toEqual([]);
+		expect(a!.zones).toEqual([]);
+		expect(a!.parameters).toEqual({});
+	});
+
+	it('survives an alert with no affects object at all', () => {
+		const wire = { ...base('near-2', '2026-09-21T18:00:00Z'), affects: null } as unknown as WxAlert;
+		expect(() => applyAlerts([wire], STATUS, null, POLICY, 'poll')).not.toThrow();
+		expect(get(wxAlertsById).get('near-2')!.affects.stations).toEqual([]);
+	});
+});

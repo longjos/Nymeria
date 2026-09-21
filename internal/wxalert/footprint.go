@@ -417,10 +417,17 @@ type Match struct {
 // alerts (nil map or nil entries are fine — the match falls back to the UGC
 // set / NEAR-by-probe result).
 func (f *Footprint) Classify(a Alert, zones map[string]*ZoneRecord) Match {
+	var m Match
 	if a.HasPolygon() {
-		return f.classifyPolygon(a.Geometry.Rings, "polygon")
+		m = f.classifyPolygon(a.Geometry.Rings, "polygon")
+	} else {
+		m = f.classifyZoneOnly(a, zones)
 	}
-	return f.classifyZoneOnly(a, zones)
+	// NEAR/FAR never call buildAffects, so their Affects is the zero value.
+	// Every slice on it is documented "never nil" and the frontend reads
+	// .length on them — one null there throws mid-render and freezes the UI.
+	m.Affects = m.Affects.nonNil()
+	return m
 }
 
 // boundaryEpsilonMiles absorbs floating-point/projection noise (the local
@@ -661,6 +668,21 @@ func iif(cond bool, a, b string) string {
 		return a
 	}
 	return b
+}
+
+// nonNil returns a copy with every slice guaranteed non-nil, so the JSON
+// carries [] rather than null. Classify is the single funnel for Affects.
+func (a Affects) nonNil() Affects {
+	a.Checkpoints = nonNilItems(a.Checkpoints)
+	a.Locations = nonNilItems(a.Locations)
+	a.Stations = nonNilItems(a.Stations)
+	if a.CheckpointSeqRange == nil {
+		a.CheckpointSeqRange = []int{}
+	}
+	if a.RouteSpans == nil {
+		a.RouteSpans = []RouteSpan{}
+	}
+	return a
 }
 
 func nonNilItems(items []AffectedItem) []AffectedItem {

@@ -1,6 +1,8 @@
 package wxalert
 
 import (
+	"bytes"
+	"encoding/json"
 	"strconv"
 	"testing"
 	"time"
@@ -630,4 +632,66 @@ func TestFootprintSamplePointSpacingAndDedup(t *testing.T) {
 	if got := f.summary.RouteMiles; got < 47 || got > 49 {
 		t.Errorf("RouteMiles = %v, want ~48", got)
 	}
+}
+
+// A NEAR/FAR match never calls buildAffects, so its zero-value Affects used to
+// marshal every slice as JSON null. The frontend's WxAffects declares those
+// "never nil" and reads .length on them, so one null froze the whole alert
+// detail. Every Classify result must carry empty slices, not nil.
+func TestClassifyAffectsSlicesNeverNil(t *testing.T) {
+	check := func(t *testing.T, where string, m Match) {
+		t.Helper()
+		if m.Affects.Checkpoints == nil {
+			t.Errorf("%s: Affects.Checkpoints is nil, want empty slice", where)
+		}
+		if m.Affects.Locations == nil {
+			t.Errorf("%s: Affects.Locations is nil, want empty slice", where)
+		}
+		if m.Affects.Stations == nil {
+			t.Errorf("%s: Affects.Stations is nil, want empty slice", where)
+		}
+		if m.Affects.CheckpointSeqRange == nil {
+			t.Errorf("%s: Affects.CheckpointSeqRange is nil, want empty slice", where)
+		}
+		if m.Affects.RouteSpans == nil {
+			t.Errorf("%s: Affects.RouteSpans is nil, want empty slice", where)
+		}
+		b, err := json.Marshal(m.Affects)
+		if err != nil {
+			t.Fatalf("%s: marshal Affects: %v", where, err)
+		}
+		if bytes.Contains(b, []byte(":null")) {
+			t.Errorf("%s: Affects marshalled a null: %s", where, b)
+		}
+	}
+
+	f := Build(Inputs{BufferMiles: 10, Own: &gr, OwnSource: "gps", Now: time.Now()})
+
+	// Polygon alerts at each proximity band.
+	for _, tt := range []struct {
+		name string
+		ring []LatLon
+	}{
+		{"polygon in", boxAt(gr, 90, 5, 3)},
+		{"polygon near", boxAt(gr, 90, 15, 3)},
+		{"polygon far", boxAt(gr, 90, 25, 3)},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			check(t, tt.name, f.Classify(polygonAlert("Severe Thunderstorm Warning", SeveritySevere, tt.ring), nil))
+		})
+	}
+
+	// Zone-only alerts, with and without a zone cache.
+	t.Run("zone only uncached", func(t *testing.T) {
+		check(t, "zone only uncached", f.Classify(zoneAlert("Heat Advisory", "MIZ999"), nil))
+	})
+	t.Run("zone only empty cache", func(t *testing.T) {
+		check(t, "zone only empty cache", f.Classify(zoneAlert("Heat Advisory", "MIZ999"), map[string]*ZoneRecord{}))
+	})
+
+	// An empty footprint (nothing of ours anywhere) must still be non-nil.
+	t.Run("empty footprint", func(t *testing.T) {
+		empty := Build(Inputs{BufferMiles: 10, Now: time.Now()})
+		check(t, "empty footprint", empty.Classify(polygonAlert("Tornado Warning", SeverityExtreme, boxAt(gr, 90, 5, 3)), nil))
+	})
 }
