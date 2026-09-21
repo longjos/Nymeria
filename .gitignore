@@ -1,5 +1,7 @@
 # Go
 /nymeria
+/nymeria-linux-*
+/nymeria-darwin-*
 *.exe
 *.test
 *.out
@@ -33,6 +35,16 @@ nymeria.yml
 # Cached map tiles
 /tiles/
 
+# NWS zone-polygon cache (written at runtime beside the binary)
+/wxalerts/
+
+# Local copies of the docker templates (the .example files are tracked)
+docker/direwolf.conf
+docker/nymeria.yaml
+
 # Environment
 .env
 .env.*
+
+# Local agent tooling
+.grok/
