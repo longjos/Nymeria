@@ -812,6 +812,7 @@
 			onClose={closePanel}
 			onBack={$panelMode === 'convo' ? openMessages : ($panelMode === 'weather' && $wxSelectedAlertId) ? () => wxSelectedAlertId.set(null) : undefined}
 			backLabel={$panelMode === 'weather' ? 'Alerts' : 'Messages'}
+			hideBackButton={$panelMode === 'weather'}
 			onTransitionEnd={() => {}}
 		>
 			{#if $panelMode === 'stations'}

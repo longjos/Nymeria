@@ -11,7 +11,9 @@ import {
 	compass,
 	param,
 	tierRank,
-	notifyRank
+	notifyRank,
+	proximityLabel,
+	proximityNote
 } from './wxAlertMeta';
 import type { WxAlert, WxSeverity, WxTier } from './types';
 import { wxAlertFixtureAlerts } from './data/wxAlertFixture';
@@ -290,5 +292,24 @@ describe('announceSentence', () => {
 		expect(announceSentence(a, '9:05 PM', now)).toBe(
 			'Tornado Warning in your watch area, affects the watch area, ends 9:00 PM, now. Source NWS Grand Rapids MI, fetched 9:05 PM.'
 		);
+	});
+});
+
+describe('proximityLabel / proximityNote', () => {
+	it('names the watch area for an in-area alert', () => {
+		const a = makeAlert({ proximity: 'in', distanceMiles: 0, bearingDeg: 0 });
+		expect(proximityLabel(a)).toBe('In watch area');
+		expect(proximityNote(a)).toContain('Inside the watch area');
+	});
+
+	it('gives distance and bearing for a nearby alert', () => {
+		const a = makeAlert({ proximity: 'near', distanceMiles: 12.4, bearingDeg: 45 });
+		expect(proximityLabel(a)).toBe('12 mi NE');
+		expect(proximityNote(a)).toBe('12 mi NE of the watch area — nothing of yours is inside it.');
+	});
+
+	it('omits the bearing when it is unknown', () => {
+		const a = makeAlert({ proximity: 'near', distanceMiles: 8, bearingDeg: Number.NaN });
+		expect(proximityLabel(a)).toBe('8 mi');
 	});
 });

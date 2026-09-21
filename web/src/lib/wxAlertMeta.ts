@@ -203,6 +203,32 @@ export function compass(deg?: number): string {
 	return COMPASS_8[idx];
 }
 
+/**
+ * The IN/NEAR answer in three words, for the detail's chip row. The row has
+ * always carried this ("12 mi NE of course"); the detail dropped it entirely,
+ * so two alerts from two different groups looked identical once opened.
+ */
+export function proximityLabel(a: WxAlert): string {
+	if (a.proximity === 'near') {
+		const dir = compass(a.bearingDeg);
+		return `${Math.round(a.distanceMiles)} mi${dir ? ` ${dir}` : ''}`;
+	}
+	return 'In watch area';
+}
+
+/**
+ * The Affects empty state. "Nothing of yours is inside this alert" is true but
+ * unhelpful for a NEAR alert — the reason it is listed at all is that it is
+ * nearly inside.
+ */
+export function proximityNote(a: WxAlert): string {
+	if (a.proximity === 'near') {
+		const dir = compass(a.bearingDeg);
+		return `${Math.round(a.distanceMiles)} mi${dir ? ` ${dir}` : ''} of the watch area — nothing of yours is inside it.`;
+	}
+	return 'Inside the watch area — no checkpoints, locations or stations of yours are inside this alert.';
+}
+
 /** The toast/list line for an alert — one string reused by showToast() and the row's line-2 fallback. */
 export function toastLine(a: WxAlert): string {
 	if (a.state !== 'active') {

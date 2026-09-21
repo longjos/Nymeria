@@ -52,12 +52,16 @@
 	});
 
 	function openDetail(id: string): void {
+		lastOpenedId = id;
 		wxSelectedAlertId.set(id);
 		sheetState.set('full');
 	}
 
 	function closeDetail(): void {
 		wxSelectedAlertId.set(null);
+		// P0-3: the detail unmounts and the list remounts, so without this the
+		// keyboard user who arrowed to row 7 lands back at <body>.
+		wantRowFocus = true;
 		// 'half' puts the list below the fold on a phone — the chrome above it
 		// is taller than the space left over — so coming back from a detail
 		// landed on no visible rows at all.
@@ -69,6 +73,17 @@
 	}
 
 	let listEl: HTMLElement | undefined = $state();
+	let lastOpenedId = $state<string | null>(null);
+	let wantRowFocus = $state(false);
+
+	$effect(() => {
+		if (!wantRowFocus || !listEl || selected) return;
+		const row = lastOpenedId
+			? listEl.querySelector<HTMLElement>(`[data-wx-row][data-wx-alert-id="${CSS.escape(lastOpenedId)}"]`)
+			: null;
+		(row ?? listEl.querySelector<HTMLElement>('[data-wx-row]'))?.focus();
+		wantRowFocus = false;
+	});
 
 	function handleListKeydown(e: KeyboardEvent): void {
 		if (!listEl) return;
@@ -153,9 +168,19 @@
 		</div>
 
 		<!-- svelte-ignore a11y_no_noninteractive_element_interactions -->
-		<div class="wx-alert-groups" role="list" bind:this={listEl} onkeydown={handleListKeydown}>
+		<!-- `role="list"` sits on the direct parent of the rows, one per group:
+		     on the groups container the listitems were grandchildren, so no
+		     screen reader counted them. The container is the group that owns
+		     arrow-key/Home/End navigation across all three lists. -->
+		<div
+			class="wx-alert-groups"
+			role="group"
+			aria-label="NWS alerts"
+			bind:this={listEl}
+			onkeydown={handleListKeydown}
+		>
 			<section class="wx-group">
-				<h3 class="wx-group-heading">In watch area <span class="wx-group-count">{inArea.length}</span></h3>
+				<h3 class="wx-group-heading" id="wx-group-inarea">In watch area <span class="wx-group-count">{inArea.length}</span></h3>
 				{#if inArea.length === 0}
 					<p class="wx-group-empty" class:wx-group-empty-down={$wxLinkStatus.state === 'down'}>
 						{#if $wxLinkStatus.state === 'down'}
@@ -165,24 +190,30 @@
 						{/if}
 					</p>
 				{:else}
-					{#each inArea as a (a.id)}
-						<WxAlertRow alert={a} acked={$wxIsAcked(a)} muted={$wxMuted.has(a.id)} onOpen={openDetail} onAck={handleAck} />
-					{/each}
+					<div role="list" aria-labelledby="wx-group-inarea">
+						{#each inArea as a (a.id)}
+							<WxAlertRow alert={a} acked={$wxIsAcked(a)} muted={$wxMuted.has(a.id)} onOpen={openDetail} onAck={handleAck} />
+						{/each}
+					</div>
 				{/if}
 			</section>
 
 			<details class="wx-group" open={nearbyOpen}>
-				<summary class="wx-group-heading">Nearby <span class="wx-group-count">{nearby.length}</span></summary>
-				{#each nearby as a (a.id)}
-					<WxAlertRow alert={a} acked={$wxIsAcked(a)} muted={$wxMuted.has(a.id)} onOpen={openDetail} onAck={handleAck} />
-				{/each}
+				<summary class="wx-group-heading" id="wx-group-nearby">Nearby <span class="wx-group-count">{nearby.length}</span></summary>
+				<div role="list" aria-labelledby="wx-group-nearby">
+					{#each nearby as a (a.id)}
+						<WxAlertRow alert={a} acked={$wxIsAcked(a)} muted={$wxMuted.has(a.id)} onOpen={openDetail} onAck={handleAck} />
+					{/each}
+				</div>
 			</details>
 
 			<details class="wx-group">
-				<summary class="wx-group-heading">Expired · last hour <span class="wx-group-count">{expiredList.length}</span></summary>
-				{#each expiredList as a (a.id)}
-					<WxAlertRow alert={a} acked={true} muted={$wxMuted.has(a.id)} expired onOpen={openDetail} />
-				{/each}
+				<summary class="wx-group-heading" id="wx-group-expired">Expired · last hour <span class="wx-group-count">{expiredList.length}</span></summary>
+				<div role="list" aria-labelledby="wx-group-expired">
+					{#each expiredList as a (a.id)}
+						<WxAlertRow alert={a} acked={true} muted={$wxMuted.has(a.id)} expired onOpen={openDetail} />
+					{/each}
+				</div>
 			</details>
 		</div>
 

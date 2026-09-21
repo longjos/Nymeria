@@ -43,13 +43,19 @@ export function countdown(iso: string | null | undefined, now: number): Countdow
 	return { text: `${s}s`, msLeft };
 }
 
-/** Coarse urgency bucket for countdown styling (row/detail/banner countdown color). */
-export function countdownTone(iso: string | null | undefined, now: number): 'normal' | 'soon' | 'expired' {
+/**
+ * Coarse urgency bucket for countdown styling (row/detail/banner countdown
+ * colour). `urgent` is the last five minutes, where the countdown also ticks
+ * per second — amber is not enough signal for "this ends while you are
+ * reading it".
+ */
+export function countdownTone(iso: string | null | undefined, now: number): 'normal' | 'soon' | 'urgent' | 'expired' {
 	if (!iso) return 'normal';
 	const target = Date.parse(iso);
 	if (Number.isNaN(target)) return 'normal';
 	const msLeft = target - now;
 	if (msLeft <= 0) return 'expired';
+	if (msLeft <= 5 * 60 * 1000) return 'urgent';
 	if (msLeft <= 10 * 60 * 1000) return 'soon';
 	return 'normal';
 }
@@ -64,6 +70,22 @@ export function clock(iso: string | null | undefined, tz?: string): string {
 		minute: '2-digit',
 		...(tz ? { timeZone: tz } : {})
 	});
+}
+
+/**
+ * '3:45 PM' today, 'Tue 5:36 AM' on any other calendar day. A bare clock time
+ * on a three-day winter-storm warning is ambiguous in the one direction that
+ * matters, so the weekday appears as soon as the date differs.
+ */
+export function clockWithDay(iso: string | null | undefined, now: number, tz?: string): string {
+	const time = clock(iso, tz);
+	if (!time) return '';
+	const d = new Date(iso as string);
+	const opts = tz ? { timeZone: tz } : undefined;
+	const sameDay = d.toLocaleDateString('en-US', opts) === new Date(now).toLocaleDateString('en-US', opts);
+	if (sameDay) return time;
+	const day = d.toLocaleDateString('en-US', { weekday: 'short', ...(tz ? { timeZone: tz } : {}) });
+	return `${day} ${time}`;
 }
 
 /** '3:21:07 PM' */

@@ -16,8 +16,8 @@
 		normalizeAlert
 	} from '$lib/stores/wxAlerts';
 	import { showToast } from '$lib/stores/toast';
-	import { tierMeta, zoneLabel, toastLine } from '$lib/wxAlertMeta';
-	import { clock, clockWithSeconds, countdown, countdownTone, progress } from '$lib/wxAlertTime';
+	import { tierMeta, zoneLabel, toastLine, compressAreaDesc, proximityLabel, proximityNote } from '$lib/wxAlertMeta';
+	import { clock, clockWithDay, clockWithSeconds, countdown, countdownTone, progress } from '$lib/wxAlertTime';
 	import WxTierGlyph from './WxTierGlyph.svelte';
 	import WxRelayComposer from './WxRelayComposer.svelte';
 	import { nwsBlocks, previewBlocks, type WxBlock } from '$lib/wxAlertText';
@@ -43,8 +43,33 @@
 	let history = $state<WxAlert[] | null>(null);
 	let historyLoading = $state(false);
 	let showingPrevious = $state<WxAlert | null>(null);
+	// P0-3: every action used to replace the focused control with a <span>,
+	// dropping focus to <body>. These are focused explicitly instead.
+	let titleEl = $state<HTMLElement | null>(null);
+	let ackStatusEl = $state<HTMLElement | null>(null);
+	let relayBtnEl = $state<HTMLElement | null>(null);
+	let wantAckFocus = $state(false);
 
 	let displayed = $derived(showingPrevious ?? alert);
+
+	// P1-5: 'issued 3:09 PM · effective 3:09 PM' is the same value twice on the
+	// vast majority of NWS products. Only show effective when it differs.
+	let effectiveDiffers = $derived(clock(displayed.effective) !== clock(displayed.sent));
+	// P1-6: a Tornado Emergency is the most important upgrade NWS issues, and
+	// the detail title was dropping it.
+	let title = $derived(displayed.effectiveEvent || displayed.event);
+	let titleSub = $derived(displayed.effectiveEvent && displayed.effectiveEvent !== displayed.event ? displayed.event : '');
+
+	// Built as one string: Svelte trims the leading space off a block's first
+	// text node, which silently glued "3:09 PM" to "· updated".
+	let timingSub = $derived.by(() => {
+		const parts = [`issued ${clockWithDay(displayed.sent, clockNow)}`];
+		if (effectiveDiffers) parts.push(`effective ${clockWithDay(displayed.effective, clockNow)}`);
+		if (!showingPrevious && displayed.references.length > 0) parts.push(`updated ${clock(displayed.updatedAt)}`);
+		return parts.join(' · ');
+	});
+
+
 
 	// NWS text normalisation (mobile review P1-1): the raw instruction/
 	// description are hard-wrapped at ~68 columns. nwsBlocks() joins only
@@ -80,6 +105,21 @@
 		};
 	});
 
+	// P0-3 / P2-7: opening a row unmounts the list, so focus has nowhere to go
+	// unless the detail claims it. tabindex="-1" keeps it out of the tab order.
+	$effect(() => {
+		titleEl?.focus();
+	});
+
+	// Move focus onto the acknowledged status the moment it replaces the button
+	// it was on; as an <output> it announces itself to a screen reader too.
+	$effect(() => {
+		if (wantAckFocus && ackStatusEl) {
+			ackStatusEl.focus();
+			wantAckFocus = false;
+		}
+	});
+
 	async function loadHistory(): Promise<void> {
 		if (history) {
 			showingPrevious = history[0] ?? null;
@@ -103,13 +143,16 @@
 	}
 
 	async function handleAcknowledge(): Promise<void> {
+		menuOpen = false;
+		wantAckFocus = true;
 		await ackAlert(alert.id);
 	}
 
 	async function handleAckForNet(): Promise<void> {
 		try {
+			wantAckFocus = true;
 			await ackAlertForNet(alert.id);
-			showToast('Acknowledged for the net.', 'success');
+			showToast('Acknowledged for the net — the banner is cleared for every station.', 'success');
 		} catch {
 			showToast('Could not acknowledge for the net.', 'error');
 		}
@@ -127,13 +170,22 @@
 			await navigator.clipboard.writeText(toastLine(alert));
 			showToast('Copied.', 'success', 2000);
 		} catch {
-			// Silent — clipboard access may be blocked.
+			showToast('Clipboard blocked — select and copy the text instead.', 'error');
 		}
 	}
 
 	function openOnWeatherGov(): void {
 		menuOpen = false;
-		window.open(`https://alerts.weather.gov/search?id=${encodeURIComponent(alert.id)}`, '_blank', 'noopener');
+		// providerUrl is the feature URL NWS itself published for this alert
+		// (types.ts documents it for exactly this link); the hand-built search
+		// URL was a second source of truth for the same thing.
+		const url = alert.providerUrl || `https://alerts.weather.gov/search?id=${encodeURIComponent(alert.id)}`;
+		window.open(url, '_blank', 'noopener');
+	}
+
+	function closeRelay(): void {
+		relayOpen = false;
+		relayBtnEl?.focus();
 	}
 </script>
 
@@ -154,15 +206,19 @@
 <div class="wx-detail">
 	{#if showingPrevious}
 		<div class="wx-detail-breadcrumb">
-			<button class="wx-breadcrumb-link" onclick={backToCurrent}>Alerts</button>
+			<button class="wx-breadcrumb-link" onclick={onBack}>Alerts</button>
 			›
-			<button class="wx-breadcrumb-link" onclick={backToCurrent}>{alert.event}</button>
+			<button class="wx-breadcrumb-link" onclick={backToCurrent}>{alert.effectiveEvent || alert.event}</button>
 			› earlier version
 		</div>
 	{/if}
 
 	<div class="wx-detail-scroll">
-		<div class="wx-detail-band" style="background: var({meta.colorVar})" class:wx-band-hatched={displayed.severity === 'Extreme' || displayed.severity === 'Severe'}></div>
+		{#if showingPrevious}
+			<div class="wx-detail-band wx-band-previous">EARLIER VERSION · sent {clock(showingPrevious.sent)}</div>
+		{:else}
+			<div class="wx-detail-band" style="background: var({meta.colorVar})" class:wx-band-hatched={displayed.severity === 'Extreme' || displayed.severity === 'Severe'}></div>
+		{/if}
 
 		<div class="wx-detail-header">
 			<button class="wx-back" onclick={onBack} aria-label="Back to alert list">
@@ -172,32 +228,41 @@
 				<span>Alerts</span>
 			</button>
 			<WxTierGlyph tier={displayed.tier} size={20} title={meta.ariaWord} />
-			<h2 class="wx-detail-title">{displayed.event}</h2>
+			<div class="wx-detail-titles">
+				<h2 class="wx-detail-title" bind:this={titleEl} tabindex="-1">{title}</h2>
+				{#if titleSub}<p class="wx-detail-title-sub">{titleSub} · upgraded</p>{/if}
+			</div>
 		</div>
 
 		<div class="wx-detail-chips">
-			<span class="wx-chip">{displayed.severity}</span>
-			<span class="wx-chip">{displayed.certainty}</span>
-			<span class="wx-chip">{displayed.urgency}</span>
+			<span class="wx-chip wx-chip-proximity">{proximityLabel(displayed)}</span>
+			<span class="wx-chip"><span class="wx-chip-key">Severity</span> {displayed.severity}</span>
+			<span class="wx-chip"><span class="wx-chip-key">Certainty</span> {displayed.certainty}</span>
+			<span class="wx-chip"><span class="wx-chip-key">Urgency</span> {displayed.urgency}</span>
 			{#if displayed.geometrySource === 'zone'}<span class="wx-chip wx-chip-zone">ZONE</span>{/if}
 			{#if displayed.status !== 'Actual'}<span class="wx-chip wx-chip-test">TEST</span>{/if}
 		</div>
 
-		<div class="wx-timing" aria-label="Ends {clock(displayed.endsAt)}">
+		<div class="wx-timing" role="group" aria-label={isEnded ? `Ended ${clockWithDay(displayed.endedAt ?? displayed.endsAt, clockNow)}` : `Ends ${clockWithDay(displayed.endsAt, clockNow)}`}>
 			{#if isEnded}
 				<div class="wx-timing-row">
-					<span class="wx-timing-label">ENDED {clock(displayed.endedAt ?? displayed.endsAt)}</span>
+					<span class="wx-timing-label">ENDED {clockWithDay(displayed.endedAt ?? displayed.endsAt, clockNow)}</span>
 				</div>
 			{:else}
 				<div class="wx-timing-row">
-					<span class="wx-timing-label">ENDS {clock(displayed.endsAt)}</span>
-					<time datetime={displayed.endsAt} class="wx-timing-countdown" class:soon={tone === 'soon'} aria-live="off">{cd.text}</time>
+					<span class="wx-timing-label">ENDS {clockWithDay(displayed.endsAt, clockNow)}</span>
+					<time datetime={displayed.endsAt} class="wx-timing-countdown" class:soon={tone === 'soon'} class:urgent={tone === 'urgent'} aria-live="off">{cd.text}</time>
 				</div>
 			{/if}
 			<div class="wx-timing-bar" class:saturate={isEnded}>
 				<div class="wx-timing-fill" style="width: {bar * 100}%; background: var({meta.colorVar})"></div>
 			</div>
-			<div class="wx-timing-sub">issued {clock(displayed.sent)} · effective {clock(displayed.effective)}</div>
+			<div class="wx-timing-sub">{timingSub}</div>
+			{#if !showingPrevious && displayed.references.length > 0}
+				<button class="wx-replaces" onclick={loadHistory} disabled={historyLoading}>
+					↺ {historyLoading ? 'Loading…' : `Replaces earlier alert (${clock(displayed.references[0].sent)})`}
+				</button>
+			{/if}
 		</div>
 
 		{#if displayed.instruction}
@@ -254,14 +319,7 @@
 		{:else}
 			<div class="wx-section">
 				<h3 class="wx-section-title">Affects (yours)</h3>
-				<p class="wx-empty-note">Nothing of yours is inside this alert.</p>
-			</div>
-		{/if}
-
-		{#if displayed.headline}
-			<div class="wx-section">
-				<h3 class="wx-section-title">Headline</h3>
-				{@render nwsBlockList(headlineBlocks)}
+				<p class="wx-empty-note">{proximityNote(displayed)}</p>
 			</div>
 		{/if}
 
@@ -277,20 +335,21 @@
 
 		<div class="wx-section">
 			<h3 class="wx-section-title">Affected area (NWS)</h3>
-			<p>{displayed.areaDesc}</p>
+			<p>{compressAreaDesc(displayed.areaDesc)}</p>
 			{#if displayed.ugc.length}<p class="wx-ugc">{displayed.ugc.join(', ')}</p>{/if}
+			{#if compressAreaDesc(displayed.areaDesc) !== displayed.areaDesc}
+				<p class="wx-areadesc-raw">{displayed.areaDesc}</p>
+			{/if}
 		</div>
 
 		<div class="wx-section wx-source">
 			<p>{displayed.senderName} ({displayed.senderId})</p>
 			<p class="wx-source-sub">sent {clock(displayed.sent)} · fetched {clockWithSeconds(displayed.fetchedAt)}</p>
-			{#if !showingPrevious && displayed.references.length > 0}
-				<button class="wx-replaces" onclick={loadHistory} disabled={historyLoading}>
-					↺ Replaces earlier alert ({clock(displayed.references[0].sent)})
-				</button>
+			{#if displayed.headline}
+				<p class="wx-source-sub wx-source-headline">{headlineBlocks.map((b) => b.text).join(' ')}</p>
 			{/if}
-			{#if displayed.ackedForNet}
-				<p class="wx-source-sub">Acked for net by {displayed.ackedForNet.callsign || displayed.ackedForNet.userName} · {clock(displayed.ackedForNet.at)}</p>
+			{#if muted}
+				<p class="wx-source-sub">Muted on this device — escalations still come through.</p>
 			{/if}
 			{#if displayed.endedReason === 'dropped'}
 				<p class="wx-source-sub">no longer listed by NWS</p>
@@ -301,40 +360,62 @@
 	</div>
 
 	<div class="wx-detail-footer">
-		<button class="wx-footer-btn wx-footer-back" onclick={onBack} aria-label="Back to alert list">‹ Alerts</button>
-		<button class="wx-footer-btn wx-footer-showmap" onclick={() => showAlertOnMap(alert.id)}>Show on map</button>
-		{#if acked}
-			<span class="wx-footer-acked">Acknowledged{ackedAt ? ` ${clock(ackedAt)}` : ''}</span>
+		{#if showingPrevious}
+			<!-- The footer acts on the current alert, so while an earlier version
+			     is on screen the only honest action is to go back to it. -->
+			<button class="wx-footer-btn wx-footer-btn-primary" onclick={backToCurrent}>Back to current version</button>
 		{:else}
-			<button class="wx-footer-btn wx-footer-btn-accent" onclick={handleAcknowledge}>Acknowledge</button>
-		{/if}
-		{#if $wxIsNcs}
+			<button class="wx-footer-btn wx-footer-back" onclick={onBack} aria-label="Back to alert list">‹ Alerts</button>
+			<button class="wx-footer-btn wx-footer-showmap" onclick={() => showAlertOnMap(alert.id)}>Show on map</button>
+
+			<!-- One status line, never two. "Acked for net" supersedes a local
+			     ack: it is the stronger claim and the one logged to the net. -->
 			{#if alert.ackedForNet}
-				<span class="wx-footer-acked wx-footer-acked-net">Acked for net</span>
+				<output class="wx-footer-acked wx-footer-acked-net" bind:this={ackStatusEl} tabindex="-1">
+					Acked for net by {alert.ackedForNet.callsign || alert.ackedForNet.userName} · {clock(alert.ackedForNet.at)}
+				</output>
+			{:else if acked}
+				<output class="wx-footer-acked" bind:this={ackStatusEl} tabindex="-1">
+					Acknowledged{ackedAt ? ` ${clock(ackedAt)}` : ''}{$wxIsNcs ? ' · not yet acked for net' : ''}
+				</output>
+				{#if $wxIsNcs}
+					<button class="wx-footer-btn wx-footer-btn-primary" onclick={handleAckForNet}>Acknowledge for net</button>
+				{/if}
+			{:else if $wxIsNcs}
+				<button class="wx-footer-btn wx-footer-btn-primary" onclick={handleAckForNet}>Acknowledge for net</button>
 			{:else}
-				<button class="wx-footer-btn" onclick={handleAckForNet}>Ack for net</button>
+				<button class="wx-footer-btn wx-footer-btn-primary" onclick={handleAcknowledge}>Acknowledge</button>
 			{/if}
-			<button class="wx-footer-btn" onclick={() => (relayOpen = true)}>Relay to net…</button>
+
+			{#if $wxIsNcs}
+				<button class="wx-footer-btn" bind:this={relayBtnEl} onclick={() => (relayOpen = true)}>Relay to net…</button>
+			{/if}
+			<div class="wx-footer-menu-wrap" bind:this={menuWrapEl}>
+				<button class="wx-footer-btn wx-icon-btn" aria-haspopup="true" aria-expanded={menuOpen} aria-label="More actions" onclick={() => (menuOpen = !menuOpen)}>
+					⋯
+				</button>
+				{#if menuOpen}
+					<div class="wx-footer-menu" data-blocks-escape="true">
+						{#if $wxIsNcs && !acked}
+							<button class="wx-row-menu-item" onclick={handleAcknowledge}>Acknowledge on this device only</button>
+						{/if}
+						{#if alert.notifyClass !== 'interrupt'}
+							<button class="wx-row-menu-item" onclick={handleMuteToggle}>{muted ? 'Unmute' : 'Mute'}</button>
+						{/if}
+						<button class="wx-row-menu-item" onclick={handleCopySummary}>Copy summary</button>
+						<button class="wx-row-menu-item" onclick={openOnWeatherGov}>Open on weather.gov</button>
+					</div>
+				{/if}
+			</div>
+			{#if $wxIsNcs && !alert.ackedForNet}
+				<p class="wx-footer-caption">Acknowledging for the net clears the banner for every station and logs it to the net.</p>
+			{/if}
 		{/if}
-		<div class="wx-footer-menu-wrap" bind:this={menuWrapEl}>
-			<button class="wx-footer-btn wx-icon-btn" aria-haspopup="menu" aria-expanded={menuOpen} aria-label="More actions" onclick={() => (menuOpen = !menuOpen)}>
-				⋯
-			</button>
-			{#if menuOpen}
-				<div class="wx-footer-menu" role="menu" data-blocks-escape="true">
-					{#if alert.notifyClass !== 'interrupt'}
-						<button role="menuitem" class="wx-row-menu-item" onclick={handleMuteToggle}>{muted ? 'Unmute' : 'Mute'}</button>
-					{/if}
-					<button role="menuitem" class="wx-row-menu-item" onclick={handleCopySummary}>Copy summary</button>
-					<button role="menuitem" class="wx-row-menu-item" onclick={openOnWeatherGov}>Open on weather.gov</button>
-				</div>
-			{/if}
-		</div>
 	</div>
 </div>
 
 {#if relayOpen}
-	<WxRelayComposer {alert} onClose={() => (relayOpen = false)} />
+	<WxRelayComposer {alert} onClose={closeRelay} />
 {/if}
 
 <style>
@@ -359,7 +440,12 @@
 		background: none;
 		border: none;
 		padding: 0;
-		color: var(--color-accent);
+		/* Accent-on-surface is ~4.15:1 — below AA at this size. Full-strength
+		   text with an accent underline carries the affordance instead. */
+		color: var(--color-text);
+		text-decoration: underline;
+		text-decoration-color: var(--color-accent);
+		text-underline-offset: 2px;
 		font-size: inherit;
 		cursor: pointer;
 	}
@@ -374,7 +460,10 @@
 		height: 4px;
 	}
 
+	/* The hatch has a 6px period, so it needs more than 4px to read as a hatch
+	   at all — this is the loudest place the "hatched = severe" legend runs. */
 	.wx-band-hatched {
+		height: 8px;
 		background-image: repeating-linear-gradient(45deg, rgba(255, 255, 255, 0.35) 0, rgba(255, 255, 255, 0.35) 2px, transparent 2px, transparent 6px);
 	}
 
@@ -396,7 +485,7 @@
 		background: none;
 		border: none;
 		border-radius: var(--radius-sm);
-		color: var(--color-accent);
+		color: var(--color-text);
 		font-size: 0.85rem;
 		font-weight: 600;
 		cursor: pointer;
@@ -408,11 +497,34 @@
 		color: var(--color-text);
 	}
 
-	.wx-detail-title {
+	.wx-band-previous {
+		height: auto;
+		padding: 3px var(--space-md);
+		background: var(--color-wx-expired);
+		color: var(--color-bg);
+		font-size: 0.65rem;
+		font-weight: 700;
+		letter-spacing: 0.04em;
+	}
+
+	.wx-detail-titles {
 		flex: 1;
 		min-width: 0;
+	}
+
+	.wx-detail-title {
 		font-size: 1rem;
 		font-weight: 700;
+	}
+
+	.wx-detail-title:focus-visible {
+		outline: 2px solid var(--color-accent);
+		outline-offset: 2px;
+	}
+
+	.wx-detail-title-sub {
+		font-size: 0.7rem;
+		color: var(--color-text-muted);
 	}
 
 	.wx-detail-chips {
@@ -431,6 +543,18 @@
 		color: var(--color-text-muted);
 		border-radius: 8px;
 		padding: 2px 8px;
+	}
+
+	.wx-chip-proximity {
+		border-color: var(--color-text);
+		color: var(--color-text);
+	}
+
+	/* "Observed"/"Immediate" are CAP vocabulary and opaque on their own. */
+	.wx-chip-key {
+		font-weight: 400;
+		opacity: 0.75;
+		margin-right: 3px;
 	}
 
 	.wx-chip-zone,
@@ -478,6 +602,10 @@
 
 	.wx-timing-countdown.soon {
 		color: var(--color-wx-watch);
+	}
+
+	.wx-timing-countdown.urgent {
+		color: var(--color-wx-warning);
 	}
 
 	.wx-timing-bar {
@@ -552,6 +680,17 @@
 		border-radius: var(--radius-sm);
 	}
 
+	/* This is the "what to do" text — it has to be readable at arm's length on
+	   a phone in sunlight, so it steps up from the description's 0.9rem. */
+	.wx-instruction :global(.wx-p),
+	.wx-instruction :global(.wx-item) {
+		font-size: 0.95rem;
+	}
+
+	.wx-instruction :global(.wx-p:first-of-type) {
+		font-weight: 600;
+	}
+
 	.wx-p,
 	.wx-item {
 		font-size: 0.9rem;
@@ -593,7 +732,10 @@
 		background: none;
 		border: none;
 		padding: 0;
-		color: var(--color-accent);
+		color: var(--color-text);
+		text-decoration: underline;
+		text-decoration-color: var(--color-accent);
+		text-underline-offset: 2px;
 		font-size: 0.75rem;
 		font-weight: 600;
 		cursor: pointer;
@@ -603,6 +745,17 @@
 		font-family: monospace;
 		font-size: 0.7rem;
 		color: var(--color-text-muted);
+	}
+
+	/* Kept verbatim under the compressed line for copy/paste fidelity. */
+	.wx-areadesc-raw {
+		margin-top: 2px;
+		font-size: 0.7rem;
+		color: var(--color-text-muted);
+	}
+
+	.wx-source-headline {
+		font-style: italic;
 	}
 
 	.wx-source {
@@ -654,9 +807,26 @@
 		border-color: var(--color-accent);
 	}
 
-	.wx-footer-btn-accent {
+	/* The one primary action. An outline in the accent colour is this
+	   codebase's *secondary* emphasis, and accent-on-surface text is ~4.15:1 —
+	   the fill fixes the hierarchy and the contrast together. */
+	.wx-footer-btn-primary {
+		background: var(--color-accent);
 		border-color: var(--color-accent);
-		color: var(--color-accent);
+		color: var(--color-text);
+	}
+
+	.wx-footer-btn-primary:hover,
+	.wx-footer-btn-primary:focus-visible {
+		filter: brightness(1.1);
+	}
+
+	.wx-footer-caption {
+		flex: 1 1 100%;
+		order: 9;
+		margin-top: 2px;
+		font-size: 0.7rem;
+		color: var(--color-text-muted);
 	}
 
 	/* Mobile-only "back" affordance in the footer's last row (P1-7 — the
@@ -669,9 +839,20 @@
 	.wx-footer-acked {
 		display: flex;
 		align-items: center;
+		min-height: 44px;
 		font-size: 0.75rem;
 		color: var(--color-text-muted);
 		padding: 0 var(--space-sm);
+	}
+
+	.wx-footer-acked:focus-visible {
+		outline: 2px solid var(--color-accent);
+		outline-offset: 2px;
+		border-radius: var(--radius-sm);
+	}
+
+	.wx-footer-acked-net {
+		color: var(--color-text);
 	}
 
 	.wx-icon-btn {
@@ -736,7 +917,7 @@
 			flex: 1 1 calc(50% - var(--space-xs) / 2);
 		}
 
-		.wx-footer-btn.wx-footer-btn-accent,
+		.wx-footer-btn.wx-footer-btn-primary,
 		.wx-footer-acked {
 			order: 1;
 			flex: 1 1 100%;

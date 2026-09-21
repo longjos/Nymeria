@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { countdown, countdownTone, clock, clockWithSeconds, endsLabel, progress, fetchedLabel, linkStateText } from './wxAlertTime';
+import { countdown, countdownTone, clock, clockWithDay, clockWithSeconds, endsLabel, progress, fetchedLabel, linkStateText } from './wxAlertTime';
 import type { WxLinkStatus } from './types';
 
 // Fixed instant: 2026-09-17T20:00:00Z == 4:00 PM America/Detroit (EDT).
@@ -250,5 +250,43 @@ describe('linkStateText — cold start is not a healthy link', () => {
 		const text = linkStateText({ ...base, state: 'off', reason: 'noWatchArea' } as any, now);
 		expect(text).not.toContain('updated');
 		expect(text).not.toContain('ago');
+	});
+});
+
+describe('countdownTone urgent bucket', () => {
+	it('escalates to urgent inside five minutes', () => {
+		expect(countdownTone(iso(4 * 60_000 + 59_000), NOW)).toBe('urgent');
+		expect(countdownTone(iso(30_000), NOW)).toBe('urgent');
+	});
+
+	it('is still only soon at five minutes and one second', () => {
+		expect(countdownTone(iso(5 * 60_000 + 1_000), NOW)).toBe('soon');
+	});
+});
+
+describe('clockWithDay', () => {
+	it('omits the weekday for a time later today', () => {
+		expect(clockWithDay(iso(2 * 3600_000), NOW)).toBe(clock(iso(2 * 3600_000)));
+	});
+
+	it('adds the weekday once the time is more than a day out', () => {
+		const far = iso(3 * 24 * 3600_000);
+		const got = clockWithDay(far, NOW);
+		expect(got).toMatch(/^(Sun|Mon|Tue|Wed|Thu|Fri|Sat) /);
+		expect(got.endsWith(clock(far))).toBe(true);
+	});
+
+	it('adds the weekday for a different calendar day even within 24 hours', () => {
+		// 23:30 local "tomorrow" style case: same 24h window, different day.
+		const d = new Date(NOW);
+		d.setDate(d.getDate() + 1);
+		d.setHours(9, 0, 0, 0);
+		const isoStr = d.toISOString();
+		expect(clockWithDay(isoStr, NOW)).toMatch(/^(Sun|Mon|Tue|Wed|Thu|Fri|Sat) /);
+	});
+
+	it('is empty for a missing or unparseable time', () => {
+		expect(clockWithDay(null, NOW)).toBe('');
+		expect(clockWithDay('nope', NOW)).toBe('');
 	});
 });

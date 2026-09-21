@@ -2,7 +2,7 @@
 	import { weatherStations, weatherConfig, selectedWeatherStation, initWeatherStore } from '$lib/stores/weather';
 	import { stations } from '$lib/stores/stations';
 	import { wxPanelTab } from '$lib/stores/ui';
-	import { wxUnackedCount, wxLinkStatus } from '$lib/stores/wxAlerts';
+	import { wxUnackedCount, wxLinkStatus, wxSelectedAlertId } from '$lib/stores/wxAlerts';
 	import type { Station } from '$lib/types';
 	import WeatherStationCard from './WeatherStationCard.svelte';
 	import WeatherDetail from './WeatherDetail.svelte';
@@ -83,7 +83,13 @@
 			aria-selected={$wxPanelTab === 'alerts'}
 			aria-controls="wx-pane-alerts"
 			class:active={$wxPanelTab === 'alerts'}
-			onclick={() => wxPanelTab.set('alerts')}
+			onclick={() => {
+				// Clicking the tab you are already on is the conventional "go
+				// back to the top of this section" gesture; it used to be inert
+				// while an alert detail was open.
+				if ($wxPanelTab === 'alerts') wxSelectedAlertId.set(null);
+				wxPanelTab.set('alerts');
+			}}
 		>
 			<span class="tab-label">NWS Alerts</span>
 			{#if $wxUnackedCount > 0}

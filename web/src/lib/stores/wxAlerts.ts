@@ -10,7 +10,7 @@ import { activeNet, checkIns } from './netcontrol';
 import type { AttentionItem } from './netcontrol';
 import { currentUser, canAdmin } from './session';
 import { showToast, announce } from './toast';
-import { openWeather, wxPanelTab, panelMode } from './ui';
+import { openWeather, wxPanelTab, panelMode, sheetState } from './ui';
 import type { WxAlert, WxLinkStatus, WxFootprintSummary, WxEffectivePolicy, WxPolygonGeometry, WxNetAck, WxAffects } from '$lib/types';
 import { tierRank, toastLine, sortAlerts } from '$lib/wxAlertMeta';
 import { clock } from '$lib/wxAlertTime';
@@ -464,11 +464,21 @@ export function openWxAlert(id: string): void {
 	wxSelectedAlertId.set(id);
 	wxPanelTab.set('alerts');
 	openWeather('alerts');
+	// openWeather leaves the phone sheet at `half`, which the mobile review
+	// measured as mostly chrome — the detail's hero lands below the fold. A row
+	// tap opens at `full`; every other door (toast View, map polygon, peek
+	// strip, interrupt banner) must land at the same depth.
+	sheetState.set('full');
 }
 
-/** Map.svelte fits bounds to the alert's geometry, then calls back to clear this. */
+/**
+ * Map.svelte fits bounds to the alert's geometry, then calls back to clear
+ * this. On a phone the sheet drops to `peek` first, otherwise the camera moves
+ * behind a full-height sheet and the button looks broken.
+ */
 export function showAlertOnMap(id: string): void {
 	wxFocusAlertId.set(id);
+	if (browser && window.matchMedia('(max-width: 768px)').matches) sheetState.set('peek');
 }
 
 /** Fetches any of `ugcs` not already cached client-side. Failures are silent — the own-geometry fallback renders instead. */

@@ -2577,6 +2577,28 @@
 
 	// "Show on map" focus — fits the alert's own layer bounds (or a small box
 	// around its chip) then hands control back via onWxFocusConsumed().
+	/**
+	 * After the camera moves, every polygon still looks the same — nothing says
+	 * "this is the one you asked for". A short stroke emphasis answers that.
+	 */
+	let wxEmphasisTimer: ReturnType<typeof setTimeout> | null = null;
+	function emphasiseWxAlert(id: string): void {
+		const group = wxAlertLayerGroups.get(id);
+		if (!group) return;
+		const paths: SVGPathElement[] = [];
+		group.eachLayer((layer) => {
+			const el = (layer as unknown as { getElement?: () => Element | null }).getElement?.();
+			if (el instanceof SVGPathElement) paths.push(el);
+		});
+		if (paths.length === 0) return;
+		if (wxEmphasisTimer) clearTimeout(wxEmphasisTimer);
+		for (const el of paths) el.classList.add('wx-alert-focused');
+		wxEmphasisTimer = setTimeout(() => {
+			for (const el of paths) el.classList.remove('wx-alert-focused');
+			wxEmphasisTimer = null;
+		}, 2000);
+	}
+
 	$effect(() => {
 		if (!map) return;
 		const id = wxFocusAlertId;
@@ -2592,8 +2614,19 @@
 		}
 		if (bounds && bounds.isValid()) {
 			programmaticMove = true;
-			map.fitBounds(bounds, { padding: [40, 40], maxZoom: 13 });
+			// The desktop side panel covers the right edge of the map, so
+			// symmetric padding fits the polygon into a viewport that is
+			// partly hidden. Measure the panel that is actually open rather
+			// than assuming a width.
+			const panel = document.querySelector<HTMLElement>('.side-panel.open');
+			const rightInset = panel ? Math.round(panel.getBoundingClientRect().width) + 24 : 40;
+			map.fitBounds(bounds, {
+				paddingTopLeft: [40, 40],
+				paddingBottomRight: [rightInset, 40],
+				maxZoom: 13
+			});
 			map.once('moveend', () => { programmaticMove = false; });
+			emphasiseWxAlert(id);
 		}
 		onWxFocusConsumed?.();
 	});
@@ -3020,6 +3053,13 @@
 	}
 	:global(.wx-alert-tooltip::before) { display: none; }
 	/* Hit-test on the stroke area even though the line paints nothing. */
+	/* Two seconds of extra weight on the polygon the operator just asked for. */
+	:global(path.wx-alert-focused) {
+		stroke-width: 6;
+		filter: drop-shadow(0 0 4px rgba(255, 255, 255, 0.5));
+		transition: stroke-width var(--duration-fast) var(--ease-out);
+	}
+
 	:global(path.wx-alert-hit) {
 		pointer-events: stroke;
 		cursor: pointer;

@@ -7,6 +7,7 @@
 		onClose,
 		onBack,
 		backLabel = 'Messages',
+		hideBackButton = false,
 		onTransitionEnd,
 		children
 	}: {
@@ -16,6 +17,12 @@
 		onBack?: () => void;
 		/** Label shown next to the back chevron (e.g. "Alerts" when backing out of the NWS Alerts detail view). */
 		backLabel?: string;
+		/**
+		 * Keep `onBack` wired to Escape but do not render the chrome back
+		 * button — for views that draw their own in-content back control and
+		 * would otherwise show two identical ones (the NWS alert detail).
+		 */
+		hideBackButton?: boolean;
 		onTransitionEnd?: () => void;
 		children?: Snippet;
 	} = $props();
@@ -44,8 +51,8 @@
 	class:open
 	ontransitionend={handleTransitionEnd}
 >
-	<div class="panel-header" class:has-back={!!onBack}>
-		{#if onBack}
+	<div class="panel-header" class:has-back={!!onBack && !hideBackButton}>
+		{#if onBack && !hideBackButton}
 			<button class="back-btn" onclick={onBack} aria-label="Back to {backLabel}">
 				<svg width="16" height="16" viewBox="0 0 16 16" fill="none">
 					<path d="M10 12L6 8l4-4" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/>

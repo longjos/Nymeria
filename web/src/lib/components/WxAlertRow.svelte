@@ -51,7 +51,7 @@
 	});
 
 	let ariaLabel = $derived(
-		`${alert.event}, ${alert.tier}, ${acked ? 'acknowledged' : 'unacknowledged'}, ends ${clock(alert.endsAt)}, ${whereLine}`
+		`${alert.effectiveEvent || alert.event}, ${alert.tier}, ${acked ? 'acknowledged' : 'unacknowledged'}${muted ? ', muted' : ''}, ends ${clock(alert.endsAt)}, ${whereLine}`
 	);
 
 	function toggleMenu(e: MouseEvent): void {
@@ -89,7 +89,7 @@
 			await navigator.clipboard.writeText(toastLine(alert));
 			showToast('Copied.', 'success', 2000);
 		} catch {
-			// Clipboard API may be unavailable (permissions, non-secure context) — fail silently.
+			showToast('Clipboard blocked — open the alert and copy the text instead.', 'error');
 		}
 	}
 
@@ -99,8 +99,20 @@
 			if (menuWrapEl?.contains(e.target as Node)) return;
 			closeMenu();
 		};
+		// Captured before SidePanel's window handler, so Escape closes the menu
+		// first and only reaches the panel on the next press.
+		const onKey = (e: KeyboardEvent) => {
+			if (e.key !== 'Escape') return;
+			e.stopImmediatePropagation();
+			closeMenu();
+			menuWrapEl?.querySelector<HTMLElement>('.wx-row-menu-btn')?.focus();
+		};
 		window.addEventListener('pointerdown', onDown, true);
-		return () => window.removeEventListener('pointerdown', onDown, true);
+		window.addEventListener('keydown', onKey, true);
+		return () => {
+			window.removeEventListener('pointerdown', onDown, true);
+			window.removeEventListener('keydown', onKey, true);
+		};
 	});
 </script>
 
@@ -135,10 +147,11 @@
 		<span class="wx-row-body">
 			<span class="wx-row-line1">
 				<span class="wx-row-event" style="font-weight: {sev.fontWeight}; text-transform: {sev.uppercase ? 'uppercase' : 'none'}">
-					{alert.event}
+					{alert.effectiveEvent || alert.event}
 				</span>
 				{#if alert.geometrySource === 'zone'}<span class="wx-tag">ZONE</span>{/if}
 				{#if alert.status !== 'Actual'}<span class="wx-tag wx-tag-test">TEST</span>{/if}
+				{#if muted}<span class="wx-tag wx-tag-muted">MUTED</span>{/if}
 			</span>
 			{#if !compact}
 				<span class="wx-row-where">{whereLine}</span>
@@ -163,7 +176,7 @@
 			<button
 				type="button"
 				class="wx-row-menu-btn"
-				aria-haspopup="menu"
+				aria-haspopup="true"
 				aria-expanded={menuOpen}
 				aria-label="More actions"
 				onclick={toggleMenu}
@@ -171,17 +184,17 @@
 				⋯
 			</button>
 			{#if menuOpen}
-				<div class="wx-row-menu" role="menu" data-blocks-escape="true">
+				<div class="wx-row-menu" data-blocks-escape="true">
 					{#if !acked}
-						<button type="button" role="menuitem" class="wx-row-menu-item" onclick={handleAck}>Acknowledge</button>
+						<button type="button" class="wx-row-menu-item" onclick={handleAck}>Acknowledge</button>
 					{/if}
 					{#if alert.notifyClass !== 'interrupt'}
-						<button type="button" role="menuitem" class="wx-row-menu-item" onclick={handleMuteToggle}>
+						<button type="button" class="wx-row-menu-item" onclick={handleMuteToggle}>
 							{muted ? 'Unmute' : 'Mute this alert'}
 						</button>
 					{/if}
-					<button type="button" role="menuitem" class="wx-row-menu-item" onclick={handleShowOnMap}>Show on map</button>
-					<button type="button" role="menuitem" class="wx-row-menu-item" onclick={handleCopySummary}>Copy summary</button>
+					<button type="button" class="wx-row-menu-item" onclick={handleShowOnMap}>Show on map</button>
+					<button type="button" class="wx-row-menu-item" onclick={handleCopySummary}>Copy summary</button>
 				</div>
 			{/if}
 		</span>
@@ -282,7 +295,8 @@
 
 	.wx-tag {
 		flex-shrink: 0;
-		font-size: 0.6rem;
+		/* 0.6rem is 9.6px — below the floor for a tag that carries state. */
+		font-size: 0.65rem;
 		font-weight: 700;
 		border: 1px solid var(--color-text-muted);
 		color: var(--color-text-muted);
@@ -293,6 +307,12 @@
 	.wx-tag-test {
 		border-color: var(--color-wx-watch);
 		color: var(--color-wx-watch);
+	}
+
+	/* Muting is invisible state otherwise: an escalation still breaks through,
+	   and the operator has no way to know why the toast came. */
+	.wx-tag-muted {
+		border-style: dashed;
 	}
 
 	.wx-row-where {

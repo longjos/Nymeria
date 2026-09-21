@@ -20,8 +20,34 @@
 	let stationCount = $derived(alert.affects.stations.filter((s) => s.kind === 'station').length);
 	let canSubmit = $derived((note || bulletin || messages) && !sending);
 
+	let dialogEl = $state<HTMLElement | null>(null);
+
+	// P0-3: the dialog declared aria-modal but never took focus, so Tab
+	// continued through the page behind it and a screen reader never entered.
+	$effect(() => {
+		dialogEl?.querySelector<HTMLElement>('input, textarea, button')?.focus();
+	});
+
+	function trapTab(e: KeyboardEvent): void {
+		if (e.key !== 'Tab' || !dialogEl) return;
+		const focusable = Array.from(
+			dialogEl.querySelectorAll<HTMLElement>('input, textarea, button:not([disabled])')
+		).filter((el) => el.offsetParent !== null);
+		if (focusable.length === 0) return;
+		const first = focusable[0];
+		const last = focusable[focusable.length - 1];
+		if (e.shiftKey && document.activeElement === first) {
+			e.preventDefault();
+			last.focus();
+		} else if (!e.shiftKey && document.activeElement === last) {
+			e.preventDefault();
+			first.focus();
+		}
+	}
+
 	function handleKeydown(e: KeyboardEvent): void {
 		if (e.key === 'Escape') onClose();
+		else trapTab(e);
 	}
 
 	async function submit(): Promise<void> {
@@ -33,7 +59,12 @@
 			if (note) parts.push('note');
 			if (bulletin && result.bulletinSent) parts.push('BLN0');
 			if (messages) parts.push(`${result.messagesSent} messages`);
-			showToast(`Relayed: ${parts.length ? parts.join(', ') : 'nothing sent'}`, 'success');
+			if (parts.length === 0) {
+				showToast('Nothing was sent — no relay method was selected.', 'error');
+			} else {
+				const pinned = note ? ' · pinned to the Situation Board' : '';
+				showToast(`Relayed: ${parts.join(', ')}${pinned}`, 'success');
+			}
 			if (result.messagesFailed.length) {
 				showToast(`Could not reach: ${result.messagesFailed.join(', ')}`, 'error');
 			}
@@ -52,6 +83,7 @@
 <div class="wx-relay-backdrop" role="presentation" onclick={onClose}>
 	<div
 		class="wx-relay"
+		bind:this={dialogEl}
 		role="dialog"
 		tabindex="-1"
 		aria-modal="true"
@@ -77,24 +109,31 @@
 			<input type="checkbox" bind:checked={bulletin} />
 		</label>
 
-		<label class="wx-toggle-row">
+		<label class="wx-toggle-row" class:wx-toggle-disabled={stationCount === 0}>
 			<span class="wx-toggle-copy">
 				<span class="wx-toggle-label">Message each roster station</span>
-				<span class="wx-toggle-caption">{stationCount} stations · sent one at a time via the message path</span>
+				<span class="wx-toggle-caption">
+					{#if stationCount === 0}
+						No roster stations are inside this alert.
+					{:else}
+						{stationCount} {stationCount === 1 ? 'station' : 'stations'} · sent one at a time via the message path
+					{/if}
+				</span>
 			</span>
-			<input type="checkbox" bind:checked={messages} />
+			<input type="checkbox" bind:checked={messages} disabled={stationCount === 0} />
 		</label>
 
 		{#if bulletin || messages}
 			<div class="wx-relay-text-row">
 				<textarea class="wx-relay-text" maxlength={67} bind:value={text} rows="2" aria-label="Bulletin / message text"></textarea>
-				<span class="wx-relay-counter" class:over={text.length >= 67}>{text.length}/67</span>
+				<!-- maxlength caps this at 67, so flagging 67 as an error flagged
+				     valid text. Warn as it fills instead. -->
+				<span class="wx-relay-counter" class:over={text.length >= 60}>{text.length}/67</span>
 			</div>
 		{/if}
 
-		{#if error}<p class="wx-relay-error">{error}</p>{/if}
-
 		<div class="wx-relay-footer">
+			{#if error}<p class="wx-relay-error" role="alert">{error}</p>{/if}
 			<button class="wx-relay-btn" onclick={onClose} disabled={sending}>Cancel</button>
 			<button class="wx-relay-btn wx-relay-btn-accent" onclick={submit} disabled={!canSubmit}>Relay</button>
 		</div>
@@ -238,9 +277,21 @@
 
 	.wx-relay-footer {
 		display: flex;
+		flex-wrap: wrap;
+		align-items: center;
 		justify-content: flex-end;
 		gap: var(--space-sm);
 		margin-top: var(--space-xs);
+	}
+
+	/* Full-width so it sits directly above the button row it belongs to, where
+	   the eye already is when Relay fails. */
+	.wx-relay-error {
+		flex: 1 1 100%;
+	}
+
+	.wx-toggle-disabled {
+		opacity: 0.55;
 	}
 
 	.wx-relay-btn {
