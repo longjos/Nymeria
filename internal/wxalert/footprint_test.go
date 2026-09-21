@@ -695,3 +695,102 @@ func TestClassifyAffectsSlicesNeverNil(t *testing.T) {
 		check(t, "empty footprint", empty.Classify(polygonAlert("Tornado Warning", SeverityExtreme, boxAt(gr, 90, 5, 3)), nil))
 	})
 }
+
+// "Affects (yours)" answers "what of ours is inside this alert", so it must be
+// a containment test. It used to reuse the IN/NEAR buffer, which listed every
+// asset within BufferMiles *outside* the polygon: on a real 10-mile-buffer
+// footprint, 49 of 49 listed course points were outside the alert.
+func TestAffectsCountsOnlyWhatIsInsideThePolygon(t *testing.T) {
+	// Course points at 0, 6 and 20 miles east of gr.
+	inside := destPoint(gr, 90, 0)
+	justOutside := destPoint(gr, 90, 6)
+	wellOutside := destPoint(gr, 90, 20)
+	anns := []store.Annotation{
+		{ID: "a-in", Category: "aid", Type: "point", Label: "Inside", Geometry: pointGeoJSON(inside)},
+		{ID: "a-near", Category: "aid", Type: "point", Label: "Six miles out", Geometry: pointGeoJSON(justOutside)},
+		{ID: "a-far", Category: "aid", Type: "point", Label: "Twenty miles out", Geometry: pointGeoJSON(wellOutside)},
+	}
+	f := Build(Inputs{BufferMiles: 10, Annotations: anns, Now: time.Now()})
+
+	// A 3-mile box centred on gr: contains only "Inside".
+	m := f.Classify(polygonAlert("Severe Thunderstorm Warning", SeveritySevere, squareRingMiles(gr, 3)), nil)
+	if m.Proximity != ProximityIn {
+		t.Fatalf("Proximity = %v, want in", m.Proximity)
+	}
+	got := []string{}
+	for _, l := range m.Affects.Locations {
+		got = append(got, l.Label)
+	}
+	if len(got) != 1 || got[0] != "Inside" {
+		t.Errorf("Affects.Locations = %v, want only [Inside] — the 6-mile point is within the buffer but outside the alert", got)
+	}
+	if m.Affects.Summary == "" {
+		t.Errorf("Summary should still name what it found, got %q", m.Affects.Summary)
+	}
+}
+
+// An alert can legitimately be IN (its edge is inside the buffer) while
+// touching nothing of ours. That must read as an empty Affects, not as the
+// whole course.
+func TestAffectsEmptyWhenAlertIsNearButTouchesNothing(t *testing.T) {
+	anns := []store.Annotation{{ID: "a1", Category: "aid", Type: "point", Label: "Aid 1", Geometry: pointGeoJSON(gr)}}
+	f := Build(Inputs{BufferMiles: 10, Annotations: anns, Now: time.Now()})
+
+	// A small box 5 miles east: inside the 10-mile buffer, so the alert is IN,
+	// but the aid station is not inside the polygon.
+	m := f.Classify(polygonAlert("Flood Warning", SeveritySevere, boxAt(gr, 90, 5, 1)), nil)
+	if m.Proximity != ProximityIn {
+		t.Fatalf("Proximity = %v, want in", m.Proximity)
+	}
+	if len(m.Affects.Locations) != 0 {
+		t.Errorf("Affects.Locations = %+v, want empty", m.Affects.Locations)
+	}
+	if m.Affects.Summary != "" {
+		t.Errorf("Summary = %q, want empty", m.Affects.Summary)
+	}
+}
+
+// The real case that surfaced this: a Special Weather Statement over Coffee /
+// Grundy counties (east of the course) listed all 49 course points as
+// affected. The nearest one is 10.3 miles from the polygon — inside the
+// 10-mile buffer, outside the alert. NWS drew the polygon; none of the course
+// is in it.
+func TestAffectsRealSpecialWeatherStatementTouchesNothing(t *testing.T) {
+	ring := []LatLon{
+		{Lat: 35.34, Lon: -86.03},
+		{Lat: 35.31, Lon: -86},
+		{Lat: 35.32, Lon: -85.98},
+		{Lat: 35.29, Lon: -85.92},
+		{Lat: 35.22, Lon: -85.86},
+		{Lat: 35.16, Lon: -85.87},
+		{Lat: 35.21, Lon: -86.19},
+		{Lat: 35.35, Lon: -86.18},
+		{Lat: 35.35, Lon: -86.16},
+		{Lat: 35.36, Lon: -86.16},
+		{Lat: 35.34, Lon: -86.03},
+	}
+	anns := []store.Annotation{
+		{ID: "loc-0", Type: "point", Category: "aid", Label: "Right", Geometry: pointGeoJSON(LatLon{Lat: 35.31556, Lon: -86.35872})},
+		{ID: "loc-1", Type: "point", Category: "aid", Label: "Right", Geometry: pointGeoJSON(LatLon{Lat: 35.31053, Lon: -86.36055})},
+		{ID: "loc-2", Type: "point", Category: "aid", Label: "Right", Geometry: pointGeoJSON(LatLon{Lat: 35.32283, Lon: -86.3651})},
+		{ID: "loc-3", Type: "point", Category: "aid", Label: "Right", Geometry: pointGeoJSON(LatLon{Lat: 35.29304, Lon: -86.36688})},
+		{ID: "loc-4", Type: "point", Category: "aid", Label: "Right", Geometry: pointGeoJSON(LatLon{Lat: 35.28432, Lon: -86.37149})},
+		{ID: "loc-5", Type: "point", Category: "aid", Label: "Left", Geometry: pointGeoJSON(LatLon{Lat: 35.28492, Lon: -86.37176})},
+	}
+	f := Build(Inputs{BufferMiles: 10, Annotations: anns, Now: time.Now()})
+	m := f.Classify(polygonAlert("Special Weather Statement", SeverityModerate, ring), nil)
+
+	if m.Proximity != ProximityIn {
+		t.Fatalf("Proximity = %v, want in (the polygon is within the 10-mile buffer)", m.Proximity)
+	}
+	if n := len(m.Affects.Locations); n != 0 {
+		labels := []string{}
+		for _, l := range m.Affects.Locations {
+			labels = append(labels, l.Label)
+		}
+		t.Errorf("Affects.Locations = %d %v, want 0 — none of the course is inside this polygon", n, labels)
+	}
+	if m.Affects.Summary != "" {
+		t.Errorf("Summary = %q, want empty", m.Affects.Summary)
+	}
+}

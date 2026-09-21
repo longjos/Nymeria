@@ -329,14 +329,23 @@
 	.wx-alert-groups {
 		display: flex;
 		flex-direction: column;
-		gap: var(--space-sm);
-		padding: var(--space-sm) var(--space-md);
+		gap: var(--space-lg);
+		padding: var(--space-sm) var(--space-md) var(--space-md);
 	}
 
 	.wx-group {
 		display: flex;
 		flex-direction: column;
-		gap: 6px;
+		gap: var(--space-sm);
+	}
+
+	/* The rows themselves. Without this the list wrapper had no gap at all and
+	   every alert butted against the next one — a wall of colour bars with no
+	   edge to read against. */
+	.wx-group [role='list'] {
+		display: flex;
+		flex-direction: column;
+		gap: var(--space-sm);
 	}
 
 	.wx-group-heading {

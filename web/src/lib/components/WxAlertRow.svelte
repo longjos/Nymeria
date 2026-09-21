@@ -216,6 +216,10 @@
 		position: relative;
 	}
 
+	.wx-row + .wx-row {
+		margin-top: 0;
+	}
+
 	.wx-row-expired {
 		opacity: 0.5;
 	}
@@ -241,7 +245,7 @@
 		align-items: flex-start;
 		gap: var(--space-sm);
 		min-height: 44px;
-		padding: var(--space-xs) var(--space-sm) var(--space-xs) 14px;
+		padding: var(--space-sm) var(--space-sm) var(--space-sm) 14px;
 		background: none;
 		border: none;
 		color: inherit;
@@ -275,7 +279,7 @@
 		min-width: 0;
 		display: flex;
 		flex-direction: column;
-		gap: 2px;
+		gap: var(--space-xs);
 	}
 
 	.wx-row-line1 {

@@ -359,57 +359,87 @@
 		</div>
 	</div>
 
-	<div class="wx-detail-footer">
+	<!--
+		Fixed slots, always in the same order and always present: status line,
+		then [back] [show on map] [primary] [relay] [⋯], then the caption. The
+		footer used to add and remove whole controls as the alert's state
+		changed — acking swapped a button for a span and everything after it
+		slid sideways — so the same action lived in a different place depending
+		on what you had already done.
+	-->
+	<div class="wx-detail-footer" class:wx-footer-previous={!!showingPrevious}>
 		{#if showingPrevious}
-			<!-- The footer acts on the current alert, so while an earlier version
-			     is on screen the only honest action is to go back to it. -->
-			<button class="wx-footer-btn wx-footer-btn-primary" onclick={backToCurrent}>Back to current version</button>
+			<button class="wx-footer-btn wx-footer-btn-primary wx-footer-slot-primary" onclick={backToCurrent}>
+				Back to current version
+			</button>
 		{:else}
-			<button class="wx-footer-btn wx-footer-back" onclick={onBack} aria-label="Back to alert list">‹ Alerts</button>
-			<button class="wx-footer-btn wx-footer-showmap" onclick={() => showAlertOnMap(alert.id)}>Show on map</button>
-
-			<!-- One status line, never two. "Acked for net" supersedes a local
-			     ack: it is the stronger claim and the one logged to the net. -->
-			{#if alert.ackedForNet}
-				<output class="wx-footer-acked wx-footer-acked-net" bind:this={ackStatusEl} tabindex="-1">
+			<output class="wx-footer-status" bind:this={ackStatusEl} tabindex="-1">
+				{#if alert.ackedForNet}
+					<span class="wx-status-dot wx-status-done" aria-hidden="true"></span>
 					Acked for net by {alert.ackedForNet.callsign || alert.ackedForNet.userName} · {clock(alert.ackedForNet.at)}
-				</output>
-			{:else if acked}
-				<output class="wx-footer-acked" bind:this={ackStatusEl} tabindex="-1">
+				{:else if acked}
+					<span class="wx-status-dot wx-status-done" aria-hidden="true"></span>
 					Acknowledged{ackedAt ? ` ${clock(ackedAt)}` : ''}{$wxIsNcs ? ' · not yet acked for net' : ''}
-				</output>
-				{#if $wxIsNcs}
-					<button class="wx-footer-btn wx-footer-btn-primary" onclick={handleAckForNet}>Acknowledge for net</button>
+				{:else}
+					<span class="wx-status-dot" aria-hidden="true"></span>
+					Not acknowledged
 				{/if}
-			{:else if $wxIsNcs}
-				<button class="wx-footer-btn wx-footer-btn-primary" onclick={handleAckForNet}>Acknowledge for net</button>
-			{:else}
-				<button class="wx-footer-btn wx-footer-btn-primary" onclick={handleAcknowledge}>Acknowledge</button>
-			{/if}
+			</output>
 
-			{#if $wxIsNcs}
-				<button class="wx-footer-btn" bind:this={relayBtnEl} onclick={() => (relayOpen = true)}>Relay to net…</button>
-			{/if}
-			<div class="wx-footer-menu-wrap" bind:this={menuWrapEl}>
-				<button class="wx-footer-btn wx-icon-btn" aria-haspopup="true" aria-expanded={menuOpen} aria-label="More actions" onclick={() => (menuOpen = !menuOpen)}>
-					⋯
-				</button>
-				{#if menuOpen}
-					<div class="wx-footer-menu" data-blocks-escape="true">
-						{#if $wxIsNcs && !acked}
-							<button class="wx-row-menu-item" onclick={handleAcknowledge}>Acknowledge on this device only</button>
-						{/if}
-						{#if alert.notifyClass !== 'interrupt'}
-							<button class="wx-row-menu-item" onclick={handleMuteToggle}>{muted ? 'Unmute' : 'Mute'}</button>
-						{/if}
-						<button class="wx-row-menu-item" onclick={handleCopySummary}>Copy summary</button>
-						<button class="wx-row-menu-item" onclick={openOnWeatherGov}>Open on weather.gov</button>
-					</div>
+			<div class="wx-footer-actions">
+				<button class="wx-footer-btn wx-footer-back" onclick={onBack} aria-label="Back to alert list">‹ Alerts</button>
+				<button class="wx-footer-btn wx-footer-showmap" onclick={() => showAlertOnMap(alert.id)}>Show on map</button>
+
+				<!-- The primary slot never empties; it goes disabled once the
+				     strongest available acknowledgement has been made, so the
+				     control keeps its position. -->
+				{#if $wxIsNcs}
+					<button
+						class="wx-footer-btn wx-footer-btn-primary wx-footer-slot-primary"
+						disabled={!!alert.ackedForNet}
+						onclick={handleAckForNet}
+					>
+						{alert.ackedForNet ? 'Acknowledged for net' : 'Acknowledge for net'}
+					</button>
+					<button class="wx-footer-btn wx-footer-slot-relay" bind:this={relayBtnEl} onclick={() => (relayOpen = true)}>
+						Relay to net…
+					</button>
+				{:else}
+					<button
+						class="wx-footer-btn wx-footer-btn-primary wx-footer-slot-primary"
+						disabled={acked}
+						onclick={handleAcknowledge}
+					>
+						{acked ? 'Acknowledged' : 'Acknowledge'}
+					</button>
 				{/if}
+
+				<div class="wx-footer-menu-wrap" bind:this={menuWrapEl}>
+					<button class="wx-footer-btn wx-icon-btn" aria-haspopup="true" aria-expanded={menuOpen} aria-label="More actions" onclick={() => (menuOpen = !menuOpen)}>
+						⋯
+					</button>
+					{#if menuOpen}
+						<div class="wx-footer-menu" data-blocks-escape="true">
+							{#if $wxIsNcs && !acked}
+								<button class="wx-row-menu-item" onclick={handleAcknowledge}>Acknowledge on this device only</button>
+							{/if}
+							{#if alert.notifyClass !== 'interrupt'}
+								<button class="wx-row-menu-item" onclick={handleMuteToggle}>{muted ? 'Unmute' : 'Mute'}</button>
+							{/if}
+							<button class="wx-row-menu-item" onclick={handleCopySummary}>Copy summary</button>
+							<button class="wx-row-menu-item" onclick={openOnWeatherGov}>Open on weather.gov</button>
+						</div>
+					{/if}
+				</div>
 			</div>
-			{#if $wxIsNcs && !alert.ackedForNet}
-				<p class="wx-footer-caption">Acknowledging for the net clears the banner for every station and logs it to the net.</p>
-			{/if}
+
+			<p class="wx-footer-caption">
+				{#if $wxIsNcs}
+					Acknowledging for the net clears the banner for every station and logs it to the net.
+				{:else}
+					Acknowledging is local to this device.
+				{/if}
+			</p>
 		{/if}
 	</div>
 </div>
@@ -779,15 +809,63 @@
 		cursor: pointer;
 	}
 
+	/* Three fixed rows: status, actions, caption. Nothing is added or removed
+	   as state changes, so no control ever moves. */
 	.wx-detail-footer {
 		position: sticky;
 		bottom: 0;
 		display: flex;
-		flex-wrap: wrap;
+		flex-direction: column;
 		gap: var(--space-xs);
 		padding: var(--space-sm) var(--space-md);
 		background: var(--color-bg);
 		border-top: 1px solid var(--color-primary);
+	}
+
+	.wx-footer-actions {
+		display: flex;
+		flex-wrap: wrap;
+		align-items: center;
+		gap: var(--space-xs);
+	}
+
+	.wx-footer-status {
+		display: flex;
+		align-items: center;
+		gap: var(--space-xs);
+		min-height: 20px;
+		font-size: 0.75rem;
+		color: var(--color-text-muted);
+	}
+
+	.wx-footer-status:focus-visible {
+		outline: 2px solid var(--color-accent);
+		outline-offset: 2px;
+		border-radius: var(--radius-sm);
+	}
+
+	.wx-status-dot {
+		width: 7px;
+		height: 7px;
+		border-radius: var(--radius-full);
+		border: 1px solid var(--color-text-muted);
+		flex-shrink: 0;
+	}
+
+	.wx-status-done {
+		background: var(--color-success);
+		border-color: var(--color-success);
+	}
+
+	.wx-footer-btn:disabled {
+		opacity: 0.55;
+		cursor: default;
+	}
+
+	.wx-footer-btn-primary:disabled {
+		background: var(--color-surface);
+		border-color: var(--color-primary);
+		color: var(--color-text-muted);
 	}
 
 	.wx-footer-btn {
@@ -822,11 +900,15 @@
 	}
 
 	.wx-footer-caption {
-		flex: 1 1 100%;
-		order: 9;
-		margin-top: 2px;
+		margin: 0;
+		min-height: 16px;
 		font-size: 0.7rem;
 		color: var(--color-text-muted);
+	}
+
+	.wx-footer-menu-wrap {
+		position: relative;
+		margin-left: auto;
 	}
 
 	/* Mobile-only "back" affordance in the footer's last row (P1-7 — the
@@ -836,32 +918,8 @@
 		display: none;
 	}
 
-	.wx-footer-acked {
-		display: flex;
-		align-items: center;
-		min-height: 44px;
-		font-size: 0.75rem;
-		color: var(--color-text-muted);
-		padding: 0 var(--space-sm);
-	}
-
-	.wx-footer-acked:focus-visible {
-		outline: 2px solid var(--color-accent);
-		outline-offset: 2px;
-		border-radius: var(--radius-sm);
-	}
-
-	.wx-footer-acked-net {
-		color: var(--color-text);
-	}
-
 	.wx-icon-btn {
 		padding: 0 var(--space-sm);
-	}
-
-	.wx-footer-menu-wrap {
-		position: relative;
-		margin-left: auto;
 	}
 
 	.wx-footer-menu {
@@ -897,16 +955,14 @@
 	}
 
 	@media (max-width: 480px) {
-		/* Flexbox + `order`, not CSS grid auto-flow: with a variable number of
-		   buttons (NCS role adds two), grid auto-placement wrapped the menu
-		   trigger into column 1 of its own row, so `right: 0` measured from
-		   the wrong box and the menu rendered off the left edge of the
-		   screen. `order` groups tiers regardless of how many buttons are
-		   present, and each tier's basis sums to ~100% so it always wraps to
-		   its own row: accent/acked (tier 1, full width) → NCS ack/relay
-		   (tier 2, halves) → back/show-on-map/menu (tier 3, the reachable
-		   last row — P1-7). */
-		.wx-detail-footer {
+		/* `order` inside .wx-footer-actions, not grid auto-flow: grid
+		   auto-placement wrapped the menu trigger into column 1 of its own
+		   row, so `right: 0` measured from the wrong box and the menu
+		   rendered off the left edge. Each tier's basis sums to ~100% so it
+		   always takes its own row: primary (full width) → relay (full
+		   width) → back / show-on-map / ⋯ (the reachable last row). The tiers
+		   are the same in every state now, because the slots are. */
+		.wx-footer-actions {
 			display: flex;
 			flex-wrap: wrap;
 			gap: var(--space-xs);
@@ -917,16 +973,15 @@
 			flex: 1 1 calc(50% - var(--space-xs) / 2);
 		}
 
-		.wx-footer-btn.wx-footer-btn-primary,
-		.wx-footer-acked {
+		.wx-footer-btn.wx-footer-slot-primary {
 			order: 1;
 			flex: 1 1 100%;
 			justify-content: center;
 		}
 
-		.wx-footer-acked.wx-footer-acked-net {
+		.wx-footer-btn.wx-footer-slot-relay {
 			order: 2;
-			flex: 1 1 calc(50% - var(--space-xs) / 2);
+			flex: 1 1 100%;
 		}
 
 		.wx-footer-btn.wx-footer-back,

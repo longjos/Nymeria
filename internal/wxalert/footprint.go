@@ -586,10 +586,18 @@ func (f *Footprint) affectsWithinZones(alertZones map[string]bool) Affects {
 	return f.buildAffects(func(s sample) bool { return within(s.zones) }, func(st stationSample) bool { return within(st.zones) })
 }
 
+// affectsWithin answers "what of ours is inside this alert" — a containment
+// test, not a proximity one. It used to reuse BufferMiles, which listed every
+// asset within the buffer *outside* the polygon: against a real 10-mile
+// footprint that put all 49 course points in the affects list of alerts none
+// of them were inside. The buffer decides IN vs NEAR for the alert as a
+// whole (classifyPolygon); it has no business deciding this.
 func (f *Footprint) affectsWithin(rings [][]LatLon) Affects {
 	within := func(p LatLon) bool {
 		for _, ring := range rings {
-			if ringDistanceMiles(p, ring, nil) <= f.BufferMiles {
+			// boundaryEpsilonMiles absorbs projection noise so a point sitting
+			// exactly on the boundary counts as inside.
+			if ringDistanceMiles(p, ring, nil) <= boundaryEpsilonMiles {
 				return true
 			}
 		}
