@@ -741,3 +741,46 @@ func TestFootprintRefreshPrefetchesItsZones(t *testing.T) {
 	defer mu.Unlock()
 	t.Fatalf("MIC081 never became cached after a footprint refresh (zone hits: %v)", zoneHits)
 }
+
+// A NEAR alert is classified without ever building Affects, so its slices used
+// to reach the browser as JSON null. The frontend reads .length on them, which
+// threw mid-render and froze the whole UI. Guard the wire format itself.
+func TestGetWxAlertsNearAlertHasNoNullSlices(t *testing.T) {
+	mgr := newTestWxManager(t)
+	center := wxalert.LatLon{Lat: 42.9634, Lon: -85.6681}
+	mgr.SetFootprintInputs(wxalert.Inputs{BufferMiles: 10, Own: &center, OwnSource: "config", Now: time.Now().UTC()})
+	// ~15 miles north of the footprint centre: outside the 10-mile buffer,
+	// inside 2x it — NEAR.
+	near := testWxAlert("urn:oid:near1", "Severe Thunderstorm Warning", wxalert.TierWarning,
+		testWxPolygon(center.Lat+15.0/69.0, center.Lon, 1))
+	mgr.OnAlerts([]wxalert.Alert{near}, time.Now().UTC(), true)
+
+	srv, _, sessMgr, _ := newTestWxServer(t, mgr)
+	_, token := userWithRole(t, sessMgr, "OBS", session.RoleObserver)
+
+	r := httptest.NewRequest("GET", "/api/wx/alerts", nil)
+	r.Header.Set("Authorization", "Bearer "+token)
+	w := httptest.NewRecorder()
+	srv.ServeHTTP(w, r)
+	if w.Code != 200 {
+		t.Fatalf("status = %d, body %s", w.Code, w.Body.String())
+	}
+
+	var snap wxalert.Snapshot
+	if err := json.Unmarshal(w.Body.Bytes(), &snap); err != nil {
+		t.Fatalf("unmarshal snapshot: %v", err)
+	}
+	if len(snap.Alerts) != 1 {
+		t.Fatalf("Alerts = %d, want 1", len(snap.Alerts))
+	}
+	if got := snap.Alerts[0].Proximity; got != wxalert.ProximityNear {
+		t.Fatalf("Proximity = %q, want near (the test polygon is misplaced)", got)
+	}
+
+	raw := w.Body.String()
+	for _, key := range []string{"checkpoints", "locations", "stations", "checkpointSeqRange", "routeSpans", "ugc", "same", "references", "zones"} {
+		if strings.Contains(raw, `"`+key+`":null`) {
+			t.Errorf("snapshot sends %q as null; the frontend reads .length on it:\n%s", key, raw)
+		}
+	}
+}
