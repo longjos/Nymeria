@@ -34,12 +34,12 @@ const TOKEN_FALLBACKS: WxTokens = {
 	warning: '#e74c3c',
 	watch: '#f59e0b',
 	advisory: '#3b82f6',
-	statement: '#aaaaaa',
+	statement: '#8b5cf6',
 	expired: '#6b7280',
 	dashWarning: '10 6',
 	dashWatch: '4 6',
 	dashAdvisory: '1 6',
-	dashStatement: '1 10',
+	dashStatement: '2 6',
 	casing: 'rgba(255, 255, 255, 0.55)',
 	zPane: '350'
 };

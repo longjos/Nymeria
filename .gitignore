@@ -14,6 +14,8 @@
 web/node_modules/
 web/build/
 web/.svelte-kit/
+# A `vite build` run from the repo root (rather than web/) drops one here.
+/.svelte-kit/
 
 # IDE
 .idea/

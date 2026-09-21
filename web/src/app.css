@@ -64,20 +64,26 @@
 	--color-wx-warning: var(--color-error);
 	--color-wx-watch: var(--color-warning);
 	--color-wx-advisory: var(--color-info);
-	--color-wx-statement: var(--color-text-muted);
+	/* Was --color-text-muted (#aaa): 2.02:1 against OSM land, the least
+	   visible thing on the map by a distance. Violet keeps the statement tier
+	   visually quietest of the four while actually being findable, and is far
+	   enough in hue from warning red / watch amber / advisory blue to stay
+	   unambiguous. 3.69:1 on the map, 3.75:1 on the dark panel. */
+	--color-wx-statement: #8b5cf6;
 	--color-wx-expired: #6b7280; /* same gray the wx overlay uses for > 60 min stale */
 
 	/* Tier-tinted surfaces (row hover, instruction box, banner band). */
 	--color-wx-warning-soft: rgba(231, 76, 60, 0.12);
 	--color-wx-watch-soft: rgba(245, 158, 11, 0.12);
 	--color-wx-advisory-soft: rgba(59, 130, 246, 0.12);
-	--color-wx-statement-soft: rgba(170, 170, 170, 0.08);
+	--color-wx-statement-soft: rgba(139, 92, 246, 0.1);
 
 	/* Map stroke patterns — tier is legible without color (SVG dasharray). */
 	--wx-dash-warning: 10 6;
 	--wx-dash-watch: 4 6;
 	--wx-dash-advisory: 1 6;
-	--wx-dash-statement: 1 10;
+	/* 1px dot every 10px was a line you had to already know was there. */
+	--wx-dash-statement: 2 6;
 
 	/* 2 px light halo drawn under every NWS stroke for sunlight legibility. */
 	--wx-casing: rgba(255, 255, 255, 0.55);

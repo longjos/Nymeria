@@ -317,3 +317,88 @@ func TestManagerZonesConfigured(t *testing.T) {
 		t.Fatal("Zones() = nil, want configured cache")
 	}
 }
+
+// LinkStatus declared inAreaCount/nearbyCount/zonesCached/zonesMissing and
+// nothing ever assigned them, so the provenance strip and Settings reported 0
+// for all four while alerts were on screen — three numbers lying in the one
+// panel whose job is honest provenance.
+func TestLinkStatusCountersReflectReality(t *testing.T) {
+	dir := t.TempDir()
+	m, err := NewManager(Config{Enabled: false, DefaultBufferMiles: 10, ZoneDataDir: dir})
+	if err != nil {
+		t.Fatalf("NewManager: %v", err)
+	}
+	center := LatLon{Lat: 42.9634, Lon: -85.6681}
+	m.SetFootprintInputs(Inputs{
+		BufferMiles: 10, Own: &center, OwnSource: "config", Now: time.Now().UTC(),
+		ExtraZones: []string{"MIZ001", "MIZ002", "MIZ003"},
+	})
+
+	// Two in the watch area, one nearby, one far (dropped by the registry's
+	// relevance filter but still active).
+	in1 := mkTestAlert("Tornado Warning", SeverityExtreme, UrgencyImmediate, squareRingMiles(center, 3))
+	in1.ID = "in-1"
+	in2 := mkTestAlert("Flood Warning", SeveritySevere, UrgencyExpected, squareRingMiles(center, 5))
+	in2.ID = "in-2"
+	near := mkTestAlert("Severe Thunderstorm Warning", SeveritySevere, UrgencyExpected, boxAt(center, 90, 15, 2))
+	near.ID = "near-1"
+	m.OnAlerts([]Alert{in1, in2, near}, time.Now().UTC(), true)
+
+	st := m.Link()
+	if st.InAreaCount != 2 {
+		t.Errorf("InAreaCount = %d, want 2", st.InAreaCount)
+	}
+	if st.NearbyCount != 1 {
+		t.Errorf("NearbyCount = %d, want 1", st.NearbyCount)
+	}
+
+	// No zone polygons have been fetched, so all three footprint zones are
+	// missing and none are cached.
+	if st.ZonesCached != 0 {
+		t.Errorf("ZonesCached = %d, want 0 before any zone is cached", st.ZonesCached)
+	}
+	if st.ZonesMissing != 3 {
+		t.Errorf("ZonesMissing = %d, want 3 (MIZ001-003)", st.ZonesMissing)
+	}
+
+	// Write one zone into the cache; the split must follow.
+	if err := m.Zones().save("MIZ002", &ZoneRecord{UGC: "MIZ002", Name: "Kent", State: "MI"}); err != nil {
+		t.Fatalf("save zone: %v", err)
+	}
+	st = m.Link()
+	if st.ZonesCached != 1 || st.ZonesMissing != 2 {
+		t.Errorf("after caching one zone: cached=%d missing=%d, want 1 and 2", st.ZonesCached, st.ZonesMissing)
+	}
+}
+
+// The counters must also ride the wx_link_status WebSocket event, not just
+// the snapshot — the provenance strip updates from both.
+func TestLinkStatusEventCarriesCounters(t *testing.T) {
+	dir := t.TempDir()
+	m, err := NewManager(Config{Enabled: false, DefaultBufferMiles: 10, ZoneDataDir: dir})
+	if err != nil {
+		t.Fatalf("NewManager: %v", err)
+	}
+	center := LatLon{Lat: 42.9634, Lon: -85.6681}
+	m.SetFootprintInputs(Inputs{BufferMiles: 10, Own: &center, OwnSource: "config", Now: time.Now().UTC()})
+	a := mkTestAlert("Tornado Warning", SeverityExtreme, UrgencyImmediate, squareRingMiles(center, 3))
+	a.ID = "in-1"
+	m.OnAlerts([]Alert{a}, time.Now().UTC(), true)
+	drainEvents(m)
+
+	m.OnLinkStatus(LinkStatus{State: LinkLive, Enabled: true})
+	var got *LinkStatus
+	for _, ev := range drainEvents(m) {
+		if ev.Type == EventLinkStatus {
+			if st, ok := ev.Data.(LinkStatus); ok {
+				got = &st
+			}
+		}
+	}
+	if got == nil {
+		t.Fatal("no EventLinkStatus emitted")
+	}
+	if got.InAreaCount != 1 {
+		t.Errorf("event InAreaCount = %d, want 1", got.InAreaCount)
+	}
+}

@@ -204,9 +204,40 @@ func (m *Manager) Footprint() FootprintSummary {
 // manager has no poller at all).
 func (m *Manager) Link() LinkStatus {
 	if m.poller == nil {
-		return LinkStatus{State: LinkOff}
+		return m.withCounts(LinkStatus{State: LinkOff})
 	}
-	return m.poller.Status()
+	return m.withCounts(m.poller.Status())
+}
+
+// withCounts fills the four provenance counters. The poller can't: it only
+// sees the raw feed, while these describe the matched set and the zone cache.
+// They were declared on LinkStatus and never assigned anywhere, so every
+// surface that showed them ("2 in watch area · zones cached 5") reported 0
+// while alerts were on screen.
+func (m *Manager) withCounts(st LinkStatus) LinkStatus {
+	for _, a := range m.registry.Active() {
+		switch a.Proximity {
+		case ProximityIn:
+			st.InAreaCount++
+		case ProximityNear:
+			st.NearbyCount++
+		}
+	}
+
+	m.mu.Lock()
+	fp := m.footprint
+	m.mu.Unlock()
+	if fp == nil {
+		return st
+	}
+	for _, z := range fp.Summary().Zones {
+		if m.zones != nil && m.zones.Has(z.UGC) {
+			st.ZonesCached++
+		} else {
+			st.ZonesMissing++
+		}
+	}
+	return st
 }
 
 // Policy returns the effective policy as served on the wire.
@@ -346,10 +377,11 @@ func (m *Manager) OnAlerts(alerts []Alert, fetchedAt time.Time, complete bool) {
 	}
 }
 
-// OnLinkStatus implements PollSink.
+// OnLinkStatus implements PollSink. The counters are added here too: the
+// provenance strip updates from this event as well as from the snapshot.
 func (m *Manager) OnLinkStatus(st LinkStatus) {
 	select {
-	case m.events <- Event{Type: EventLinkStatus, Data: st}:
+	case m.events <- Event{Type: EventLinkStatus, Data: m.withCounts(st)}:
 	default:
 	}
 }
