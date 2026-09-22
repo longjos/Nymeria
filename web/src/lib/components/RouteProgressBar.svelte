@@ -1,10 +1,9 @@
 <script lang="ts">
-	import type { CheckpointWithPassages } from '$lib/types';
 	import { orderedCheckpoints, progressElements, hasCheckpoints } from '$lib/stores/netcontrol';
 	import { statusColor } from '$lib/annotationMeta';
 	import { timeAgo } from '$lib/utils';
 	import { wxInAreaAlerts } from '$lib/stores/wxAlerts';
-	import WxTierGlyph from './WxTierGlyph.svelte';
+	import CourseRail from './CourseRail.svelte';
 
 	let {
 		onCheckpointClick,
@@ -14,38 +13,17 @@
 
 	let expandedCpId = $state<string | null>(null);
 
-	// Tier brackets over the affected checkpoint span (UX §8.6). Statements
-	// are excluded — too low-signal to earn a bracket on the route bar.
-	let wxBrackets = $derived(
-		$wxInAreaAlerts
-			.filter((a) => a.tier !== 'statement' && a.affects.checkpointSeqRange.length === 2)
-			.map((a) => {
-				const [loSeq, hiSeq] = a.affects.checkpointSeqRange;
-				const total = $orderedCheckpoints.length;
-				const loIdx = $orderedCheckpoints.findIndex((c) => c.meta.sequenceNumber === loSeq);
-				const hiIdx = $orderedCheckpoints.findIndex((c) => c.meta.sequenceNumber === hiSeq);
-				if (loIdx < 0 || hiIdx < 0) return null;
-				const pctStart = total > 1 ? (loIdx / (total - 1)) * 100 : 0;
-				const pctEnd = total > 1 ? (hiIdx / (total - 1)) * 100 : 100;
-				return { alert: a, pctStart, pctEnd, loSeq, hiSeq };
-			})
-			.filter((b): b is NonNullable<typeof b> => b !== null)
-	);
-
-	// Element colors by label.
+	// Element colors by label — used only by the expanded passage detail below;
+	// the rail itself (CourseRail) owns the canonical copy of this table.
 	const elementColors: Record<string, string> = {
-		lead: '#22c55e',
-		sweep: '#ef4444',
+		lead: 'var(--color-ride-lead)',
+		sweep: 'var(--color-ride-sweep)',
 		tail: '#f59e0b',
 		'main pack': '#3b82f6',
 	};
 
 	function getElementColor(label: string): string {
 		return elementColors[label.toLowerCase()] || '#8b5cf6';
-	}
-
-	function dotSize(passageCount: number): number {
-		return Math.min(20, Math.max(8, 8 + passageCount * 2));
 	}
 
 	function toggleDetail(cpId: string) {
@@ -65,70 +43,12 @@
 
 		<!-- Progress bar visualization -->
 		<div class="rp-bar-container">
-			<div class="rp-bar" class:has-wx={wxBrackets.length > 0}>
-				<!-- NWS alert tier brackets over the affected checkpoint span -->
-				{#if wxBrackets.length > 0}
-					<div class="rp-wx-layer">
-						{#each wxBrackets as b, i (b.alert.id)}
-							<div
-								class="rp-wx"
-								style="left: {b.pctStart}%; width: {b.pctEnd - b.pctStart}%; top: {2 + i * 12}px; --wx: var(--color-wx-{b.alert.tier})"
-								title="{b.alert.event}: CP {b.loSeq}–CP {b.hiSeq}"
-							>
-								<span class="rp-wx-label"><WxTierGlyph tier={b.alert.tier} size={10} /> {b.alert.shortCode}</span>
-							</div>
-						{/each}
-					</div>
-				{/if}
-				<!-- Connecting line -->
-				<div class="rp-line"></div>
-
-				<!-- Element markers (above the line) -->
-				{#if $progressElements.length > 0}
-					<div class="rp-elements">
-						{#each $progressElements as elem (elem.label)}
-							{@const cpIndex = $orderedCheckpoints.findIndex(c => c.meta.annotationId === elem.lastCheckpointId)}
-							{@const totalCps = $orderedCheckpoints.length}
-							{@const pct = totalCps > 1 ? (cpIndex / (totalCps - 1)) * 100 : 50}
-							<div
-								class="rp-element"
-								style="left: {pct}%; --elem-color: {getElementColor(elem.label)}"
-								title="{elem.label} at CP{elem.lastCheckpointSeq}"
-							>
-								<span class="rp-element-dot"></span>
-								<span class="rp-element-label">{elem.label}</span>
-							</div>
-						{/each}
-					</div>
-				{/if}
-
-				<!-- Checkpoint dots -->
-				<div class="rp-dots">
-					{#each $orderedCheckpoints as cp, i (cp.meta.annotationId)}
-						{@const totalCps = $orderedCheckpoints.length}
-						{@const pct = totalCps > 1 ? (i / (totalCps - 1)) * 100 : 50}
-						{@const size = dotSize(cp.passageCount)}
-						{@const color = statusColor('checkpoint', cp.annotation.status)}
-						<div
-							class="rp-dot-wrapper"
-							style="left: {pct}%"
-						>
-							<button
-								class="rp-dot"
-								style="width: {size}px; height: {size}px; background: {color}; border-color: {color}"
-								onclick={() => toggleDetail(cp.meta.annotationId)}
-								title="{cp.annotation.label} (#{cp.meta.sequenceNumber}) — {cp.passageCount} passages"
-							>
-								<span class="rp-dot-seq">{cp.meta.sequenceNumber}</span>
-							</button>
-							<span class="rp-dot-label">{cp.annotation.shortName || cp.annotation.label}</span>
-							{#if cp.passageCount > 0}
-								<span class="rp-dot-count">{cp.passageCount}</span>
-							{/if}
-						</div>
-					{/each}
-				</div>
-			</div>
+			<CourseRail
+				checkpoints={$orderedCheckpoints}
+				elements={$progressElements}
+				wxAlerts={$wxInAreaAlerts}
+				onStopActivate={toggleDetail}
+			/>
 		</div>
 
 		<!-- Expanded checkpoint detail -->
@@ -192,149 +112,6 @@
 	.rp-bar-container {
 		padding: 8px var(--space-md) 12px;
 		overflow-x: auto;
-	}
-
-	.rp-bar {
-		position: relative;
-		min-height: 72px;
-		min-width: 200px;
-		padding: 24px 16px 0;
-	}
-
-	.rp-bar.has-wx {
-		padding-top: 40px;
-	}
-
-	.rp-wx-layer {
-		position: absolute;
-		top: 0;
-		left: 16px;
-		right: 16px;
-		height: 40px;
-	}
-
-	.rp-wx {
-		position: absolute;
-		height: 8px;
-		border: 2px solid var(--wx);
-		border-bottom: none;
-		border-radius: 3px 3px 0 0;
-	}
-
-	.rp-wx-label {
-		position: absolute;
-		top: -12px;
-		left: 0;
-		display: inline-flex;
-		align-items: center;
-		gap: 2px;
-		font-size: 0.6rem;
-		font-weight: 700;
-		color: var(--wx);
-		white-space: nowrap;
-	}
-
-	.rp-line {
-		position: absolute;
-		top: 36px;
-		left: 16px;
-		right: 16px;
-		height: 2px;
-		background: var(--color-primary);
-		opacity: 0.6;
-	}
-
-	/* Element markers above the line */
-	.rp-elements {
-		position: absolute;
-		top: 4px;
-		left: 16px;
-		right: 16px;
-		height: 20px;
-	}
-
-	.rp-element {
-		position: absolute;
-		transform: translateX(-50%);
-		display: flex;
-		flex-direction: column;
-		align-items: center;
-		gap: 1px;
-	}
-
-	.rp-element-dot {
-		width: 6px;
-		height: 6px;
-		border-radius: 50%;
-		background: var(--elem-color);
-		box-shadow: 0 0 4px var(--elem-color);
-	}
-
-	.rp-element-label {
-		font-size: 0.6rem;
-		font-weight: 700;
-		color: var(--elem-color);
-		white-space: nowrap;
-		text-transform: uppercase;
-		letter-spacing: 0.03em;
-	}
-
-	/* Checkpoint dots */
-	.rp-dots {
-		position: absolute;
-		top: 24px;
-		left: 16px;
-		right: 16px;
-		height: 48px;
-	}
-
-	.rp-dot-wrapper {
-		position: absolute;
-		transform: translateX(-50%);
-		display: flex;
-		flex-direction: column;
-		align-items: center;
-		gap: 3px;
-	}
-
-	.rp-dot {
-		border: 2px solid;
-		border-radius: 50%;
-		cursor: pointer;
-		display: flex;
-		align-items: center;
-		justify-content: center;
-		transition: transform var(--duration-fast), box-shadow var(--duration-fast);
-		padding: 0;
-		min-width: 0;
-	}
-
-	.rp-dot:hover {
-		transform: scale(1.25);
-		box-shadow: 0 0 8px rgba(255, 255, 255, 0.2);
-	}
-
-	.rp-dot-seq {
-		font-size: 0.55rem;
-		font-weight: 700;
-		color: rgba(255, 255, 255, 0.9);
-		line-height: 1;
-	}
-
-	.rp-dot-label {
-		font-size: 0.6rem;
-		color: var(--color-text-muted);
-		white-space: nowrap;
-		max-width: 60px;
-		overflow: hidden;
-		text-overflow: ellipsis;
-		text-align: center;
-	}
-
-	.rp-dot-count {
-		font-size: 0.55rem;
-		color: var(--color-text-muted);
-		opacity: 0.7;
 	}
 
 	/* Detail popover */

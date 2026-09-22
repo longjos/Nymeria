@@ -162,6 +162,32 @@ export function openICS309(netId?: string): void {
 
 export const ics309NetId = writable<string | null>(null);
 
+/**
+ * A tab NetControlPanel should switch to on next mount/effect (e.g. the ride
+ * strip's zone navigation, or RidePeek on a phone). Same pattern as
+ * `settingsOpenSection`. Consumed (reset to null) by NetControlPanel once
+ * applied.
+ */
+export const netControlRequestedTab = writable<'situation' | 'roster' | 'missions' | 'locations' | 'timeline' | 'sag' | 'course' | null>(null);
+
+/**
+ * A sub-tab CoursePanel should switch to on next mount/effect (e.g. the ride
+ * strip's NEXT SHUTOFF/STOPS zone navigation, or the command palette's
+ * `close ` verb). Same pattern as `netControlRequestedTab`. Consumed (reset
+ * to null) by CoursePanel once applied.
+ */
+export const courseRequestedTab = writable<'stops' | 'shutoffs' | 'sweep' | 'riders' | 'closeout' | null>(null);
+
+/** Opens Net Control at the situation tab — the phone's whole ride surface (RidePeek's tap target). */
+export function openRideSituation(): void {
+	netControlRequestedTab.set('situation');
+	openNetControl();
+	sheetState.set('full');
+}
+
+/** `?` shortcut inside ride mode — a small overlay listing the ride status strip's keyboard accelerators. */
+export const rideShortcutHelpOpen = writable<boolean>(false);
+
 /** Toggle a panel: if it's already open, close it; otherwise open it. */
 export function togglePanel(mode: PanelMode): void {
 	if (get(panelMode) === mode) {

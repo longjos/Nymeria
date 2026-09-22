@@ -3,6 +3,7 @@
 	import { stations } from '$lib/stores/stations';
 	import { wxPanelTab } from '$lib/stores/ui';
 	import { wxUnackedCount, wxLinkStatus, wxSelectedAlertId } from '$lib/stores/wxAlerts';
+	import { profileHasPanel } from '$lib/stores/netProfile';
 	import type { Station } from '$lib/types';
 	import WeatherStationCard from './WeatherStationCard.svelte';
 	import WeatherDetail from './WeatherDetail.svelte';
@@ -50,6 +51,14 @@
 	function handleBack() {
 		selectedWeatherStation.set(null);
 	}
+
+	// Bike-ride profile nets don't list the "weather" panel id (only
+	// "wxalerts") — a general station roster is not part of that profile's
+	// contract, so the tab is hidden and the panel defaults to Alerts.
+	let showStationsTab = $derived($profileHasPanel('weather'));
+	$effect(() => {
+		if (!showStationsTab && $wxPanelTab === 'stations') wxPanelTab.set('alerts');
+	});
 </script>
 
 <div class="wx-panel">
@@ -62,19 +71,21 @@
 	</div>
 
 	<div class="wx-tabs" role="tablist" aria-label="Weather sections" tabindex="-1" onkeydown={handleTabKeydown}>
-		<button
-			class="wx-tab tab"
-			role="tab"
-			id="wx-tab-stations"
-			tabindex={$wxPanelTab === 'stations' ? 0 : -1}
-			aria-selected={$wxPanelTab === 'stations'}
-			aria-controls="wx-pane-stations"
-			class:active={$wxPanelTab === 'stations'}
-			onclick={() => wxPanelTab.set('stations')}
-		>
-			<span class="tab-label">Stations</span>
-			<span class="tab-count">{$weatherStations.length}</span>
-		</button>
+		{#if showStationsTab}
+			<button
+				class="wx-tab tab"
+				role="tab"
+				id="wx-tab-stations"
+				tabindex={$wxPanelTab === 'stations' ? 0 : -1}
+				aria-selected={$wxPanelTab === 'stations'}
+				aria-controls="wx-pane-stations"
+				class:active={$wxPanelTab === 'stations'}
+				onclick={() => wxPanelTab.set('stations')}
+			>
+				<span class="tab-label">Stations</span>
+				<span class="tab-count">{$weatherStations.length}</span>
+			</button>
+		{/if}
 		<button
 			class="wx-tab tab"
 			role="tab"

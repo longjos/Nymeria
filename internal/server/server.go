@@ -18,11 +18,15 @@ import (
 	"github.com/narvel/nymeria/internal/beacon"
 	"github.com/narvel/nymeria/internal/checkpoint"
 	"github.com/narvel/nymeria/internal/config"
+	"github.com/narvel/nymeria/internal/course"
 	"github.com/narvel/nymeria/internal/geocode/w3w"
 	"github.com/narvel/nymeria/internal/gps"
 	"github.com/narvel/nymeria/internal/message"
 	"github.com/narvel/nymeria/internal/netcontrol"
 	"github.com/narvel/nymeria/internal/object"
+	"github.com/narvel/nymeria/internal/ride"
+	"github.com/narvel/nymeria/internal/ride/phase"
+	"github.com/narvel/nymeria/internal/ride/reconcile"
 	"github.com/narvel/nymeria/internal/server/ws"
 	"github.com/narvel/nymeria/internal/session"
 	"github.com/narvel/nymeria/internal/station"
@@ -35,27 +39,32 @@ import (
 
 // Server is the main HTTP server for Nymeria.
 type Server struct {
-	router     chi.Router
-	hub        *ws.Hub
-	tracker    station.Tracker
-	transports *transport.Manager
-	msgEngine  message.Engine
-	objManager *object.Manager
-	beaconMgr  *beacon.Manager
-	store      store.Store
-	sessions   session.Manager
-	actLogger  activity.Logger
-	annMgr     *annotation.Manager
-	netMgr     *netcontrol.Manager
-	cpMgr      *checkpoint.Manager
-	tileCache  *tilecache.Cache
-	gpsMgr     *gps.Manager
-	configMgr  *config.Manager
-	stationCfg config.StationConfig
-	weatherMu  sync.RWMutex
-	weatherCfg config.WeatherConfig
-	w3w        *w3w.Client
-	w3wMu      sync.RWMutex
+	router      chi.Router
+	hub         *ws.Hub
+	tracker     station.Tracker
+	transports  *transport.Manager
+	msgEngine   message.Engine
+	objManager  *object.Manager
+	beaconMgr   *beacon.Manager
+	store       store.Store
+	sessions    session.Manager
+	actLogger   activity.Logger
+	annMgr      *annotation.Manager
+	netMgr      *netcontrol.Manager
+	cpMgr       *checkpoint.Manager
+	rideMgr     *ride.Manager
+	rideTraffic *ride.TrafficManager
+	courseMgr   *course.Manager
+	phaseMgr    *phase.Manager
+	recMgr      *reconcile.Manager
+	tileCache   *tilecache.Cache
+	gpsMgr      *gps.Manager
+	configMgr   *config.Manager
+	stationCfg  config.StationConfig
+	weatherMu   sync.RWMutex
+	weatherCfg  config.WeatherConfig
+	w3w         *w3w.Client
+	w3wMu       sync.RWMutex
 
 	// NWS weather alerts (internal/wxalert). wxMgr is hot-swappable: enabling
 	// wx_alerts, or changing its contact/base URL/data dir, needs a fresh
@@ -140,6 +149,21 @@ func New(tracker station.Tracker, tm *transport.Manager, eng message.Engine, db 
 	if s.cpMgr != nil {
 		go s.bridgeCheckpointEvents()
 	}
+	if s.rideMgr != nil {
+		go s.bridgeRideEvents()
+	}
+	if s.rideTraffic != nil {
+		go s.bridgeRideTrafficEvents()
+	}
+	if s.courseMgr != nil {
+		go s.bridgeCourseEvents()
+	}
+	if s.phaseMgr != nil {
+		go s.bridgeRidePhaseEvents()
+	}
+	if s.recMgr != nil {
+		go s.bridgeReconcileEvents()
+	}
 	if s.tileCache != nil {
 		go s.bridgeTileCacheEvents()
 	}
@@ -207,6 +231,50 @@ func WithNetControlManager(mgr *netcontrol.Manager) Option {
 func WithCheckpointManager(mgr *checkpoint.Manager) Option {
 	return func(s *Server) {
 		s.cpMgr = mgr
+	}
+}
+
+// WithRideManager sets the ride mode (internal/ride) SAG manager on the
+// server. Every /nets/{id}/sag/* route answers 503 when this is nil.
+func WithRideManager(mgr *ride.Manager) Option {
+	return func(s *Server) {
+		s.rideMgr = mgr
+	}
+}
+
+// WithCourseManager sets the course closure (internal/course) manager on
+// the server. Every /nets/{id}/course/* route answers 503 when this is nil.
+func WithCourseManager(mgr *course.Manager) Option {
+	return func(s *Server) {
+		s.courseMgr = mgr
+	}
+}
+
+// WithRideTrafficManager sets the ride-mode supply/medical traffic manager
+// (internal/ride's TrafficManager, WP4) on the server. Every
+// /nets/{id}/ride/* route answers 503 when this is nil.
+func WithRideTrafficManager(mgr *ride.TrafficManager) Option {
+	return func(s *Server) {
+		s.rideTraffic = mgr
+	}
+}
+
+// WithPhaseManager sets the ride phase manager (internal/ride/phase, WP5b)
+// on the server. GET/POST /nets/{id}/ride/phase answer 503 when this is
+// nil; every other route is unaffected either way.
+func WithPhaseManager(mgr *phase.Manager) Option {
+	return func(s *Server) {
+		s.phaseMgr = mgr
+	}
+}
+
+// WithReconcileManager sets the ride-mode close-out/reconciliation manager
+// (internal/ride/reconcile, WP5) on the server. Every
+// /nets/{id}/ride/{accounting,closeout,shift-summaries,handoff*,briefing}
+// and /nets/{id}/ics21{1,4} route answers 503 when this is nil.
+func WithReconcileManager(mgr *reconcile.Manager) Option {
+	return func(s *Server) {
+		s.recMgr = mgr
 	}
 }
 
@@ -513,6 +581,19 @@ func (s *Server) bridgeNetControlEvents() {
 		s.hub.Broadcast(data)
 		s.TriggerWxFootprintRefresh()
 
+		// A sag-category check-in being released (explicit checkout, or any
+		// other path that ends up setting Status=released) frees its
+		// dispatched/enroute/onscene legs; a loaded leg is left for the crew
+		// to resolve and logs a warning instead. evt.Data is the live Go
+		// value netcontrol just emitted, not a JSON round-trip, so a direct
+		// type assertion is enough (mission_updated below round-trips
+		// because it also has to handle a Data shape from elsewhere).
+		if evt.Type == netcontrol.EventCheckInUpdated && s.rideMgr != nil {
+			if ci, ok := evt.Data.(store.NetCheckIn); ok && ci.Status == netcontrol.OpReleased && ci.Category == netcontrol.CatSAG {
+				s.rideMgr.ReleaseVehicle(ci.NetID, ci.ID, "vehicle checked out")
+			}
+		}
+
 		// Closing a net deliberately does NOT touch its annotations. Bulk-resolving
 		// them stamped a ResolvedAt nobody earned, destroyed the record of what was
 		// still outstanding when the net ended, and could not be undone. Whether a
@@ -554,6 +635,101 @@ func (s *Server) bridgeCheckpointEvents() {
 		data, err := json.Marshal(msg)
 		if err != nil {
 			log.Printf("[server] marshal checkpoint event: %v", err)
+			continue
+		}
+		s.hub.Broadcast(data)
+	}
+}
+
+// bridgeRideEvents reads ride mode (internal/ride) events and broadcasts
+// them via WebSocket. Its timeline rows are emitted under the same
+// "net_timeline_entry" type netcontrol's own timeline uses (see
+// ride.TimelineEntryEventType), so the existing timeline panel shows them
+// with no frontend changes.
+func (s *Server) bridgeRideEvents() {
+	for evt := range s.rideMgr.Events() {
+		msg := map[string]any{
+			"type": evt.Type,
+			"data": evt.Data,
+		}
+		data, err := json.Marshal(msg)
+		if err != nil {
+			log.Printf("[server] marshal ride event: %v", err)
+			continue
+		}
+		s.hub.Broadcast(data)
+	}
+}
+
+// bridgeRideTrafficEvents reads ride-mode supply/medical traffic
+// (internal/ride's TrafficManager, WP4) domain events and broadcasts them
+// via WebSocket. Its timeline rows go through netcontrol's own
+// AddTimelineEventWithDetails instead, so they are already broadcast by
+// bridgeNetControlEvents — this bridge only carries the
+// ride_supply_*/ride_medical_* domain events.
+func (s *Server) bridgeRideTrafficEvents() {
+	for evt := range s.rideTraffic.Events() {
+		msg := map[string]any{
+			"type": evt.Type,
+			"data": evt.Data,
+		}
+		data, err := json.Marshal(msg)
+		if err != nil {
+			log.Printf("[server] marshal ride traffic event: %v", err)
+			continue
+		}
+		s.hub.Broadcast(data)
+	}
+}
+
+// bridgeCourseEvents reads course closure (internal/course) events and
+// broadcasts them via WebSocket.
+func (s *Server) bridgeCourseEvents() {
+	for evt := range s.courseMgr.Events() {
+		msg := map[string]any{
+			"type": evt.Type,
+			"data": evt.Data,
+		}
+		data, err := json.Marshal(msg)
+		if err != nil {
+			log.Printf("[server] marshal course event: %v", err)
+			continue
+		}
+		s.hub.Broadcast(data)
+	}
+}
+
+// bridgeRidePhaseEvents reads ride phase (internal/ride/phase, WP5b) events
+// and broadcasts them via WebSocket, so the strip's phase chip updates live.
+func (s *Server) bridgeRidePhaseEvents() {
+	for evt := range s.phaseMgr.Events() {
+		msg := map[string]any{
+			"type": evt.Type,
+			"data": evt.Data,
+		}
+		data, err := json.Marshal(msg)
+		if err != nil {
+			log.Printf("[server] marshal ride phase event: %v", err)
+			continue
+		}
+		s.hub.Broadcast(data)
+	}
+}
+
+// bridgeReconcileEvents reads ride reconciliation (internal/ride/reconcile,
+// WP5) events — shift-summary updates and hand-off activity — and
+// broadcasts them via WebSocket. Its close-out-forced/shift-filed/handoff
+// timeline rows go through netcontrol's own AddTimelineEvent(WithDetails),
+// so they are already broadcast by bridgeNetControlEvents.
+func (s *Server) bridgeReconcileEvents() {
+	for evt := range s.recMgr.Events() {
+		msg := map[string]any{
+			"type": evt.Type,
+			"data": evt.Data,
+		}
+		data, err := json.Marshal(msg)
+		if err != nil {
+			log.Printf("[server] marshal reconcile event: %v", err)
 			continue
 		}
 		s.hub.Broadcast(data)

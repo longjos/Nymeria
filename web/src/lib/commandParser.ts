@@ -36,6 +36,13 @@ export type ParsedCommand =
 	| { type: 'mission_assign'; callsign: string; missionTitle: string }
 	| { type: 'location'; callsign: string; locationName?: string; lat?: number; lon?: number }
 	| { type: 'checkpoint_passage'; checkpointRef: string; label: string }
+	// Ride mode (bike-ride profile): 'lead cp3' / 'sweep cp3' — executed via
+	// the same checkpoint-passage path the existing 'cp3 lead' command uses.
+	| { type: 'lead_passage'; checkpointRef: string }
+	| { type: 'sweep_passage'; checkpointRef: string }
+	// Typed stubs for WP7's composers — recognized here so the ride strip's
+	// e/n/s/c accelerators can seed the palette, but not yet executable.
+	| { type: 'sag' | 'incident' | 'close'; rest: string }
 	| { type: 'unknown'; raw: string };
 
 export interface AutocompleteContext {
@@ -72,6 +79,26 @@ export function parseCommand(
 		const title = parts.slice(1).join(' ').trim();
 		if (!title) return { type: 'unknown', raw };
 		return { type: 'mission_create', title };
+	}
+
+	// Ride mode: "lead cp3" / "lead 3" and "sweep cp3" / "sweep 3" — the
+	// q/w strip accelerators seed 'lead '/'sweep ', so the checkpoint
+	// reference is whatever the operator types next, with or without the
+	// 'cp' prefix the palette's own suggestions already show.
+	const firstLower = firstToken.toLowerCase();
+	if (firstLower === 'lead' || firstLower === 'sweep') {
+		const refRaw = (parts[1] ?? '').trim();
+		const refMatch = refRaw.match(/^cp(\d+)$/i) ?? refRaw.match(/^(\d+)$/);
+		if (!refMatch) return { type: 'unknown', raw };
+		return firstLower === 'lead'
+			? { type: 'lead_passage', checkpointRef: refMatch[1] }
+			: { type: 'sweep_passage', checkpointRef: refMatch[1] };
+	}
+
+	// Ride mode typed stubs (WP7 composers land the commit path; recognized
+	// here so the palette can show the parsed intent and a locked tier chip).
+	if (firstLower === 'sag' || firstLower === 'incident' || firstLower === 'close') {
+		return { type: firstLower, rest: parts.slice(1).join(' ').trim() };
 	}
 
 	// Everything else: first token is a callsign
@@ -167,6 +194,16 @@ export function getModeIndicator(parsed: ParsedCommand): string {
 			return '[LOCATION]';
 		case 'checkpoint_passage':
 			return `[CP${parsed.checkpointRef} \u2192 ${parsed.label}]`;
+		case 'lead_passage':
+			return `[LEAD \u2192 CP${parsed.checkpointRef}]`;
+		case 'sweep_passage':
+			return `[SWEEP \u2192 CP${parsed.checkpointRef}]`;
+		case 'sag':
+			return '[SAG]';
+		case 'incident':
+			return '[INCIDENT]';
+		case 'close':
+			return '[CLOSE]';
 		case 'unknown':
 			return '';
 	}

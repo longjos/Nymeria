@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"encoding/json"
 	"path/filepath"
+	"sync"
 	"testing"
 	"time"
 
@@ -436,5 +437,131 @@ func TestCheckpointPassagesNeverNilJSON(t *testing.T) {
 	}
 	if bytes.Contains(pdata, []byte(`"elements":null`)) {
 		t.Errorf("progress elements serialized as null, want []: %s", pdata)
+	}
+}
+
+// TestSetMeta_SequenceableCategories verifies SetMeta accepts every category
+// that carries CheckpointMeta (checkpoint/aid/start/finish) and rejects
+// everything else, so course closure's rest-stop/start/finish stations
+// participate in route progress the same way a "checkpoint" annotation does.
+func TestSetMeta_SequenceableCategories(t *testing.T) {
+	cpMgr, annMgr, _ := newTestManager(t)
+
+	cases := []struct {
+		category string
+		wantErr  bool
+	}{
+		{"checkpoint", false},
+		{"aid", false},
+		{"start", false},
+		{"finish", false},
+		{"hazard", true},
+		{"route", true},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.category, func(t *testing.T) {
+			geom := `{"type":"Point","coordinates":[-118.24,34.05]}`
+			if tc.category == "route" {
+				geom = `{"type":"LineString","coordinates":[[-118.24,34.05],[-118.25,34.06]]}`
+			}
+			ann, err := annMgr.Create(store.Annotation{
+				Type:     "point",
+				Label:    "Station " + tc.category,
+				Geometry: geom,
+				Category: tc.category,
+				NetID:    "net-1",
+			})
+			if tc.category == "route" {
+				ann, err = annMgr.Create(store.Annotation{
+					Type:     "line",
+					Label:    "Route",
+					Geometry: geom,
+					Category: tc.category,
+					NetID:    "net-1",
+				})
+			}
+			if err != nil {
+				t.Fatalf("create %s annotation: %v", tc.category, err)
+			}
+
+			_, err = cpMgr.SetMeta(store.CheckpointMeta{
+				AnnotationID:   ann.ID,
+				NetID:          "net-1",
+				SequenceNumber: 1,
+			})
+			if tc.wantErr && err == nil {
+				t.Errorf("SetMeta(%s) = nil error, want error", tc.category)
+			}
+			if !tc.wantErr && err != nil {
+				t.Errorf("SetMeta(%s) = %v, want nil error", tc.category, err)
+			}
+		})
+	}
+}
+
+// TestLoad_CollectsAidNetIDs verifies Load discovers net IDs from aid (not
+// just "checkpoint") annotations, so a bike-ride net's rest stops load their
+// checkpoint metadata even when no store.Net row exists yet (test fixtures).
+func TestLoad_CollectsAidNetIDs(t *testing.T) {
+	_, annMgr, s := newTestManager(t)
+
+	ann, err := annMgr.Create(store.Annotation{
+		Type:     "point",
+		Label:    "Rest Stop 1",
+		Geometry: `{"type":"Point","coordinates":[-118.24,34.05]}`,
+		Category: "aid",
+		NetID:    "net-aid-only",
+	})
+	if err != nil {
+		t.Fatalf("create aid annotation: %v", err)
+	}
+	if err := s.SaveCheckpointMeta(store.CheckpointMeta{AnnotationID: ann.ID, NetID: "net-aid-only", SequenceNumber: 1}); err != nil {
+		t.Fatalf("SaveCheckpointMeta: %v", err)
+	}
+
+	cpMgr2 := NewManager(s, annMgr)
+	if err := cpMgr2.Load(); err != nil {
+		t.Fatalf("Load failed: %v", err)
+	}
+
+	cpMgr2.mu.RLock()
+	meta, ok := cpMgr2.metas[ann.ID]
+	cpMgr2.mu.RUnlock()
+	if !ok || meta.SequenceNumber != 1 {
+		t.Error("aid checkpoint meta not loaded from store")
+	}
+}
+
+// TestOnPassageHook verifies a registered hook receives the persisted
+// passage (with its ID populated) exactly once per LogPassage call.
+func TestOnPassageHook(t *testing.T) {
+	cpMgr, annMgr, _ := newTestManager(t)
+
+	ann := createCheckpointAnnotation(t, annMgr, "net-1", "CP1")
+	cpMgr.SetMeta(store.CheckpointMeta{AnnotationID: ann.ID, NetID: "net-1", SequenceNumber: 1})
+
+	var mu sync.Mutex
+	var received []store.CheckpointPassage
+	cpMgr.SetOnPassage(func(p store.CheckpointPassage) {
+		mu.Lock()
+		received = append(received, p)
+		mu.Unlock()
+	})
+
+	passage, err := cpMgr.LogPassage(store.CheckpointPassage{
+		CheckpointID: ann.ID, NetID: "net-1", Label: "lead", Direction: "through",
+	})
+	if err != nil {
+		t.Fatalf("LogPassage failed: %v", err)
+	}
+
+	mu.Lock()
+	defer mu.Unlock()
+	if len(received) != 1 {
+		t.Fatalf("hook invocation count = %d, want 1", len(received))
+	}
+	if received[0].ID != passage.ID || received[0].ID == "" {
+		t.Errorf("hook received passage ID %q, want %q (non-empty)", received[0].ID, passage.ID)
 	}
 }

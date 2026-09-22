@@ -11,16 +11,23 @@
 	import { wxInAreaAlerts, wxIsAcked, wxMuted, wxLinkStatus, wxWeatherAttentionItems, ackAlert, openWxAlert } from '$lib/stores/wxAlerts';
 	import { tierRank } from '$lib/wxAlertMeta';
 	import { clock } from '$lib/wxAlertTime';
+	import { rideMode } from '$lib/stores/ride';
 	import RouteProgressBar from './RouteProgressBar.svelte';
+	import RideSituation from './RideSituation.svelte';
 	import WxAlertRow from './WxAlertRow.svelte';
 	import WxTierGlyph from './WxTierGlyph.svelte';
 
 	let {
 		onNavigateTab,
 		onFlyTo,
+		isDesktop = false,
 	}: {
 		onNavigateTab: (tab: 'roster' | 'missions' | 'timeline', filter?: string) => void;
 		onFlyTo?: (lat: number, lon: number) => void;
+		/** When true and bike-ride mode is active, the desktop ride strip already
+		 * owns the route rail — suppress SituationBoard's own copy so there is
+		 * never a second one on screen (spec §0). */
+		isDesktop?: boolean;
 	} = $props();
 
 	const priorityColors: Record<string, string> = {
@@ -185,8 +192,13 @@
 		</section>
 	{/if}
 
+	<!-- RIDE STATUS (bike-ride profile nets) -->
+	{#if $rideMode}
+		<RideSituation />
+	{/if}
+
 	<!-- ROUTE PROGRESS -->
-	{#if $hasCheckpoints}
+	{#if $hasCheckpoints && !($rideMode && isDesktop)}
 		<RouteProgressBar />
 	{/if}
 

@@ -30,6 +30,12 @@
 	import GpsStatusPill from '$lib/components/GpsStatusPill.svelte';
 	import WxLinkPill from '$lib/components/WxLinkPill.svelte';
 	import WxInterruptBanner from '$lib/components/WxInterruptBanner.svelte';
+	import RideInterruptBanner from '$lib/components/RideInterruptBanner.svelte';
+	import RideStrip from '$lib/components/RideStrip.svelte';
+	import RidePeek from '$lib/components/RidePeek.svelte';
+	import RideShortcutHelp from '$lib/components/RideShortcutHelp.svelte';
+	import RidePendingList from '$lib/components/RidePendingList.svelte';
+	import ShiftBriefing from '$lib/components/ShiftBriefing.svelte';
 	import NextStopPill from '$lib/components/NextStopPill.svelte';
 	import type { MeasureBand, DistanceOrigin } from '$lib/components/NextStopPill.svelte';
 	import { STOP_CATEGORIES } from '$lib/routeDistance';
@@ -71,12 +77,21 @@
 	import {
 		selectedStation, panelMode, detailTab, searchOpen, sheetState,
 		selectStation, closePanel, openStationList, openMessages, openConversation, openTransports, openActivity, openAnnotations, openNetControl, openBulletins, openICS309, openWeather, openTelemetry, openDF, openPackets, openSettings,
-		togglePanel, commandPaletteOpen, toggleCommandPalette
+		togglePanel, commandPaletteOpen, toggleCommandPalette, rideShortcutHelpOpen
 	} from '$lib/stores/ui';
 	import type { SheetState, DetailTab, PanelMode } from '$lib/stores/ui';
 	import type { Annotation } from '$lib/types';
+	import { activeInterruptSource } from '$lib/stores/interrupts';
+	import {
+		rideMode, initRideStore, rideEmergency, rideLadder,
+		ackEmergency, seedPalette
+	} from '$lib/stores/ride';
 
 	let isDesktop = $state(true);
+	/** Landscape phone (spec §9: max-height: 499px) — same query as
+	 * `.desktop-only`/BottomSheet's SHORT_VH_BREAKPOINT. RidePeek is
+	 * suppressed there entirely rather than squeezed into an even shorter sheet. */
+	let isShortViewport = $state(false);
 	let flyToTarget = $state<{ lat: number; lon: number; zoom?: number } | null>(null);
 	let flyToBounds = $state<Array<{ lat: number; lon: number }> | null>(null);
 	let sessionReady = $state(false);
@@ -166,6 +181,7 @@
 			initBulletinStore();
 			initWeatherStore();
 			initWxAlertStore();
+			initRideStore();
 			initPacketStore();
 			loadW3WStatus();
 			if ($canAdmin) {
@@ -198,7 +214,16 @@
 		isDesktop = mq.matches;
 		const handler = (e: MediaQueryListEvent) => { isDesktop = e.matches; };
 		mq.addEventListener('change', handler);
-		return () => mq.removeEventListener('change', handler);
+
+		const shortMq = window.matchMedia('(max-height: 499px)');
+		isShortViewport = shortMq.matches;
+		const shortHandler = (e: MediaQueryListEvent) => { isShortViewport = e.matches; };
+		shortMq.addEventListener('change', shortHandler);
+
+		return () => {
+			mq.removeEventListener('change', handler);
+			shortMq.removeEventListener('change', shortHandler);
+		};
 	});
 
 	// Auto-enable overlay when its panel opens (convenience)
@@ -331,6 +356,11 @@
 	// PEEK_CONTENT_H budget below — grows/shrinks it via peekExtraH so the
 	// nav rail is never pushed off-screen.
 	const WX_PEEK_STRIP_H = 36;
+	// Ride mode (spec §9): a 44px peek line, ABOVE the wx strip, phone only
+	// (landscape phone — <500px tall — never mounts it: the strip's own
+	// isDesktop gate already keeps RideStrip off there, and this mirrors it).
+	const RIDE_PEEK_STRIP_H = 44;
+	let showRidePeek = $derived(!isDesktop && !isShortViewport && $rideMode);
 	let wxPeekAlert = $derived($wxInAreaAlerts[0] ?? null);
 	let wxPeekCountdown = $derived(wxPeekAlert ? countdown(wxPeekAlert.endsAt, $wxMinute * 60000) : null);
 	// Hidden entirely with no in-area alerts, when NWS alerts are off, or when the
@@ -644,6 +674,27 @@
 		togglePanel(mode);
 	}
 
+	/**
+	 * Guards the ride strip's single-key accelerators (spec §5): inert
+	 * outside ride mode, while typing, with a modifier held, while the
+	 * command palette is already open, while any modal/overlay is up (the
+	 * same DOM probe SidePanel.svelte already uses for Escape), or before the
+	 * session is ready/approved.
+	 */
+	function rideShortcutsInert(e: KeyboardEvent): boolean {
+		if (!$rideMode) return true;
+		const tag = (e.target as HTMLElement)?.tagName;
+		if (tag === 'INPUT' || tag === 'TEXTAREA' || (e.target as HTMLElement)?.isContentEditable) return true;
+		if (e.ctrlKey || e.metaKey || e.altKey) return true;
+		if ($commandPaletteOpen) return true;
+		if (document.querySelector('[aria-modal="true"], [data-blocks-escape="true"], .login-overlay, .setup-wizard')) return true;
+		if (!sessionReady || $needsSetup || !$isApproved) return true;
+		return false;
+	}
+
+	let ridePendingListOpen = $state(false);
+	let rideBriefingOpen = $state(false);
+
 	function handleGlobalKeydown(e: KeyboardEvent) {
 		// Ctrl+K / Cmd+K → toggle command palette
 		if ((e.ctrlKey || e.metaKey) && e.key === 'k') {
@@ -658,6 +709,56 @@
 				e.preventDefault();
 				commandPaletteOpen.set(true);
 			}
+			return;
+		}
+
+		if (rideShortcutsInert(e)) return;
+		switch (e.key) {
+			case 'q':
+				e.preventDefault();
+				seedPalette('lead ');
+				break;
+			case 'w':
+				e.preventDefault();
+				seedPalette('sweep ');
+				break;
+			case 'a': {
+				e.preventDefault();
+				const top = $rideEmergency;
+				if (top) void ackEmergency(top.id);
+				else showToast('Nothing to acknowledge', 'info', 2000);
+				break;
+			}
+			case 'r':
+				e.preventDefault();
+				ridePendingListOpen = true;
+				break;
+			case 'x':
+				e.preventDefault();
+				rideBriefingOpen = true;
+				break;
+			case '?':
+				e.preventDefault();
+				rideShortcutHelpOpen.set(true);
+				break;
+			case 'e': {
+				e.preventDefault();
+				const rank1 = $rideLadder.find((t) => t.rank === 1);
+				seedPalette('incident ', rank1?.id);
+				break;
+			}
+			case 'n':
+				e.preventDefault();
+				seedPalette('incident ');
+				break;
+			case 's':
+				e.preventDefault();
+				seedPalette('sag ');
+				break;
+			case 'c':
+				e.preventDefault();
+				seedPalette('close ');
+				break;
 		}
 	}
 
@@ -880,6 +981,7 @@
 					missionPickActive={placingMissionLocation != null}
 					onSetMissionDraftPoint={handleSetMissionDraftPoint}
 					getMapCenter={handleGetMapCenter}
+					isDesktop={true}
 				/>
 			{:else if $panelMode === 'weather'}
 				<WeatherPanel onFlyTo={handleFlyTo} />
@@ -897,12 +999,22 @@
 		</SidePanel>
 	{/if}
 
+	<!-- Desktop: Ride status strip (bike-ride profile nets only) -->
+	{#if isDesktop && $rideMode}
+		<RideStrip
+			{isDesktop}
+			onFlyTo={handleNetFlyTo}
+			onFlyToBounds={handleFlyToBounds}
+			onHeightChange={() => requestAnimationFrame(() => mapRef?.invalidateSize())}
+		/>
+	{/if}
+
 	<!-- Mobile: Bottom Sheet -->
 	{#if !isDesktop}
 		<BottomSheet
 			sheetLevel={$sheetState}
 			onStateChange={handleSheetStateChange}
-			peekExtraH={showWxPeekStrip ? WX_PEEK_STRIP_H : 0}
+			peekExtraH={(showRidePeek ? RIDE_PEEK_STRIP_H : 0) + (showWxPeekStrip ? WX_PEEK_STRIP_H : 0)}
 		>
 			{#snippet peekContent()}
 				{#if $sheetState === 'peek'}
@@ -912,6 +1024,9 @@
 						</button>
 						<span class="station-count">{$rosterScopedStations.scoped ? `${$rosterScopedStations.stations.length} on roster` : `${$stationList.length} stations`}</span>
 					</div>
+					{#if showRidePeek}
+						<RidePeek />
+					{/if}
 					{#if showWxPeekStrip && wxPeekAlert && wxPeekCountdown}
 						<button
 							class="wx-peek-strip"
@@ -1042,8 +1157,14 @@
 		</BottomSheet>
 	{/if}
 
-	<!-- NWS interrupt-class alert — overlays sheet/panel, never inside them -->
-	<WxInterruptBanner />
+	<!-- Interrupt channel — overlays sheet/panel, never inside them. Exactly
+	     one full-width banner can exist at a time; ride EMERGENCY always wins
+	     arbitration over a weather interrupt (spec §0/§4). -->
+	{#if $activeInterruptSource === 'ride'}
+		<RideInterruptBanner />
+	{:else if $activeInterruptSource === 'wx'}
+		<WxInterruptBanner />
+	{/if}
 
 	<!-- Mobile: Search Overlay -->
 	{#if $searchOpen && !isDesktop}
@@ -1060,6 +1181,17 @@
 			onClose={() => commandPaletteOpen.set(false)}
 		/>
 	{/if}
+
+	<!-- Ride mode global overlays (keyboard accelerators r / x / ?) -->
+	{#if ridePendingListOpen}
+		<RidePendingList onClose={() => (ridePendingListOpen = false)} />
+	{/if}
+	{#if rideBriefingOpen}
+		<ShiftBriefing onClose={() => (rideBriefingOpen = false)} />
+	{/if}
+	{#if $rideShortcutHelpOpen}
+		<RideShortcutHelp onClose={() => rideShortcutHelpOpen.set(false)} />
+	{/if}
 </div>
 
 <style>
@@ -1073,7 +1205,10 @@
 
 	.map-layer {
 		position: absolute;
-		inset: 0;
+		/* The ride strip is a bottom band, not an overlay — it must not cover
+		   the course it describes. --ride-strip-h defaults to 0px outside
+		   bike-ride mode, so this is a no-op everywhere else (spec §9). */
+		inset: 0 0 var(--ride-strip-h, 0px) 0;
 		z-index: var(--z-map);
 	}
 

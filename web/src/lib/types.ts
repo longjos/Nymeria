@@ -705,6 +705,691 @@ export interface Net {
 	wxInterruptCustom: boolean;
 	/** Used only when wxInterruptCustom is true. */
 	wxInterruptEvents: string[];
+	/** Selects the net-control vocabulary set (internal/netprofile). */
+	profile: NetProfileID;
+}
+
+// --- Net profile / ride config (internal/netprofile) ---
+
+export type NetProfileID = 'general' | 'bike-ride';
+
+export interface PriorityTier {
+	id: string;
+	label: string;
+	rank: number;
+	description: string;
+	examples: string[];
+}
+
+export interface RideRoute {
+	id: string;
+	name: string;
+	distanceMiles: number;
+	startTime?: string;
+	cutoffAt?: string;
+	division?: string;
+}
+
+export interface RideCutoffPolicy {
+	courseOpensAt?: string;
+	courseClosesAt?: string;
+	mandatorySagAfterCutoff: boolean;
+	declinedSagIsUnsupported: boolean;
+	notes: string;
+}
+
+export interface NetRideConfig {
+	netId: string;
+	agencyName: string;
+	eventName: string;
+	eventDate: string;
+	routes: RideRoute[];
+	cutoff: RideCutoffPolicy;
+	withholdBibOnSevereInjury: boolean;
+	priorityTiers: PriorityTier[];
+	division?: string;
+	updatedAt: string;
+}
+
+export interface NetProfile {
+	id: NetProfileID;
+	label: string;
+	description: string;
+	panels: string[];
+	annotationCategories: string[];
+	checkInCategories: string[];
+	defaultCheckInCategory: string;
+	priorityLadderId: string;
+	priorityTiers: PriorityTier[];
+	hasRideConfig: boolean;
+}
+
+export interface NetProfileView {
+	netId: string;
+	profile: NetProfile;
+	rideConfig?: NetRideConfig;
+	effectivePriorityTiers: PriorityTier[];
+}
+
+// --- Ride phase (internal/ride/phase, WP5b) ---
+//
+// Only meaningful for a bike-ride profile net — GET/POST /nets/{id}/ride/phase
+// answer 409 { code: 'profile_mismatch' } for any other profile. Phase is
+// ALWAYS operator-set; `suggestion` is a live-computed hint the NCS must
+// explicitly confirm via POST, never something the frontend should act on by
+// itself. Never hardcode the phase label text elsewhere — RidePhaseID is the
+// full legal set, in forward order.
+
+export type RidePhaseID = 'pre-start' | 'launched' | 'mid-ride' | 'closing' | 'collapse' | 'reconcile';
+
+export interface RidePhaseSuggestion {
+	/** '' when the current phase's own trigger has not fired. */
+	phase: RidePhaseID | '';
+	reason: string;
+}
+
+/** GET/POST /nets/{id}/ride/phase response. */
+export interface RidePhaseStatus {
+	netId: string;
+	phase: RidePhaseID;
+	setBy: string;
+	/** The operator's note. Required by the API for a backward move, optional for forward. */
+	reason: string;
+	updatedAt: string;
+	suggestion: RidePhaseSuggestion;
+}
+
+// --- Course closure (internal/course, WP3) ---
+
+export interface CourseConfig {
+	netId: string;
+	division: string;
+	sweepLabel: string;
+	leadLabel: string;
+	closeRequiresSweep: boolean;
+	autoSweepFromPassage: boolean;
+	updatedAt: string;
+}
+
+export type ShutoffStatus = 'planned' | 'fired' | 'cancelled';
+
+export interface ShutoffPoint {
+	id: string;
+	netId: string;
+	division: string;
+	name: string;
+	lat: number;
+	lon: number;
+	routeMile?: number;
+	annotationId?: string;
+	scheduledAt: string;
+	rerouteDirection: string;
+	rerouteDestination: string;
+	rerouteInstructions: string;
+	staffedByCheckInId: string;
+	status: ShutoffStatus;
+	firedAt?: string;
+	firedBy: string;
+	fireNote: string;
+	rerouteCount: number;
+	createdAt: string;
+	updatedAt: string;
+}
+
+export type RiderSupportStatus = 'supported' | 'unsupported';
+
+export interface RiderException {
+	id: string;
+	netId: string;
+	division: string;
+	bib: string;
+	bibWithheld: boolean;
+	kind: string;
+	supportStatus: RiderSupportStatus;
+	reason: string;
+	routeLabel: string;
+	routeMile?: number;
+	lat?: number;
+	lon?: number;
+	shutoffId?: string;
+	sagRequestId?: string;
+	reportedBy: string;
+	recordedAt: string;
+	statusChangedAt: string;
+	statusChangedBy: string;
+	note: string;
+}
+
+export interface SweepReport {
+	id: string;
+	netId: string;
+	division: string;
+	routeLabel: string;
+	checkInId: string;
+	reportedBy: string;
+	routeMile?: number;
+	lat?: number;
+	lon?: number;
+	lastRiderBib: string;
+	estimatedSpeedMph?: number;
+	note: string;
+	reportedAt: string;
+}
+
+export type StationClosureState = 'open' | 'riders_clear' | 'sweep_passed' | 'closed';
+
+export interface StationClosure {
+	netId: string;
+	checkpointId: string;
+	division: string;
+	state: StationClosureState;
+	ridersClearAt?: string;
+	ridersClearBy: string;
+	sweepPassedAt?: string;
+	sweepPassedBy: string;
+	sweepPassageId?: string;
+	closedAt?: string;
+	closedBy: string;
+	closedByOverride: boolean;
+	overrideReason: string;
+	reopenCount: number;
+	note: string;
+	updatedAt: string;
+}
+
+export interface StationView {
+	checkpointId: string;
+	label: string;
+	category: string;
+	sequenceNumber: number;
+	closure: StationClosure;
+	outOfOrder: boolean;
+	passageCount: number;
+}
+
+export interface SweepPosition {
+	lastCheckpointId: string;
+	lastCheckpointSeq: number;
+	lastPassageTime?: string;
+	latestReport?: SweepReport;
+	nextStationId: string;
+	nextStationLabel: string;
+	etaToNextMinutes?: number;
+}
+
+export interface CourseState {
+	netId: string;
+	config: CourseConfig;
+	stations: StationView[];
+	clearThroughSeq: number;
+	clearThroughLabel: string;
+	stationsOpen: number;
+	stationsClosed: number;
+	allStationsClosed: boolean;
+	sweep: SweepPosition;
+	shutoffs: ShutoffPoint[];
+	nextShutoff?: ShutoffPoint;
+	supportedExceptions: number;
+	unsupportedExceptions: number;
+	rerouteCountTotal: number;
+	updatedAt: string;
+}
+
+// --- Ride mode: SAG (internal/ride, WP2) ---
+
+export interface SAGLocation {
+	kind: string;
+	annotationId?: string;
+	route?: string;
+	mileMarker?: number;
+	milesRemaining?: number;
+	lat?: number;
+	lon?: number;
+	description?: string;
+}
+
+export interface SAGSlot {
+	id: string;
+	bib?: string;
+	riderName?: string;
+	note?: string;
+	hasBike: boolean;
+	disposition: string;
+	legId?: string;
+	deliveredTo?: SAGLocation;
+	updatedAt: string;
+}
+
+export interface SAGLeg {
+	id: string;
+	vehicleCheckInId: string;
+	vehicleLabel: string;
+	slotIds: string[];
+	status: string;
+	releaseReason?: string;
+	overcommitted: boolean;
+	dispatchedAt: string;
+	enrouteAt?: string;
+	onSceneAt?: string;
+	loadedAt?: string;
+	deliveredAt?: string;
+	releasedAt?: string;
+}
+
+export interface SAGRequest {
+	id: string;
+	netId: string;
+	division?: string;
+	sequence: number;
+	pickup: SAGLocation;
+	dropoff: SAGLocation;
+	reason: string;
+	priority: string;
+	status: string;
+	needsVehicle: boolean;
+	slots: SAGSlot[];
+	legs: SAGLeg[];
+	requestedBy: string;
+	createdByName?: string;
+	notes: string;
+	cancelReason?: string;
+	createdAt: string;
+	updatedAt: string;
+	closedAt?: string;
+}
+
+export interface SAGVehicle {
+	netId: string;
+	checkInId: string;
+	division?: string;
+	seats: number;
+	rackSlots: number;
+	notes: string;
+	updatedAt: string;
+}
+
+export interface SAGVehicleStatus extends SAGVehicle {
+	callsign: string;
+	tacticalCall: string;
+	checkInStatus: string;
+	committedSeats: number;
+	committedRacks: number;
+	availableSeats: number;
+	availableRacks: number;
+	activeLegIds: string[];
+	activeRequestIds: string[];
+}
+
+export interface RideSagConfig {
+	priorities: string[];
+	defaultCoursePriority: string;
+	defaultStopPriority: string;
+	reasons: string[];
+	defaultSeats: number;
+	defaultRackSlots: number;
+	requireNameForHospitalStart: boolean;
+}
+
+export interface SAGBoard {
+	netId: string;
+	requests: SAGRequest[];
+	vehicles: SAGVehicleStatus[];
+	counts: Record<string, number>;
+	config: RideSagConfig;
+}
+
+// --- Ride mode: supply / medical traffic (internal/ride, WP4) ---
+
+export interface SupplyItem {
+	item: string;
+	quantity: number;
+	unit?: string;
+	note?: string;
+	addedAt: string;
+}
+
+export interface SupplyETA {
+	minutes: number;
+	givenAt: string;
+	dueAt: string;
+	source?: string;
+}
+
+export interface SupplyRequest {
+	id: string;
+	netId: string;
+	division?: string;
+	requestedByCheckInId?: string;
+	requestedByCall: string;
+	location: string;
+	locationAnnotationId?: string;
+	milesRemaining?: number;
+	routeId?: string;
+	lat?: number;
+	lon?: number;
+	items: SupplyItem[];
+	askedWhatElse: boolean;
+	priority: string;
+	notes?: string;
+	status: string;
+	createdAt: string;
+	readBackAt?: string;
+	readBackBy?: string;
+	relayedAt?: string;
+	relayedTo?: string;
+	etas: SupplyETA[];
+	deliveredAt?: string;
+	cancelledAt?: string;
+	cancelReason?: string;
+	mergedIntoId?: string;
+	updatedAt: string;
+}
+
+export interface MedicalNotification {
+	id: string;
+	netId: string;
+	division?: string;
+	reportedByCheckInId?: string;
+	reportedByCall: string;
+	bib?: string;
+	bibWithheld: boolean;
+	sex: string;
+	age: string;
+	location: string;
+	milesRemaining?: number;
+	routeId?: string;
+	locationAnnotationId?: string;
+	lat?: number;
+	lon?: number;
+	chiefComplaint: string;
+	readBackAt?: string;
+	readBackBy?: string;
+	severity: string;
+	priority: string;
+	status: string;
+	emsUnit?: string;
+	etaMinutes?: number;
+	etaGivenAt?: string;
+	etaDueAt?: string;
+	onSceneAt?: string;
+	departedAt?: string;
+	onSceneSeconds?: number;
+	destination?: string;
+	destinationName?: string;
+	patientCount: number;
+	/** Never present in a redacted payload (observer GET/WS). */
+	patientName?: string;
+	releasedAt?: string;
+	cancelledAt?: string;
+	cancelReason?: string;
+	notes?: string;
+	createdAt: string;
+	updatedAt: string;
+}
+
+// --- Ride mode: SAG/supply/medical write inputs (internal/ride, WP7) ---
+//
+// Mirrors of the Go *Input structs the handlers in internal/server/sag.go
+// and ride_traffic.go decode request bodies into. Field names/optionality
+// match the json tags exactly — see those files, not this comment, if the
+// two ever disagree.
+
+export interface SlotInput {
+	bib: string;
+	riderName: string;
+	note: string;
+	/** Omitted -> server defaults to true. */
+	hasBike?: boolean | null;
+}
+
+export interface CreateRequestInput {
+	pickup: SAGLocation;
+	dropoff: SAGLocation;
+	reason: string;
+	/** '' -> server derives from the net's ladder + pickup.kind. */
+	priority: string;
+	slots: SlotInput[];
+	requestedBy: string;
+	notes: string;
+	division?: string;
+}
+
+export interface UpdateRequestInput {
+	pickup: SAGLocation;
+	dropoff: SAGLocation;
+	reason: string;
+	priority: string;
+	notes: string;
+	requestedBy: string;
+}
+
+export interface DispatchInput {
+	vehicleCheckInId: string;
+	/** Empty -> every currently waiting, unassigned slot. */
+	slotIds: string[];
+	allowOvercommit: boolean;
+}
+
+/** GET /nets/{id}/sag/config. */
+export interface SAGConfigResponse {
+	config: RideSagConfig;
+	pickupKinds: string[];
+	dropoffKinds: string[];
+}
+
+/** The 409 body writeSAGError sends for an *ride.OverCapacityError. */
+export interface OverCapacityBody {
+	error: string;
+	committedSeats: number;
+	seats: number;
+	committedRacks: number;
+	rackSlots: number;
+}
+
+export interface SupplyItemInput {
+	item: string;
+	quantity: number;
+	unit?: string;
+	note?: string;
+}
+
+export interface CreateSupplyInput {
+	requestedByCheckInId?: string;
+	requestedByCall: string;
+	location: string;
+	locationAnnotationId?: string;
+	milesRemaining?: number | null;
+	routeId?: string;
+	lat?: number | null;
+	lon?: number | null;
+	items: SupplyItemInput[];
+	askedWhatElse: boolean;
+	priority: string;
+	notes?: string;
+	division?: string;
+}
+
+export interface AddItemsInput {
+	items: SupplyItemInput[];
+	/** Lets the "what else?" prompt flip the flag on an append. */
+	askedWhatElse?: boolean;
+}
+
+export interface ReadbackInput {
+	/** false = requester corrected something; the record stays draft/reported. */
+	confirmed: boolean;
+	readBackBy?: string;
+	correction?: string;
+}
+
+export interface RelayInput {
+	relayedTo: string;
+}
+
+export interface RideETAInput {
+	minutes: number;
+	source?: string;
+}
+
+export interface CancelInput {
+	reason: string;
+}
+
+export interface SupplyCatalogEntry {
+	item: string;
+	defaultTier: string;
+	when?: string;
+}
+
+export interface CreateMedicalInput {
+	reportedByCheckInId?: string;
+	reportedByCall: string;
+	bib?: string;
+	sex: string;
+	age: string;
+	location: string;
+	milesRemaining?: number | null;
+	routeId?: string;
+	locationAnnotationId?: string;
+	lat?: number | null;
+	lon?: number | null;
+	chiefComplaint: string;
+	severity: string;
+	priority: string;
+	notes?: string;
+	division?: string;
+	/** The composer may take the read-back in the same breath as the report. */
+	readbackConfirmed?: boolean;
+	readBackBy?: string;
+}
+
+export interface MedicalETAInput {
+	emsUnit: string;
+	minutes: number;
+}
+
+export interface OnSceneInput {
+	emsUnit?: string;
+	/** ISO timestamp; omitted = now (lets a late entry say "5 min ago"). */
+	at?: string;
+}
+
+export interface DepartInput {
+	destination: string;
+	destinationName: string;
+	patientCount: number;
+	/** Only honored for destination hospital|start; else the server 400s. */
+	patientName?: string;
+	at?: string;
+}
+
+export interface ReleaseInput {
+	reason: string;
+	at?: string;
+}
+
+// --- Ride reconciliation (internal/ride/reconcile, WP5) ---
+
+export interface HandoffItem {
+	id: string;
+	netId: string;
+	division?: string;
+	kind: 'awaiting_reply' | 'pending_action' | 'fyi';
+	summary: string;
+	sentTo: string;
+	replyTo: string;
+	refType?: string;
+	refId?: string;
+	dueAt?: string;
+	status: 'open' | 'resolved' | 'cancelled';
+	handoverCount: number;
+	createdBy: string;
+	createdAt: string;
+	resolvedBy?: string;
+	resolvedAt?: string;
+	resolution?: string;
+}
+
+export interface ShiftHandoff {
+	id: string;
+	netId: string;
+	division?: string;
+	fromCallsign: string;
+	toCallsign: string;
+	at: string;
+	openItemIds: string[];
+	briefing: string;
+	acknowledgedAt?: string;
+	acknowledgedBy?: string;
+}
+
+export interface ExceptionCounts {
+	supported: number;
+	unsupported: number;
+	byKind: Record<string, number>;
+}
+
+export interface Accounting {
+	netId: string;
+	sweepComplete: boolean;
+	sweepDetail: string;
+	counts: ExceptionCounts;
+	openExceptions: RiderException[];
+	computedAt: string;
+}
+
+export interface CloseoutItem {
+	key: string;
+	label: string;
+	done: boolean;
+	blocking: boolean;
+	count: number;
+	total: number;
+	detail: string;
+}
+
+export interface CloseoutStatus {
+	netId: string;
+	ready: boolean;
+	items: CloseoutItem[];
+	computedAt: string;
+}
+
+export interface BriefingLine {
+	label: string;
+	value: string;
+	severity: 'info' | 'warn' | 'urgent';
+	refType?: string;
+	refId?: string;
+}
+
+export interface BriefingSection {
+	key: string;
+	title: string;
+	lines: BriefingLine[];
+}
+
+export interface AwaitingReply {
+	messageId: string;
+	to: string;
+	body: string;
+	sentAt: string;
+	state: 'pending' | 'sent';
+}
+
+export interface ShiftBriefing {
+	netId: string;
+	netName: string;
+	ncsCallsign: string;
+	ncsSince?: string;
+	shiftDueAt?: string;
+	openItems: HandoffItem[];
+	awaitingReplies: AwaitingReply[];
+	accounting: Accounting;
+	closeout: CloseoutStatus;
+	sections: BriefingSection[];
+	recentEvents: NetEvent[];
+	generatedAt: string;
 }
 
 export interface TrackedStation {

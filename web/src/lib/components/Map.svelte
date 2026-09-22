@@ -196,6 +196,14 @@
 		return { lat: c.lat, lon: c.lng, zoom: map.getZoom() };
 	}
 
+	/** Tells Leaflet the container's size may have changed (the ride strip
+	 * mounting/unmounting or changing height). Without this Leaflet keeps a
+	 * stale container height and every click lands offset by the strip's
+	 * height — a silent, maddening bug. */
+	export function invalidateSize(): void {
+		map?.invalidateSize();
+	}
+
 	/** Pans (without zooming) to the current own-position fix, if any. */
 	export function centerOnOwnPosition(): void {
 		if (!map || !ownPosition || ownPosition.mode < 2) return;

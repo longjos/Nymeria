@@ -2,7 +2,7 @@
 	import { onMount } from 'svelte';
 	import { api, ApiError } from '$lib/api';
 	import { timeAgo } from '$lib/utils';
-	import { openICS309, openSettings, missionDraftBackup } from '$lib/stores/ui';
+	import { openICS309, openSettings, missionDraftBackup, netControlRequestedTab, courseRequestedTab } from '$lib/stores/ui';
 	import { get } from 'svelte/store';
 	import { canAdmin } from '$lib/stores/session';
 	import type { Net, NetCheckIn, NetMission, NetEvent, NetNote, NetSummary, OperatorStatus, TrafficType, Annotation, NoteCategory, NoteSeverity, StationCategory, W3WSuggestion } from '$lib/types';
@@ -43,10 +43,16 @@
 	import { gpsStatus } from '$lib/stores/gps';
 	import LocationManager from './LocationManager.svelte';
 	import SituationBoard from './SituationBoard.svelte';
+	import SagPanel from './ride/SagPanel.svelte';
+	import { rideMode, rideOpenItems, sagComposerSeed } from '$lib/stores/ride';
 	import WxWatchAreaSheet from './WxWatchAreaSheet.svelte';
 	import WxTierGlyph from './WxTierGlyph.svelte';
 	import { wxActiveWarningIn, wxUnackedWarningsIn, wxIsNcs, openWxAlert, weatherCheckInIds, wxClock } from '$lib/stores/wxAlerts';
 	import { clock, countdown } from '$lib/wxAlertTime';
+	import CoursePanel from './course/CoursePanel.svelte';
+	import RideConfigSheet from './RideConfigSheet.svelte';
+	import { netProfiles, loadNetProfiles } from '$lib/stores/netProfile';
+	import { closeStationChecked, plannedShutoffCount, stationsAwaitingSweep } from '$lib/stores/course';
 
 	let {
 		onFlyTo,
@@ -68,6 +74,7 @@
 		missionPickActive = false,
 		onSetMissionDraftPoint,
 		getMapCenter,
+		isDesktop = false,
 	}: {
 		onFlyTo?: (lat: number, lon: number, zoom?: number) => void;
 		onFlyToBounds?: (coords: Array<{ lat: number; lon: number }>) => void;
@@ -96,9 +103,12 @@
 		/** Current map viewport centre, used to focus what3words autosuggest
 		 * on the area the NCS is actually looking at. */
 		getMapCenter?: () => { lat: number; lon: number; zoom: number } | null;
+		/** Passed down to SituationBoard so it can suppress its own route rail
+		 * when the desktop ride strip already owns it (spec §0). */
+		isDesktop?: boolean;
 	} = $props();
 
-	type Tab = 'situation' | 'roster' | 'missions' | 'locations' | 'timeline';
+	type Tab = 'situation' | 'roster' | 'missions' | 'locations' | 'timeline' | 'sag' | 'course';
 	let currentTab = $state<Tab>('situation');
 
 	// A net-location marker click routes here (see +page.svelte
@@ -107,6 +117,16 @@
 	// LocationManager has somewhere to scroll.
 	$effect(() => {
 		if (focusedAnnotationId) currentTab = 'locations';
+	});
+
+	// The ride strip's zone navigation (and RidePeek on a phone) requests a
+	// tab here the same way settingsOpenSection requests a Settings section.
+	$effect(() => {
+		const requested = $netControlRequestedTab;
+		if (requested) {
+			currentTab = requested;
+			netControlRequestedTab.set(null);
+		}
 	});
 
 	// Metrics bar filter — clicking a metric filters the roster
@@ -122,6 +142,7 @@
 	let showCreateForm = $state(false);
 	let newNetName = $state('');
 	let newNetType = $state('tactical');
+	let newNetProfile = $state('general');
 	let newNetFreq = $state('');
 	let newNetNotes = $state('');
 	let creating = $state(false);
@@ -275,6 +296,8 @@
 	let showCloseDialog = $state(false);
 	/** Replaces the panel content with WxWatchAreaSheet (NCS/admin, ⋯ menu). */
 	let showWxWatchSheet = $state(false);
+	/** Replaces the panel content with RideConfigSheet (bike-ride NCS, ⋯ menu). */
+	let showRideConfigSheet = $state(false);
 	let stateChipEl = $state<HTMLButtonElement | null>(null);
 	let moreBtnEl = $state<HTMLButtonElement | null>(null);
 	let popTop = $state(0);
@@ -417,6 +440,7 @@
 			const net = await api.createNet({
 				name: newNetName.trim(),
 				type: newNetType,
+				profile: newNetProfile as Net['profile'],
 				frequency: newNetFreq.trim(),
 				notes: newNetNotes.trim(),
 				missionBrief: newNetMissionBrief.trim()
@@ -426,6 +450,7 @@
 			await loadNetData(net.id);
 			showCreateForm = false;
 			newNetName = '';
+			newNetProfile = 'general';
 			newNetFreq = '';
 			newNetNotes = '';
 			newNetMissionBrief = '';
@@ -671,6 +696,65 @@
 					showToast(`${parsed.label} passed CP${seqNum} (${cp.annotation.label})`, 'success');
 					break;
 				}
+				case 'lead_passage':
+				case 'sweep_passage': {
+					const seqNum = parseInt(parsed.checkpointRef, 10);
+					const cp = $orderedCheckpoints.find(c => c.meta.sequenceNumber === seqNum);
+					if (!cp) { showToast(`Checkpoint #${seqNum} not found`, 'error'); break; }
+					const label = parsed.type === 'lead_passage' ? 'LEAD' : 'SWEEP';
+					await api.logPassage($activeNet.id, cp.meta.annotationId, { label });
+					showToast(`${label} passed CP${seqNum} (${cp.annotation.label})`, 'success');
+					break;
+				}
+				case 'sag':
+					// A SAG request is a multi-field record (pickup, dropoff, N rider
+					// slots) that cannot be committed from one typed line — the palette
+					// hands off to the real composer instead, prefilled with whatever
+					// free text followed "sag " as the reason.
+					currentTab = 'sag';
+					sagComposerSeed.set({ reason: parsed.rest });
+					break;
+				case 'close': {
+					// "close <stop>" — resolve the stop by sequence number ("close 3" /
+					// "close cp3") or by a label substring, then run the exact same
+					// sweep-gated close the Course board's own button does, so the
+					// refusal (and its override path) behaves identically either way.
+					currentTab = 'course';
+					courseRequestedTab.set('stops');
+					const rest = parsed.rest.trim();
+					if (!rest) { quickAddRef?.focus(); return; }
+					const seqMatch = rest.match(/^(?:cp)?\s*(\d+)/i);
+					let cp = seqMatch
+						? $orderedCheckpoints.find((c) => c.meta.sequenceNumber === parseInt(seqMatch[1], 10))
+						: undefined;
+					if (!cp) {
+						cp = $orderedCheckpoints.find((c) => c.annotation.label.toLowerCase().includes(rest.toLowerCase()));
+					}
+					if (!cp) { showToast(`Could not find a stop matching "${rest}"`, 'error'); return; }
+					const result = await closeStationChecked(cp.meta.annotationId);
+					// Success and unexpected failures are toasted by closeStation()
+					// itself; only the gate refusals are re-stated here, because
+					// only here do we know the operator is one tab away from the
+					// override form rather than looking straight at it.
+					if (result.ok) return;
+					if (result.gate === 'sweep_not_passed') {
+						showToast(`${result.stationLabel} can't close yet — the sweep hasn't passed it. Net control can override from the stop's card below.`, 'error', 8000);
+					} else if (result.gate === 'ncs_required') {
+						showToast('Only net control or an admin can override the sweep gate', 'error', 8000);
+					} else if (result.gate === 'already_closed') {
+						showToast(`${cp.annotation.label} was already closed`, 'info');
+					}
+					return;
+				}
+				case 'incident':
+					// Not yet a ride-mode record type — an "incident" is either a rider
+					// exception (Riders tab), a mission, or a plain note, and the palette
+					// cannot guess which without more fields than one typed line carries.
+					// Point at the closest real surface instead of silently dropping it.
+					currentTab = 'course';
+					courseRequestedTab.set('riders');
+					showToast('Incidents aren’t one ride-mode record — opening the Riders log; use a note or mission for anything else.', 'info');
+					return;
 				case 'unknown':
 					showToast('Unrecognized command', 'error');
 					quickAddRef?.focus();
@@ -2333,6 +2417,8 @@
 <div class="net-panel" bind:this={panelRootEl} tabindex="-1">
 	{#if showWxWatchSheet && $activeNet}
 		<WxWatchAreaSheet netId={$activeNet.id} onClose={() => (showWxWatchSheet = false)} />
+	{:else if showRideConfigSheet && $activeNet}
+		<RideConfigSheet netId={$activeNet.id} onClose={() => (showRideConfigSheet = false)} />
 	{:else if !$activeNet}
 		<!-- No active net -->
 		<div class="panel-header">
@@ -2370,7 +2456,7 @@
 					<path d="M12 2L2 7l10 5 10-5-10-5zM2 17l10 5 10-5M2 12l10 5 10-5" stroke-linecap="round" stroke-linejoin="round"/>
 				</svg>
 				<p>No active net</p>
-				<button class="btn-primary" onclick={() => (showCreateForm = true)}>Create Net</button>
+				<button class="btn-primary" onclick={() => { showCreateForm = true; loadNetProfiles(); }}>Create Net</button>
 			</div>
 		{:else}
 			<div class="create-form">
@@ -2392,6 +2478,20 @@
 						<label for="net-freq">Frequency</label>
 						<input id="net-freq" type="text" bind:value={newNetFreq} placeholder="146.520 MHz" />
 					</div>
+				</div>
+				<div class="form-group">
+					<label for="net-profile">Profile</label>
+					<select id="net-profile" bind:value={newNetProfile}>
+						{#each $netProfiles as p (p.id)}
+							<option value={p.id}>{p.label}</option>
+						{:else}
+							<option value="general">General</option>
+						{/each}
+					</select>
+					{#if $netProfiles.find((p) => p.id === newNetProfile)?.description}
+						<p class="form-hint">{$netProfiles.find((p) => p.id === newNetProfile)?.description}</p>
+					{/if}
+					<p class="form-hint">Set once &mdash; a net's profile can't change after it opens.</p>
 				</div>
 				<div class="form-group">
 					<label for="net-brief">Mission Brief</label>
@@ -2435,6 +2535,9 @@
 							<path d="M2 4l3 3 3-3" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/>
 						</svg>
 					</button>
+					{#if $activeNet.profile !== 'general'}
+						<span class="net-profile-chip">{$netProfiles.find((p) => p.id === $activeNet?.profile)?.label ?? $activeNet.profile}</span>
+					{/if}
 					{#if $wxActiveWarningIn}
 						{@const wxWarn = $wxActiveWarningIn}
 						<button
@@ -2584,6 +2687,14 @@
 						<span>Weather watch area…</span>
 					</button>
 				{/if}
+				{#if $rideMode && $wxIsNcs}
+					<button class="pop-row" role="menuitem" onclick={() => { showRideConfigSheet = true; closePopovers(); }}>
+						<svg width="16" height="16" viewBox="0 0 16 16" fill="none" aria-hidden="true">
+							<path d="M8 1v4M4.5 3L6 6M11.5 3L10 6M8 6v5M5 11h6M3 14h10" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/>
+						</svg>
+						<span>Ride settings…</span>
+					</button>
+				{/if}
 			</div>
 		{/if}
 
@@ -2672,6 +2783,16 @@
 				<span class="tab-label">SitBoard</span>
 				{#if $attentionItems.length + $wxUnackedWarningsIn.length > 0}<span class="tab-count tab-count-alert" aria-label="{$attentionItems.length + $wxUnackedWarningsIn.length} items need attention">{$attentionItems.length + $wxUnackedWarningsIn.length}</span>{/if}
 			</button>
+			{#if $rideMode}
+				<button class="tab" role="tab" aria-selected={currentTab === 'sag'} class:active={currentTab === 'sag'} onclick={() => { currentTab = 'sag'; metricsFilter = null; }}>
+					<span class="tab-label">SAG</span>
+					{#if $rideOpenItems.length > 0}<span class="tab-count" aria-label="{$rideOpenItems.length} open ride records">{$rideOpenItems.length}</span>{/if}
+				</button>
+				<button class="tab" role="tab" aria-selected={currentTab === 'course'} class:active={currentTab === 'course'} onclick={() => { currentTab = 'course'; metricsFilter = null; }}>
+					<span class="tab-label">Course</span>
+					{#if $stationsAwaitingSweep.length > 0}<span class="tab-count tab-count-alert" aria-label="{$stationsAwaitingSweep.length} stops awaiting sweep">{$stationsAwaitingSweep.length}</span>{:else if $plannedShutoffCount > 0}<span class="tab-count">{$plannedShutoffCount}</span>{/if}
+				</button>
+			{/if}
 			<button class="tab" role="tab" aria-selected={currentTab === 'roster'} class:active={currentTab === 'roster'} onclick={() => { currentTab = 'roster'; metricsFilter = null; }}>
 				<span class="tab-label">Roster</span>
 				<span class="tab-count">{$activeCheckIns.length}</span>
@@ -2700,7 +2821,12 @@
 						else metricsFilter = null;
 					}}
 					onFlyTo={(lat, lon) => onFlyTo?.(lat, lon)}
+					{isDesktop}
 				/>
+			{:else if currentTab === 'sag'}
+				<SagPanel />
+			{:else if currentTab === 'course'}
+				<CoursePanel onFlyTo={(lat, lon, zoom) => onFlyTo?.(lat, lon, zoom)} onNavigateTab={(tab) => { currentTab = tab as Tab; }} />
 			{:else if currentTab === 'roster'}
 				<!-- Roster header with export -->
 				{#if $activeNet && $sortedCheckIns.length > 0}
@@ -3968,6 +4094,22 @@
 	}
 
 	.net-state-chip.state-open { border-color: #22c55e; }
+
+	.net-profile-chip {
+		display: inline-flex;
+		align-items: center;
+		flex-shrink: 0;
+		min-height: 24px;
+		padding: 0 var(--space-sm);
+		background: var(--color-bg);
+		border: 1px solid var(--color-accent);
+		border-radius: var(--radius-full);
+		font-size: 0.65rem;
+		font-weight: 700;
+		text-transform: uppercase;
+		letter-spacing: 0.04em;
+		color: var(--color-accent);
+	}
 	.net-state-chip.state-open .chip-state { color: #22c55e; }
 	.net-state-chip.state-closed .chip-state { color: var(--color-text-muted); }
 
@@ -3996,7 +4138,7 @@
 		border-radius: var(--radius-full);
 		font-size: 0.7rem;
 		font-weight: 700;
-		color: var(--color-wx-warning);
+		color: var(--color-wx-warning-text);
 		cursor: pointer;
 	}
 
@@ -4124,7 +4266,7 @@
 
 	.pop-row.ops-view-set { color: #22c55e; }
 
-	.pop-row-danger { color: var(--color-error); }
+	.pop-row-danger { color: var(--color-error-text); }
 
 	.pop-row-danger:hover,
 	.pop-row-danger:focus-visible {
@@ -4242,7 +4384,7 @@
 		flex-shrink: 0;
 		width: 18px;
 		text-align: center;
-		color: var(--color-error);
+		color: var(--color-error-text);
 		font-weight: 700;
 	}
 
@@ -4255,7 +4397,7 @@
 	.cn-error {
 		font-size: 0.75rem;
 		line-height: 1.4;
-		color: var(--color-error);
+		color: var(--color-error-text);
 		padding: var(--space-sm);
 		background: rgba(231, 76, 60, 0.1);
 		border-radius: var(--radius-sm);
@@ -5550,7 +5692,7 @@
 	.priority-chip.priority-routine[aria-checked='true']   { border-color: var(--color-text-muted); background: rgba(255,255,255,0.06); }
 	.priority-chip.priority-priority[aria-checked='true']  { border-color: var(--color-warning); color: var(--color-warning); }
 	.priority-chip.priority-welfare[aria-checked='true']   { border-color: var(--color-success); color: var(--color-success); }
-	.priority-chip.priority-emergency[aria-checked='true'] { border-color: var(--color-error);   color: var(--color-error); background: rgba(233,69,96,0.08); }
+	.priority-chip.priority-emergency[aria-checked='true'] { border-color: var(--color-error);   color: var(--color-error-text); background: rgba(233,69,96,0.08); }
 
 	/* ---- Details disclosure ---- */
 	.details-toggle {
@@ -5573,7 +5715,7 @@
 	.btn-mini:hover { border-color: var(--color-accent); color: var(--color-text); }
 
 	/* ---- Feedback ---- */
-	.form-error { font-size: 0.75rem; color: var(--color-error); }
+	.form-error { font-size: 0.75rem; color: var(--color-error-text); }
 	.sr-live { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; }
 	.form-actions.submitting { pointer-events: none; }
 
@@ -6166,6 +6308,12 @@
 
 	.form-group textarea {
 		resize: vertical;
+	}
+
+	.form-hint {
+		font-size: 0.7rem;
+		color: var(--color-text-muted);
+		margin: 0;
 	}
 
 	.form-row {

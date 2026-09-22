@@ -20,6 +20,7 @@ import (
 	"github.com/narvel/nymeria/internal/annotation"
 	"github.com/narvel/nymeria/internal/aprs"
 	"github.com/narvel/nymeria/internal/checkpoint"
+	"github.com/narvel/nymeria/internal/course"
 	"github.com/narvel/nymeria/internal/ics309"
 	"github.com/narvel/nymeria/internal/message"
 	"github.com/narvel/nymeria/internal/netcontrol"
@@ -136,9 +137,59 @@ func (s *Server) routes() {
 			r.Get("/nets/{id}/checkpoints", s.handleGetCheckpoints)
 			r.Get("/nets/{id}/progress", s.handleGetProgress)
 
+			// Course closure (internal/course) — read endpoints (observer+)
+			r.Get("/nets/{id}/course", s.handleGetCourseState)
+			r.Get("/nets/{id}/course/config", s.handleGetCourseConfig)
+			r.Get("/nets/{id}/course/shutoffs", s.handleGetShutoffs)
+			r.Get("/nets/{id}/course/riders", s.handleGetRiders)
+			r.Get("/nets/{id}/course/sweep", s.handleGetSweep)
+			r.Get("/nets/{id}/course/stations", s.handleGetCourseStations)
+
 			// NWS weather alerts — per-net watch area (observer+)
 			r.Get("/nets/{id}/wxwatch", s.handleGetNetWxWatch)
 			r.Get("/nets/{id}/wxwatch/zones", s.handleGetNetWxWatchZones)
+
+			// Net profile / ride config — read endpoints (observer+)
+			r.Get("/net-profiles", s.handleGetNetProfiles)
+			r.Get("/net-profiles/{id}", s.handleGetNetProfileByID)
+			r.Get("/nets/{id}/profile", s.handleGetNetProfileView)
+			r.Get("/nets/{id}/ride-config", s.handleGetRideConfig)
+
+			// Ride phase (internal/ride/phase, WP5b) — read endpoint (observer+)
+			r.Get("/nets/{id}/ride/phase", s.handleGetRidePhase)
+
+			// Ride mode (internal/ride) — SAG board — read endpoints (observer+)
+			r.Get("/nets/{id}/sag", s.handleGetSAGBoard)
+			r.Get("/nets/{id}/sag/requests", s.handleGetSAGRequests)
+			r.Get("/nets/{id}/sag/requests/{reqId}", s.handleGetSAGRequest)
+			r.Get("/nets/{id}/sag/vehicles", s.handleGetSAGVehicles)
+			r.Get("/nets/{id}/sag/config", s.handleGetSAGConfig)
+
+			// Ride mode (internal/ride) — supply/medical traffic (WP4) —
+			// read endpoints (observer+). Medical is ALWAYS Redacted() here;
+			// the unredacted single-fetch is operator-only, below.
+			r.Get("/nets/{id}/ride/supply", s.handleRideListSupply)
+			r.Get("/nets/{id}/ride/supply/{sid}", s.handleRideGetSupply)
+			r.Get("/nets/{id}/ride/supply-catalog", s.handleRideSupplyCatalog)
+			r.Get("/nets/{id}/ride/medical", s.handleRideListMedical)
+
+			// Ride reconciliation (internal/ride/reconcile, WP5) — read
+			// endpoints (observer+). Rider accounting itself is served by
+			// the existing /nets/{id}/course/riders (internal/course, WP3)
+			// — Accounting embeds it, so it is not duplicated as a separate
+			// route here.
+			r.Get("/nets/{id}/ride/accounting", s.handleGetRideAccounting)
+			r.Get("/nets/{id}/ride/closeout", s.handleGetRideCloseout)
+			r.Get("/nets/{id}/ride/shift-summaries", s.handleGetShiftSummaries)
+			r.Get("/nets/{id}/ride/shift-summaries/{sid}", s.handleGetShiftSummary)
+			r.Get("/nets/{id}/ride/shift-summaries/{sid}/export", s.handleExportShiftSummaryCSV)
+			r.Get("/nets/{id}/ride/handoff", s.handleGetHandoffItems)
+			r.Get("/nets/{id}/ride/handoffs", s.handleGetShiftHandoffs)
+			r.Get("/nets/{id}/ride/briefing", s.handleGetBriefing)
+			r.Get("/nets/{id}/ics211", s.handleGetICS211)
+			r.Get("/nets/{id}/ics211/export", s.handleExportICS211CSV)
+			r.Get("/nets/{id}/ics214", s.handleGetICS214)
+			r.Get("/nets/{id}/ics214/export", s.handleExportICS214CSV)
 		})
 
 		// NWS weather alerts — read endpoints (observer+). All wx routes
@@ -192,6 +243,75 @@ func (s *Server) routes() {
 			// NWS weather alerts — changing the watch area is net-control
 			// work, gated the same as ending/handing over the net.
 			r.Put("/nets/{id}/wxwatch", s.handleUpdateNetWxWatch)
+
+			// Net profile / ride config — write endpoints (operator+)
+			r.Put("/nets/{id}/profile", s.handlePutNetProfile)
+			r.Put("/nets/{id}/ride-config", s.handlePutRideConfig)
+
+			// Ride phase (internal/ride/phase, WP5b) — write endpoint
+			// (operator+, NCS/Admin-gated like SetProfile/CloseNet).
+			r.Post("/nets/{id}/ride/phase", s.handleSetRidePhase)
+
+			// Ride mode (internal/ride) — SAG board — write endpoints (operator+)
+			r.Post("/nets/{id}/sag/requests", s.handleCreateSAGRequest)
+			r.Put("/nets/{id}/sag/requests/{reqId}", s.handleUpdateSAGRequest)
+			r.Post("/nets/{id}/sag/requests/{reqId}/cancel", s.handleCancelSAGRequest)
+			r.Post("/nets/{id}/sag/requests/{reqId}/slots", s.handleAddSAGSlot)
+			r.Put("/nets/{id}/sag/requests/{reqId}/slots/{slotId}", s.handleUpdateSAGSlot)
+			r.Post("/nets/{id}/sag/requests/{reqId}/slots/{slotId}/resolve", s.handleResolveSAGSlot)
+			r.Post("/nets/{id}/sag/requests/{reqId}/legs", s.handleDispatchSAGLeg)
+			r.Post("/nets/{id}/sag/requests/{reqId}/legs/{legId}/status", s.handleAdvanceSAGLeg)
+			r.Post("/nets/{id}/sag/requests/{reqId}/legs/{legId}/load", s.handleLoadSAGSlots)
+			r.Post("/nets/{id}/sag/requests/{reqId}/legs/{legId}/deliver", s.handleDeliverSAGSlots)
+			r.Post("/nets/{id}/sag/requests/{reqId}/legs/{legId}/release", s.handleReleaseSAGLeg)
+			r.Put("/nets/{id}/sag/vehicles/{ciId}", s.handlePutSAGVehicle)
+
+			// Ride mode (internal/ride) — supply/medical traffic (WP4) —
+			// write endpoints (operator+). No PUT/free-form edit endpoint:
+			// the scripted fields are taken once and read back; corrections
+			// go through the readback step or a cancel + re-create.
+			r.Get("/nets/{id}/ride/medical/{mid}", s.handleRideGetMedical)
+			r.Post("/nets/{id}/ride/supply", s.handleRideCreateSupply)
+			r.Post("/nets/{id}/ride/supply/{sid}/items", s.handleRideSupplyItems)
+			r.Post("/nets/{id}/ride/supply/{sid}/readback", s.handleRideSupplyReadback)
+			r.Post("/nets/{id}/ride/supply/{sid}/relay", s.handleRideSupplyRelay)
+			r.Post("/nets/{id}/ride/supply/{sid}/eta", s.handleRideSupplyETA)
+			r.Post("/nets/{id}/ride/supply/{sid}/deliver", s.handleRideSupplyDeliver)
+			r.Post("/nets/{id}/ride/supply/{sid}/cancel", s.handleRideSupplyCancel)
+			r.Post("/nets/{id}/ride/supply/{sid}/merge/{otherSid}", s.handleRideSupplyMerge)
+			r.Post("/nets/{id}/ride/medical", s.handleRideCreateMedical)
+			r.Post("/nets/{id}/ride/medical/{mid}/readback", s.handleRideMedicalReadback)
+			r.Post("/nets/{id}/ride/medical/{mid}/eta", s.handleRideMedicalETA)
+			r.Post("/nets/{id}/ride/medical/{mid}/on-scene", s.handleRideMedicalOnScene)
+			r.Post("/nets/{id}/ride/medical/{mid}/depart", s.handleRideMedicalDepart)
+			r.Post("/nets/{id}/ride/medical/{mid}/release", s.handleRideMedicalRelease)
+			r.Post("/nets/{id}/ride/medical/{mid}/cancel", s.handleRideMedicalCancel)
+
+			// Ride reconciliation (internal/ride/reconcile, WP5) — write
+			// endpoints (operator+).
+			r.Post("/nets/{id}/ride/shift-summaries", s.handleCreateShiftSummary)
+			r.Put("/nets/{id}/ride/shift-summaries/{sid}", s.handleUpdateShiftSummary)
+			r.Post("/nets/{id}/ride/shift-summaries/{sid}/file", s.handleFileShiftSummary)
+			r.Post("/nets/{id}/ride/handoff", s.handleAddHandoffItem)
+			r.Patch("/nets/{id}/ride/handoff/{hid}", s.handleUpdateHandoffItem)
+			r.Post("/nets/{id}/ride/handoff/ack", s.handleAckHandoff)
+			r.Post("/nets/{id}/ride/closeout", s.handlePostRideCloseout)
+
+			// Course closure (internal/course) — write endpoints (operator+)
+			r.Put("/nets/{id}/course/config", s.handlePutCourseConfig)
+			r.Post("/nets/{id}/course/shutoffs", s.handleCreateShutoff)
+			r.Put("/nets/{id}/course/shutoffs/{sId}", s.handleUpdateShutoff)
+			r.Delete("/nets/{id}/course/shutoffs/{sId}", s.handleDeleteShutoff)
+			r.Post("/nets/{id}/course/shutoffs/{sId}/fire", s.handleFireShutoff)
+			r.Post("/nets/{id}/course/shutoffs/{sId}/cancel", s.handleCancelShutoff)
+			r.Post("/nets/{id}/course/shutoffs/{sId}/reinstate", s.handleReinstateShutoff)
+			r.Post("/nets/{id}/course/riders", s.handleRecordRider)
+			r.Post("/nets/{id}/course/riders/{rId}/status", s.handleSetRiderStatus)
+			r.Post("/nets/{id}/course/sweep", s.handleReportSweep)
+			r.Post("/nets/{id}/course/stations/{cpId}/riders-clear", s.handleStationRidersClear)
+			r.Post("/nets/{id}/course/stations/{cpId}/sweep-passed", s.handleStationSweepPassed)
+			r.Post("/nets/{id}/course/stations/{cpId}/close", s.handleStationClose)
+			r.Post("/nets/{id}/course/stations/{cpId}/reopen", s.handleStationReopen)
 		})
 
 		// NWS weather alerts — write endpoints (operator+)
@@ -1155,6 +1275,10 @@ func (s *Server) handleChangeAnnotationStatus(w http.ResponseWriter, r *http.Req
 
 	ann, err := s.annMgr.ChangeStatus(id, req.Status)
 	if err != nil {
+		if errors.Is(err, course.ErrSweepNotPassed) {
+			writeJSON(w, http.StatusConflict, map[string]string{"error": err.Error(), "code": "sweep_not_passed"})
+			return
+		}
 		writeJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
 		return
 	}
@@ -2127,6 +2251,19 @@ func (s *Server) handleCloseNet(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// A bike-ride net's close-out checklist (WP5) must be complete before
+	// this general-purpose route closes it too — otherwise a frontend that
+	// still calls the old route silently bypasses it. Force-closing an
+	// incomplete checklist stays the dedicated POST /ride/closeout route's
+	// job; this route just refuses when the ride net isn't ready.
+	if ready, applicable := s.rideCloseoutGate(id); applicable && !ready {
+		writeJSON(w, http.StatusConflict, map[string]any{
+			"error":    "close-out checklist incomplete",
+			"closeout": s.recMgr.Closeout(id),
+		})
+		return
+	}
+
 	n, summary, err := s.netMgr.CloseNet(id)
 	if err != nil {
 		writeJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
@@ -2159,9 +2296,23 @@ func (s *Server) handleTransferNCS(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// Captured before the transfer mutates the net, for the shift-relief
+	// hand-off record (WP5) below.
+	oldCallsign := ""
+	if before, ok := s.netMgr.GetNet(id); ok {
+		oldCallsign = before.NCSCallsign
+	}
+
 	if err := s.netMgr.TransferNCS(id, req.Callsign, req.UserID); err != nil {
 		writeJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
 		return
+	}
+
+	// Freezes the outgoing NCS's briefing and carries every open hand-off
+	// item forward to the incoming one (governing brief: "any pending
+	// activity ... and who gets the reply").
+	if s.recMgr != nil {
+		s.recMgr.RecordNCSTransfer(id, oldCallsign, req.Callsign)
 	}
 
 	n, _ := s.netMgr.GetNet(id)

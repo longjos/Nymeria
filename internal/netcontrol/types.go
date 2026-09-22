@@ -66,6 +66,11 @@ const (
 // AddTimelineEvent by internal/server's wx alert handlers and manager bridge.
 const EventWxAlert = "wx_alert"
 
+// EventNetRideConfigUpdated broadcasts a net's ride-event config (data:
+// store.NetRideConfig) after a change. Profile changes themselves ride on
+// the existing EventNetUpdated (Net.Profile is part of Net).
+const EventNetRideConfigUpdated = "net_ride_config_updated"
+
 // Event represents a net control event for WebSocket broadcast.
 type Event struct {
 	Type string `json:"type"`

@@ -12,7 +12,14 @@ import type {
 	W3WStatus, W3WResult, W3WSuggestResponse, What3WordsSettings,
 	WxSnapshot, WxAlert, WxLinkStatus, WxFootprintSummary, WxPolygonGeometry,
 	WxZoneRef, WxZone, WxEventType, WxNetWatch, WxNetWatchZones, WxRelayRequest,
-	WxRelayResult, WxAlertsSettings
+	WxRelayResult, WxAlertsSettings,
+	NetProfileView, NetProfile, NetRideConfig, RidePhaseStatus, CourseState, SAGBoard, SAGRequest, SAGVehicleStatus,
+	SAGConfigResponse, SAGLocation, CreateRequestInput, UpdateRequestInput, SlotInput, DispatchInput,
+	MedicalNotification, SupplyRequest, SupplyCatalogEntry, CreateSupplyInput, AddItemsInput,
+	ReadbackInput, RelayInput, RideETAInput, CancelInput, CreateMedicalInput, MedicalETAInput,
+	OnSceneInput, DepartInput, ReleaseInput,
+	HandoffItem, ShiftHandoff, ShiftBriefing, CloseoutStatus, Accounting,
+	StationClosure, CourseConfig, ShutoffPoint, RiderException, SweepReport, StationView, SweepPosition
 } from './types';
 
 const BASE = '/api';
@@ -400,5 +407,150 @@ export const api = {
 		return get<W3WSuggestResponse>(`/w3w/suggest?${params.toString()}`);
 	},
 	w3wReverse: (lat: number, lon: number) =>
-		get<W3WResult>(`/w3w/reverse?lat=${encodeURIComponent(String(lat))}&lon=${encodeURIComponent(String(lon))}`)
+		get<W3WResult>(`/w3w/reverse?lat=${encodeURIComponent(String(lat))}&lon=${encodeURIComponent(String(lon))}`),
+
+	// --- Ride mode (bike-ride profile): net profile, phase, course, SAG, supply/medical, reconciliation ---
+
+	netProfiles: () => get<NetProfile[]>('/net-profiles'),
+	netProfile: (netId: string) => get<NetProfileView>(`/nets/${netId}/profile`),
+	setNetProfile: (netId: string, profile: string) => put<NetProfileView>(`/nets/${netId}/profile`, { profile }),
+	ridePhase: (netId: string) => get<RidePhaseStatus>(`/nets/${netId}/ride/phase`),
+	setRidePhase: (netId: string, data: { phase: string; reason?: string }) =>
+		post<RidePhaseStatus>(`/nets/${netId}/ride/phase`, data),
+
+	rideConfig: (netId: string) => get<NetRideConfig>(`/nets/${netId}/ride-config`),
+	updateRideConfig: (netId: string, data: NetRideConfig) => put<NetRideConfig>(`/nets/${netId}/ride-config`, data),
+
+	courseState: (netId: string) => get<CourseState>(`/nets/${netId}/course`),
+	courseConfig: (netId: string) => get<CourseConfig>(`/nets/${netId}/course/config`),
+	updateCourseConfig: (netId: string, data: Partial<CourseConfig>) =>
+		put<CourseConfig>(`/nets/${netId}/course/config`, data),
+	courseStations: (netId: string) => get<StationView[]>(`/nets/${netId}/course/stations`),
+
+	shutoffs: (netId: string) => get<ShutoffPoint[]>(`/nets/${netId}/course/shutoffs`),
+	createShutoff: (netId: string, data: Partial<ShutoffPoint>) =>
+		post<ShutoffPoint>(`/nets/${netId}/course/shutoffs`, data),
+	updateShutoff: (netId: string, sId: string, data: Partial<ShutoffPoint>) =>
+		put<ShutoffPoint>(`/nets/${netId}/course/shutoffs/${sId}`, data),
+	deleteShutoff: (netId: string, sId: string) => del<void>(`/nets/${netId}/course/shutoffs/${sId}`),
+	fireShutoff: (netId: string, sId: string, data: { note?: string; bibs?: string[]; rerouteCount?: number; bibWithheld?: boolean }) =>
+		post<{ shutoff: ShutoffPoint; riders: RiderException[] }>(`/nets/${netId}/course/shutoffs/${sId}/fire`, data),
+	cancelShutoff: (netId: string, sId: string, reason: string) =>
+		post<ShutoffPoint>(`/nets/${netId}/course/shutoffs/${sId}/cancel`, { reason }),
+	reinstateShutoff: (netId: string, sId: string, reason = '') =>
+		post<ShutoffPoint>(`/nets/${netId}/course/shutoffs/${sId}/reinstate`, { reason }),
+
+	riderExceptions: (netId: string, status?: string) =>
+		get<RiderException[]>(`/nets/${netId}/course/riders${status ? `?status=${encodeURIComponent(status)}` : ''}`),
+	recordRider: (netId: string, data: Partial<RiderException>) =>
+		post<RiderException>(`/nets/${netId}/course/riders`, data),
+	setRiderStatus: (netId: string, rId: string, supportStatus: string, reason: string) =>
+		post<RiderException>(`/nets/${netId}/course/riders/${rId}/status`, { supportStatus, reason }),
+
+	sweep: (netId: string, limit = 20) =>
+		get<{ position: SweepPosition; reports: SweepReport[] }>(`/nets/${netId}/course/sweep?limit=${limit}`),
+	reportSweep: (netId: string, data: Partial<SweepReport>) =>
+		post<SweepReport>(`/nets/${netId}/course/sweep`, data),
+
+	stationRidersClear: (netId: string, cpId: string) =>
+		post<StationClosure>(`/nets/${netId}/course/stations/${cpId}/riders-clear`, {}),
+	stationSweepPassed: (netId: string, cpId: string) =>
+		post<StationClosure>(`/nets/${netId}/course/stations/${cpId}/sweep-passed`, {}),
+	stationClose: (netId: string, cpId: string, data: { override?: boolean; reason?: string }) =>
+		post<StationClosure>(`/nets/${netId}/course/stations/${cpId}/close`, data),
+	stationReopen: (netId: string, cpId: string, reason: string) =>
+		post<StationClosure>(`/nets/${netId}/course/stations/${cpId}/reopen`, { reason }),
+
+	postRideCloseout: (netId: string, data: { force?: boolean; reason?: string }) =>
+		post<{ net: Net; summary: unknown; closeout: CloseoutStatus }>(`/nets/${netId}/ride/closeout`, data),
+	ics211ExportUrl: (netId: string) => `${BASE}/nets/${netId}/ics211/export`,
+	ics214ExportUrl: (netId: string) => `${BASE}/nets/${netId}/ics214/export`,
+
+	sagBoard: (netId: string) => get<SAGBoard>(`/nets/${netId}/sag`),
+	sagConfig: (netId: string) => get<SAGConfigResponse>(`/nets/${netId}/sag/config`),
+	sagRequests: (netId: string, params?: { status?: string; active?: boolean }) => {
+		const qs = new URLSearchParams();
+		if (params?.status) qs.set('status', params.status);
+		if (params?.active) qs.set('active', 'true');
+		const s = qs.toString();
+		return get<SAGRequest[]>(`/nets/${netId}/sag/requests${s ? `?${s}` : ''}`);
+	},
+	sagRequest: (netId: string, reqId: string) => get<SAGRequest>(`/nets/${netId}/sag/requests/${reqId}`),
+	createSagRequest: (netId: string, data: CreateRequestInput) =>
+		post<SAGRequest>(`/nets/${netId}/sag/requests`, data),
+	updateSagRequest: (netId: string, reqId: string, data: UpdateRequestInput) =>
+		put<SAGRequest>(`/nets/${netId}/sag/requests/${reqId}`, data),
+	cancelSagRequest: (netId: string, reqId: string, reason: string) =>
+		post<SAGRequest>(`/nets/${netId}/sag/requests/${reqId}/cancel`, { reason }),
+	addSagSlot: (netId: string, reqId: string, data: SlotInput) =>
+		post<SAGRequest>(`/nets/${netId}/sag/requests/${reqId}/slots`, data),
+	updateSagSlot: (netId: string, reqId: string, slotId: string, data: SlotInput) =>
+		put<SAGRequest>(`/nets/${netId}/sag/requests/${reqId}/slots/${slotId}`, data),
+	resolveSagSlot: (netId: string, reqId: string, slotId: string, data: { disposition: string; note?: string }) =>
+		post<SAGRequest>(`/nets/${netId}/sag/requests/${reqId}/slots/${slotId}/resolve`, data),
+	dispatchSagLeg: (netId: string, reqId: string, data: DispatchInput) =>
+		post<SAGRequest>(`/nets/${netId}/sag/requests/${reqId}/legs`, data),
+	advanceSagLeg: (netId: string, reqId: string, legId: string, status: string) =>
+		post<SAGRequest>(`/nets/${netId}/sag/requests/${reqId}/legs/${legId}/status`, { status }),
+	loadSagSlots: (netId: string, reqId: string, legId: string, slotIds: string[]) =>
+		post<SAGRequest>(`/nets/${netId}/sag/requests/${reqId}/legs/${legId}/load`, { slotIds }),
+	deliverSagSlots: (netId: string, reqId: string, legId: string, data: { slotIds?: string[]; destination?: SAGLocation }) =>
+		post<SAGRequest>(`/nets/${netId}/sag/requests/${reqId}/legs/${legId}/deliver`, data),
+	releaseSagLeg: (netId: string, reqId: string, legId: string, reason?: string) =>
+		post<SAGRequest>(`/nets/${netId}/sag/requests/${reqId}/legs/${legId}/release`, { reason }),
+	setSagVehicle: (netId: string, ciId: string, data: { seats: number; rackSlots: number; notes?: string }) =>
+		put<SAGVehicleStatus>(`/nets/${netId}/sag/vehicles/${ciId}`, data),
+
+	rideMedical: (netId: string, open?: boolean) =>
+		get<MedicalNotification[]>(`/nets/${netId}/ride/medical${open ? '?status=open' : ''}`),
+	rideMedicalFull: (netId: string, mid: string) =>
+		get<MedicalNotification>(`/nets/${netId}/ride/medical/${mid}`),
+	medicalReadback: (netId: string, mid: string, data: { confirmed: boolean; readBackBy?: string; correction?: string }) =>
+		post<MedicalNotification>(`/nets/${netId}/ride/medical/${mid}/readback`, data),
+	createRideMedical: (netId: string, data: CreateMedicalInput, callsign?: string) =>
+		post<MedicalNotification>(`/nets/${netId}/ride/medical`, { ...data, callsign }),
+	etaRideMedical: (netId: string, mid: string, data: MedicalETAInput, callsign?: string) =>
+		post<MedicalNotification>(`/nets/${netId}/ride/medical/${mid}/eta`, { ...data, callsign }),
+	onSceneRideMedical: (netId: string, mid: string, data: OnSceneInput, callsign?: string) =>
+		post<MedicalNotification>(`/nets/${netId}/ride/medical/${mid}/on-scene`, { ...data, callsign }),
+	departRideMedical: (netId: string, mid: string, data: DepartInput, callsign?: string) =>
+		post<MedicalNotification>(`/nets/${netId}/ride/medical/${mid}/depart`, { ...data, callsign }),
+	releaseRideMedical: (netId: string, mid: string, data: ReleaseInput, callsign?: string) =>
+		post<MedicalNotification>(`/nets/${netId}/ride/medical/${mid}/release`, { ...data, callsign }),
+	cancelRideMedical: (netId: string, mid: string, data: CancelInput, callsign?: string) =>
+		post<MedicalNotification>(`/nets/${netId}/ride/medical/${mid}/cancel`, { ...data, callsign }),
+
+	rideSupply: (netId: string, open?: boolean) =>
+		get<SupplyRequest[]>(`/nets/${netId}/ride/supply${open ? '?status=open' : ''}`),
+	rideSupplyOne: (netId: string, sid: string) =>
+		get<SupplyRequest>(`/nets/${netId}/ride/supply/${sid}`),
+	supplyCatalog: (netId: string) => get<SupplyCatalogEntry[]>(`/nets/${netId}/ride/supply-catalog`),
+	createRideSupply: (netId: string, data: CreateSupplyInput, callsign?: string) =>
+		post<SupplyRequest>(`/nets/${netId}/ride/supply`, { ...data, callsign }),
+	addRideSupplyItems: (netId: string, sid: string, data: AddItemsInput, callsign?: string) =>
+		post<SupplyRequest>(`/nets/${netId}/ride/supply/${sid}/items`, { ...data, callsign }),
+	readbackRideSupply: (netId: string, sid: string, data: ReadbackInput, callsign?: string) =>
+		post<SupplyRequest>(`/nets/${netId}/ride/supply/${sid}/readback`, { ...data, callsign }),
+	relayRideSupply: (netId: string, sid: string, data: RelayInput, callsign?: string) =>
+		post<SupplyRequest>(`/nets/${netId}/ride/supply/${sid}/relay`, { ...data, callsign }),
+	etaRideSupply: (netId: string, sid: string, data: RideETAInput, callsign?: string) =>
+		post<SupplyRequest>(`/nets/${netId}/ride/supply/${sid}/eta`, { ...data, callsign }),
+	deliverRideSupply: (netId: string, sid: string, callsign?: string) =>
+		post<SupplyRequest>(`/nets/${netId}/ride/supply/${sid}/deliver`, { callsign }),
+	cancelRideSupply: (netId: string, sid: string, data: CancelInput, callsign?: string) =>
+		post<SupplyRequest>(`/nets/${netId}/ride/supply/${sid}/cancel`, { ...data, callsign }),
+	mergeRideSupply: (netId: string, sid: string, otherSid: string, callsign?: string) =>
+		post<SupplyRequest>(`/nets/${netId}/ride/supply/${sid}/merge/${otherSid}`, { callsign }),
+
+	rideHandoff: (netId: string, status?: string) =>
+		get<HandoffItem[]>(`/nets/${netId}/ride/handoff${status ? `?status=${encodeURIComponent(status)}` : ''}`),
+	addHandoffItem: (netId: string, data: Partial<HandoffItem>) =>
+		post<HandoffItem>(`/nets/${netId}/ride/handoff`, data),
+	updateHandoffItem: (netId: string, hid: string, data: { action: 'resolve' | 'cancel'; resolution?: string }) =>
+		patch<HandoffItem>(`/nets/${netId}/ride/handoff/${hid}`, data),
+	ackHandoff: (netId: string) => post<ShiftHandoff>(`/nets/${netId}/ride/handoff/ack`, {}),
+
+	rideBriefing: (netId: string) => get<ShiftBriefing>(`/nets/${netId}/ride/briefing`),
+	rideCloseout: (netId: string) => get<CloseoutStatus>(`/nets/${netId}/ride/closeout`),
+	rideAccounting: (netId: string) => get<Accounting>(`/nets/${netId}/ride/accounting`)
 };

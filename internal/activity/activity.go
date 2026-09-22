@@ -45,6 +45,13 @@ const (
 	ActionWxAlertRelayed      Action = "wx_alert_relayed"
 	ActionWxLinkDown          Action = "wx_link_down"
 	ActionWxLinkRestored      Action = "wx_link_restored"
+
+	// Ride mode traffic (internal/ride, WP4): supply requests and medical
+	// notifications.
+	ActionSupplyRequestCreated Action = "supply_request_created"
+	ActionSupplyRequestUpdated Action = "supply_request_updated"
+	ActionMedicalNotifCreated  Action = "medical_notification_created"
+	ActionMedicalNotifUpdated  Action = "medical_notification_updated"
 )
 
 // Entry represents a single activity log entry.

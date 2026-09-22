@@ -74,7 +74,10 @@
 		position: fixed;
 		top: 0;
 		right: var(--rail-width);
-		bottom: 0;
+		/* The ride strip is a full-width bottom band (spec §9); the panel
+		   insets off the same runtime-published token the strip publishes,
+		   defaulting to 0px outside bike-ride mode. */
+		bottom: var(--ride-strip-h, 0px);
 		width: var(--panel-width);
 		background: var(--color-bg);
 		border-left: 1px solid var(--color-primary);

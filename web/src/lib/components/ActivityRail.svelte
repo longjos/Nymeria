@@ -8,6 +8,8 @@
 	import { connectionState } from '$lib/stores/ui';
 	import type { PanelMode } from '$lib/stores/ui';
 	import { canAdmin, pendingRequests } from '$lib/stores/session';
+	import { visiblePanelModes } from '$lib/stores/netProfile';
+	import { panelModeVisible } from '$lib/profilePanels';
 	import UserMenu from './UserMenu.svelte';
 
 	let {
@@ -33,6 +35,13 @@
 	let stationCount = $derived($stationList.length);
 	let netActive = $derived($activeNet?.status === 'open');
 	let netOpCount = $derived($activeCheckIns.length);
+
+	/** Ride-mode panel gating (WP7, part 2): hides the APRS-heavy UI a
+	 * bike-ride net's profile doesn't list, read from the backend registry —
+	 * never a hardcoded panel list here. Modes the profile system never
+	 * names (df, packets, bulletins, transports, settings, activity, …)
+	 * default to visible; see profilePanels.ts. */
+	let visible = $derived((m: PanelMode) => panelModeVisible($visiblePanelModes, m));
 
 	let connState = $derived($connectionState);
 	let dotColor = $derived.by(() => {
@@ -198,21 +207,23 @@
 		<div class="rail-divider"></div>
 
 		<!-- Navigation icons -->
-		<button
-			class="rail-btn"
-			class:active={panelMode === 'stations'}
-			onclick={() => onToggle?.('stations')}
-			title="Stations"
-			aria-label="Stations ({stationCount})"
-		>
-			<svg width="18" height="18" viewBox="0 0 16 16" fill="none">
-				<circle cx="8" cy="5" r="3" stroke="currentColor" stroke-width="1.5"/>
-				<path d="M2 14c0-3.3 2.7-6 6-6s6 2.7 6 6" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/>
-			</svg>
-			{#if stationCount > 0}
-				<span class="badge">{stationCount}</span>
-			{/if}
-		</button>
+		{#if visible('stations')}
+			<button
+				class="rail-btn"
+				class:active={panelMode === 'stations'}
+				onclick={() => onToggle?.('stations')}
+				title="Stations"
+				aria-label="Stations ({stationCount})"
+			>
+				<svg width="18" height="18" viewBox="0 0 16 16" fill="none">
+					<circle cx="8" cy="5" r="3" stroke="currentColor" stroke-width="1.5"/>
+					<path d="M2 14c0-3.3 2.7-6 6-6s6 2.7 6 6" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/>
+				</svg>
+				{#if stationCount > 0}
+					<span class="badge">{stationCount}</span>
+				{/if}
+			</button>
+		{/if}
 
 		<button
 			class="rail-btn"
@@ -270,33 +281,37 @@
 			</svg>
 		</button>
 
-		<button
-			class="rail-btn"
-			class:active={panelMode === 'weather'}
-			onclick={() => onToggle?.('weather')}
-			title="Weather{$wxUnackedCount > 0 ? ` — ${$wxUnackedCount} unacknowledged NWS alerts` : ''}"
-			aria-label="Weather{$wxUnackedCount > 0 ? `, ${$wxUnackedCount} unacknowledged NWS alerts` : ''}"
-		>
-			<svg width="18" height="18" viewBox="0 0 16 16" fill="none">
-				<circle cx="8" cy="8" r="3" stroke="currentColor" stroke-width="1.5"/>
-				<path d="M8 1v2M8 13v2M1 8h2M13 8h2M3 3l1.5 1.5M11.5 11.5L13 13M13 3l-1.5 1.5M4.5 11.5L3 13" stroke="currentColor" stroke-width="1.3" stroke-linecap="round"/>
-			</svg>
-			{#if $wxUnackedCount > 0}
-				<span class="badge wx" class:wx-warning={!!$wxActiveWarningIn} title="{$wxUnackedCount} unacknowledged NWS alerts">{$wxUnackedCount}</span>
-			{/if}
-		</button>
+		{#if visible('weather')}
+			<button
+				class="rail-btn"
+				class:active={panelMode === 'weather'}
+				onclick={() => onToggle?.('weather')}
+				title="Weather{$wxUnackedCount > 0 ? ` — ${$wxUnackedCount} unacknowledged NWS alerts` : ''}"
+				aria-label="Weather{$wxUnackedCount > 0 ? `, ${$wxUnackedCount} unacknowledged NWS alerts` : ''}"
+			>
+				<svg width="18" height="18" viewBox="0 0 16 16" fill="none">
+					<circle cx="8" cy="8" r="3" stroke="currentColor" stroke-width="1.5"/>
+					<path d="M8 1v2M8 13v2M1 8h2M13 8h2M3 3l1.5 1.5M11.5 11.5L13 13M13 3l-1.5 1.5M4.5 11.5L3 13" stroke="currentColor" stroke-width="1.3" stroke-linecap="round"/>
+				</svg>
+				{#if $wxUnackedCount > 0}
+					<span class="badge wx" class:wx-warning={!!$wxActiveWarningIn} title="{$wxUnackedCount} unacknowledged NWS alerts">{$wxUnackedCount}</span>
+				{/if}
+			</button>
+		{/if}
 
-		<button
-			class="rail-btn"
-			class:active={panelMode === 'telemetry'}
-			onclick={() => onToggle?.('telemetry')}
-			title="Telemetry"
-			aria-label="Telemetry"
-		>
-			<svg width="18" height="18" viewBox="0 0 16 16" fill="none">
-				<path d="M1 12l3-4 3 2 4-6 4 5" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/>
-			</svg>
-		</button>
+		{#if visible('telemetry')}
+			<button
+				class="rail-btn"
+				class:active={panelMode === 'telemetry'}
+				onclick={() => onToggle?.('telemetry')}
+				title="Telemetry"
+				aria-label="Telemetry"
+			>
+				<svg width="18" height="18" viewBox="0 0 16 16" fill="none">
+					<path d="M1 12l3-4 3 2 4-6 4 5" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/>
+				</svg>
+			</button>
+		{/if}
 
 		<button
 			class="rail-btn"
@@ -423,7 +438,9 @@
 		position: fixed;
 		top: 0;
 		right: 0;
-		bottom: 0;
+		/* Same runtime-published token SidePanel insets off — the ride strip is
+		   always the full-width bottom band (spec §9); 0px outside ride mode. */
+		bottom: var(--ride-strip-h, 0px);
 		width: var(--rail-width);
 		background: var(--color-surface);
 		border-left: 1px solid var(--color-primary);

@@ -7,11 +7,13 @@
 	import {
 		paletteQuery, paletteFilter, paletteResults, recentCallsigns, emptyStateData,
 		recordInteraction, noteCategoryMeta, severityMeta, statusColors, missionPriorityColors,
-		trafficMeta, stationCategoryMeta,
+		trafficMeta, stationCategoryMeta, paletteSeed,
 		type PaletteResult, type PaletteFilter
 	} from '$lib/stores/commandpalette';
 	import { rosterFilterActive, rosterScopedStations } from '$lib/stores/rosterScope';
-	import type { NoteCategory, NoteSeverity, TrafficType, StationCategory, NetMission, NetNote } from '$lib/types';
+	import type { NoteCategory, NoteSeverity, TrafficType, StationCategory, NetMission, NetNote, PriorityTier } from '$lib/types';
+	import { rideLadder } from '$lib/stores/ride';
+	import { tierById, tierStyle } from '$lib/rideMeta';
 
 	let {
 		onFlyTo,
@@ -45,6 +47,25 @@
 	// Refs
 	let searchInputRef = $state<HTMLInputElement>();
 	let textareaRef = $state<HTMLTextAreaElement>();
+
+	// Ride strip accelerators (q/w/e/n/s/c) pre-seed the query via
+	// stores/ride.ts seedPalette() before opening the palette. Applied once,
+	// on mount, then cleared — a later re-open must not resurrect stale text.
+	let lockedTier = $state<PriorityTier | null>(null);
+	$effect(() => {
+		const seed = $paletteSeed;
+		if (!seed) return;
+		paletteQuery.set(seed.text);
+		lockedTier = seed.lockedTierId ? (tierById($rideLadder, seed.lockedTierId) ?? null) : null;
+		paletteSeed.set(null);
+		requestAnimationFrame(() => {
+			if (searchInputRef) {
+				searchInputRef.focus();
+				const end = searchInputRef.value.length;
+				searchInputRef.setSelectionRange(end, end);
+			}
+		});
+	});
 
 	// Derived
 	// The palette obeys the app-wide roster scope (#106). Check-ins are roster by
@@ -130,6 +151,7 @@
 	function handleClose() {
 		paletteQuery.set('');
 		paletteFilter.set('all');
+		lockedTier = null;
 		onClose();
 	}
 
@@ -395,6 +417,12 @@
 				/>
 				<kbd class="cp-kbd">ESC</kbd>
 			</div>
+
+			{#if lockedTier}
+				<p class="cp-locked-tier" style="color: var({tierStyle(lockedTier).textVar})">
+					Locked to {lockedTier.label.toUpperCase()} — this composer commits at this priority
+				</p>
+			{/if}
 
 			<!-- Filter buttons -->
 			<div class="cp-filters">
@@ -912,6 +940,14 @@
 	}
 
 	/* Roster-scope banner: text-first, never colour alone. */
+	.cp-locked-tier {
+		margin: 0;
+		padding: var(--space-xs) var(--space-md);
+		border-bottom: 1px solid var(--color-primary);
+		font-size: 0.75rem;
+		font-weight: 700;
+	}
+
 	.cp-scope-note {
 		display: flex;
 		align-items: center;

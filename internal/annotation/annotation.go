@@ -121,6 +121,16 @@ func clampLabel(s string) string {
 	return s
 }
 
+// SequenceableCategories are the categories that may carry CheckpointMeta
+// and therefore participate in route progress (internal/checkpoint) and
+// course closure (internal/course).
+var SequenceableCategories = map[string]bool{
+	CategoryCheckpoint: true,
+	CategoryAid:        true,
+	CategoryStart:      true,
+	CategoryFinish:     true,
+}
+
 // validCategories is the set of allowed category values.
 var validCategories = map[string]bool{
 	CategoryIncident:   true,
@@ -290,6 +300,14 @@ type Manager struct {
 	cpRestore    func(store.CheckpointMeta) (*store.CheckpointMeta, error)
 	now          func() time.Time
 	undoBuf      []undoEntry
+
+	// statusGuard, when set, is consulted by ChangeStatus and by Update
+	// (when Status changes) before persisting a status transition. An error
+	// blocks the transition and nothing is saved or emitted. Registered by
+	// internal/course to enforce "a rest stop may not close until sweep has
+	// passed it". ChangeStatusUnguarded bypasses it for callers (course
+	// itself) that have already enforced the same rule with full context.
+	statusGuard func(a store.Annotation, newStatus string) error
 }
 
 // NewManager creates a new annotation Manager backed by the given store.
@@ -323,6 +341,22 @@ func (m *Manager) SetCheckpointSnapshot(
 	m.cpSnapshot = get
 	m.cpRestore = set
 	m.mu.Unlock()
+}
+
+// SetStatusGuard registers the hook ChangeStatus and Update (on a Status
+// change) consult before persisting. A nil guard (the default) means no
+// behavior change. See the Manager.statusGuard field doc for the exact
+// contract.
+func (m *Manager) SetStatusGuard(fn func(a store.Annotation, newStatus string) error) {
+	m.mu.Lock()
+	m.statusGuard = fn
+	m.mu.Unlock()
+}
+
+func (m *Manager) guard() func(a store.Annotation, newStatus string) error {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+	return m.statusGuard
 }
 
 // SetClock injects a time source (defaults to time.Now) so the undo TTL is
@@ -439,6 +473,14 @@ func (m *Manager) Update(ann Annotation) (*Annotation, error) {
 
 	if err := validate(ann); err != nil {
 		return nil, err
+	}
+
+	if ann.Status != existing.Status {
+		if g := m.guard(); g != nil {
+			if err := g(existing, ann.Status); err != nil {
+				return nil, err
+			}
+		}
 	}
 
 	ann.CreatedAt = existing.CreatedAt
@@ -1053,8 +1095,20 @@ func (m *Manager) Get(id string) (*Annotation, bool) {
 	return &a, true
 }
 
-// ChangeStatus changes an annotation's status, validates it, and emits an event.
+// ChangeStatus changes an annotation's status, validates it, checks the
+// registered status guard (if any), and emits an event.
 func (m *Manager) ChangeStatus(id, newStatus string) (*Annotation, error) {
+	return m.changeStatus(id, newStatus, true)
+}
+
+// ChangeStatusUnguarded is ChangeStatus without consulting the registered
+// status guard. Used by internal/course after it has already enforced the
+// same rule itself with full context (e.g. an explicit NCS override).
+func (m *Manager) ChangeStatusUnguarded(id, newStatus string) (*Annotation, error) {
+	return m.changeStatus(id, newStatus, false)
+}
+
+func (m *Manager) changeStatus(id, newStatus string, checkGuard bool) (*Annotation, error) {
 	m.mu.RLock()
 	ann, exists := m.annotations[id]
 	m.mu.RUnlock()
@@ -1065,6 +1119,14 @@ func (m *Manager) ChangeStatus(id, newStatus string) (*Annotation, error) {
 
 	if err := ValidateStatusForCategory(ann.Category, newStatus); err != nil {
 		return nil, err
+	}
+
+	if checkGuard {
+		if g := m.guard(); g != nil {
+			if err := g(ann, newStatus); err != nil {
+				return nil, err
+			}
+		}
 	}
 
 	ann.Status = newStatus

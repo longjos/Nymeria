@@ -269,6 +269,10 @@ func TestActionConstants(t *testing.T) {
 		ActionWxAlertRelayed,
 		ActionWxLinkDown,
 		ActionWxLinkRestored,
+		ActionSupplyRequestCreated,
+		ActionSupplyRequestUpdated,
+		ActionMedicalNotifCreated,
+		ActionMedicalNotifUpdated,
 	}
 
 	for _, a := range actions {
@@ -309,6 +313,33 @@ func TestWxAlertActionsSurviveCSVExport(t *testing.T) {
 	output := buf.String()
 	for _, want := range []string{
 		"wx_alert_received", "wx_alert_net_acked", "wx_alert_relayed", "wx_link_down", "wx_link_restored",
+	} {
+		if !strings.Contains(output, want) {
+			t.Errorf("CSV output missing action %q:\n%s", want, output)
+		}
+	}
+}
+
+// TestRideTrafficActionsSurviveCSVExport confirms the 4 supply/medical
+// ride-mode actions (internal/ride, WP4) round-trip through ExportCSV like
+// any other action.
+func TestRideTrafficActionsSurviveCSVExport(t *testing.T) {
+	now := time.Now().Truncate(time.Second).UTC()
+	entries := []Entry{
+		{Timestamp: now, UserName: "NCS", Action: ActionSupplyRequestCreated, Target: "sup-1", Details: "ice, water"},
+		{Timestamp: now, UserName: "NCS", Action: ActionSupplyRequestUpdated, Target: "sup-1", Details: "delivered"},
+		{Timestamp: now, UserName: "NCS", Action: ActionMedicalNotifCreated, Target: "med-1", Details: "bib=412"},
+		{Timestamp: now, UserName: "NCS", Action: ActionMedicalNotifUpdated, Target: "med-1", Details: "status=departed"},
+	}
+
+	var buf bytes.Buffer
+	if err := ExportCSV(&buf, entries); err != nil {
+		t.Fatalf("ExportCSV failed: %v", err)
+	}
+
+	output := buf.String()
+	for _, want := range []string{
+		"supply_request_created", "supply_request_updated", "medical_notification_created", "medical_notification_updated",
 	} {
 		if !strings.Contains(output, want) {
 			t.Errorf("CSV output missing action %q:\n%s", want, output)

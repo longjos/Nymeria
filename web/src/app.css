@@ -7,6 +7,9 @@
 	--color-text-muted: #aaa;
 
 	/* Spacing */
+	/* Below --space-xs: the inside-a-chip measure (glyph-to-code,
+	   icon-to-count). 50 components open-coded it as a literal 2px. */
+	--space-2xs: 2px;
 	--space-xs: 4px;
 	--space-sm: 8px;
 	--space-md: 16px;
@@ -70,6 +73,16 @@
 	--color-error-text: #fa7a6a;
 	--color-info-text: #60a5fa;
 
+	/* Recurring surface primitives. These were open-coded as literal rgba()
+	   in ~30 components before ride mode; the ride surfaces use the tokens
+	   and the rest is tracked as repo-wide cleanup. */
+	--color-scrim: rgba(0, 0, 0, 0.5);       /* modal backdrop */
+	--color-on-accent: #fff;                  /* text on --color-accent / --color-error fills */
+	--color-on-warning: #000;                 /* text on a --color-warning fill (amber needs dark) */
+	--color-raised: rgba(255, 255, 255, 0.03); /* subtle inset panel on --color-surface */
+	--color-raised-strong: rgba(255, 255, 255, 0.07); /* selected / nested inset */
+	--color-hairline: rgba(255, 255, 255, 0.08);      /* 1px divider */
+
 	/* NWS alert tiers (internal/wxalert) alias the semantic trio; deliberately
 	   NOT new hues. "wx-warning" is RED (--color-error). "--color-warning"
 	   (amber) is the WATCH tier. Always use the --color-wx-* aliases inside
@@ -123,6 +136,50 @@
 	/* Leaflet pane order: below overlayPane (400) so annotations, tracks and DR win. */
 	--z-wx-pane: 350;
 
+	/* Ride priority tiers (bike-ride mode) — aliases of the semantic trio,
+	   same discipline as --color-wx-*. Keyed by LADDER RANK, not by name: the
+	   five tier names are agency data (GET /nets/{id}/profile). RED IS
+	   EXACTLY ONE TIER (rank 1). Rank 2 and 3 share amber and are told apart
+	   by glyph (filled vs open triangle) and by the two-letter code. */
+	--color-ride-emergency: var(--color-error);
+	--color-ride-priority: var(--color-warning);
+	--color-ride-high: var(--color-warning);
+	--color-ride-medium: var(--color-info);
+	--color-ride-low: var(--color-text-muted);
+	--color-ride-emergency-soft: rgba(231, 76, 60, 0.12);
+	--color-ride-priority-soft: rgba(245, 158, 11, 0.12);
+	--color-ride-medium-soft: rgba(59, 130, 246, 0.12);
+	--color-ride-low-soft: rgba(170, 170, 170, 0.12);
+	/* TEXT-SAFE ride tier tokens. The base --color-ride-* tokens above are for
+	   glyph fills, borders and rules; --color-ride-emergency and
+	   --color-ride-medium alias --color-error / --color-info, which fail WCAG AA
+	   (4.16:1 / 4.32:1 on --color-surface) at normal text size. Anything that
+	   colors a WORD or a NUMERAL uses these. No new hues: priority/high/low
+	   already pass as text and alias straight through. */
+	--color-ride-emergency-text: var(--color-error-text);
+	--color-ride-priority-text: var(--color-warning);
+	--color-ride-high-text: var(--color-warning);
+	--color-ride-medium-text: var(--color-info-text);
+	--color-ride-low-text: var(--color-text-muted);
+	--color-ride-lead: var(--color-success);
+	--color-ride-sweep: var(--color-accent);
+
+	/* Strip geometry. Published on :root at runtime by RideStrip.svelte the
+	   way BottomSheet.svelte publishes --sheet-peek; the default here is only
+	   so var(--ride-strip-h, 0px) reads 0 when the strip is not mounted.
+	   .map-layer, SidePanel, ActivityRail, MapPalette's FAB, InterruptBanner
+	   and Toast all inset off it, so rendered height and layout can never
+	   drift apart. */
+	--ride-strip-h: 0px;
+
+	/* Type roles for the ride strip. app.css has no type scale and components
+	   hard-code rem sizes; the strip has eight tiles that must agree, so
+	   these three are named by ROLE. Sized for sunlight on an outdoor laptop
+	   (value 22px). Deliberately ride-prefixed, not a global scale —
+	   promoting them app-wide is later cleanup work. */
+	--ride-t-value: 1.375rem;
+	--ride-t-body: 0.875rem;
+	--ride-t-label: 0.6875rem;
 }
 
 * {

@@ -8,9 +8,24 @@ import (
 	"time"
 
 	"github.com/narvel/nymeria/internal/aprs"
+	"github.com/narvel/nymeria/internal/netprofile"
 	"github.com/narvel/nymeria/internal/object"
 	"github.com/narvel/nymeria/internal/store"
 )
+
+// TestNetProfileAnnotationCategoriesAreValid guards the netprofile registry
+// from the annotation side: netprofile cannot import annotation (annotation
+// may need to import netprofile down the line), so this fence lives here
+// instead, as a test-only dependency.
+func TestNetProfileAnnotationCategoriesAreValid(t *testing.T) {
+	for _, p := range netprofile.All() {
+		for _, cat := range p.AnnotationCategories {
+			if !validCategories[cat] {
+				t.Errorf("profile %q: annotation category %q is not a valid annotation category", p.ID, cat)
+			}
+		}
+	}
+}
 
 func newTestManager(t *testing.T) *Manager {
 	t.Helper()
@@ -648,6 +663,86 @@ func TestChangeStatusNotFound(t *testing.T) {
 	_, err := mgr.ChangeStatus("nonexistent", "resolved")
 	if err == nil {
 		t.Error("expected error for nonexistent annotation")
+	}
+}
+
+// TestStatusGuardBlocksChangeStatusAndUpdate verifies a registered status
+// guard blocks both ChangeStatus and Update-with-changed-status, that
+// neither emits an event when blocked, that ChangeStatusUnguarded bypasses
+// it, and that a nil guard (the default) is a no-op.
+func TestStatusGuardBlocksChangeStatusAndUpdate(t *testing.T) {
+	mgr := newTestManager(t)
+
+	ann, err := mgr.Create(Annotation{
+		Type:     TypePoint,
+		Label:    "Rest Stop 2",
+		Geometry: `{"type":"Point","coordinates":[-118.24,34.05]}`,
+		Category: CategoryAid,
+		Status:   "active",
+	})
+	if err != nil {
+		t.Fatalf("Create failed: %v", err)
+	}
+
+	events := mgr.Events()
+	<-events // drain the annotation_created event from Create above.
+
+	guardErr := errors.New("sweep has not passed")
+	mgr.SetStatusGuard(func(a store.Annotation, newStatus string) error {
+		if newStatus == "closed" {
+			return guardErr
+		}
+		return nil
+	})
+
+	// ChangeStatus is blocked.
+	if _, err := mgr.ChangeStatus(ann.ID, "closed"); !errors.Is(err, guardErr) {
+		t.Errorf("ChangeStatus with guard = %v, want %v", err, guardErr)
+	}
+	// Update-with-changed-status is blocked too.
+	current, _ := mgr.Get(ann.ID)
+	changed := *current
+	changed.Status = "closed"
+	if _, err := mgr.Update(changed); !errors.Is(err, guardErr) {
+		t.Errorf("Update with guard = %v, want %v", err, guardErr)
+	}
+
+	// Annotation is unchanged after both blocked attempts.
+	still, _ := mgr.Get(ann.ID)
+	if still.Status != "active" {
+		t.Errorf("status after blocked transitions = %q, want %q", still.Status, "active")
+	}
+
+	// Neither blocked attempt emitted an event.
+	select {
+	case evt := <-events:
+		t.Errorf("unexpected event emitted while guard blocked the transition: %+v", evt)
+	default:
+	}
+
+	// ChangeStatusUnguarded bypasses the guard.
+	updated, err := mgr.ChangeStatusUnguarded(ann.ID, "closed")
+	if err != nil {
+		t.Fatalf("ChangeStatusUnguarded: %v", err)
+	}
+	if updated.Status != "closed" {
+		t.Errorf("status after unguarded change = %q, want %q", updated.Status, "closed")
+	}
+
+	// A nil guard (freshly constructed manager) is a no-op.
+	plain := newTestManager(t)
+	ann2, err := plain.Create(Annotation{
+		Type:     TypePoint,
+		Label:    "Rest Stop 3",
+		Geometry: `{"type":"Point","coordinates":[0,0]}`,
+		Category: CategoryAid,
+		Status:   "active",
+	})
+	if err != nil {
+		t.Fatalf("Create failed: %v", err)
+	}
+	if _, err := plain.ChangeStatus(ann2.ID, "closed"); err != nil {
+		t.Errorf("ChangeStatus with nil guard = %v, want nil", err)
 	}
 }
 

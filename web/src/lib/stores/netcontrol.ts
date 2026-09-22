@@ -321,7 +321,9 @@ export interface NetMetrics {
 	missionsDone: number;
 }
 
-const STALE_THRESHOLD_MS = 20 * 60 * 1000; // 20 minutes
+// Exported so other "how old is this" surfaces (rideMeta.ts's ageState) reuse
+// the exact same threshold rather than a duplicated literal.
+export const STALE_THRESHOLD_MS = 20 * 60 * 1000; // 20 minutes
 
 export const netMetrics = derived([checkIns, missions], ([$cis, $ms]): NetMetrics => {
 	const active = $cis.filter(ci => ci.status !== 'released');

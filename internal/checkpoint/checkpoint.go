@@ -55,6 +55,11 @@ type Manager struct {
 	metas  map[string]store.CheckpointMeta      // annotationID → meta
 	passages map[string][]store.CheckpointPassage // netID → passages
 	events chan Event
+
+	// onPassage, when set, is invoked after a passage is persisted and
+	// cached, before the event is emitted (internal/course's sweep-passed
+	// auto-hook).
+	onPassage func(store.CheckpointPassage)
 }
 
 // NewManager creates a new checkpoint Manager.
@@ -66,6 +71,14 @@ func NewManager(s store.Store, am *annotation.Manager) *Manager {
 		passages: make(map[string][]store.CheckpointPassage),
 		events:   make(chan Event, 64),
 	}
+}
+
+// SetOnPassage registers a hook invoked after every passage is persisted and
+// cached, before the WebSocket event is emitted.
+func (m *Manager) SetOnPassage(fn func(store.CheckpointPassage)) {
+	m.mu.Lock()
+	m.onPassage = fn
+	m.mu.Unlock()
 }
 
 // Load hydrates metas and passages from the store.
@@ -81,9 +94,11 @@ func (m *Manager) Load() error {
 		netIDs[n.ID] = true
 	}
 
-	// Also check annotations for net IDs (checkpoint annotations may exist without a net record in tests).
+	// Also check annotations for net IDs (sequenceable annotations may exist
+	// without a net record in tests). aid/start/finish annotations carry
+	// CheckpointMeta too, not just "checkpoint".
 	for _, ann := range m.annMgr.All() {
-		if ann.Category == "checkpoint" && ann.NetID != "" {
+		if annotation.SequenceableCategories[ann.Category] && ann.NetID != "" {
 			netIDs[ann.NetID] = true
 		}
 	}
@@ -124,8 +139,8 @@ func (m *Manager) SetMeta(meta store.CheckpointMeta) (*store.CheckpointMeta, err
 	if !ok {
 		return nil, fmt.Errorf("annotation %q not found", meta.AnnotationID)
 	}
-	if ann.Category != annotation.CategoryCheckpoint {
-		return nil, fmt.Errorf("annotation %q is not a checkpoint (category: %s)", meta.AnnotationID, ann.Category)
+	if !annotation.SequenceableCategories[ann.Category] {
+		return nil, fmt.Errorf("annotation %q is not a sequenceable station (category: %s)", meta.AnnotationID, ann.Category)
 	}
 
 	if err := m.store.SaveCheckpointMeta(meta); err != nil {
@@ -181,7 +196,12 @@ func (m *Manager) LogPassage(p store.CheckpointPassage) (*store.CheckpointPassag
 
 	m.mu.Lock()
 	m.passages[p.NetID] = append(m.passages[p.NetID], p)
+	hook := m.onPassage
 	m.mu.Unlock()
+
+	if hook != nil {
+		hook(p)
+	}
 
 	m.emit(Event{Type: EventCheckpointPassage, Data: p})
 

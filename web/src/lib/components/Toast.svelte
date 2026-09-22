@@ -53,7 +53,10 @@
 <style>
 	.toast-container {
 		position: fixed;
-		bottom: var(--space-lg);
+		/* Lifts off the ride strip the same way as SidePanel/ActivityRail;
+		   0px outside bike-ride mode. Toasts must not cover the strip's
+		   Acknowledge button or shift-brief chip. */
+		bottom: calc(var(--space-lg) + var(--ride-strip-h, 0px));
 		right: var(--space-lg);
 		z-index: var(--z-toast);
 		display: flex;
@@ -78,8 +81,13 @@
 		border-left: 3px solid;
 	}
 
-	.toast-success { border-left-color: #22c55e; }
-	.toast-error   { border-left-color: #ef4444; }
+	/* Rule bars are non-text: the base tokens are correct here (>=3:1). The
+	   icon and the action BUTTON below are text, so they take the -text
+	   variants — #ef4444 was 4.22:1 and var(--color-info) 4.32:1 against the
+	   toast's --color-surface, i.e. an action label that failed AA on the one
+	   surface every ride mutation reports its outcome through. */
+	.toast-success { border-left-color: var(--color-success); }
+	.toast-error   { border-left-color: var(--color-error); }
 	.toast-info    { border-left-color: var(--color-info); }
 	.toast-wx      { border-left-color: var(--toast-tier); }
 
@@ -93,9 +101,9 @@
 		justify-content: center;
 	}
 
-	.toast-success .toast-icon { color: #22c55e; }
-	.toast-error   .toast-icon { color: #ef4444; }
-	.toast-info    .toast-icon { color: var(--color-info); }
+	.toast-success .toast-icon { color: var(--color-success); }
+	.toast-error   .toast-icon { color: var(--color-error-text); }
+	.toast-info    .toast-icon { color: var(--color-info-text); }
 	.toast-wx      .toast-icon { color: var(--toast-tier); }
 
 	.toast-message {
@@ -118,13 +126,13 @@
 		transition: background var(--duration-fast), color var(--duration-fast);
 	}
 
-	.toast-success .toast-action { color: #22c55e; }
-	.toast-error   .toast-action { color: #ef4444; }
-	.toast-info    .toast-action { color: var(--color-info); }
+	.toast-success .toast-action { color: var(--color-success); }
+	.toast-error   .toast-action { color: var(--color-error-text); }
+	.toast-info    .toast-action { color: var(--color-info-text); }
 	.toast-wx      .toast-action { color: var(--toast-tier); }
 
 	.toast-action:hover {
-		background: rgba(255, 255, 255, 0.1);
+		background: var(--color-raised-strong);
 	}
 
 	/* A toast carrying an action holds more words — give it room to wrap. */

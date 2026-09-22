@@ -36,6 +36,20 @@ export const paletteQuery = writable<string>('');
 export const paletteFilter = writable<PaletteFilter>('all');
 export const recentCallsigns = writable<string[]>(loadRecents());
 
+/**
+ * A pre-seeded palette query the ride strip's single-key accelerators
+ * (q/w/e/n/s/c) arm before opening the palette (see stores/ride.ts
+ * seedPalette()). CommandPalette.svelte reads this on mount, sets
+ * `paletteQuery` to `text` with the caret at the end, and shows a locked
+ * tier chip when `lockedTierId` is set (the `e` shortcut locks to the net's
+ * rank-1 tier so Enter cannot commit at the wrong priority).
+ */
+export interface PaletteSeed {
+	text: string;
+	lockedTierId?: string;
+}
+export const paletteSeed = writable<PaletteSeed | null>(null);
+
 // --- Recents persistence (session storage) ---
 
 function loadRecents(): string[] {

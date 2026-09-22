@@ -2,9 +2,11 @@ package store
 
 import (
 	"database/sql"
+	"encoding/json"
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
@@ -605,8 +607,8 @@ func TestV2SchemaVersion(t *testing.T) {
 	if err != nil {
 		t.Fatalf("query schema_version: %v", err)
 	}
-	if version != 24 {
-		t.Errorf("expected schema version 24, got %d", version)
+	if version != 30 {
+		t.Errorf("expected schema version 30, got %d", version)
 	}
 }
 
@@ -1105,8 +1107,8 @@ func TestV3SchemaVersion(t *testing.T) {
 	if err != nil {
 		t.Fatalf("query schema_version: %v", err)
 	}
-	if version != 24 {
-		t.Errorf("expected schema version 24, got %d", version)
+	if version != 30 {
+		t.Errorf("expected schema version 30, got %d", version)
 	}
 }
 
@@ -1726,8 +1728,8 @@ func TestV5MigrationAddsTrackedStationsColumn(t *testing.T) {
 
 	var version int
 	s.db.QueryRow("SELECT version FROM schema_version LIMIT 1").Scan(&version)
-	if version != 24 {
-		t.Errorf("expected schema version 24, got %d", version)
+	if version != 30 {
+		t.Errorf("expected schema version 30, got %d", version)
 	}
 }
 
@@ -1833,8 +1835,8 @@ func TestV6MigrationCreatesTacticalAliasesTable(t *testing.T) {
 
 	var version int
 	s.db.QueryRow("SELECT version FROM schema_version LIMIT 1").Scan(&version)
-	if version != 24 {
-		t.Errorf("expected schema version 24, got %d", version)
+	if version != 30 {
+		t.Errorf("expected schema version 30, got %d", version)
 	}
 }
 
@@ -2001,8 +2003,8 @@ func TestV7MigrationAddsAnnotationColumns(t *testing.T) {
 
 	var version int
 	s.db.QueryRow("SELECT version FROM schema_version LIMIT 1").Scan(&version)
-	if version != 24 {
-		t.Errorf("expected schema version 24, got %d", version)
+	if version != 30 {
+		t.Errorf("expected schema version 30, got %d", version)
 	}
 }
 
@@ -2304,8 +2306,8 @@ func TestMigrateV8CreatesOperationsTable(t *testing.T) {
 
 	var version int
 	s.db.QueryRow("SELECT version FROM schema_version LIMIT 1").Scan(&version)
-	if version != 24 {
-		t.Errorf("expected schema version 24, got %d", version)
+	if version != 30 {
+		t.Errorf("expected schema version 30, got %d", version)
 	}
 
 	// Verify operations table exists by doing a query.
@@ -2324,8 +2326,8 @@ func TestMigrateV11AddsOpsViewColumns(t *testing.T) {
 
 	var version int
 	s.db.QueryRow("SELECT version FROM schema_version LIMIT 1").Scan(&version)
-	if version != 24 {
-		t.Errorf("expected schema version 24, got %d", version)
+	if version != 30 {
+		t.Errorf("expected schema version 30, got %d", version)
 	}
 
 	// Verify ops_view columns exist.
@@ -2714,8 +2716,8 @@ func TestMigrateV13CreatesTelemetryReadingsTable(t *testing.T) {
 
 	var version int
 	s.db.QueryRow("SELECT version FROM schema_version LIMIT 1").Scan(&version)
-	if version != 24 {
-		t.Errorf("expected schema version 24, got %d", version)
+	if version != 30 {
+		t.Errorf("expected schema version 30, got %d", version)
 	}
 }
 
@@ -2958,8 +2960,8 @@ func TestMigrateV16(t *testing.T) {
 	if err != nil {
 		t.Fatalf("query schema_version: %v", err)
 	}
-	if version != 24 {
-		t.Errorf("expected schema version 24, got %d", version)
+	if version != 30 {
+		t.Errorf("expected schema version 30, got %d", version)
 	}
 }
 
@@ -3239,8 +3241,8 @@ func TestMigrateV19CreatesCheckpointTables(t *testing.T) {
 	if err := s.db.QueryRow("SELECT version FROM schema_version LIMIT 1").Scan(&version); err != nil {
 		t.Fatalf("read schema_version: %v", err)
 	}
-	if version != 24 {
-		t.Errorf("expected schema version 24, got %d", version)
+	if version != 30 {
+		t.Errorf("expected schema version 30, got %d", version)
 	}
 
 	// Verify tables exist.
@@ -3352,8 +3354,8 @@ func TestMigrateV20NormalizesLegacySources(t *testing.T) {
 	if err := s.db.QueryRow("SELECT version FROM schema_version LIMIT 1").Scan(&version); err != nil {
 		t.Fatalf("read schema_version: %v", err)
 	}
-	if version != 24 {
-		t.Errorf("expected schema version 24, got %d", version)
+	if version != 30 {
+		t.Errorf("expected schema version 30, got %d", version)
 	}
 
 	// sources column must exist.
@@ -3525,8 +3527,8 @@ func TestMigrateV21CreatesConversationReadsTable(t *testing.T) {
 	if err := s.db.QueryRow("SELECT version FROM schema_version LIMIT 1").Scan(&version); err != nil {
 		t.Fatalf("read schema_version: %v", err)
 	}
-	if version != 24 {
-		t.Errorf("expected schema version 24, got %d", version)
+	if version != 30 {
+		t.Errorf("expected schema version 30, got %d", version)
 	}
 
 	var count int
@@ -3774,8 +3776,8 @@ func TestMigrateV22AddsAnnotationBatchColumns(t *testing.T) {
 	if err := s.db.QueryRow("SELECT version FROM schema_version LIMIT 1").Scan(&version); err != nil {
 		t.Fatalf("read schema_version: %v", err)
 	}
-	if version != 24 {
-		t.Errorf("expected schema version 24, got %d", version)
+	if version != 30 {
+		t.Errorf("expected schema version 30, got %d", version)
 	}
 
 	cols := map[string]bool{}
@@ -4134,8 +4136,8 @@ func TestMigrateV23BackfillsAssignedTo(t *testing.T) {
 	}
 	defer s.Close()
 
-	if v := currentVersion(t, s); v != 24 {
-		t.Errorf("expected schema version 24, got %d", v)
+	if v := currentVersion(t, s); v != 30 {
+		t.Errorf("expected schema version 30, got %d", v)
 	}
 	if got := v23MissionIDs(t, s, "ci-1"); got != `["m-1"]` {
 		t.Errorf("mission_ids: got %s, want [\"m-1\"]", got)
@@ -4170,8 +4172,8 @@ func TestMigrateV23OrphanCallsignDoesNotFail(t *testing.T) {
 	}
 	defer s.Close()
 
-	if v := currentVersion(t, s); v != 24 {
-		t.Errorf("expected schema version 24, got %d", v)
+	if v := currentVersion(t, s); v != 30 {
+		t.Errorf("expected schema version 30, got %d", v)
 	}
 	if got := v23MissionIDs(t, s, "ci-1"); got != `[]` {
 		t.Errorf("mission_ids: got %s, want []", got)
@@ -4253,8 +4255,8 @@ func TestMigrateV23WithoutMissionTables(t *testing.T) {
 	}
 	defer s.Close()
 
-	if v := currentVersion(t, s); v != 24 {
-		t.Errorf("expected schema version 24, got %d", v)
+	if v := currentVersion(t, s); v != 30 {
+		t.Errorf("expected schema version 30, got %d", v)
 	}
 }
 
@@ -4342,8 +4344,8 @@ func TestMigrateV24FromV23Fixture(t *testing.T) {
 	}
 	defer s.Close()
 
-	if v := currentVersion(t, s); v != 24 {
-		t.Errorf("expected schema version 24, got %d", v)
+	if v := currentVersion(t, s); v != 30 {
+		t.Errorf("expected schema version 30, got %d", v)
 	}
 
 	n, err := s.LoadNet("net-1")
@@ -4649,5 +4651,1700 @@ func TestWxMetaRoundtrip(t *testing.T) {
 	v, ok, err = s.GetWxMeta("registry_snapshot")
 	if err != nil || !ok || v != `{"active":[1]}` {
 		t.Errorf("GetWxMeta after overwrite = (%q, %v, %v)", v, ok, err)
+	}
+}
+
+// --- Net profile / ride config (schema v25) ---
+
+// preV25Fixture hand-builds a v24-shaped nets table (the full column set,
+// including the v24 wx_* columns, but WITHOUT profile) plus
+// schema_version=24, so Init's migrateV25 runs its ALTER TABLE path against
+// a table shaped like a genuine pre-v25 upgrade.
+func preV25Fixture(t *testing.T) string {
+	t.Helper()
+	path := filepath.Join(t.TempDir(), "pre-v25.db")
+	db, err := sql.Open("sqlite", path)
+	if err != nil {
+		t.Fatalf("open raw db: %v", err)
+	}
+	stmts := []string{
+		`CREATE TABLE schema_version (version INTEGER NOT NULL)`,
+		`INSERT INTO schema_version (version) VALUES (24)`,
+		`CREATE TABLE nets (
+			id TEXT PRIMARY KEY, name TEXT NOT NULL, type TEXT NOT NULL DEFAULT '',
+			frequency TEXT NOT NULL DEFAULT '', ncs_callsign TEXT NOT NULL DEFAULT '',
+			ncs_user_id TEXT NOT NULL DEFAULT '', status TEXT NOT NULL DEFAULT 'draft',
+			opened_at DATETIME, closed_at DATETIME, notes TEXT NOT NULL DEFAULT '',
+			mission_brief TEXT NOT NULL DEFAULT '', ops_view_lat REAL, ops_view_lon REAL,
+			ops_view_zoom REAL, pinned_stations TEXT NOT NULL DEFAULT '[]',
+			wx_buffer_miles REAL NOT NULL DEFAULT 0, wx_extra_zones TEXT NOT NULL DEFAULT '[]',
+			wx_mute_advisories INTEGER NOT NULL DEFAULT 0, wx_interrupt_custom INTEGER NOT NULL DEFAULT 0,
+			wx_interrupt_events TEXT NOT NULL DEFAULT '[]'
+		)`,
+		`INSERT INTO nets (id, name) VALUES ('net-1', 'Jack and Back')`,
+	}
+	for _, stmt := range stmts {
+		if _, err := db.Exec(stmt); err != nil {
+			db.Close()
+			t.Fatalf("setup stmt %q: %v", stmt, err)
+		}
+	}
+	if err := db.Close(); err != nil {
+		t.Fatalf("close raw db: %v", err)
+	}
+	return path
+}
+
+func TestMigrateV25AddsProfileColumn(t *testing.T) {
+	path := preV25Fixture(t)
+
+	s := NewSQLiteStore(path)
+	if err := s.Init(); err != nil {
+		t.Fatalf("Init failed: %v", err)
+	}
+	defer s.Close()
+
+	if v := currentVersion(t, s); v != 30 {
+		t.Errorf("expected schema version 30, got %d", v)
+	}
+
+	rows, err := s.db.Query(`PRAGMA table_info(nets)`)
+	if err != nil {
+		t.Fatalf("table_info: %v", err)
+	}
+	found := false
+	for rows.Next() {
+		var cid int
+		var name, ctype string
+		var notnull, pk int
+		var dflt sql.NullString
+		if err := rows.Scan(&cid, &name, &ctype, &notnull, &dflt, &pk); err != nil {
+			t.Fatalf("scan table_info: %v", err)
+		}
+		if name == "profile" {
+			found = true
+		}
+	}
+	rows.Close()
+	if !found {
+		t.Error("nets table missing profile column after migrateV25")
+	}
+
+	var profile string
+	if err := s.db.QueryRow(`SELECT profile FROM nets WHERE id = 'net-1'`).Scan(&profile); err != nil {
+		t.Fatalf("select profile: %v", err)
+	}
+	if profile != "general" {
+		t.Errorf("profile = %q, want %q", profile, "general")
+	}
+}
+
+func TestMigrateV25CreatesRideConfigTable(t *testing.T) {
+	s, _ := newTestStore(t)
+	defer s.Close()
+
+	rows, err := s.db.Query(`PRAGMA table_info(net_ride_configs)`)
+	if err != nil {
+		t.Fatalf("table_info: %v", err)
+	}
+	defer rows.Close()
+
+	want := map[string]bool{
+		"net_id": true, "agency_name": true, "event_name": true, "event_date": true,
+		"routes": true, "cutoff": true, "withhold_bib_on_severe_injury": true,
+		"priority_tiers": true, "division": true, "updated_at": true,
+	}
+	got := map[string]bool{}
+	for rows.Next() {
+		var cid int
+		var name, ctype string
+		var notnull, pk int
+		var dflt sql.NullString
+		if err := rows.Scan(&cid, &name, &ctype, &notnull, &dflt, &pk); err != nil {
+			t.Fatalf("scan table_info: %v", err)
+		}
+		got[name] = true
+	}
+	for col := range want {
+		if !got[col] {
+			t.Errorf("net_ride_configs missing column %q", col)
+		}
+	}
+}
+
+func TestMigrateV25Idempotent(t *testing.T) {
+	s, _ := newTestStore(t)
+	defer s.Close()
+
+	if err := s.migrateV25(); err != nil {
+		t.Fatalf("first rerun of migrateV25 failed: %v", err)
+	}
+	if err := s.migrateV25(); err != nil {
+		t.Fatalf("second rerun of migrateV25 failed: %v", err)
+	}
+}
+
+func TestMigrateV25NarrowFixtureWithoutNets(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "pre-v25-bare.db")
+	db, err := sql.Open("sqlite", path)
+	if err != nil {
+		t.Fatalf("open raw db: %v", err)
+	}
+	for _, stmt := range []string{
+		`CREATE TABLE schema_version (version INTEGER NOT NULL)`,
+		`INSERT INTO schema_version (version) VALUES (24)`,
+	} {
+		if _, err := db.Exec(stmt); err != nil {
+			db.Close()
+			t.Fatalf("setup stmt %q: %v", stmt, err)
+		}
+	}
+	db.Close()
+
+	s := NewSQLiteStore(path)
+	if err := s.Init(); err != nil {
+		t.Fatalf("Init must succeed without the nets table: %v", err)
+	}
+	defer s.Close()
+
+	if v := currentVersion(t, s); v != 30 {
+		t.Errorf("expected schema version 30, got %d", v)
+	}
+}
+
+func TestLoadNetPreV25RowIsGeneral(t *testing.T) {
+	path := preV25Fixture(t)
+
+	s := NewSQLiteStore(path)
+	if err := s.Init(); err != nil {
+		t.Fatalf("Init failed: %v", err)
+	}
+	defer s.Close()
+
+	n, err := s.LoadNet("net-1")
+	if err != nil {
+		t.Fatalf("LoadNet: %v", err)
+	}
+	if n.Profile != "general" {
+		t.Errorf("LoadNet profile = %q, want general", n.Profile)
+	}
+
+	nets, err := s.LoadNets()
+	if err != nil {
+		t.Fatalf("LoadNets: %v", err)
+	}
+	if len(nets) != 1 || nets[0].Profile != "general" {
+		t.Errorf("LoadNets profile = %+v, want [general]", nets)
+	}
+}
+
+func TestSaveAndLoadNetProfileRoundtrip(t *testing.T) {
+	tests := []struct {
+		name    string
+		profile string
+	}{
+		{"general", "general"},
+		{"bike-ride", "bike-ride"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			s, _ := newTestStore(t)
+			defer s.Close()
+
+			n := Net{ID: "net-" + tt.name, Name: "Test Net", Status: "draft", PinnedStations: []string{}, Profile: tt.profile}
+			if err := s.SaveNet(n); err != nil {
+				t.Fatalf("SaveNet: %v", err)
+			}
+
+			loaded, err := s.LoadNet(n.ID)
+			if err != nil {
+				t.Fatalf("LoadNet: %v", err)
+			}
+			if loaded.Profile != tt.profile {
+				t.Errorf("LoadNet profile = %q, want %q", loaded.Profile, tt.profile)
+			}
+
+			nets, err := s.LoadNets()
+			if err != nil {
+				t.Fatalf("LoadNets: %v", err)
+			}
+			if len(nets) != 1 || nets[0].Profile != tt.profile {
+				t.Errorf("LoadNets profile = %+v, want [%s]", nets, tt.profile)
+			}
+		})
+	}
+}
+
+func TestSaveNetEmptyProfileLoadsAsGeneral(t *testing.T) {
+	s, _ := newTestStore(t)
+	defer s.Close()
+
+	n := Net{ID: "net-empty-profile", Name: "Test Net", Status: "draft", PinnedStations: []string{}, Profile: ""}
+	if err := s.SaveNet(n); err != nil {
+		t.Fatalf("SaveNet: %v", err)
+	}
+
+	loaded, err := s.LoadNet(n.ID)
+	if err != nil {
+		t.Fatalf("LoadNet: %v", err)
+	}
+	if loaded.Profile != "general" {
+		t.Errorf("LoadNet profile = %q, want general", loaded.Profile)
+	}
+}
+
+func TestSaveAndLoadNetRideConfigRoundtrip(t *testing.T) {
+	s, _ := newTestStore(t)
+	defer s.Close()
+
+	start := time.Date(2026, 6, 13, 6, 0, 0, 0, time.UTC)
+	cutoffAt := time.Date(2026, 6, 13, 18, 0, 0, 0, time.UTC)
+	opens := time.Date(2026, 6, 13, 5, 0, 0, 0, time.UTC)
+	closes := time.Date(2026, 6, 13, 20, 0, 0, 0, time.UTC)
+
+	cfg := NetRideConfig{
+		NetID:      "net-1",
+		AgencyName: "Marin Cyclists",
+		EventName:  "Jack and Back 2026",
+		EventDate:  "2026-06-13",
+		Routes: []RideRoute{
+			{ID: "100", Name: "100 Mile Century", DistanceMiles: 100, StartTime: &start, CutoffAt: &cutoffAt, Division: "route-a"},
+			{ID: "75", Name: "75 Mile", DistanceMiles: 75},
+			{ID: "55", Name: "55 Mile", DistanceMiles: 55},
+			{ID: "48", Name: "48 Mile Jack and Back", DistanceMiles: 48},
+		},
+		Cutoff: RideCutoffPolicy{
+			CourseOpensAt:            &opens,
+			CourseClosesAt:           &closes,
+			MandatorySAGAfterCutoff:  true,
+			DeclinedSAGIsUnsupported: true,
+			Notes:                    "SAG sweeps back to front",
+		},
+		WithholdBibOnSevereInjury: true,
+		PriorityTiers: []PriorityTier{
+			{ID: "emergency", Label: "Emergency", Rank: 1, Description: "d1", Examples: []string{"e1", "e2"}},
+			{ID: "priority", Label: "Priority", Rank: 2, Description: "d2", Examples: []string{"e3"}},
+			{ID: "high", Label: "High", Rank: 3, Description: "d3", Examples: []string{"e4"}},
+			{ID: "medium", Label: "Medium", Rank: 4, Description: "d4", Examples: []string{"e5"}},
+			{ID: "low", Label: "Low", Rank: 5, Description: "d5", Examples: []string{"e6"}},
+		},
+	}
+
+	if err := s.SaveNetRideConfig(cfg); err != nil {
+		t.Fatalf("SaveNetRideConfig: %v", err)
+	}
+
+	loaded, ok, err := s.LoadNetRideConfig("net-1")
+	if err != nil {
+		t.Fatalf("LoadNetRideConfig: %v", err)
+	}
+	if !ok {
+		t.Fatal("LoadNetRideConfig ok = false, want true")
+	}
+	if loaded.AgencyName != cfg.AgencyName || loaded.EventName != cfg.EventName || loaded.EventDate != cfg.EventDate {
+		t.Errorf("basic fields mismatch: %+v", loaded)
+	}
+	if len(loaded.Routes) != 4 {
+		t.Fatalf("Routes len = %d, want 4", len(loaded.Routes))
+	}
+	r0 := loaded.Routes[0]
+	if r0.ID != "100" || r0.Name != "100 Mile Century" || r0.DistanceMiles != 100 || r0.Division != "route-a" {
+		t.Errorf("route 0 = %+v", r0)
+	}
+	if r0.StartTime == nil || !r0.StartTime.Equal(start) {
+		t.Errorf("route 0 StartTime = %v, want %v", r0.StartTime, start)
+	}
+	if r0.CutoffAt == nil || !r0.CutoffAt.Equal(cutoffAt) {
+		t.Errorf("route 0 CutoffAt = %v, want %v", r0.CutoffAt, cutoffAt)
+	}
+	if loaded.Cutoff.CourseOpensAt == nil || !loaded.Cutoff.CourseOpensAt.UTC().Equal(opens) {
+		t.Errorf("Cutoff.CourseOpensAt = %v, want %v", loaded.Cutoff.CourseOpensAt, opens)
+	}
+	if loaded.Cutoff.CourseClosesAt == nil || !loaded.Cutoff.CourseClosesAt.UTC().Equal(closes) {
+		t.Errorf("Cutoff.CourseClosesAt = %v, want %v", loaded.Cutoff.CourseClosesAt, closes)
+	}
+	if !loaded.Cutoff.MandatorySAGAfterCutoff || !loaded.Cutoff.DeclinedSAGIsUnsupported {
+		t.Errorf("Cutoff flags = %+v", loaded.Cutoff)
+	}
+	if loaded.Cutoff.Notes != cfg.Cutoff.Notes {
+		t.Errorf("Cutoff.Notes = %q, want %q", loaded.Cutoff.Notes, cfg.Cutoff.Notes)
+	}
+	if !loaded.WithholdBibOnSevereInjury {
+		t.Error("WithholdBibOnSevereInjury = false, want true")
+	}
+	if len(loaded.PriorityTiers) != 5 {
+		t.Fatalf("PriorityTiers len = %d, want 5", len(loaded.PriorityTiers))
+	}
+	for i, tier := range loaded.PriorityTiers {
+		want := cfg.PriorityTiers[i]
+		if tier.ID != want.ID || tier.Label != want.Label || tier.Rank != want.Rank || tier.Description != want.Description {
+			t.Errorf("tier %d = %+v, want %+v", i, tier, want)
+		}
+		if len(tier.Examples) != len(want.Examples) {
+			t.Errorf("tier %d examples = %v, want %v", i, tier.Examples, want.Examples)
+		}
+	}
+}
+
+func TestLoadNetRideConfigAbsent(t *testing.T) {
+	s, _ := newTestStore(t)
+	defer s.Close()
+
+	cfg, ok, err := s.LoadNetRideConfig("unknown-net")
+	if err != nil {
+		t.Fatalf("LoadNetRideConfig: %v", err)
+	}
+	if ok || cfg != nil {
+		t.Errorf("LoadNetRideConfig = (%v, %v), want (nil, false)", cfg, ok)
+	}
+}
+
+func TestNetRideConfigNilSlicesNeverNil(t *testing.T) {
+	s, _ := newTestStore(t)
+	defer s.Close()
+
+	cfg := NetRideConfig{
+		NetID:         "net-nil",
+		Routes:        nil,
+		PriorityTiers: nil,
+	}
+	if err := s.SaveNetRideConfig(cfg); err != nil {
+		t.Fatalf("SaveNetRideConfig: %v", err)
+	}
+
+	loaded, ok, err := s.LoadNetRideConfig("net-nil")
+	if err != nil || !ok {
+		t.Fatalf("LoadNetRideConfig: ok=%v err=%v", ok, err)
+	}
+	if loaded.Routes == nil {
+		t.Error("Routes = nil, want empty slice")
+	}
+	if loaded.PriorityTiers == nil {
+		t.Error("PriorityTiers = nil, want empty slice")
+	}
+
+	b, err := json.Marshal(loaded)
+	if err != nil {
+		t.Fatalf("Marshal: %v", err)
+	}
+	s2 := string(b)
+	if !strings.Contains(s2, `"routes":[]`) {
+		t.Errorf("marshaled config missing routes:[], got %s", s2)
+	}
+	if !strings.Contains(s2, `"priorityTiers":[]`) {
+		t.Errorf("marshaled config missing priorityTiers:[], got %s", s2)
+	}
+	if strings.Contains(s2, "null") {
+		t.Errorf("marshaled config contains null: %s", s2)
+	}
+}
+
+func TestLoadNetRideConfigs(t *testing.T) {
+	s, _ := newTestStore(t)
+	defer s.Close()
+
+	configs, err := s.LoadNetRideConfigs()
+	if err != nil {
+		t.Fatalf("LoadNetRideConfigs (empty): %v", err)
+	}
+	if configs == nil || len(configs) != 0 {
+		t.Errorf("LoadNetRideConfigs (empty) = %v, want empty non-nil slice", configs)
+	}
+
+	for _, id := range []string{"net-c", "net-a", "net-b"} {
+		if err := s.SaveNetRideConfig(NetRideConfig{NetID: id}); err != nil {
+			t.Fatalf("SaveNetRideConfig(%s): %v", id, err)
+		}
+	}
+
+	configs, err = s.LoadNetRideConfigs()
+	if err != nil {
+		t.Fatalf("LoadNetRideConfigs: %v", err)
+	}
+	if len(configs) != 3 {
+		t.Fatalf("LoadNetRideConfigs len = %d, want 3", len(configs))
+	}
+	want := []string{"net-a", "net-b", "net-c"}
+	for i, c := range configs {
+		if c.NetID != want[i] {
+			t.Errorf("configs[%d].NetID = %q, want %q", i, c.NetID, want[i])
+		}
+	}
+}
+
+func TestDeleteNetCascadesRideConfig(t *testing.T) {
+	s, _ := newTestStore(t)
+	defer s.Close()
+
+	n := Net{ID: "net-cascade", Name: "Cascade Net", Status: "draft", PinnedStations: []string{}, Profile: "bike-ride"}
+	if err := s.SaveNet(n); err != nil {
+		t.Fatalf("SaveNet: %v", err)
+	}
+	if err := s.SaveNetRideConfig(NetRideConfig{NetID: n.ID}); err != nil {
+		t.Fatalf("SaveNetRideConfig: %v", err)
+	}
+
+	if err := s.DeleteNet(n.ID); err != nil {
+		t.Fatalf("DeleteNet: %v", err)
+	}
+
+	_, ok, err := s.LoadNetRideConfig(n.ID)
+	if err != nil {
+		t.Fatalf("LoadNetRideConfig after delete: %v", err)
+	}
+	if ok {
+		t.Error("LoadNetRideConfig ok = true after DeleteNet, want false")
+	}
+}
+
+func TestDeleteNetRideConfig(t *testing.T) {
+	s, _ := newTestStore(t)
+	defer s.Close()
+
+	if err := s.SaveNetRideConfig(NetRideConfig{NetID: "net-direct"}); err != nil {
+		t.Fatalf("SaveNetRideConfig: %v", err)
+	}
+	if err := s.DeleteNetRideConfig("net-direct"); err != nil {
+		t.Fatalf("DeleteNetRideConfig: %v", err)
+	}
+	_, ok, err := s.LoadNetRideConfig("net-direct")
+	if err != nil || ok {
+		t.Fatalf("LoadNetRideConfig after delete = (ok=%v, err=%v), want (false, nil)", ok, err)
+	}
+
+	// Deleting an absent config is not an error.
+	if err := s.DeleteNetRideConfig("never-existed"); err != nil {
+		t.Errorf("DeleteNetRideConfig(absent) = %v, want nil", err)
+	}
+}
+
+func TestMigrateV26CreatesSAGTables(t *testing.T) {
+	s, _ := newTestStore(t)
+	defer s.Close()
+
+	for _, table := range []string{"sag_requests", "sag_vehicles"} {
+		var present int
+		if err := s.db.QueryRow(
+			`SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name=?`, table,
+		).Scan(&present); err != nil {
+			t.Fatalf("check table %s: %v", table, err)
+		}
+		if present != 1 {
+			t.Errorf("table %s missing after migrateV26", table)
+		}
+	}
+
+	var idxPresent int
+	if err := s.db.QueryRow(
+		`SELECT COUNT(*) FROM sqlite_master WHERE type='index' AND name='idx_sag_requests_net_seq'`,
+	).Scan(&idxPresent); err != nil {
+		t.Fatalf("check index: %v", err)
+	}
+	if idxPresent != 1 {
+		t.Error("idx_sag_requests_net_seq missing after migrateV26")
+	}
+}
+
+func TestMigrateV26Idempotent(t *testing.T) {
+	s, _ := newTestStore(t)
+	defer s.Close()
+
+	if err := s.migrateV26(); err != nil {
+		t.Fatalf("first rerun of migrateV26 failed: %v", err)
+	}
+	if err := s.migrateV26(); err != nil {
+		t.Fatalf("second rerun of migrateV26 failed: %v", err)
+	}
+}
+
+func TestSAGRequestRoundTrip(t *testing.T) {
+	s, _ := newTestStore(t)
+	defer s.Close()
+
+	mm := 12.5
+	now := time.Now().Truncate(time.Second).UTC()
+	closedAt := now.Add(time.Hour)
+
+	req := SAGRequest{
+		ID:       "req-1",
+		NetID:    "net-1",
+		Division: nil, // NULL in v1
+		Sequence: 1,
+		Pickup: SAGLocation{
+			Kind:       "course",
+			Route:      "100M",
+			MileMarker: &mm,
+		},
+		Dropoff: SAGLocation{
+			Kind: "next_reststop",
+		},
+		Reason:        "mechanical",
+		Priority:      "high",
+		Status:        "open",
+		NeedsVehicle:  true,
+		Slots:         []SAGSlot{{ID: "slot-1", Bib: "42", HasBike: true, Disposition: "waiting", UpdatedAt: now}},
+		Legs:          []SAGLeg{{ID: "leg-1", VehicleCheckInID: "ci-1", SlotIDs: []string{"slot-1"}, Status: "dispatched", DispatchedAt: now}},
+		RequestedBy:   "K6ABC",
+		CreatedByName: "Net Control",
+		Notes:         "flat tire",
+		CreatedAt:     now,
+		UpdatedAt:     now,
+		ClosedAt:      &closedAt,
+	}
+	if err := s.SaveSAGRequest(req); err != nil {
+		t.Fatalf("SaveSAGRequest: %v", err)
+	}
+
+	loaded, err := s.LoadSAGRequests("net-1")
+	if err != nil {
+		t.Fatalf("LoadSAGRequests: %v", err)
+	}
+	if len(loaded) != 1 {
+		t.Fatalf("LoadSAGRequests len = %d, want 1", len(loaded))
+	}
+	got := loaded[0]
+	if got.Division != nil {
+		t.Errorf("Division = %v, want nil", *got.Division)
+	}
+	if got.Pickup.Kind != "course" || got.Pickup.MileMarker == nil || *got.Pickup.MileMarker != mm {
+		t.Errorf("Pickup = %+v, want kind=course mileMarker=%v", got.Pickup, mm)
+	}
+	if len(got.Slots) != 1 || got.Slots[0].ID != "slot-1" {
+		t.Errorf("Slots = %+v", got.Slots)
+	}
+	if len(got.Legs) != 1 || got.Legs[0].ID != "leg-1" || len(got.Legs[0].SlotIDs) != 1 {
+		t.Errorf("Legs = %+v", got.Legs)
+	}
+	if got.ClosedAt == nil || !got.ClosedAt.Equal(closedAt) {
+		t.Errorf("ClosedAt = %v, want %v", got.ClosedAt, closedAt)
+	}
+
+	// division round-trips as a real value too.
+	div := "route"
+	req.Division = &div
+	req.ID = "req-2"
+	req.Sequence = 2
+	req.Slots = nil // never persisted as nil — must come back as []
+	req.Legs = nil
+	req.ClosedAt = nil
+	if err := s.SaveSAGRequest(req); err != nil {
+		t.Fatalf("SaveSAGRequest (nil slices): %v", err)
+	}
+	loaded, err = s.LoadSAGRequests("net-1")
+	if err != nil {
+		t.Fatalf("LoadSAGRequests: %v", err)
+	}
+	if len(loaded) != 2 {
+		t.Fatalf("LoadSAGRequests len = %d, want 2", len(loaded))
+	}
+	// ORDER BY sequence ASC.
+	if loaded[0].ID != "req-1" || loaded[1].ID != "req-2" {
+		t.Errorf("LoadSAGRequests order = [%s, %s], want [req-1, req-2]", loaded[0].ID, loaded[1].ID)
+	}
+	second := loaded[1]
+	if second.Division == nil || *second.Division != "route" {
+		t.Errorf("Division = %v, want route", second.Division)
+	}
+	if second.Slots == nil || len(second.Slots) != 0 {
+		t.Errorf("Slots = %v, want empty non-nil slice", second.Slots)
+	}
+	if second.Legs == nil || len(second.Legs) != 0 {
+		t.Errorf("Legs = %v, want empty non-nil slice", second.Legs)
+	}
+	if second.ClosedAt != nil {
+		t.Errorf("ClosedAt = %v, want nil", second.ClosedAt)
+	}
+
+	b, err := json.Marshal(second)
+	if err != nil {
+		t.Fatalf("Marshal: %v", err)
+	}
+	if strings.Contains(string(b), "null") {
+		t.Errorf("marshaled request contains null: %s", b)
+	}
+}
+
+func TestSAGVehicleRoundTrip(t *testing.T) {
+	s, _ := newTestStore(t)
+	defer s.Close()
+
+	now := time.Now().Truncate(time.Second).UTC()
+	v := SAGVehicle{
+		NetID:     "net-1",
+		CheckInID: "ci-1",
+		Seats:     3,
+		RackSlots: 2,
+		Notes:     "van",
+		UpdatedAt: now,
+	}
+	if err := s.SaveSAGVehicle(v); err != nil {
+		t.Fatalf("SaveSAGVehicle: %v", err)
+	}
+
+	loaded, err := s.LoadSAGVehicles("net-1")
+	if err != nil {
+		t.Fatalf("LoadSAGVehicles: %v", err)
+	}
+	if len(loaded) != 1 {
+		t.Fatalf("LoadSAGVehicles len = %d, want 1", len(loaded))
+	}
+	if loaded[0].Seats != 3 || loaded[0].RackSlots != 2 || loaded[0].Division != nil {
+		t.Errorf("loaded = %+v", loaded[0])
+	}
+
+	if err := s.DeleteSAGVehicle("net-1", "ci-1"); err != nil {
+		t.Fatalf("DeleteSAGVehicle: %v", err)
+	}
+	loaded, err = s.LoadSAGVehicles("net-1")
+	if err != nil {
+		t.Fatalf("LoadSAGVehicles after delete: %v", err)
+	}
+	if len(loaded) != 0 {
+		t.Errorf("LoadSAGVehicles after delete = %v, want empty", loaded)
+	}
+}
+
+func TestDeleteNetCascadesSAG(t *testing.T) {
+	s, _ := newTestStore(t)
+	defer s.Close()
+
+	n := Net{ID: "net-sag-cascade", Name: "Cascade Net", Status: "draft", PinnedStations: []string{}, Profile: "bike-ride"}
+	if err := s.SaveNet(n); err != nil {
+		t.Fatalf("SaveNet: %v", err)
+	}
+	now := time.Now().UTC()
+	if err := s.SaveSAGRequest(SAGRequest{ID: "req-cascade", NetID: n.ID, Sequence: 1, CreatedAt: now, UpdatedAt: now}); err != nil {
+		t.Fatalf("SaveSAGRequest: %v", err)
+	}
+	if err := s.SaveSAGVehicle(SAGVehicle{NetID: n.ID, CheckInID: "ci-cascade", UpdatedAt: now}); err != nil {
+		t.Fatalf("SaveSAGVehicle: %v", err)
+	}
+
+	if err := s.DeleteNet(n.ID); err != nil {
+		t.Fatalf("DeleteNet: %v", err)
+	}
+
+	reqs, err := s.LoadSAGRequests(n.ID)
+	if err != nil {
+		t.Fatalf("LoadSAGRequests after delete: %v", err)
+	}
+	if len(reqs) != 0 {
+		t.Errorf("LoadSAGRequests after DeleteNet = %v, want empty", reqs)
+	}
+	vehicles, err := s.LoadSAGVehicles(n.ID)
+	if err != nil {
+		t.Fatalf("LoadSAGVehicles after delete: %v", err)
+	}
+	if len(vehicles) != 0 {
+		t.Errorf("LoadSAGVehicles after DeleteNet = %v, want empty", vehicles)
+	}
+}
+
+// --- Course closure (internal/course) ---
+
+func TestMigrateV27CreatesCourseTables(t *testing.T) {
+	s, _ := newTestStore(t)
+	defer s.Close()
+
+	for _, table := range []string{
+		"course_config", "course_shutoffs", "course_rider_exceptions",
+		"course_sweep_reports", "course_station_closures",
+	} {
+		var present int
+		if err := s.db.QueryRow(
+			`SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name=?`, table,
+		).Scan(&present); err != nil {
+			t.Fatalf("check table %s: %v", table, err)
+		}
+		if present != 1 {
+			t.Errorf("table %s missing after migrateV27", table)
+		}
+	}
+}
+
+func TestMigrateV27Idempotent(t *testing.T) {
+	s, _ := newTestStore(t)
+	defer s.Close()
+
+	if err := s.migrateV27(); err != nil {
+		t.Fatalf("first rerun of migrateV27 failed: %v", err)
+	}
+	if err := s.migrateV27(); err != nil {
+		t.Fatalf("second rerun of migrateV27 failed: %v", err)
+	}
+}
+
+func TestCourseConfigRoundTrip(t *testing.T) {
+	s, _ := newTestStore(t)
+	defer s.Close()
+
+	now := time.Now().Truncate(time.Second).UTC()
+	cfg := CourseConfig{
+		NetID:                "net-1",
+		Division:             "",
+		SweepLabel:           "TAIL",
+		LeadLabel:            "FRONT",
+		CloseRequiresSweep:   true,
+		AutoSweepFromPassage: false,
+		UpdatedAt:            now,
+	}
+	if err := s.SaveCourseConfig(cfg); err != nil {
+		t.Fatalf("SaveCourseConfig: %v", err)
+	}
+
+	got, err := s.LoadCourseConfig("net-1")
+	if err != nil {
+		t.Fatalf("LoadCourseConfig: %v", err)
+	}
+	if got == nil {
+		t.Fatal("LoadCourseConfig = nil, want a config")
+	}
+	if got.SweepLabel != "TAIL" || got.LeadLabel != "FRONT" || !got.CloseRequiresSweep || got.AutoSweepFromPassage {
+		t.Errorf("loaded config = %+v", got)
+	}
+	if !got.UpdatedAt.Equal(now) {
+		t.Errorf("UpdatedAt = %v, want %v", got.UpdatedAt, now)
+	}
+
+	missing, err := s.LoadCourseConfig("missing")
+	if err != nil {
+		t.Fatalf("LoadCourseConfig(missing): %v", err)
+	}
+	if missing != nil {
+		t.Errorf("LoadCourseConfig(missing) = %+v, want nil", missing)
+	}
+}
+
+func TestShutoffPointRoundTrip(t *testing.T) {
+	s, _ := newTestStore(t)
+	defer s.Close()
+
+	now := time.Now().Truncate(time.Second).UTC()
+	mile := 41.2
+	firedAt := now.Add(time.Hour)
+
+	cases := []ShutoffPoint{
+		{
+			ID: "sp-1", NetID: "net-1", Name: "Benson Shutoff",
+			Lat: 41.79474, Lon: -111.90586, RouteMile: nil,
+			ScheduledAt: now, RerouteDirection: "West", RerouteDestination: "55-mile route",
+			Status: "planned", CreatedAt: now, UpdatedAt: now,
+		},
+		{
+			ID: "sp-2", NetID: "net-1", Name: "Second Shutoff",
+			Lat: 41.8, Lon: -111.9, RouteMile: &mile,
+			ScheduledAt: now.Add(2 * time.Hour), Status: "planned",
+			CreatedAt: now, UpdatedAt: now,
+		},
+		{
+			ID: "sp-3", NetID: "net-1", Name: "Fired Shutoff",
+			Lat: 41.9, Lon: -112.0,
+			ScheduledAt: now.Add(3 * time.Hour), Status: "fired",
+			FiredAt: &firedAt, FiredBy: "NCS", FireNote: "note", RerouteCount: 3,
+			CreatedAt: now, UpdatedAt: now,
+		},
+	}
+	for _, sp := range cases {
+		if err := s.SaveShutoffPoint(sp); err != nil {
+			t.Fatalf("SaveShutoffPoint(%s): %v", sp.ID, err)
+		}
+	}
+
+	loaded, err := s.LoadShutoffPoints("net-1")
+	if err != nil {
+		t.Fatalf("LoadShutoffPoints: %v", err)
+	}
+	if len(loaded) != 3 {
+		t.Fatalf("LoadShutoffPoints len = %d, want 3", len(loaded))
+	}
+	// ORDER BY scheduled_at ASC.
+	if loaded[0].ID != "sp-1" || loaded[1].ID != "sp-2" || loaded[2].ID != "sp-3" {
+		t.Errorf("order = [%s,%s,%s], want [sp-1,sp-2,sp-3]", loaded[0].ID, loaded[1].ID, loaded[2].ID)
+	}
+	if loaded[0].RouteMile != nil {
+		t.Errorf("sp-1 RouteMile = %v, want nil", *loaded[0].RouteMile)
+	}
+	if loaded[1].RouteMile == nil || *loaded[1].RouteMile != mile {
+		t.Errorf("sp-2 RouteMile = %v, want %v", loaded[1].RouteMile, mile)
+	}
+	if loaded[2].FiredAt == nil || !loaded[2].FiredAt.Equal(firedAt) {
+		t.Errorf("sp-3 FiredAt = %v, want %v", loaded[2].FiredAt, firedAt)
+	}
+	if loaded[2].RerouteCount != 3 {
+		t.Errorf("sp-3 RerouteCount = %d, want 3", loaded[2].RerouteCount)
+	}
+
+	if err := s.DeleteShutoffPoint("sp-2"); err != nil {
+		t.Fatalf("DeleteShutoffPoint: %v", err)
+	}
+	loaded, err = s.LoadShutoffPoints("net-1")
+	if err != nil {
+		t.Fatalf("LoadShutoffPoints after delete: %v", err)
+	}
+	if len(loaded) != 2 {
+		t.Errorf("LoadShutoffPoints after delete len = %d, want 2", len(loaded))
+	}
+}
+
+func TestRiderExceptionRoundTrip(t *testing.T) {
+	s, _ := newTestStore(t)
+	defer s.Close()
+
+	now := time.Now().Truncate(time.Second).UTC()
+	mile := 12.5
+
+	// Two rows with the SAME bib both persist — bib is a label, not a key.
+	r1 := RiderException{
+		ID: "re-1", NetID: "net-1", Bib: "101", Kind: "sag",
+		SupportStatus: "unsupported", RouteMile: &mile,
+		RecordedAt: now, StatusChangedAt: now,
+	}
+	r2 := RiderException{
+		ID: "re-2", NetID: "net-1", Bib: "101", Kind: "medical",
+		SupportStatus: "supported",
+		RecordedAt:    now.Add(time.Minute), StatusChangedAt: now.Add(time.Minute),
+	}
+	r3 := RiderException{
+		ID: "re-3", NetID: "net-1", Bib: "", BibWithheld: true, Kind: "shutoff_reroute",
+		SupportStatus: "unsupported",
+		RecordedAt:    now.Add(2 * time.Minute), StatusChangedAt: now.Add(2 * time.Minute),
+	}
+	for _, r := range []RiderException{r1, r2, r3} {
+		if err := s.SaveRiderException(r); err != nil {
+			t.Fatalf("SaveRiderException(%s): %v", r.ID, err)
+		}
+	}
+
+	loaded, err := s.LoadRiderExceptions("net-1")
+	if err != nil {
+		t.Fatalf("LoadRiderExceptions: %v", err)
+	}
+	if len(loaded) != 3 {
+		t.Fatalf("LoadRiderExceptions len = %d, want 3", len(loaded))
+	}
+	// ORDER BY recorded_at ASC.
+	if loaded[0].ID != "re-1" || loaded[1].ID != "re-2" || loaded[2].ID != "re-3" {
+		t.Errorf("order = [%s,%s,%s]", loaded[0].ID, loaded[1].ID, loaded[2].ID)
+	}
+	if loaded[0].Bib != "101" || loaded[1].Bib != "101" {
+		t.Errorf("both rows should keep bib 101: %+v / %+v", loaded[0], loaded[1])
+	}
+	if loaded[0].RouteMile == nil || *loaded[0].RouteMile != mile {
+		t.Errorf("re-1 RouteMile = %v, want %v", loaded[0].RouteMile, mile)
+	}
+	if loaded[2].Bib != "" || !loaded[2].BibWithheld {
+		t.Errorf("re-3 = %+v, want bib withheld", loaded[2])
+	}
+}
+
+func TestSweepReportsLimit(t *testing.T) {
+	s, _ := newTestStore(t)
+	defer s.Close()
+
+	now := time.Now().Truncate(time.Second).UTC()
+	for i := 0; i < 5; i++ {
+		r := SweepReport{
+			ID: fmt.Sprintf("sr-%d", i), NetID: "net-1",
+			ReportedBy: "sweep", LastRiderBib: fmt.Sprintf("bib-%d", i),
+			ReportedAt: now.Add(time.Duration(i) * time.Minute),
+		}
+		if err := s.SaveSweepReport(r); err != nil {
+			t.Fatalf("SaveSweepReport(%d): %v", i, err)
+		}
+	}
+
+	limited, err := s.LoadSweepReports("net-1", 2)
+	if err != nil {
+		t.Fatalf("LoadSweepReports(limit 2): %v", err)
+	}
+	if len(limited) != 2 {
+		t.Fatalf("LoadSweepReports(limit 2) len = %d, want 2", len(limited))
+	}
+	// newest first (DESC).
+	if limited[0].ID != "sr-4" || limited[1].ID != "sr-3" {
+		t.Errorf("limited order = [%s,%s], want [sr-4,sr-3]", limited[0].ID, limited[1].ID)
+	}
+
+	all, err := s.LoadSweepReports("net-1", 0)
+	if err != nil {
+		t.Fatalf("LoadSweepReports(limit 0): %v", err)
+	}
+	if len(all) != 5 {
+		t.Errorf("LoadSweepReports(limit 0) len = %d, want 5 (all)", len(all))
+	}
+}
+
+func TestStationClosureUpsert(t *testing.T) {
+	s, _ := newTestStore(t)
+	defer s.Close()
+
+	now := time.Now().Truncate(time.Second).UTC()
+	c := StationClosure{
+		NetID: "net-1", CheckpointID: "cp-1", State: "open", UpdatedAt: now,
+	}
+	if err := s.SaveStationClosure(c); err != nil {
+		t.Fatalf("SaveStationClosure: %v", err)
+	}
+	c.State = "sweep_passed"
+	sweepAt := now.Add(time.Hour)
+	c.SweepPassedAt = &sweepAt
+	c.SweepPassedBy = "sweep"
+	c.UpdatedAt = sweepAt
+	if err := s.SaveStationClosure(c); err != nil {
+		t.Fatalf("SaveStationClosure (update): %v", err)
+	}
+
+	loaded, err := s.LoadStationClosures("net-1")
+	if err != nil {
+		t.Fatalf("LoadStationClosures: %v", err)
+	}
+	if len(loaded) != 1 {
+		t.Fatalf("LoadStationClosures len = %d, want 1 (upsert, not insert)", len(loaded))
+	}
+	if loaded[0].State != "sweep_passed" || loaded[0].SweepPassedAt == nil || !loaded[0].SweepPassedAt.Equal(sweepAt) {
+		t.Errorf("loaded = %+v, want latest state", loaded[0])
+	}
+}
+
+func TestDeleteCourseDataForNet(t *testing.T) {
+	s, _ := newTestStore(t)
+	defer s.Close()
+
+	now := time.Now().UTC()
+	if err := s.SaveCourseConfig(CourseConfig{NetID: "net-1", UpdatedAt: now}); err != nil {
+		t.Fatalf("SaveCourseConfig net-1: %v", err)
+	}
+	if err := s.SaveCourseConfig(CourseConfig{NetID: "net-2", UpdatedAt: now}); err != nil {
+		t.Fatalf("SaveCourseConfig net-2: %v", err)
+	}
+	if err := s.SaveShutoffPoint(ShutoffPoint{ID: "sp-a", NetID: "net-1", Name: "A", ScheduledAt: now, Status: "planned", CreatedAt: now, UpdatedAt: now}); err != nil {
+		t.Fatalf("SaveShutoffPoint net-1: %v", err)
+	}
+	if err := s.SaveShutoffPoint(ShutoffPoint{ID: "sp-b", NetID: "net-2", Name: "B", ScheduledAt: now, Status: "planned", CreatedAt: now, UpdatedAt: now}); err != nil {
+		t.Fatalf("SaveShutoffPoint net-2: %v", err)
+	}
+	if err := s.SaveRiderException(RiderException{ID: "re-a", NetID: "net-1", Kind: "sag", RecordedAt: now, StatusChangedAt: now}); err != nil {
+		t.Fatalf("SaveRiderException net-1: %v", err)
+	}
+	if err := s.SaveRiderException(RiderException{ID: "re-b", NetID: "net-2", Kind: "sag", RecordedAt: now, StatusChangedAt: now}); err != nil {
+		t.Fatalf("SaveRiderException net-2: %v", err)
+	}
+	if err := s.SaveSweepReport(SweepReport{ID: "sr-a", NetID: "net-1", ReportedAt: now}); err != nil {
+		t.Fatalf("SaveSweepReport net-1: %v", err)
+	}
+	if err := s.SaveSweepReport(SweepReport{ID: "sr-b", NetID: "net-2", ReportedAt: now}); err != nil {
+		t.Fatalf("SaveSweepReport net-2: %v", err)
+	}
+	if err := s.SaveStationClosure(StationClosure{NetID: "net-1", CheckpointID: "cp-a", State: "open", UpdatedAt: now}); err != nil {
+		t.Fatalf("SaveStationClosure net-1: %v", err)
+	}
+	if err := s.SaveStationClosure(StationClosure{NetID: "net-2", CheckpointID: "cp-b", State: "open", UpdatedAt: now}); err != nil {
+		t.Fatalf("SaveStationClosure net-2: %v", err)
+	}
+
+	if err := s.DeleteCourseDataForNet("net-1"); err != nil {
+		t.Fatalf("DeleteCourseDataForNet: %v", err)
+	}
+
+	if cfg, err := s.LoadCourseConfig("net-1"); err != nil || cfg != nil {
+		t.Errorf("net-1 config after delete = (%v, %v), want (nil, nil)", cfg, err)
+	}
+	if sps, _ := s.LoadShutoffPoints("net-1"); len(sps) != 0 {
+		t.Errorf("net-1 shutoffs after delete = %v, want empty", sps)
+	}
+	if res, _ := s.LoadRiderExceptions("net-1"); len(res) != 0 {
+		t.Errorf("net-1 riders after delete = %v, want empty", res)
+	}
+	if srs, _ := s.LoadSweepReports("net-1", 0); len(srs) != 0 {
+		t.Errorf("net-1 sweep reports after delete = %v, want empty", srs)
+	}
+	if scs, _ := s.LoadStationClosures("net-1"); len(scs) != 0 {
+		t.Errorf("net-1 station closures after delete = %v, want empty", scs)
+	}
+
+	// net-2 untouched.
+	if cfg, err := s.LoadCourseConfig("net-2"); err != nil || cfg == nil {
+		t.Errorf("net-2 config after delete of net-1 = (%v, %v), want a config", cfg, err)
+	}
+	if sps, _ := s.LoadShutoffPoints("net-2"); len(sps) != 1 {
+		t.Errorf("net-2 shutoffs after delete of net-1 = %v, want 1", sps)
+	}
+	if res, _ := s.LoadRiderExceptions("net-2"); len(res) != 1 {
+		t.Errorf("net-2 riders after delete of net-1 = %v, want 1", res)
+	}
+	if srs, _ := s.LoadSweepReports("net-2", 0); len(srs) != 1 {
+		t.Errorf("net-2 sweep reports after delete of net-1 = %v, want 1", srs)
+	}
+	if scs, _ := s.LoadStationClosures("net-2"); len(scs) != 1 {
+		t.Errorf("net-2 station closures after delete of net-1 = %v, want 1", scs)
+	}
+}
+
+func TestCourseLoadsReturnEmptyNotNil(t *testing.T) {
+	s, _ := newTestStore(t)
+	defer s.Close()
+
+	if sps, err := s.LoadShutoffPoints("unknown-net"); err != nil || sps == nil || len(sps) != 0 {
+		t.Errorf("LoadShutoffPoints(unknown) = (%v, %v), want (empty non-nil, nil)", sps, err)
+	}
+	if res, err := s.LoadRiderExceptions("unknown-net"); err != nil || res == nil || len(res) != 0 {
+		t.Errorf("LoadRiderExceptions(unknown) = (%v, %v), want (empty non-nil, nil)", res, err)
+	}
+	if srs, err := s.LoadSweepReports("unknown-net", 0); err != nil || srs == nil || len(srs) != 0 {
+		t.Errorf("LoadSweepReports(unknown) = (%v, %v), want (empty non-nil, nil)", srs, err)
+	}
+	if scs, err := s.LoadStationClosures("unknown-net"); err != nil || scs == nil || len(scs) != 0 {
+		t.Errorf("LoadStationClosures(unknown) = (%v, %v), want (empty non-nil, nil)", scs, err)
+	}
+}
+
+// --- Ride traffic (WP4): supply requests and medical notifications ---
+
+func TestMigrateV28CreatesRideTrafficTables(t *testing.T) {
+	s, _ := newTestStore(t)
+	defer s.Close()
+
+	for _, table := range []string{"ride_supply_requests", "ride_medical_notifications"} {
+		var present int
+		if err := s.db.QueryRow(
+			`SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name=?`, table,
+		).Scan(&present); err != nil {
+			t.Fatalf("check table %s: %v", table, err)
+		}
+		if present != 1 {
+			t.Errorf("table %s missing after migrateV28", table)
+		}
+	}
+
+	for _, idx := range []string{"idx_ride_supply_status", "idx_ride_medical_status"} {
+		var present int
+		if err := s.db.QueryRow(
+			`SELECT COUNT(*) FROM sqlite_master WHERE type='index' AND name=?`, idx,
+		).Scan(&present); err != nil {
+			t.Fatalf("check index %s: %v", idx, err)
+		}
+		if present != 1 {
+			t.Errorf("index %s missing after migrateV28", idx)
+		}
+	}
+}
+
+func TestMigrateV28Idempotent(t *testing.T) {
+	s, _ := newTestStore(t)
+	defer s.Close()
+
+	if err := s.migrateV28(); err != nil {
+		t.Fatalf("first rerun of migrateV28 failed: %v", err)
+	}
+	if err := s.migrateV28(); err != nil {
+		t.Fatalf("second rerun of migrateV28 failed: %v", err)
+	}
+}
+
+func TestSupplyRequestRoundTrip(t *testing.T) {
+	s, _ := newTestStore(t)
+	defer s.Close()
+
+	now := time.Now().Truncate(time.Second).UTC()
+	mm := 22.5
+	lat, lon := 38.1, -122.7
+	readBack := now.Add(5 * time.Minute)
+	relayed := now.Add(10 * time.Minute)
+
+	req := SupplyRequest{
+		ID:                   "sup-1",
+		NetID:                "net-1",
+		Division:             nil,
+		RequestedByCheckInID: "ci-1",
+		RequestedByCall:      "RS3",
+		Location:             "Rest Stop 3 / Nicasio",
+		LocationAnnotationID: "ann-1",
+		MilesRemaining:       &mm,
+		RouteID:              "100",
+		Lat:                  &lat,
+		Lon:                  &lon,
+		Items: []SupplyItem{
+			{Item: "ice", Quantity: 10, Unit: "bags", AddedAt: now},
+			{Item: "water", Quantity: 2, Unit: "cases", AddedAt: now.Add(time.Minute)},
+		},
+		AskedWhatElse: true,
+		Priority:      "medium",
+		Notes:         "please hurry",
+		Status:        "en_route",
+		CreatedAt:     now,
+		ReadBackAt:    &readBack,
+		ReadBackBy:    "RS3",
+		RelayedAt:     &relayed,
+		RelayedTo:     "SUPPLY 1",
+		ETAs: []SupplyETA{
+			{Minutes: 20, GivenAt: relayed, DueAt: relayed.Add(20 * time.Minute), Source: "SUPPLY 1"},
+			{Minutes: 35, GivenAt: relayed.Add(15 * time.Minute), DueAt: relayed.Add(50 * time.Minute), Source: "SUPPLY 1"},
+		},
+		DeliveredAt: nil,
+		UpdatedAt:   now,
+	}
+	if err := s.SaveSupplyRequest(req); err != nil {
+		t.Fatalf("SaveSupplyRequest: %v", err)
+	}
+
+	loaded, err := s.LoadSupplyRequests("net-1")
+	if err != nil {
+		t.Fatalf("LoadSupplyRequests: %v", err)
+	}
+	if len(loaded) != 1 {
+		t.Fatalf("LoadSupplyRequests len = %d, want 1", len(loaded))
+	}
+	got := loaded[0]
+	if got.Division != nil {
+		t.Errorf("Division = %v, want nil", *got.Division)
+	}
+	if len(got.Items) != 2 || got.Items[0].Item != "ice" || got.Items[1].Item != "water" {
+		t.Errorf("Items = %+v", got.Items)
+	}
+	if len(got.ETAs) != 2 || got.ETAs[0].Minutes != 20 || got.ETAs[1].Minutes != 35 {
+		t.Errorf("ETAs = %+v", got.ETAs)
+	}
+	if got.MilesRemaining == nil || *got.MilesRemaining != mm {
+		t.Errorf("MilesRemaining = %v, want %v", got.MilesRemaining, mm)
+	}
+	if !got.ReadBackAt.Equal(readBack) {
+		t.Errorf("ReadBackAt = %v, want %v", got.ReadBackAt, readBack)
+	}
+	if got.DeliveredAt != nil {
+		t.Errorf("DeliveredAt = %v, want nil", got.DeliveredAt)
+	}
+
+	// Division round-trips as a real pointer value, and nil Items/ETAs on
+	// save come back as empty non-nil slices, never null.
+	div := "route"
+	req.ID = "sup-2"
+	req.Division = &div
+	req.Items = nil
+	req.ETAs = nil
+	req.ReadBackAt = nil
+	req.RelayedAt = nil
+	if err := s.SaveSupplyRequest(req); err != nil {
+		t.Fatalf("SaveSupplyRequest (nil slices): %v", err)
+	}
+	loaded, err = s.LoadSupplyRequests("net-1")
+	if err != nil {
+		t.Fatalf("LoadSupplyRequests: %v", err)
+	}
+	if len(loaded) != 2 {
+		t.Fatalf("LoadSupplyRequests len = %d, want 2", len(loaded))
+	}
+	// ORDER BY created_at ASC; both rows share CreatedAt=now so fall back to
+	// checking both IDs are present rather than assuming a specific order.
+	byID := map[string]SupplyRequest{loaded[0].ID: loaded[0], loaded[1].ID: loaded[1]}
+	second, ok := byID["sup-2"]
+	if !ok {
+		t.Fatalf("sup-2 not found in %+v", loaded)
+	}
+	if second.Division == nil || *second.Division != "route" {
+		t.Errorf("Division = %v, want route", second.Division)
+	}
+	if second.Items == nil || len(second.Items) != 0 {
+		t.Errorf("Items = %v, want empty non-nil slice", second.Items)
+	}
+	if second.ETAs == nil || len(second.ETAs) != 0 {
+		t.Errorf("ETAs = %v, want empty non-nil slice", second.ETAs)
+	}
+
+	b, err := json.Marshal(second)
+	if err != nil {
+		t.Fatalf("Marshal: %v", err)
+	}
+	if strings.Contains(string(b), "null") {
+		t.Errorf("marshaled request contains null: %s", b)
+	}
+}
+
+func TestLoadSupplyRequestsUnknownNet(t *testing.T) {
+	s, _ := newTestStore(t)
+	defer s.Close()
+
+	reqs, err := s.LoadSupplyRequests("unknown-net")
+	if err != nil {
+		t.Fatalf("LoadSupplyRequests: %v", err)
+	}
+	if reqs == nil || len(reqs) != 0 {
+		t.Errorf("LoadSupplyRequests(unknown) = %v, want empty non-nil slice", reqs)
+	}
+}
+
+func TestMedicalNotificationRoundTrip(t *testing.T) {
+	s, _ := newTestStore(t)
+	defer s.Close()
+
+	now := time.Now().Truncate(time.Second).UTC()
+	mm := 22.0
+	lat, lon := 38.05, -122.6
+	readBack := now.Add(2 * time.Minute)
+	etaGiven := now.Add(3 * time.Minute)
+	etaDue := etaGiven.Add(8 * time.Minute)
+	onScene := now.Add(11 * time.Minute)
+	departed := now.Add(34 * time.Minute)
+	onSceneSecs := 1380
+	etaMinutes := 8
+
+	n := MedicalNotification{
+		ID:                   "med-1",
+		NetID:                "net-1",
+		Division:             nil,
+		ReportedByCheckInID:  "ci-2",
+		ReportedByCall:       "SAG 2",
+		Bib:                  "412",
+		BibWithheld:          true,
+		Sex:                  "M",
+		Age:                  "~40",
+		Location:             "near Nicasio",
+		MilesRemaining:       &mm,
+		RouteID:              "100",
+		LocationAnnotationID: "ann-2",
+		Lat:                  &lat,
+		Lon:                  &lon,
+		ChiefComplaint:       "fall/shoulder",
+		ReadBackAt:           &readBack,
+		ReadBackBy:           "SAG 2",
+		Severity:             "severe",
+		Priority:             "priority",
+		Status:               "departed",
+		EMSUnit:              "Medic 12",
+		ETAMinutes:           &etaMinutes,
+		ETAGivenAt:           &etaGiven,
+		ETADueAt:             &etaDue,
+		OnSceneAt:            &onScene,
+		DepartedAt:           &departed,
+		OnSceneSeconds:       &onSceneSecs,
+		Destination:          "hospital",
+		DestinationName:      "Marin General",
+		PatientCount:         1,
+		PatientName:          "Jane Rider",
+		Notes:                "transported",
+		CreatedAt:            now,
+		UpdatedAt:            departed,
+	}
+	if err := s.SaveMedicalNotification(n); err != nil {
+		t.Fatalf("SaveMedicalNotification: %v", err)
+	}
+
+	loaded, err := s.LoadMedicalNotifications("net-1")
+	if err != nil {
+		t.Fatalf("LoadMedicalNotifications: %v", err)
+	}
+	if len(loaded) != 1 {
+		t.Fatalf("LoadMedicalNotifications len = %d, want 1", len(loaded))
+	}
+	got := loaded[0]
+	if got.Division != nil {
+		t.Errorf("Division = %v, want nil", *got.Division)
+	}
+	if !got.BibWithheld || got.Bib != "412" {
+		t.Errorf("Bib/BibWithheld = %q/%v, want 412/true (still stored, redaction is a read-time concern)", got.Bib, got.BibWithheld)
+	}
+	if got.PatientName != "Jane Rider" {
+		t.Errorf("PatientName = %q, want Jane Rider (unredacted store round-trip)", got.PatientName)
+	}
+	if got.ETAMinutes == nil || *got.ETAMinutes != 8 {
+		t.Errorf("ETAMinutes = %v, want 8", got.ETAMinutes)
+	}
+	if got.OnSceneSeconds == nil || *got.OnSceneSeconds != 1380 {
+		t.Errorf("OnSceneSeconds = %v, want 1380", got.OnSceneSeconds)
+	}
+	if got.OnSceneAt == nil || !got.OnSceneAt.Equal(onScene) {
+		t.Errorf("OnSceneAt = %v, want %v", got.OnSceneAt, onScene)
+	}
+	if got.DepartedAt == nil || !got.DepartedAt.Equal(departed) {
+		t.Errorf("DepartedAt = %v, want %v", got.DepartedAt, departed)
+	}
+
+	// Every *time.Time nil round-trips as nil, not a zero time.
+	n2 := MedicalNotification{
+		ID: "med-2", NetID: "net-1", ReportedByCall: "SAG 3", Sex: "U", Age: "unknown",
+		Location: "near start", ChiefComplaint: "twisted ankle",
+		Severity: "routine", Priority: "low", Status: "reported",
+		CreatedAt: now, UpdatedAt: now,
+	}
+	if err := s.SaveMedicalNotification(n2); err != nil {
+		t.Fatalf("SaveMedicalNotification (all nil times): %v", err)
+	}
+	loaded, err = s.LoadMedicalNotifications("net-1")
+	if err != nil {
+		t.Fatalf("LoadMedicalNotifications: %v", err)
+	}
+	if len(loaded) != 2 {
+		t.Fatalf("LoadMedicalNotifications len = %d, want 2", len(loaded))
+	}
+	var second MedicalNotification
+	for _, m := range loaded {
+		if m.ID == "med-2" {
+			second = m
+		}
+	}
+	for name, ptr := range map[string]*time.Time{
+		"ReadBackAt": second.ReadBackAt, "ETAGivenAt": second.ETAGivenAt, "ETADueAt": second.ETADueAt,
+		"OnSceneAt": second.OnSceneAt, "DepartedAt": second.DepartedAt, "ReleasedAt": second.ReleasedAt,
+		"CancelledAt": second.CancelledAt,
+	} {
+		if ptr != nil {
+			t.Errorf("%s = %v, want nil", name, ptr)
+		}
+	}
+	if second.ETAMinutes != nil {
+		t.Errorf("ETAMinutes = %v, want nil", second.ETAMinutes)
+	}
+	if second.OnSceneSeconds != nil {
+		t.Errorf("OnSceneSeconds = %v, want nil", second.OnSceneSeconds)
+	}
+
+	b, err := json.Marshal(second)
+	if err != nil {
+		t.Fatalf("Marshal: %v", err)
+	}
+	if strings.Contains(string(b), "null") {
+		t.Errorf("marshaled notification contains null: %s", b)
+	}
+}
+
+func TestDeleteRideTraffic(t *testing.T) {
+	s, _ := newTestStore(t)
+	defer s.Close()
+
+	now := time.Now().Truncate(time.Second).UTC()
+	if err := s.SaveSupplyRequest(SupplyRequest{
+		ID: "sup-1", NetID: "net-1", RequestedByCall: "RS3", Priority: "medium",
+		Status: "draft", CreatedAt: now, UpdatedAt: now,
+	}); err != nil {
+		t.Fatalf("SaveSupplyRequest: %v", err)
+	}
+	if err := s.SaveSupplyRequest(SupplyRequest{
+		ID: "sup-2", NetID: "net-2", RequestedByCall: "RS1", Priority: "medium",
+		Status: "draft", CreatedAt: now, UpdatedAt: now,
+	}); err != nil {
+		t.Fatalf("SaveSupplyRequest: %v", err)
+	}
+	if err := s.SaveMedicalNotification(MedicalNotification{
+		ID: "med-1", NetID: "net-1", ReportedByCall: "SAG 2", Sex: "U", Age: "unknown",
+		Location: "x", ChiefComplaint: "y", Severity: "routine", Priority: "low",
+		Status: "reported", CreatedAt: now, UpdatedAt: now,
+	}); err != nil {
+		t.Fatalf("SaveMedicalNotification: %v", err)
+	}
+	if err := s.SaveMedicalNotification(MedicalNotification{
+		ID: "med-2", NetID: "net-2", ReportedByCall: "SAG 3", Sex: "U", Age: "unknown",
+		Location: "x", ChiefComplaint: "y", Severity: "routine", Priority: "low",
+		Status: "reported", CreatedAt: now, UpdatedAt: now,
+	}); err != nil {
+		t.Fatalf("SaveMedicalNotification: %v", err)
+	}
+
+	if err := s.DeleteRideTraffic("net-1"); err != nil {
+		t.Fatalf("DeleteRideTraffic: %v", err)
+	}
+
+	if reqs, _ := s.LoadSupplyRequests("net-1"); len(reqs) != 0 {
+		t.Errorf("net-1 supply requests after delete = %v, want empty", reqs)
+	}
+	if meds, _ := s.LoadMedicalNotifications("net-1"); len(meds) != 0 {
+		t.Errorf("net-1 medical notifications after delete = %v, want empty", meds)
+	}
+	if reqs, _ := s.LoadSupplyRequests("net-2"); len(reqs) != 1 {
+		t.Errorf("net-2 supply requests after delete of net-1 = %v, want 1", reqs)
+	}
+	if meds, _ := s.LoadMedicalNotifications("net-2"); len(meds) != 1 {
+		t.Errorf("net-2 medical notifications after delete of net-1 = %v, want 1", meds)
+	}
+}
+
+// --- Ride reconciliation (WP5) round-trip tests ---
+
+func TestV29SchemaVersion(t *testing.T) {
+	s, _ := newTestStore(t)
+	defer s.Close()
+	if v := currentVersion(t, s); v != 30 {
+		t.Errorf("expected schema version 30, got %d", v)
+	}
+}
+
+func TestSAGShiftSummaryRoundtrip(t *testing.T) {
+	s, _ := newTestStore(t)
+	defer s.Close()
+
+	now := time.Now().Truncate(time.Second).UTC()
+	start := now.Add(-2 * time.Hour)
+	odoStart := 12000.0
+	odoEnd := 12084.2
+	transports := 7
+	assists := 0 // explicit zero must survive as 0, not fall back to derived
+
+	sm := SAGShiftSummary{
+		ID:            "shift-1",
+		NetID:         "net-1",
+		CheckInID:     "ci-sag-1",
+		Callsign:      "K6ABC",
+		TacticalCall:  "SAG 2",
+		DriverName:    "Pat Driver",
+		Vehicle:       "white Sprinter, 2 racks",
+		ShiftStart:    &start,
+		OdometerStart: &odoStart,
+		OdometerEnd:   &odoEnd,
+		Entered: SAGShiftCounts{
+			Transports: &transports,
+			Assists:    &assists,
+		},
+		Notes:     "smooth shift",
+		Status:    ShiftFiled,
+		FiledAt:   &now,
+		FiledBy:   "K6ABC",
+		CreatedAt: start,
+		UpdatedAt: now,
+	}
+	if err := s.SaveSAGShiftSummary(sm); err != nil {
+		t.Fatalf("SaveSAGShiftSummary: %v", err)
+	}
+
+	// A second summary with no entered counts at all — every pointer must
+	// stay nil, not become 0, so the caller knows to fall back to derived.
+	sm2 := SAGShiftSummary{
+		ID: "shift-2", NetID: "net-1", CheckInID: "ci-sag-2",
+		Status: ShiftDraft, CreatedAt: start, UpdatedAt: start,
+	}
+	if err := s.SaveSAGShiftSummary(sm2); err != nil {
+		t.Fatalf("SaveSAGShiftSummary (no entered counts): %v", err)
+	}
+
+	loaded, err := s.LoadSAGShiftSummaries("net-1")
+	if err != nil {
+		t.Fatalf("LoadSAGShiftSummaries: %v", err)
+	}
+	if len(loaded) != 2 {
+		t.Fatalf("LoadSAGShiftSummaries len = %d, want 2", len(loaded))
+	}
+
+	got := loaded[0]
+	if got.Division != "" {
+		t.Errorf("Division = %q, want \"\"", got.Division)
+	}
+	if got.Entered.Transports == nil || *got.Entered.Transports != 7 {
+		t.Errorf("Entered.Transports = %v, want 7", got.Entered.Transports)
+	}
+	if got.Entered.Assists == nil || *got.Entered.Assists != 0 {
+		t.Errorf("Entered.Assists = %v, want 0 (explicit zero must not be nil)", got.Entered.Assists)
+	}
+	if got.Entered.TubesProvided != nil {
+		t.Errorf("Entered.TubesProvided = %v, want nil (not entered)", got.Entered.TubesProvided)
+	}
+	if got.OdometerStart == nil || *got.OdometerStart != odoStart {
+		t.Errorf("OdometerStart = %v, want %v", got.OdometerStart, odoStart)
+	}
+	if got.ShiftEnd != nil {
+		t.Errorf("ShiftEnd = %v, want nil", got.ShiftEnd)
+	}
+
+	got2 := loaded[1]
+	if got2.Entered.Transports != nil || got2.Entered.Assists != nil || got2.Entered.IncidentsAttended != nil {
+		t.Errorf("shift-2 Entered = %+v, want every pointer nil", got2.Entered)
+	}
+	if got2.OdometerStart != nil || got2.ShiftStart != nil {
+		t.Errorf("shift-2 unset optionals should stay nil: OdometerStart=%v ShiftStart=%v", got2.OdometerStart, got2.ShiftStart)
+	}
+
+	if loaded, err := s.LoadSAGShiftSummaries("no-such-net"); err != nil || loaded == nil || len(loaded) != 0 {
+		t.Errorf("LoadSAGShiftSummaries(unknown net) = %v, %v, want empty non-nil slice", loaded, err)
+	}
+}
+
+func TestHandoffItemRoundtrip(t *testing.T) {
+	s, _ := newTestStore(t)
+	defer s.Close()
+
+	now := time.Now().Truncate(time.Second).UTC()
+	due := now.Add(15 * time.Minute)
+	resolved := now.Add(20 * time.Minute)
+
+	h := HandoffItem{
+		ID: "ho-1", NetID: "net-1",
+		Kind: HandoffAwaitingReply, Summary: "Asked RS3 for water status",
+		SentTo: "RS3", ReplyTo: "NCS", RefType: "message", RefID: "msg-1",
+		DueAt: &due, Status: HandoffResolved, HandoverCount: 2,
+		CreatedBy: "K6ABC", CreatedAt: now,
+		ResolvedBy: "W6XYZ", ResolvedAt: &resolved, Resolution: "RS3 confirmed full",
+	}
+	if err := s.SaveHandoffItem(h); err != nil {
+		t.Fatalf("SaveHandoffItem: %v", err)
+	}
+
+	loaded, err := s.LoadHandoffItems("net-1")
+	if err != nil {
+		t.Fatalf("LoadHandoffItems: %v", err)
+	}
+	if len(loaded) != 1 {
+		t.Fatalf("LoadHandoffItems len = %d, want 1", len(loaded))
+	}
+	got := loaded[0]
+	if got.HandoverCount != 2 {
+		t.Errorf("HandoverCount = %d, want 2", got.HandoverCount)
+	}
+	if got.DueAt == nil || !got.DueAt.Equal(due) {
+		t.Errorf("DueAt = %v, want %v", got.DueAt, due)
+	}
+	if got.ResolvedAt == nil || !got.ResolvedAt.Equal(resolved) {
+		t.Errorf("ResolvedAt = %v, want %v", got.ResolvedAt, resolved)
+	}
+	if got.Resolution != "RS3 confirmed full" {
+		t.Errorf("Resolution = %q, want %q", got.Resolution, "RS3 confirmed full")
+	}
+
+	if loaded, err := s.LoadHandoffItems("no-such-net"); err != nil || loaded == nil || len(loaded) != 0 {
+		t.Errorf("LoadHandoffItems(unknown net) = %v, %v, want empty non-nil slice", loaded, err)
+	}
+}
+
+func TestShiftHandoffRoundtrip(t *testing.T) {
+	s, _ := newTestStore(t)
+	defer s.Close()
+
+	now := time.Now().Truncate(time.Second).UTC()
+
+	h := ShiftHandoff{
+		ID: "sh-1", NetID: "net-1",
+		FromCallsign: "K6ABC", ToCallsign: "W6XYZ", At: now,
+		OpenItemIDs: []string{"ho-1", "ho-2"},
+		Briefing:    `{"netId":"net-1","ncsCallsign":"W6XYZ"}`,
+	}
+	if err := s.SaveShiftHandoff(h); err != nil {
+		t.Fatalf("SaveShiftHandoff: %v", err)
+	}
+
+	// A handoff saved with a nil OpenItemIDs slice must still load as [].
+	h2 := ShiftHandoff{
+		ID: "sh-2", NetID: "net-1",
+		FromCallsign: "W6XYZ", ToCallsign: "N6DEF", At: now.Add(2 * time.Hour),
+		OpenItemIDs: nil,
+	}
+	if err := s.SaveShiftHandoff(h2); err != nil {
+		t.Fatalf("SaveShiftHandoff (nil open items): %v", err)
+	}
+
+	loaded, err := s.LoadShiftHandoffs("net-1")
+	if err != nil {
+		t.Fatalf("LoadShiftHandoffs: %v", err)
+	}
+	if len(loaded) != 2 {
+		t.Fatalf("LoadShiftHandoffs len = %d, want 2", len(loaded))
+	}
+	got := loaded[0]
+	if len(got.OpenItemIDs) != 2 || got.OpenItemIDs[0] != "ho-1" || got.OpenItemIDs[1] != "ho-2" {
+		t.Errorf("OpenItemIDs = %v, want [ho-1 ho-2]", got.OpenItemIDs)
+	}
+	if got.AcknowledgedAt != nil {
+		t.Errorf("AcknowledgedAt = %v, want nil", got.AcknowledgedAt)
+	}
+
+	got2 := loaded[1]
+	if got2.OpenItemIDs == nil || len(got2.OpenItemIDs) != 0 {
+		t.Errorf("OpenItemIDs (saved nil) = %v, want empty non-nil slice", got2.OpenItemIDs)
+	}
+
+	if loaded, err := s.LoadShiftHandoffs("no-such-net"); err != nil || loaded == nil || len(loaded) != 0 {
+		t.Errorf("LoadShiftHandoffs(unknown net) = %v, %v, want empty non-nil slice", loaded, err)
+	}
+}
+
+// --- Ride phase (internal/ride/phase, WP5b) ---
+
+func TestV30SchemaVersion(t *testing.T) {
+	s, _ := newTestStore(t)
+	defer s.Close()
+	if v := currentVersion(t, s); v != 30 {
+		t.Errorf("expected schema version 30, got %d", v)
+	}
+}
+
+func TestMigrateV30CreatesRidePhaseTable(t *testing.T) {
+	s, _ := newTestStore(t)
+	defer s.Close()
+
+	var present int
+	if err := s.db.QueryRow(
+		`SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name='ride_phase_state'`,
+	).Scan(&present); err != nil {
+		t.Fatalf("check table ride_phase_state: %v", err)
+	}
+	if present != 1 {
+		t.Error("table ride_phase_state missing after migrateV30")
+	}
+}
+
+func TestMigrateV30Idempotent(t *testing.T) {
+	s, _ := newTestStore(t)
+	defer s.Close()
+
+	if err := s.migrateV30(); err != nil {
+		t.Fatalf("first rerun of migrateV30 failed: %v", err)
+	}
+	if err := s.migrateV30(); err != nil {
+		t.Fatalf("second rerun of migrateV30 failed: %v", err)
+	}
+}
+
+func TestRidePhaseRoundTrip(t *testing.T) {
+	s, _ := newTestStore(t)
+	defer s.Close()
+
+	// No row yet -> nil, nil (the manager's default is pre-start, not an error).
+	got, err := s.LoadRidePhase("net-1")
+	if err != nil {
+		t.Fatalf("LoadRidePhase (absent): %v", err)
+	}
+	if got != nil {
+		t.Errorf("LoadRidePhase (absent) = %+v, want nil", got)
+	}
+
+	now := time.Now().Truncate(time.Second).UTC()
+	p := RidePhaseState{NetID: "net-1", Phase: "launched", SetBy: "K6ABC", Reason: "", UpdatedAt: now}
+	if err := s.SaveRidePhase(p); err != nil {
+		t.Fatalf("SaveRidePhase: %v", err)
+	}
+
+	got, err = s.LoadRidePhase("net-1")
+	if err != nil {
+		t.Fatalf("LoadRidePhase: %v", err)
+	}
+	if got == nil {
+		t.Fatal("LoadRidePhase = nil, want a row")
+	}
+	if got.Phase != "launched" || got.SetBy != "K6ABC" || got.Reason != "" {
+		t.Errorf("LoadRidePhase = %+v, want phase launched, setBy K6ABC", got)
+	}
+	if !got.UpdatedAt.Equal(now) {
+		t.Errorf("UpdatedAt = %v, want %v", got.UpdatedAt, now)
+	}
+
+	// INSERT OR REPLACE: a second save for the same net overwrites, not appends.
+	backAt := now.Add(time.Hour)
+	if err := s.SaveRidePhase(RidePhaseState{
+		NetID: "net-1", Phase: "pre-start", SetBy: "K6ABC", Reason: "advanced too early", UpdatedAt: backAt,
+	}); err != nil {
+		t.Fatalf("SaveRidePhase (overwrite): %v", err)
+	}
+	got, err = s.LoadRidePhase("net-1")
+	if err != nil {
+		t.Fatalf("LoadRidePhase (after overwrite): %v", err)
+	}
+	if got.Phase != "pre-start" || got.Reason != "advanced too early" {
+		t.Errorf("LoadRidePhase (after overwrite) = %+v, want phase pre-start with reason", got)
+	}
+
+	// A second net's row is independent.
+	if err := s.SaveRidePhase(RidePhaseState{NetID: "net-2", Phase: "mid-ride", UpdatedAt: now}); err != nil {
+		t.Fatalf("SaveRidePhase (net-2): %v", err)
+	}
+	got1, err := s.LoadRidePhase("net-1")
+	if err != nil {
+		t.Fatalf("LoadRidePhase (net-1 again): %v", err)
+	}
+	if got1.Phase != "pre-start" {
+		t.Errorf("net-1 phase = %q after saving net-2, want unaffected pre-start", got1.Phase)
 	}
 }

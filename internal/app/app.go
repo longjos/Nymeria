@@ -16,11 +16,15 @@ import (
 	"github.com/narvel/nymeria/internal/beacon"
 	"github.com/narvel/nymeria/internal/checkpoint"
 	"github.com/narvel/nymeria/internal/config"
+	"github.com/narvel/nymeria/internal/course"
 	"github.com/narvel/nymeria/internal/geocode/w3w"
 	"github.com/narvel/nymeria/internal/gps"
 	"github.com/narvel/nymeria/internal/message"
 	"github.com/narvel/nymeria/internal/netcontrol"
 	"github.com/narvel/nymeria/internal/object"
+	"github.com/narvel/nymeria/internal/ride"
+	"github.com/narvel/nymeria/internal/ride/phase"
+	"github.com/narvel/nymeria/internal/ride/reconcile"
 	"github.com/narvel/nymeria/internal/server"
 	"github.com/narvel/nymeria/internal/session"
 	"github.com/narvel/nymeria/internal/station"
@@ -304,6 +308,67 @@ func New(opts Options) (*App, error) {
 	})
 	annMgr.SetCheckpointSnapshot(cpMgr.MetaForAnnotation, cpMgr.SetMeta)
 
+	// Create ride mode (internal/ride) manager — SAG (support-and-gear
+	// transport) requests and vehicles. netMgr satisfies ride.CheckInSource
+	// and annMgr satisfies ride.AnnotationSource; a package nobody
+	// constructs is not done, so this is wired in even though no net may be
+	// running "bike-ride" profile yet.
+	rideMgr := ride.NewManager(db, netMgr, annMgr, ride.DefaultConfig())
+	// Validate SAG request priorities against the net's own agency-configured
+	// priority ladder (WP1's NetRideConfig.PriorityTiers), the same ladder
+	// supply/medical traffic already use. Nets with no override keep the
+	// shipped Marin ladder.
+	rideMgr.SetTierSource(ride.NewNetProfileTiers(netMgr))
+	if err := rideMgr.Load(); err != nil {
+		log.Printf("warning: failed to load ride mode data: %v", err)
+	}
+
+	// Create ride mode's supply/medical traffic manager (WP4). netMgr
+	// satisfies ride.NetLookup and ride.TimelineSink (via
+	// AddTimelineEventWithDetails) structurally; ride.NewNetProfilePolicy
+	// adapts netMgr's per-net ride config (WP1) into the bib-withholding
+	// and priority-tier-vocabulary Policy this package needs, without this
+	// package knowing netcontrol's field names.
+	rideTraffic := ride.NewTrafficManager(db, netMgr, netMgr, actLogger, ride.NewNetProfilePolicy(netMgr))
+	if err := rideTraffic.Load(); err != nil {
+		log.Printf("warning: failed to load ride traffic data: %v", err)
+	}
+
+	// Create course closure (internal/course) manager — shutoff points,
+	// rider support exceptions, sweep tracking, and the per-station closure
+	// ladder. Wired in unconditionally like checkpoint/ride (the 503 guard
+	// in each handler already covers "not enabled" for a general net).
+	courseMgr := course.NewManager(db, cpMgr, annMgr)
+	if err := courseMgr.Load(); err != nil {
+		log.Printf("warning: failed to load course closure data: %v", err)
+	}
+	cpMgr.SetOnPassage(courseMgr.OnPassage)
+	annMgr.SetStatusGuard(courseMgr.GuardAnnotationStatus)
+
+	// Create the ride phase manager (internal/ride/phase, WP5b) — the
+	// operator-set pre-start/launched/mid-ride/closing/collapse/reconcile
+	// state the ride status strip is keyed off, plus the live-computed
+	// "what should we move to next, and why" suggestion the NCS confirms.
+	// Wired in unconditionally like checkpoint/ride/course (the 503 guard
+	// in its handlers already covers "not enabled" for a general net, and
+	// the manager itself refuses any net whose profile isn't bike-ride).
+	phaseMgr := phase.NewManager(db, netMgr, courseMgr, cpMgr)
+	if err := phaseMgr.Load(); err != nil {
+		log.Printf("warning: failed to load ride phase data: %v", err)
+	}
+
+	// Create the ride reconciliation manager (internal/ride/reconcile, WP5)
+	// — supported-rider accounting (reused from courseMgr, not duplicated),
+	// the post-ride close-out checklist, SAG driver shift summaries, and
+	// NCS shift-relief hand-off. Wired in unconditionally like
+	// checkpoint/ride/course (the 503 guard in each handler already covers
+	// "not enabled" for a general net).
+	recMgr := reconcile.NewManager(db, netMgr, courseMgr, rideMgr, annMgr)
+	if err := recMgr.Load(); err != nil {
+		log.Printf("warning: failed to load ride reconciliation data: %v", err)
+	}
+	recMgr.SetMessageEngine(msgEngine)
+
 	// Initialize tile cache
 	var tc *tilecache.Cache
 	if cfg.TileCache.Enabled {
@@ -451,6 +516,11 @@ func New(opts Options) (*App, error) {
 		server.WithAnnotationManager(annMgr),
 		server.WithNetControlManager(netMgr),
 		server.WithCheckpointManager(cpMgr),
+		server.WithRideManager(rideMgr),
+		server.WithRideTrafficManager(rideTraffic),
+		server.WithCourseManager(courseMgr),
+		server.WithPhaseManager(phaseMgr),
+		server.WithReconcileManager(recMgr),
 		server.WithConfigManager(cfgMgr),
 		server.WithStationConfig(cfg.Station),
 		server.WithWeatherConfig(cfg.Weather),

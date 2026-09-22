@@ -2,6 +2,8 @@
 	import { activeNet, activeCheckIns } from '$lib/stores/netcontrol';
 	import { wxUnackedCount, wxActiveWarningIn } from '$lib/stores/wxAlerts';
 	import { canAdmin } from '$lib/stores/session';
+	import { visiblePanelModes } from '$lib/stores/netProfile';
+	import { panelModeVisible } from '$lib/profilePanels';
 	import type { PanelMode } from '$lib/stores/ui';
 
 	let {
@@ -36,6 +38,9 @@
 
 	let netActive = $derived($activeNet?.status === 'open');
 	let netOpCount = $derived($activeCheckIns.length);
+
+	/** Same gating as ActivityRail.svelte's desktop rail — see profilePanels.ts. */
+	let visible = $derived((m: PanelMode) => panelModeVisible($visiblePanelModes, m));
 </script>
 
 <!-- Mobile navigation rail: lives in the bottom sheet's peek area only (P0-2 —
@@ -108,23 +113,25 @@
 		</svg>
 		<span class="fab-label">Annotations</span>
 	</button>
-	<button
-		class="fab"
-		class:active={activeMode === 'weather'}
-		aria-current={(activeMode === 'weather') ? 'page' : undefined}
-		onclick={onWeatherOpen}
-		title="Weather{$wxUnackedCount > 0 ? ` — ${$wxUnackedCount} unacknowledged NWS alerts` : ''}"
-		aria-label="Weather{$wxUnackedCount > 0 ? `, ${$wxUnackedCount} unacknowledged NWS alerts` : ''}"
-	>
-		<svg width="18" height="18" viewBox="0 0 16 16" fill="none" aria-hidden="true">
-			<circle cx="8" cy="8" r="3" stroke="currentColor" stroke-width="1.5"/>
-			<path d="M8 1v2M8 13v2M1 8h2M13 8h2M3 3l1.5 1.5M11.5 11.5L13 13M13 3l-1.5 1.5M4.5 11.5L3 13" stroke="currentColor" stroke-width="1.3" stroke-linecap="round"/>
-		</svg>
-		<span class="fab-label">Weather</span>
-		{#if $wxUnackedCount > 0}
-			<span class="fab-badge wx" class:wx-warning={!!$wxActiveWarningIn} title="{$wxUnackedCount} unacknowledged NWS alerts">{$wxUnackedCount}</span>
-		{/if}
-	</button>
+	{#if visible('weather')}
+		<button
+			class="fab"
+			class:active={activeMode === 'weather'}
+			aria-current={(activeMode === 'weather') ? 'page' : undefined}
+			onclick={onWeatherOpen}
+			title="Weather{$wxUnackedCount > 0 ? ` — ${$wxUnackedCount} unacknowledged NWS alerts` : ''}"
+			aria-label="Weather{$wxUnackedCount > 0 ? `, ${$wxUnackedCount} unacknowledged NWS alerts` : ''}"
+		>
+			<svg width="18" height="18" viewBox="0 0 16 16" fill="none" aria-hidden="true">
+				<circle cx="8" cy="8" r="3" stroke="currentColor" stroke-width="1.5"/>
+				<path d="M8 1v2M8 13v2M1 8h2M13 8h2M3 3l1.5 1.5M11.5 11.5L13 13M13 3l-1.5 1.5M4.5 11.5L3 13" stroke="currentColor" stroke-width="1.3" stroke-linecap="round"/>
+			</svg>
+			<span class="fab-label">Weather</span>
+			{#if $wxUnackedCount > 0}
+				<span class="fab-badge wx" class:wx-warning={!!$wxActiveWarningIn} title="{$wxUnackedCount} unacknowledged NWS alerts">{$wxUnackedCount}</span>
+			{/if}
+		</button>
+	{/if}
 	<button
 		class="fab"
 		class:active={activeMode === 'transports'}

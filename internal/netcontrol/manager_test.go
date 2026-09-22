@@ -2,6 +2,8 @@ package netcontrol
 
 import (
 	"bytes"
+	"encoding/json"
+	"errors"
 	"fmt"
 	"path/filepath"
 	"strings"
@@ -10,9 +12,28 @@ import (
 	"time"
 
 	"github.com/narvel/nymeria/internal/config"
+	"github.com/narvel/nymeria/internal/netprofile"
 	"github.com/narvel/nymeria/internal/station"
 	"github.com/narvel/nymeria/internal/store"
 )
+
+// eventTypesContain drains every pending event and reports whether any of
+// them has the given type. logEvent always emits its own
+// EventTimelineEntry alongside a caller's more specific event, so tests
+// that call it must check membership rather than assume a fixed position.
+func eventTypesContain(mgr *Manager, want string) bool {
+	found := false
+	for {
+		select {
+		case evt := <-mgr.Events():
+			if evt.Type == want {
+				found = true
+			}
+		default:
+			return found
+		}
+	}
+}
 
 func newTestManager(t *testing.T) *Manager {
 	t.Helper()
@@ -1602,6 +1623,58 @@ func TestAddTimelineEventNetNotFound(t *testing.T) {
 	}
 }
 
+// TestAddTimelineEventWithDetails covers WP4's addition: same shape as
+// AddTimelineEvent, plus a Details payload that must survive to the saved
+// NetEvent and the emitted EventTimelineEntry.
+func TestAddTimelineEventWithDetails(t *testing.T) {
+	mgr := newTestManager(t)
+
+	if err := mgr.AddTimelineEventWithDetails("nonexistent", EventTimelineEntry, "W8ABC", "should not persist", `{"bib":"412"}`); err == nil {
+		t.Error("expected error for nonexistent net")
+	}
+
+	n, _ := mgr.CreateNet(store.Net{Name: "Timeline Details Net"})
+	drainEvents(mgr)
+
+	details := `{"bib":"412","withheld":true}`
+	if err := mgr.AddTimelineEventWithDetails(n.ID, "medical_reported", "SAG 2", "MEDICAL from SAG 2", details); err != nil {
+		t.Fatalf("AddTimelineEventWithDetails failed: %v", err)
+	}
+
+	events, err := mgr.GetEvents(n.ID)
+	if err != nil {
+		t.Fatalf("GetEvents: %v", err)
+	}
+	found := false
+	for _, e := range events {
+		if e.Type == "medical_reported" && e.Callsign == "SAG 2" {
+			if e.Details != details {
+				t.Errorf("saved NetEvent.Details = %q, want %q", e.Details, details)
+			}
+			found = true
+		}
+	}
+	if !found {
+		t.Errorf("medical_reported timeline event not persisted: %+v", events)
+	}
+
+	select {
+	case evt := <-mgr.Events():
+		if evt.Type != EventTimelineEntry {
+			t.Errorf("expected %s event, got %s", EventTimelineEntry, evt.Type)
+		}
+		ne, ok := evt.Data.(store.NetEvent)
+		if !ok {
+			t.Fatalf("event Data is %T, want store.NetEvent", evt.Data)
+		}
+		if ne.Details != details {
+			t.Errorf("emitted NetEvent.Details = %q, want %q", ne.Details, details)
+		}
+	default:
+		t.Error("expected EventTimelineEntry to be emitted")
+	}
+}
+
 func TestToggleNotePin(t *testing.T) {
 	mgr := newTestManager(t)
 
@@ -2537,3 +2610,513 @@ func TestOpenNetTimestamps(t *testing.T) {
 		})
 	}
 }
+
+// --- Net profile / ride config ---
+
+func TestCreateNetDefaultsProfileGeneral(t *testing.T) {
+	mgr := newTestManager(t)
+	n, err := mgr.CreateNet(store.Net{Name: "Net"})
+	if err != nil {
+		t.Fatalf("CreateNet: %v", err)
+	}
+	if n.Profile != netprofile.ProfileGeneral {
+		t.Errorf("Profile = %q, want %q", n.Profile, netprofile.ProfileGeneral)
+	}
+	if _, ok := mgr.GetRideConfig(n.ID); ok {
+		t.Error("GetRideConfig = ok, want not found for a general net")
+	}
+
+	select {
+	case evt := <-mgr.Events():
+		if evt.Type != EventNetCreated {
+			t.Errorf("event type = %s, want %s", evt.Type, EventNetCreated)
+		}
+	default:
+		t.Fatal("expected net_created event")
+	}
+	select {
+	case evt := <-mgr.Events():
+		t.Errorf("unexpected extra event %s; a general net must not get a ride-config event", evt.Type)
+	default:
+	}
+}
+
+func TestCreateNetNormalizesProfile(t *testing.T) {
+	mgr := newTestManager(t)
+	n, err := mgr.CreateNet(store.Net{Name: "Net", Profile: " Bike-Ride "})
+	if err != nil {
+		t.Fatalf("CreateNet: %v", err)
+	}
+	if n.Profile != netprofile.ProfileBikeRide {
+		t.Errorf("Profile = %q, want %q", n.Profile, netprofile.ProfileBikeRide)
+	}
+}
+
+func TestCreateNetRejectsUnknownProfile(t *testing.T) {
+	mgr := newTestManager(t)
+	before := len(mgr.GetNets())
+
+	_, err := mgr.CreateNet(store.Net{Name: "Net", Profile: "sar"})
+	if err == nil {
+		t.Fatal("expected error for unknown profile")
+	}
+	if !errors.Is(err, ErrInvalidProfile) {
+		t.Errorf("error = %v, want errors.Is ErrInvalidProfile", err)
+	}
+	if got := len(mgr.GetNets()); got != before {
+		t.Errorf("net count = %d, want unchanged %d", got, before)
+	}
+}
+
+func TestCreateNetBikeRideSeedsDefaultRideConfig(t *testing.T) {
+	mgr := newTestManager(t)
+	n, err := mgr.CreateNet(store.Net{Name: "Ride", Profile: netprofile.ProfileBikeRide})
+	if err != nil {
+		t.Fatalf("CreateNet: %v", err)
+	}
+
+	cfg, ok := mgr.GetRideConfig(n.ID)
+	if !ok {
+		t.Fatal("GetRideConfig = not found, want ok")
+	}
+	if cfg.NetID != n.ID {
+		t.Errorf("NetID = %q, want %q", cfg.NetID, n.ID)
+	}
+	if len(cfg.Routes) != 0 {
+		t.Errorf("Routes = %v, want empty", cfg.Routes)
+	}
+
+	stored, ok, err := mgr.store.LoadNetRideConfig(n.ID)
+	if err != nil || !ok {
+		t.Fatalf("store LoadNetRideConfig: ok=%v err=%v", ok, err)
+	}
+	if stored.NetID != n.ID {
+		t.Errorf("stored NetID = %q, want %q", stored.NetID, n.ID)
+	}
+
+	select {
+	case evt := <-mgr.Events():
+		if evt.Type != EventNetCreated {
+			t.Fatalf("first event = %s, want %s", evt.Type, EventNetCreated)
+		}
+	default:
+		t.Fatal("expected net_created event")
+	}
+	select {
+	case evt := <-mgr.Events():
+		if evt.Type != EventNetRideConfigUpdated {
+			t.Fatalf("second event = %s, want %s", evt.Type, EventNetRideConfigUpdated)
+		}
+	default:
+		t.Fatal("expected net_ride_config_updated event")
+	}
+}
+
+func TestSetProfileDraftOnly(t *testing.T) {
+	tests := []struct {
+		name    string
+		prepare func(t *testing.T, mgr *Manager, id string)
+		wantErr error // nil means expect success
+	}{
+		{"draft", func(t *testing.T, mgr *Manager, id string) {}, nil},
+		{"open", func(t *testing.T, mgr *Manager, id string) {
+			if err := mgr.OpenNet(id); err != nil {
+				t.Fatalf("OpenNet: %v", err)
+			}
+		}, ErrNotDraft},
+		{"closed", func(t *testing.T, mgr *Manager, id string) {
+			if err := mgr.OpenNet(id); err != nil {
+				t.Fatalf("OpenNet: %v", err)
+			}
+			if _, _, err := mgr.CloseNet(id); err != nil {
+				t.Fatalf("CloseNet: %v", err)
+			}
+		}, ErrNotDraft},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			mgr := newTestManager(t)
+			n, err := mgr.CreateNet(store.Net{Name: "Net", NCSCallsign: "KD7BBC"})
+			if err != nil {
+				t.Fatalf("CreateNet: %v", err)
+			}
+			tt.prepare(t, mgr, n.ID)
+			drainEvents(mgr)
+
+			updated, err := mgr.SetProfile(n.ID, netprofile.ProfileBikeRide)
+			if tt.wantErr == nil {
+				if err != nil {
+					t.Fatalf("SetProfile: %v", err)
+				}
+				if updated.Profile != netprofile.ProfileBikeRide {
+					t.Errorf("Profile = %q, want %q", updated.Profile, netprofile.ProfileBikeRide)
+				}
+				events, err := mgr.store.LoadNetEvents(n.ID)
+				if err != nil {
+					t.Fatalf("LoadNetEvents: %v", err)
+				}
+				found := false
+				for _, e := range events {
+					if e.Type == "profile_changed" {
+						found = true
+					}
+				}
+				if !found {
+					t.Error("expected a profile_changed timeline entry")
+				}
+				if !eventTypesContain(mgr, EventNetUpdated) {
+					t.Error("expected a net_updated event")
+				}
+			} else {
+				if !errors.Is(err, tt.wantErr) {
+					t.Fatalf("error = %v, want errors.Is %v", err, tt.wantErr)
+				}
+				current, _ := mgr.GetNet(n.ID)
+				if current.Profile != netprofile.ProfileGeneral {
+					t.Errorf("Profile changed to %q despite error", current.Profile)
+				}
+				select {
+				case evt := <-mgr.Events():
+					t.Errorf("unexpected event %s after failed SetProfile", evt.Type)
+				default:
+				}
+			}
+		})
+	}
+}
+
+func TestSetProfileToBikeRideSeedsConfigOnce(t *testing.T) {
+	mgr := newTestManager(t)
+	n, err := mgr.CreateNet(store.Net{Name: "Net", NCSCallsign: "KD7BBC"})
+	if err != nil {
+		t.Fatalf("CreateNet: %v", err)
+	}
+
+	if _, err := mgr.SetProfile(n.ID, netprofile.ProfileBikeRide); err != nil {
+		t.Fatalf("SetProfile(bike-ride): %v", err)
+	}
+	cfg, ok := mgr.GetRideConfig(n.ID)
+	if !ok {
+		t.Fatal("GetRideConfig after SetProfile: not found")
+	}
+	cfg.AgencyName = "Marin Cyclists"
+	if _, err := mgr.SetRideConfig(n.ID, *cfg); err != nil {
+		t.Fatalf("SetRideConfig: %v", err)
+	}
+
+	if _, err := mgr.SetProfile(n.ID, netprofile.ProfileGeneral); err != nil {
+		t.Fatalf("SetProfile(general): %v", err)
+	}
+	if _, err := mgr.SetProfile(n.ID, netprofile.ProfileBikeRide); err != nil {
+		t.Fatalf("SetProfile(bike-ride again): %v", err)
+	}
+
+	got, ok := mgr.GetRideConfig(n.ID)
+	if !ok {
+		t.Fatal("GetRideConfig after flip-flop: not found")
+	}
+	if got.AgencyName != "Marin Cyclists" {
+		t.Errorf("AgencyName = %q, want preserved %q", got.AgencyName, "Marin Cyclists")
+	}
+}
+
+func TestSetRideConfig(t *testing.T) {
+	mgr := newTestManager(t)
+	n, err := mgr.CreateNet(store.Net{Name: "Ride", NCSCallsign: "KD7BBC", Profile: netprofile.ProfileBikeRide})
+	if err != nil {
+		t.Fatalf("CreateNet: %v", err)
+	}
+	drainEvents(mgr)
+
+	input := store.NetRideConfig{
+		NetID:      "spoofed-net-id",
+		AgencyName: "Marin Cyclists",
+		Routes: []store.RideRoute{
+			{ID: " 100 ", Name: "100 Mile", DistanceMiles: 100},
+		},
+	}
+	got, err := mgr.SetRideConfig(n.ID, input)
+	if err != nil {
+		t.Fatalf("SetRideConfig: %v", err)
+	}
+	if got.NetID != n.ID {
+		t.Errorf("NetID = %q, want %q (forced from arg)", got.NetID, n.ID)
+	}
+	if len(got.Routes) != 1 || got.Routes[0].ID != "100" {
+		t.Errorf("Routes = %+v, want normalized id 100", got.Routes)
+	}
+	if got.UpdatedAt.IsZero() {
+		t.Error("UpdatedAt is zero, want set")
+	}
+
+	cached, ok := mgr.GetRideConfig(n.ID)
+	if !ok {
+		t.Fatal("GetRideConfig: not found")
+	}
+	if cached.AgencyName != "Marin Cyclists" {
+		t.Errorf("cached AgencyName = %q, want %q", cached.AgencyName, "Marin Cyclists")
+	}
+
+	stored, ok, err := mgr.store.LoadNetRideConfig(n.ID)
+	if err != nil || !ok {
+		t.Fatalf("store LoadNetRideConfig: ok=%v err=%v", ok, err)
+	}
+	if stored.AgencyName != "Marin Cyclists" {
+		t.Errorf("stored AgencyName = %q, want %q", stored.AgencyName, "Marin Cyclists")
+	}
+
+	if !eventTypesContain(mgr, EventNetRideConfigUpdated) {
+		t.Error("expected a net_ride_config_updated event")
+	}
+
+	events, err := mgr.store.LoadNetEvents(n.ID)
+	if err != nil {
+		t.Fatalf("LoadNetEvents: %v", err)
+	}
+	found := false
+	for _, e := range events {
+		if e.Type == "ride_config_updated" {
+			found = true
+		}
+	}
+	if !found {
+		t.Error("expected a ride_config_updated timeline entry")
+	}
+}
+
+func TestSetRideConfigRejectsInvalid(t *testing.T) {
+	mgr := newTestManager(t)
+	n, err := mgr.CreateNet(store.Net{Name: "Ride", NCSCallsign: "KD7BBC", Profile: netprofile.ProfileBikeRide})
+	if err != nil {
+		t.Fatalf("CreateNet: %v", err)
+	}
+	before, ok := mgr.GetRideConfig(n.ID)
+	if !ok {
+		t.Fatal("GetRideConfig before: not found")
+	}
+	drainEvents(mgr)
+
+	invalid := store.NetRideConfig{
+		Routes: []store.RideRoute{{ID: "a", Name: "A", DistanceMiles: 0}},
+	}
+	_, err = mgr.SetRideConfig(n.ID, invalid)
+	if err == nil {
+		t.Fatal("expected error")
+	}
+	if !errors.Is(err, ErrInvalidRideConfig) {
+		t.Errorf("error = %v, want errors.Is ErrInvalidRideConfig", err)
+	}
+
+	after, ok := mgr.GetRideConfig(n.ID)
+	if !ok {
+		t.Fatal("GetRideConfig after: not found")
+	}
+	if len(after.Routes) != len(before.Routes) {
+		t.Errorf("cached config changed despite invalid input: %+v vs %+v", after, before)
+	}
+
+	select {
+	case evt := <-mgr.Events():
+		t.Errorf("unexpected event %s after rejected SetRideConfig", evt.Type)
+	default:
+	}
+}
+
+func TestSetRideConfigProfileMismatch(t *testing.T) {
+	mgr := newTestManager(t)
+	n, err := mgr.CreateNet(store.Net{Name: "Net", NCSCallsign: "KD7BBC"})
+	if err != nil {
+		t.Fatalf("CreateNet: %v", err)
+	}
+	_, err = mgr.SetRideConfig(n.ID, store.NetRideConfig{})
+	if !errors.Is(err, ErrProfileMismatch) {
+		t.Errorf("error = %v, want errors.Is ErrProfileMismatch", err)
+	}
+}
+
+func TestSetRideConfigClosedNet(t *testing.T) {
+	mgr := newTestManager(t)
+	n, err := mgr.CreateNet(store.Net{Name: "Ride", NCSCallsign: "KD7BBC", Profile: netprofile.ProfileBikeRide})
+	if err != nil {
+		t.Fatalf("CreateNet: %v", err)
+	}
+	if err := mgr.OpenNet(n.ID); err != nil {
+		t.Fatalf("OpenNet: %v", err)
+	}
+	if _, err := mgr.SetRideConfig(n.ID, store.NetRideConfig{AgencyName: "Open Agency"}); err != nil {
+		t.Fatalf("SetRideConfig on open net: %v", err)
+	}
+
+	if _, _, err := mgr.CloseNet(n.ID); err != nil {
+		t.Fatalf("CloseNet: %v", err)
+	}
+	_, err = mgr.SetRideConfig(n.ID, store.NetRideConfig{AgencyName: "Closed Agency"})
+	if !errors.Is(err, ErrNetClosed) {
+		t.Errorf("error = %v, want errors.Is ErrNetClosed", err)
+	}
+}
+
+func TestProfileView(t *testing.T) {
+	t.Run("general", func(t *testing.T) {
+		mgr := newTestManager(t)
+		n, err := mgr.CreateNet(store.Net{Name: "Net", NCSCallsign: "KD7BBC"})
+		if err != nil {
+			t.Fatalf("CreateNet: %v", err)
+		}
+		view, err := mgr.ProfileView(n.ID)
+		if err != nil {
+			t.Fatalf("ProfileView: %v", err)
+		}
+		if view.RideConfig != nil {
+			t.Error("RideConfig != nil for general net")
+		}
+		if len(view.EffectivePriorityTiers) != 4 {
+			t.Errorf("EffectivePriorityTiers len = %d, want 4", len(view.EffectivePriorityTiers))
+		}
+	})
+
+	t.Run("bike-ride default", func(t *testing.T) {
+		mgr := newTestManager(t)
+		n, err := mgr.CreateNet(store.Net{Name: "Ride", NCSCallsign: "KD7BBC", Profile: netprofile.ProfileBikeRide})
+		if err != nil {
+			t.Fatalf("CreateNet: %v", err)
+		}
+		view, err := mgr.ProfileView(n.ID)
+		if err != nil {
+			t.Fatalf("ProfileView: %v", err)
+		}
+		if view.RideConfig == nil {
+			t.Fatal("RideConfig = nil, want non-nil for bike-ride net")
+		}
+		if len(view.EffectivePriorityTiers) != 5 {
+			t.Errorf("EffectivePriorityTiers len = %d, want 5", len(view.EffectivePriorityTiers))
+		}
+	})
+
+	t.Run("bike-ride custom tiers", func(t *testing.T) {
+		mgr := newTestManager(t)
+		n, err := mgr.CreateNet(store.Net{Name: "Ride", NCSCallsign: "KD7BBC", Profile: netprofile.ProfileBikeRide})
+		if err != nil {
+			t.Fatalf("CreateNet: %v", err)
+		}
+		custom := []store.PriorityTier{
+			{ID: "a", Label: "A", Rank: 1},
+			{ID: "b", Label: "B", Rank: 2},
+			{ID: "c", Label: "C", Rank: 3},
+		}
+		if _, err := mgr.SetRideConfig(n.ID, store.NetRideConfig{PriorityTiers: custom}); err != nil {
+			t.Fatalf("SetRideConfig: %v", err)
+		}
+		view, err := mgr.ProfileView(n.ID)
+		if err != nil {
+			t.Fatalf("ProfileView: %v", err)
+		}
+		if len(view.EffectivePriorityTiers) != 3 {
+			t.Errorf("EffectivePriorityTiers len = %d, want 3", len(view.EffectivePriorityTiers))
+		}
+	})
+
+	t.Run("unknown net", func(t *testing.T) {
+		mgr := newTestManager(t)
+		if _, err := mgr.ProfileView("nonexistent"); err == nil {
+			t.Error("expected error for unknown net")
+		}
+	})
+}
+
+func TestLoadRestoresRideConfigs(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "test.db")
+	s := store.NewSQLiteStore(path)
+	if err := s.Init(); err != nil {
+		t.Fatalf("Init failed: %v", err)
+	}
+	defer s.Close()
+
+	tracker := station.NewMemoryTracker(config.StationConfig{
+		StaleTimeout:   time.Hour,
+		TrackMaxPoints: 10,
+		DedupWindow:    30 * time.Second,
+	})
+
+	mgr := NewManager(s, tracker)
+	n, err := mgr.CreateNet(store.Net{Name: "Ride Net", NCSCallsign: "KD7BBC", Profile: netprofile.ProfileBikeRide})
+	if err != nil {
+		t.Fatalf("CreateNet: %v", err)
+	}
+	edited := netprofile.DefaultRideConfig(n.ID)
+	edited.AgencyName = "Marin Cyclists"
+	if _, err := mgr.SetRideConfig(n.ID, edited); err != nil {
+		t.Fatalf("SetRideConfig: %v", err)
+	}
+
+	// An archived net's ride config exists in the store but must not be
+	// loaded into the cache — archived nets are skipped entirely, same as
+	// their check-ins and missions.
+	archivedNet := store.Net{ID: "archived-net", Name: "Old Ride", Status: StatusArchived, Profile: netprofile.ProfileBikeRide, PinnedStations: []string{}}
+	if err := s.SaveNet(archivedNet); err != nil {
+		t.Fatalf("SaveNet(archived): %v", err)
+	}
+	if err := s.SaveNetRideConfig(netprofile.DefaultRideConfig(archivedNet.ID)); err != nil {
+		t.Fatalf("SaveNetRideConfig(archived): %v", err)
+	}
+
+	mgr2 := NewManager(s, tracker)
+	if err := mgr2.Load(); err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+
+	got, ok := mgr2.GetRideConfig(n.ID)
+	if !ok {
+		t.Fatal("GetRideConfig after Load: not found")
+	}
+	if got.AgencyName != "Marin Cyclists" {
+		t.Errorf("AgencyName = %q, want %q", got.AgencyName, "Marin Cyclists")
+	}
+
+	if _, ok := mgr2.GetRideConfig(archivedNet.ID); ok {
+		t.Error("GetRideConfig for archived net = ok, want not found")
+	}
+}
+
+func TestGeneralNetJSONUnchangedExceptProfile(t *testing.T) {
+	mgr := newTestManager(t)
+	n, err := mgr.CreateNet(store.Net{Name: "Net", NCSCallsign: "KD7BBC"})
+	if err != nil {
+		t.Fatalf("CreateNet: %v", err)
+	}
+
+	b, err := json.Marshal(n)
+	if err != nil {
+		t.Fatalf("Marshal: %v", err)
+	}
+	var got map[string]json.RawMessage
+	if err := json.Unmarshal(b, &got); err != nil {
+		t.Fatalf("Unmarshal: %v", err)
+	}
+
+	want := []string{
+		"id", "name", "type", "frequency", "ncsCallsign", "ncsUserId", "status",
+		"notes", "missionBrief", "pinnedStations",
+		"wxBufferMiles", "wxExtraZones", "wxMuteAdvisories", "wxInterruptCustom", "wxInterruptEvents",
+		"profile",
+	}
+	for _, key := range want {
+		if _, ok := got[key]; !ok {
+			t.Errorf("missing key %q in %s", key, b)
+		}
+	}
+	for _, key := range []string{"openedAt", "closedAt", "opsViewLat", "opsViewLon", "opsViewZoom"} {
+		if _, ok := got[key]; ok {
+			t.Errorf("unexpected key %q present on a fresh draft net: %s", key, b)
+		}
+	}
+	if len(got) != len(want) {
+		keys := make([]string, 0, len(got))
+		for k := range got {
+			keys = append(keys, k)
+		}
+		t.Errorf("key count = %d, want %d (got keys: %v)", len(got), len(want), keys)
+	}
+}
+

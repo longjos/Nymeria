@@ -2,6 +2,7 @@ package netcontrol
 
 import (
 	"encoding/csv"
+	"errors"
 	"fmt"
 	"io"
 	"log"
@@ -10,8 +11,19 @@ import (
 	"time"
 
 	"github.com/google/uuid"
+	"github.com/narvel/nymeria/internal/netprofile"
 	"github.com/narvel/nymeria/internal/station"
 	"github.com/narvel/nymeria/internal/store"
+)
+
+// Sentinel errors for net profile / ride config operations, so handlers can
+// pick the right HTTP status with errors.Is.
+var (
+	ErrInvalidProfile    = errors.New("invalid profile")
+	ErrNotDraft          = errors.New("profile can only change while the net is a draft")
+	ErrProfileMismatch   = errors.New("net profile has no ride config")
+	ErrNetClosed         = errors.New("net is closed")
+	ErrInvalidRideConfig = errors.New("invalid ride config")
 )
 
 // trackedRef maps a tracked station callsign back to its check-in.
@@ -30,6 +42,7 @@ type Manager struct {
 	missions     map[string][]store.NetMission // keyed by netID
 	trackedIndex map[string]trackedRef         // station callsign → check-in reference
 	events       chan Event
+	rideConfigs  map[string]store.NetRideConfig // keyed by netID; only nets whose profile is/was bike-ride
 }
 
 // NewManager creates a new net control Manager.
@@ -42,6 +55,7 @@ func NewManager(s store.Store, t station.Tracker) *Manager {
 		missions:     make(map[string][]store.NetMission),
 		trackedIndex: make(map[string]trackedRef),
 		events:       make(chan Event, 64),
+		rideConfigs:  make(map[string]store.NetRideConfig),
 	}
 }
 
@@ -50,6 +64,15 @@ func (m *Manager) Load() error {
 	nets, err := m.store.LoadNets()
 	if err != nil {
 		return fmt.Errorf("load nets: %w", err)
+	}
+
+	cfgs, err := m.store.LoadNetRideConfigs()
+	if err != nil {
+		return fmt.Errorf("load net ride configs: %w", err)
+	}
+	cfgByNetID := make(map[string]store.NetRideConfig, len(cfgs))
+	for _, c := range cfgs {
+		cfgByNetID[c.NetID] = c
 	}
 
 	m.mu.Lock()
@@ -72,6 +95,10 @@ func (m *Manager) Load() error {
 			return fmt.Errorf("load missions for net %s: %w", n.ID, err)
 		}
 		m.missions[n.ID] = missions
+
+		if c, ok := cfgByNetID[n.ID]; ok {
+			m.rideConfigs[n.ID] = c
+		}
 	}
 
 	m.rebuildTrackedIndex()
@@ -108,17 +135,38 @@ func (m *Manager) CreateNet(n store.Net) (*store.Net, error) {
 		n.WxInterruptEvents = []string{}
 	}
 
+	n.Profile = netprofile.Normalize(n.Profile)
+	if !netprofile.Valid(n.Profile) {
+		return nil, fmt.Errorf("%w %q", ErrInvalidProfile, n.Profile)
+	}
+	profile, _ := netprofile.Get(n.Profile)
+
 	if err := m.store.SaveNet(n); err != nil {
 		return nil, fmt.Errorf("persist net: %w", err)
+	}
+
+	var rideCfg *store.NetRideConfig
+	if profile.HasRideConfig {
+		cfg := netprofile.DefaultRideConfig(n.ID)
+		if err := m.store.SaveNetRideConfig(cfg); err != nil {
+			return nil, fmt.Errorf("persist ride config: %w", err)
+		}
+		rideCfg = &cfg
 	}
 
 	m.mu.Lock()
 	m.nets[n.ID] = n
 	m.checkIns[n.ID] = nil
 	m.missions[n.ID] = nil
+	if rideCfg != nil {
+		m.rideConfigs[n.ID] = *rideCfg
+	}
 	m.mu.Unlock()
 
 	m.emit(Event{Type: EventNetCreated, Data: n})
+	if rideCfg != nil {
+		m.emit(Event{Type: EventNetRideConfigUpdated, Data: *rideCfg})
+	}
 
 	return &n, nil
 }
@@ -1400,6 +1448,37 @@ func (m *Manager) AddTimelineEvent(netID, eventType, callsign, summary string) e
 	return nil
 }
 
+// AddTimelineEventWithDetails is AddTimelineEvent plus a JSON Details
+// string, for callers (internal/ride's TrafficManager, WP4) that need a
+// privacy-scoped detail payload on the timeline row rather than the fixed
+// "{}" logEvent always writes. An empty details defaults to "{}", same as
+// logEvent.
+func (m *Manager) AddTimelineEventWithDetails(netID, eventType, callsign, summary, details string) error {
+	m.mu.RLock()
+	_, ok := m.nets[netID]
+	m.mu.RUnlock()
+	if !ok {
+		return fmt.Errorf("net %q not found", netID)
+	}
+	if details == "" {
+		details = "{}"
+	}
+	evt := store.NetEvent{
+		ID:        uuid.New().String(),
+		NetID:     netID,
+		Type:      eventType,
+		Callsign:  callsign,
+		Summary:   summary,
+		Details:   details,
+		CreatedAt: time.Now().UTC(),
+	}
+	if err := m.store.SaveNetEvent(evt); err != nil {
+		return fmt.Errorf("save timeline event: %w", err)
+	}
+	m.emit(Event{Type: EventTimelineEntry, Data: evt})
+	return nil
+}
+
 // SetWxWatch persists a net's NWS weather-watch settings (buffer, extra
 // zones, mute-advisories, and the custom interrupt allowlist) — see
 // store.Net's five Wx* fields and internal/wxalert. Mirrors SetOpsView:
@@ -1427,6 +1506,174 @@ func (m *Manager) SetWxWatch(netID string, bufferMiles float64, extraZones []str
 	m.emit(Event{Type: EventNetUpdated, Data: n})
 
 	return &n, nil
+}
+
+// SetProfile changes a net's vocabulary profile (internal/netprofile).
+// Restricted to draft nets: WP2+ records reference tier/route ids that only
+// exist under one profile, so changing vocabulary mid-net would orphan them.
+// Switching into a profile that HasRideConfig seeds a default ride config
+// the first time only — flipping back and forth never deletes it, so a
+// draft flip-flop cannot lose agency data already entered.
+func (m *Manager) SetProfile(netID, profile string) (*store.Net, error) {
+	normalized := netprofile.Normalize(profile)
+	if !netprofile.Valid(normalized) {
+		return nil, fmt.Errorf("%w %q", ErrInvalidProfile, normalized)
+	}
+
+	m.mu.Lock()
+	n, ok := m.nets[netID]
+	if !ok {
+		m.mu.Unlock()
+		return nil, fmt.Errorf("net %q not found", netID)
+	}
+	if n.Status != StatusDraft {
+		m.mu.Unlock()
+		return nil, ErrNotDraft
+	}
+	n.Profile = normalized
+	m.nets[netID] = n
+	_, hasCfg := m.rideConfigs[netID]
+	m.mu.Unlock()
+
+	if err := m.store.SaveNet(n); err != nil {
+		return nil, fmt.Errorf("persist net: %w", err)
+	}
+
+	profileInfo, _ := netprofile.Get(normalized)
+	var seededCfg *store.NetRideConfig
+	if profileInfo.HasRideConfig && !hasCfg {
+		cfg := netprofile.DefaultRideConfig(netID)
+		if err := m.store.SaveNetRideConfig(cfg); err != nil {
+			return nil, fmt.Errorf("persist ride config: %w", err)
+		}
+		m.mu.Lock()
+		m.rideConfigs[netID] = cfg
+		m.mu.Unlock()
+		seededCfg = &cfg
+	}
+
+	m.logEvent(netID, "profile_changed", n.NCSCallsign, fmt.Sprintf("Profile → %s", normalized))
+	m.emit(Event{Type: EventNetUpdated, Data: n})
+	if seededCfg != nil {
+		m.emit(Event{Type: EventNetRideConfigUpdated, Data: *seededCfg})
+	}
+
+	return &n, nil
+}
+
+// GetRideConfig returns a copy of a net's ride-event config, if one exists
+// (only nets whose profile is or was "bike-ride" have one).
+func (m *Manager) GetRideConfig(netID string) (*store.NetRideConfig, bool) {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+	c, ok := m.rideConfigs[netID]
+	if !ok {
+		return nil, false
+	}
+	cp := copyRideConfig(c)
+	return &cp, true
+}
+
+// SetRideConfig validates and persists a net's ride-event config. NetID is
+// always taken from netID, never from cfg, so a client cannot retarget the
+// write by spoofing the body.
+func (m *Manager) SetRideConfig(netID string, cfg store.NetRideConfig) (*store.NetRideConfig, error) {
+	m.mu.RLock()
+	n, ok := m.nets[netID]
+	m.mu.RUnlock()
+	if !ok {
+		return nil, fmt.Errorf("net %q not found", netID)
+	}
+
+	profileInfo, profOk := netprofile.Get(n.Profile)
+	if !profOk || !profileInfo.HasRideConfig {
+		return nil, ErrProfileMismatch
+	}
+	if n.Status == StatusClosed || n.Status == StatusArchived {
+		return nil, ErrNetClosed
+	}
+
+	cfg.NetID = netID
+	if err := netprofile.ValidateRideConfig(&cfg); err != nil {
+		return nil, fmt.Errorf("%w: %s", ErrInvalidRideConfig, err.Error())
+	}
+	cfg.UpdatedAt = time.Now().UTC()
+
+	if err := m.store.SaveNetRideConfig(cfg); err != nil {
+		return nil, fmt.Errorf("persist ride config: %w", err)
+	}
+
+	m.mu.Lock()
+	m.rideConfigs[netID] = cfg
+	m.mu.Unlock()
+
+	m.logEvent(netID, "ride_config_updated", n.NCSCallsign, rideConfigSummary(cfg))
+	m.emit(Event{Type: EventNetRideConfigUpdated, Data: cfg})
+
+	out := copyRideConfig(cfg)
+	return &out, nil
+}
+
+// ProfileView assembles everything the frontend needs to mount a net in one
+// round trip: the registry entry for its profile, its ride config (nil for
+// general), and the priority ladder actually in force.
+func (m *Manager) ProfileView(netID string) (*netprofile.NetProfileView, error) {
+	m.mu.RLock()
+	n, ok := m.nets[netID]
+	var rideCfg *store.NetRideConfig
+	if c, hasCfg := m.rideConfigs[netID]; hasCfg {
+		cp := copyRideConfig(c)
+		rideCfg = &cp
+	}
+	m.mu.RUnlock()
+	if !ok {
+		return nil, fmt.Errorf("net %q not found", netID)
+	}
+
+	profileInfo, profOk := netprofile.Get(n.Profile)
+	if !profOk {
+		profileInfo, _ = netprofile.Get(netprofile.ProfileGeneral)
+	}
+
+	var override []store.PriorityTier
+	if rideCfg != nil {
+		override = rideCfg.PriorityTiers
+	}
+
+	view := &netprofile.NetProfileView{
+		NetID:                  netID,
+		Profile:                profileInfo,
+		EffectivePriorityTiers: netprofile.EffectiveTiers(n.Profile, override),
+	}
+	if profileInfo.HasRideConfig {
+		view.RideConfig = rideCfg
+	}
+	return view, nil
+}
+
+// copyRideConfig deep-copies the two slice fields so callers holding the
+// manager's lock never hand out aliases into cached state.
+func copyRideConfig(c store.NetRideConfig) store.NetRideConfig {
+	cp := c
+	cp.Routes = append([]store.RideRoute{}, c.Routes...)
+	cp.PriorityTiers = append([]store.PriorityTier{}, c.PriorityTiers...)
+	return cp
+}
+
+// rideConfigSummary is a coarse, human-readable description of a ride config
+// for the net timeline — not a full diff, just enough to say what changed at
+// a glance.
+func rideConfigSummary(cfg store.NetRideConfig) string {
+	parts := []string{fmt.Sprintf("%d routes", len(cfg.Routes))}
+	if cfg.Cutoff.CourseClosesAt != nil {
+		parts = append(parts, fmt.Sprintf("course closes %s", cfg.Cutoff.CourseClosesAt.UTC().Format("15:04")))
+	}
+	if len(cfg.PriorityTiers) > 0 {
+		parts = append(parts, fmt.Sprintf("%d tiers (custom)", len(cfg.PriorityTiers)))
+	} else {
+		parts = append(parts, "default tiers")
+	}
+	return "Ride config updated: " + strings.Join(parts, ", ")
 }
 
 // logEvent creates a timeline event and persists it.

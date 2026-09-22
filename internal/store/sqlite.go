@@ -17,7 +17,7 @@ import (
 	_ "modernc.org/sqlite"
 )
 
-const currentSchemaVersion = 24
+const currentSchemaVersion = 30
 
 // SQLiteStore implements Store using modernc.org/sqlite.
 type SQLiteStore struct {
@@ -218,6 +218,42 @@ func (s *SQLiteStore) migrate() error {
 	if version < 24 {
 		if err := s.migrateV24(); err != nil {
 			return fmt.Errorf("migrate v24: %w", err)
+		}
+	}
+
+	if version < 25 {
+		if err := s.migrateV25(); err != nil {
+			return fmt.Errorf("migrate v25: %w", err)
+		}
+	}
+
+	if version < 26 {
+		if err := s.migrateV26(); err != nil {
+			return fmt.Errorf("migrate v26: %w", err)
+		}
+	}
+
+	if version < 27 {
+		if err := s.migrateV27(); err != nil {
+			return fmt.Errorf("migrate v27: %w", err)
+		}
+	}
+
+	if version < 28 {
+		if err := s.migrateV28(); err != nil {
+			return fmt.Errorf("migrate v28: %w", err)
+		}
+	}
+
+	if version < 29 {
+		if err := s.migrateV29(); err != nil {
+			return fmt.Errorf("migrate v29: %w", err)
+		}
+	}
+
+	if version < 30 {
+		if err := s.migrateV30(); err != nil {
+			return fmt.Errorf("migrate v30: %w", err)
 		}
 	}
 
@@ -1107,15 +1143,21 @@ func (s *SQLiteStore) SaveNet(n Net) error {
 		wxInterruptEventsJSON = string(b)
 	}
 
+	profile := n.Profile
+	if profile == "" {
+		profile = "general" // netprofile.ProfileGeneral; store must not import netprofile
+	}
+
 	_, err := s.db.Exec(`
 		INSERT OR REPLACE INTO nets
 			(id, name, type, frequency, ncs_callsign, ncs_user_id, status, opened_at, closed_at, notes, mission_brief, ops_view_lat, ops_view_lon, ops_view_zoom, pinned_stations,
-			 wx_buffer_miles, wx_extra_zones, wx_mute_advisories, wx_interrupt_custom, wx_interrupt_events)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+			 wx_buffer_miles, wx_extra_zones, wx_mute_advisories, wx_interrupt_custom, wx_interrupt_events, profile)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
 		n.ID, n.Name, n.Type, n.Frequency, n.NCSCallsign, n.NCSUserID,
 		n.Status, openedAt, closedAt, n.Notes, n.MissionBrief,
 		n.OpsViewLat, n.OpsViewLon, n.OpsViewZoom, pinnedJSON,
 		n.WxBufferMiles, wxExtraZonesJSON, n.WxMuteAdvisories, n.WxInterruptCustom, wxInterruptEventsJSON,
+		profile,
 	)
 	if err != nil {
 		return fmt.Errorf("save net: %w", err)
@@ -1133,18 +1175,23 @@ func (s *SQLiteStore) LoadNet(id string) (*Net, error) {
 		SELECT id, name, type, frequency, ncs_callsign, ncs_user_id,
 		       status, opened_at, closed_at, notes, mission_brief,
 		       ops_view_lat, ops_view_lon, ops_view_zoom, pinned_stations,
-		       wx_buffer_miles, wx_extra_zones, wx_mute_advisories, wx_interrupt_custom, wx_interrupt_events
+		       wx_buffer_miles, wx_extra_zones, wx_mute_advisories, wx_interrupt_custom, wx_interrupt_events,
+		       profile
 		FROM nets WHERE id = ?`, id).Scan(
 		&n.ID, &n.Name, &n.Type, &n.Frequency, &n.NCSCallsign, &n.NCSUserID,
 		&n.Status, &openedAt, &closedAt, &n.Notes, &n.MissionBrief,
 		&opsLat, &opsLon, &opsZoom, &pinnedJSON,
 		&n.WxBufferMiles, &wxExtraZonesJSON, &n.WxMuteAdvisories, &n.WxInterruptCustom, &wxInterruptEventsJSON,
+		&n.Profile,
 	)
 	if err != nil {
 		if err == sql.ErrNoRows {
 			return nil, fmt.Errorf("net %q not found", id)
 		}
 		return nil, fmt.Errorf("load net: %w", err)
+	}
+	if n.Profile == "" {
+		n.Profile = "general" // netprofile.ProfileGeneral; store must not import netprofile
 	}
 
 	if openedAt.Valid {
@@ -1192,7 +1239,8 @@ func (s *SQLiteStore) LoadNets() ([]Net, error) {
 		SELECT id, name, type, frequency, ncs_callsign, ncs_user_id,
 		       status, opened_at, closed_at, notes, mission_brief,
 		       ops_view_lat, ops_view_lon, ops_view_zoom, pinned_stations,
-		       wx_buffer_miles, wx_extra_zones, wx_mute_advisories, wx_interrupt_custom, wx_interrupt_events
+		       wx_buffer_miles, wx_extra_zones, wx_mute_advisories, wx_interrupt_custom, wx_interrupt_events,
+		       profile
 		FROM nets ORDER BY rowid ASC`)
 	if err != nil {
 		return nil, fmt.Errorf("query nets: %w", err)
@@ -1211,8 +1259,12 @@ func (s *SQLiteStore) LoadNets() ([]Net, error) {
 			&n.Status, &openedAt, &closedAt, &n.Notes, &n.MissionBrief,
 			&opsLat, &opsLon, &opsZoom, &pinnedJSON,
 			&n.WxBufferMiles, &wxExtraZonesJSON, &n.WxMuteAdvisories, &n.WxInterruptCustom, &wxInterruptEventsJSON,
+			&n.Profile,
 		); err != nil {
 			return nil, fmt.Errorf("scan net: %w", err)
+		}
+		if n.Profile == "" {
+			n.Profile = "general" // netprofile.ProfileGeneral; store must not import netprofile
 		}
 
 		if openedAt.Valid {
@@ -1264,6 +1316,193 @@ func (s *SQLiteStore) DeleteNet(id string) error {
 	_, err := s.db.Exec("DELETE FROM nets WHERE id = ?", id)
 	if err != nil {
 		return fmt.Errorf("delete net: %w", err)
+	}
+	if _, err := s.db.Exec("DELETE FROM net_ride_configs WHERE net_id = ?", id); err != nil {
+		return fmt.Errorf("delete net ride config: %w", err)
+	}
+	if _, err := s.db.Exec("DELETE FROM sag_requests WHERE net_id = ?", id); err != nil {
+		return fmt.Errorf("delete sag requests: %w", err)
+	}
+	if _, err := s.db.Exec("DELETE FROM sag_vehicles WHERE net_id = ?", id); err != nil {
+		return fmt.Errorf("delete sag vehicles: %w", err)
+	}
+	if err := s.DeleteRideTraffic(id); err != nil {
+		return err
+	}
+	return nil
+}
+
+// --- Net Ride Config CRUD ---
+
+func (s *SQLiteStore) SaveNetRideConfig(c NetRideConfig) error {
+	routesJSON := "[]"
+	if len(c.Routes) > 0 {
+		b, err := json.Marshal(c.Routes)
+		if err != nil {
+			return fmt.Errorf("marshal routes: %w", err)
+		}
+		routesJSON = string(b)
+	}
+
+	cutoffJSON := "{}"
+	{
+		b, err := json.Marshal(c.Cutoff)
+		if err != nil {
+			return fmt.Errorf("marshal cutoff: %w", err)
+		}
+		cutoffJSON = string(b)
+	}
+
+	tiersJSON := "[]"
+	if len(c.PriorityTiers) > 0 {
+		b, err := json.Marshal(c.PriorityTiers)
+		if err != nil {
+			return fmt.Errorf("marshal priority_tiers: %w", err)
+		}
+		tiersJSON = string(b)
+	}
+
+	updatedAt := c.UpdatedAt
+	if updatedAt.IsZero() {
+		updatedAt = time.Now().UTC()
+	}
+
+	_, err := s.db.Exec(`
+		INSERT OR REPLACE INTO net_ride_configs
+			(net_id, agency_name, event_name, event_date, routes, cutoff, withhold_bib_on_severe_injury, priority_tiers, division, updated_at)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		c.NetID, c.AgencyName, c.EventName, c.EventDate, routesJSON, cutoffJSON,
+		c.WithholdBibOnSevereInjury, tiersJSON, c.Division, updatedAt.UTC(),
+	)
+	if err != nil {
+		return fmt.Errorf("save net ride config: %w", err)
+	}
+	return nil
+}
+
+func (s *SQLiteStore) LoadNetRideConfig(netID string) (*NetRideConfig, bool, error) {
+	var c NetRideConfig
+	var routesJSON, cutoffJSON, tiersJSON, updatedAt string
+
+	err := s.db.QueryRow(`
+		SELECT net_id, agency_name, event_name, event_date, routes, cutoff, withhold_bib_on_severe_injury, priority_tiers, division, updated_at
+		FROM net_ride_configs WHERE net_id = ?`, netID).Scan(
+		&c.NetID, &c.AgencyName, &c.EventName, &c.EventDate, &routesJSON, &cutoffJSON,
+		&c.WithholdBibOnSevereInjury, &tiersJSON, &c.Division, &updatedAt,
+	)
+	if err == sql.ErrNoRows {
+		return nil, false, nil
+	}
+	if err != nil {
+		return nil, false, fmt.Errorf("load net ride config: %w", err)
+	}
+
+	c.Routes = []RideRoute{}
+	if routesJSON != "" && routesJSON != "[]" {
+		if err := json.Unmarshal([]byte(routesJSON), &c.Routes); err != nil {
+			return nil, false, fmt.Errorf("unmarshal routes: %w", err)
+		}
+	}
+	if c.Routes == nil {
+		c.Routes = []RideRoute{}
+	}
+
+	if cutoffJSON != "" && cutoffJSON != "{}" {
+		if err := json.Unmarshal([]byte(cutoffJSON), &c.Cutoff); err != nil {
+			return nil, false, fmt.Errorf("unmarshal cutoff: %w", err)
+		}
+	}
+
+	c.PriorityTiers = []PriorityTier{}
+	if tiersJSON != "" && tiersJSON != "[]" {
+		if err := json.Unmarshal([]byte(tiersJSON), &c.PriorityTiers); err != nil {
+			return nil, false, fmt.Errorf("unmarshal priority_tiers: %w", err)
+		}
+	}
+	if c.PriorityTiers == nil {
+		c.PriorityTiers = []PriorityTier{}
+	}
+	for i := range c.PriorityTiers {
+		if c.PriorityTiers[i].Examples == nil {
+			c.PriorityTiers[i].Examples = []string{}
+		}
+	}
+
+	if c.UpdatedAt, err = parseTime(updatedAt); err != nil {
+		return nil, false, fmt.Errorf("parse updated_at: %w", err)
+	}
+
+	return &c, true, nil
+}
+
+func (s *SQLiteStore) LoadNetRideConfigs() ([]NetRideConfig, error) {
+	rows, err := s.db.Query(`
+		SELECT net_id, agency_name, event_name, event_date, routes, cutoff, withhold_bib_on_severe_injury, priority_tiers, division, updated_at
+		FROM net_ride_configs ORDER BY net_id ASC`)
+	if err != nil {
+		return nil, fmt.Errorf("query net ride configs: %w", err)
+	}
+	defer rows.Close()
+
+	configs := []NetRideConfig{}
+	for rows.Next() {
+		var c NetRideConfig
+		var routesJSON, cutoffJSON, tiersJSON, updatedAt string
+
+		if err := rows.Scan(
+			&c.NetID, &c.AgencyName, &c.EventName, &c.EventDate, &routesJSON, &cutoffJSON,
+			&c.WithholdBibOnSevereInjury, &tiersJSON, &c.Division, &updatedAt,
+		); err != nil {
+			return nil, fmt.Errorf("scan net ride config: %w", err)
+		}
+
+		c.Routes = []RideRoute{}
+		if routesJSON != "" && routesJSON != "[]" {
+			if err := json.Unmarshal([]byte(routesJSON), &c.Routes); err != nil {
+				return nil, fmt.Errorf("unmarshal routes: %w", err)
+			}
+		}
+		if c.Routes == nil {
+			c.Routes = []RideRoute{}
+		}
+
+		if cutoffJSON != "" && cutoffJSON != "{}" {
+			if err := json.Unmarshal([]byte(cutoffJSON), &c.Cutoff); err != nil {
+				return nil, fmt.Errorf("unmarshal cutoff: %w", err)
+			}
+		}
+
+		c.PriorityTiers = []PriorityTier{}
+		if tiersJSON != "" && tiersJSON != "[]" {
+			if err := json.Unmarshal([]byte(tiersJSON), &c.PriorityTiers); err != nil {
+				return nil, fmt.Errorf("unmarshal priority_tiers: %w", err)
+			}
+		}
+		if c.PriorityTiers == nil {
+			c.PriorityTiers = []PriorityTier{}
+		}
+		for i := range c.PriorityTiers {
+			if c.PriorityTiers[i].Examples == nil {
+				c.PriorityTiers[i].Examples = []string{}
+			}
+		}
+
+		if c.UpdatedAt, err = parseTime(updatedAt); err != nil {
+			return nil, fmt.Errorf("parse updated_at: %w", err)
+		}
+
+		configs = append(configs, c)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("iterate net ride configs: %w", err)
+	}
+	return configs, nil
+}
+
+func (s *SQLiteStore) DeleteNetRideConfig(netID string) error {
+	_, err := s.db.Exec("DELETE FROM net_ride_configs WHERE net_id = ?", netID)
+	if err != nil {
+		return fmt.Errorf("delete net ride config: %w", err)
 	}
 	return nil
 }
@@ -1857,6 +2096,16 @@ func nullTimePtr(t *time.Time) any {
 		return nil
 	}
 	return t.UTC()
+}
+
+// nullFloatPtr converts a nullable float column value the same explicit way
+// nullTimePtr does for times, rather than relying on the driver's reflection
+// dereference of a bare *float64.
+func nullFloatPtr(f *float64) any {
+	if f == nil {
+		return nil
+	}
+	return *f
 }
 
 // --- Tactical Alias CRUD ---
@@ -2918,6 +3167,56 @@ CREATE TABLE IF NOT EXISTS wx_alert_meta (
 	return nil
 }
 
+// migrateV25 adds the net profile column and its per-net ride-event
+// configuration table (internal/netprofile). The present-table guard on
+// `nets` mirrors migrateV22/V23/V24: narrow migration-test fixtures hand-
+// build only the tables their own migration touches.
+//
+// The DEFAULT 'general' on the ALTER is the compatibility guarantee: every
+// pre-existing row reads back as general with no data migration. The literal
+// "general" here (rather than netprofile.ProfileGeneral) is deliberate —
+// store must not import netprofile (netprofile is the higher-level
+// registry); TestProfileGeneralLiteralMatchesStore pins the two equal.
+func (s *SQLiteStore) migrateV25() error {
+	var netsPresent int
+	if err := s.db.QueryRow(
+		`SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name='nets'`,
+	).Scan(&netsPresent); err != nil {
+		return fmt.Errorf("migrate v25 check nets table: %w", err)
+	}
+	if netsPresent == 1 {
+		if _, err := s.db.Exec(`ALTER TABLE nets ADD COLUMN profile TEXT NOT NULL DEFAULT 'general'`); err != nil && !isDuplicateColumnError(err) {
+			return fmt.Errorf("migrate v25 alter nets: %w", err)
+		}
+	}
+
+	ddl := `
+CREATE TABLE IF NOT EXISTS net_ride_configs (
+    net_id                         TEXT PRIMARY KEY,
+    agency_name                    TEXT NOT NULL DEFAULT '',
+    event_name                     TEXT NOT NULL DEFAULT '',
+    event_date                     TEXT NOT NULL DEFAULT '',
+    routes                         TEXT NOT NULL DEFAULT '[]',
+    cutoff                         TEXT NOT NULL DEFAULT '{}',
+    withhold_bib_on_severe_injury  INTEGER NOT NULL DEFAULT 0,
+    priority_tiers                 TEXT NOT NULL DEFAULT '[]',
+    division                       TEXT NOT NULL DEFAULT '',
+    updated_at                     DATETIME NOT NULL
+);
+`
+	if _, err := s.db.Exec(ddl); err != nil {
+		return fmt.Errorf("migrate v25 create net_ride_configs: %w", err)
+	}
+
+	if _, err := s.db.Exec(`DELETE FROM schema_version`); err != nil {
+		return fmt.Errorf("clear schema version: %w", err)
+	}
+	if _, err := s.db.Exec(`INSERT INTO schema_version (version) VALUES (?)`, 25); err != nil {
+		return fmt.Errorf("set schema version: %w", err)
+	}
+	return nil
+}
+
 // backfillConversationReads seeds an "everything so far is read" marker for
 // every conversation that already has inbound messages.
 //
@@ -3241,6 +3540,1524 @@ func (s *SQLiteStore) SetWxMeta(key, value string) error {
 		return fmt.Errorf("set wx meta %q: %w", key, err)
 	}
 	return nil
+}
+
+// migrateV26 adds internal/ride's SAG (support-and-gear transport) tables.
+// Both are brand new — no ALTER on an existing table, so unlike v22-v25
+// there is no present-table guard to worry about; CREATE TABLE IF NOT
+// EXISTS makes this idempotent on its own.
+//
+// Aggregate storage (slots + legs as JSON on the request row) follows the
+// net_check_ins mission_ids/tracked_stations idiom: the ride.Manager holds
+// the whole aggregate in memory and INSERT OR REPLACEs it; capacity is
+// derived, never a stored counter. division is NULLABLE by design — single
+// net for v1, parallel Route/RestStop/Medical/Supply nets land later
+// without a painful migration.
+func (s *SQLiteStore) migrateV26() error {
+	ddl := `
+CREATE TABLE IF NOT EXISTS sag_requests (
+    id              TEXT PRIMARY KEY,
+    net_id          TEXT NOT NULL,
+    division        TEXT,                        -- NULL in v1
+    sequence        INTEGER NOT NULL,
+    pickup          TEXT NOT NULL DEFAULT '{}',   -- SAGLocation JSON
+    dropoff         TEXT NOT NULL DEFAULT '{}',   -- SAGLocation JSON
+    reason          TEXT NOT NULL DEFAULT '',
+    priority        TEXT NOT NULL DEFAULT 'medium',
+    status          TEXT NOT NULL DEFAULT 'open', -- derived, persisted for queries
+    needs_vehicle   INTEGER NOT NULL DEFAULT 1,
+    slots           TEXT NOT NULL DEFAULT '[]',   -- []SAGSlot JSON
+    legs            TEXT NOT NULL DEFAULT '[]',   -- []SAGLeg JSON
+    requested_by    TEXT NOT NULL DEFAULT '',
+    created_by_name TEXT NOT NULL DEFAULT '',
+    notes           TEXT NOT NULL DEFAULT '',
+    cancel_reason   TEXT NOT NULL DEFAULT '',
+    created_at      DATETIME NOT NULL,
+    updated_at      DATETIME NOT NULL,
+    closed_at       DATETIME
+);
+CREATE INDEX IF NOT EXISTS idx_sag_requests_net ON sag_requests(net_id, sequence);
+CREATE INDEX IF NOT EXISTS idx_sag_requests_status ON sag_requests(net_id, status);
+CREATE UNIQUE INDEX IF NOT EXISTS idx_sag_requests_net_seq ON sag_requests(net_id, sequence);
+
+CREATE TABLE IF NOT EXISTS sag_vehicles (
+    net_id       TEXT NOT NULL,
+    check_in_id  TEXT NOT NULL,
+    division     TEXT,
+    seats        INTEGER NOT NULL DEFAULT 3,
+    rack_slots   INTEGER NOT NULL DEFAULT 2,
+    notes        TEXT NOT NULL DEFAULT '',
+    updated_at   DATETIME NOT NULL,
+    PRIMARY KEY (net_id, check_in_id)
+);
+`
+	if _, err := s.db.Exec(ddl); err != nil {
+		return fmt.Errorf("migrate v26 create sag tables: %w", err)
+	}
+	if _, err := s.db.Exec(`DELETE FROM schema_version`); err != nil {
+		return fmt.Errorf("clear schema version: %w", err)
+	}
+	if _, err := s.db.Exec(`INSERT INTO schema_version (version) VALUES (?)`, 26); err != nil {
+		return fmt.Errorf("set schema version: %w", err)
+	}
+	return nil
+}
+
+// --- SAG Request / Vehicle CRUD (internal/ride) ---
+
+func (s *SQLiteStore) SaveSAGRequest(r SAGRequest) error {
+	var division interface{}
+	if r.Division != nil {
+		division = *r.Division
+	}
+
+	pickupJSON, err := json.Marshal(r.Pickup)
+	if err != nil {
+		return fmt.Errorf("marshal pickup: %w", err)
+	}
+	dropoffJSON, err := json.Marshal(r.Dropoff)
+	if err != nil {
+		return fmt.Errorf("marshal dropoff: %w", err)
+	}
+
+	slotsJSON := "[]"
+	if len(r.Slots) > 0 {
+		b, err := json.Marshal(r.Slots)
+		if err != nil {
+			return fmt.Errorf("marshal slots: %w", err)
+		}
+		slotsJSON = string(b)
+	}
+
+	legsJSON := "[]"
+	if len(r.Legs) > 0 {
+		b, err := json.Marshal(r.Legs)
+		if err != nil {
+			return fmt.Errorf("marshal legs: %w", err)
+		}
+		legsJSON = string(b)
+	}
+
+	var closedAt interface{}
+	if r.ClosedAt != nil {
+		closedAt = r.ClosedAt.UTC()
+	}
+
+	_, err = s.db.Exec(`
+		INSERT OR REPLACE INTO sag_requests
+			(id, net_id, division, sequence, pickup, dropoff, reason, priority, status,
+			 needs_vehicle, slots, legs, requested_by, created_by_name, notes, cancel_reason,
+			 created_at, updated_at, closed_at)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		r.ID, r.NetID, division, r.Sequence, string(pickupJSON), string(dropoffJSON),
+		r.Reason, r.Priority, r.Status, r.NeedsVehicle, slotsJSON, legsJSON,
+		r.RequestedBy, r.CreatedByName, r.Notes, r.CancelReason,
+		r.CreatedAt.UTC(), r.UpdatedAt.UTC(), closedAt,
+	)
+	if err != nil {
+		return fmt.Errorf("save sag request: %w", err)
+	}
+	return nil
+}
+
+func (s *SQLiteStore) LoadSAGRequests(netID string) ([]SAGRequest, error) {
+	rows, err := s.db.Query(`
+		SELECT id, net_id, division, sequence, pickup, dropoff, reason, priority, status,
+		       needs_vehicle, slots, legs, requested_by, created_by_name, notes, cancel_reason,
+		       created_at, updated_at, closed_at
+		FROM sag_requests WHERE net_id = ? ORDER BY sequence ASC`, netID)
+	if err != nil {
+		return nil, fmt.Errorf("query sag requests: %w", err)
+	}
+	defer rows.Close()
+
+	requests := []SAGRequest{}
+	for rows.Next() {
+		var r SAGRequest
+		var division sql.NullString
+		var pickupJSON, dropoffJSON, slotsJSON, legsJSON string
+		var createdAt, updatedAt string
+		var closedAt sql.NullString
+
+		if err := rows.Scan(
+			&r.ID, &r.NetID, &division, &r.Sequence, &pickupJSON, &dropoffJSON,
+			&r.Reason, &r.Priority, &r.Status, &r.NeedsVehicle, &slotsJSON, &legsJSON,
+			&r.RequestedBy, &r.CreatedByName, &r.Notes, &r.CancelReason,
+			&createdAt, &updatedAt, &closedAt,
+		); err != nil {
+			return nil, fmt.Errorf("scan sag request: %w", err)
+		}
+
+		if division.Valid {
+			d := division.String
+			r.Division = &d
+		}
+
+		if pickupJSON != "" && pickupJSON != "{}" {
+			if err := json.Unmarshal([]byte(pickupJSON), &r.Pickup); err != nil {
+				return nil, fmt.Errorf("unmarshal pickup: %w", err)
+			}
+		}
+		if dropoffJSON != "" && dropoffJSON != "{}" {
+			if err := json.Unmarshal([]byte(dropoffJSON), &r.Dropoff); err != nil {
+				return nil, fmt.Errorf("unmarshal dropoff: %w", err)
+			}
+		}
+
+		r.Slots = []SAGSlot{}
+		if slotsJSON != "" && slotsJSON != "[]" {
+			if err := json.Unmarshal([]byte(slotsJSON), &r.Slots); err != nil {
+				return nil, fmt.Errorf("unmarshal slots: %w", err)
+			}
+		}
+		if r.Slots == nil {
+			r.Slots = []SAGSlot{}
+		}
+
+		r.Legs = []SAGLeg{}
+		if legsJSON != "" && legsJSON != "[]" {
+			if err := json.Unmarshal([]byte(legsJSON), &r.Legs); err != nil {
+				return nil, fmt.Errorf("unmarshal legs: %w", err)
+			}
+		}
+		if r.Legs == nil {
+			r.Legs = []SAGLeg{}
+		}
+		for i := range r.Legs {
+			if r.Legs[i].SlotIDs == nil {
+				r.Legs[i].SlotIDs = []string{}
+			}
+		}
+
+		if r.CreatedAt, err = parseTime(createdAt); err != nil {
+			return nil, fmt.Errorf("parse created_at: %w", err)
+		}
+		if r.UpdatedAt, err = parseTime(updatedAt); err != nil {
+			return nil, fmt.Errorf("parse updated_at: %w", err)
+		}
+		if closedAt.Valid {
+			t, err := parseTime(closedAt.String)
+			if err != nil {
+				return nil, fmt.Errorf("parse closed_at: %w", err)
+			}
+			r.ClosedAt = &t
+		}
+
+		requests = append(requests, r)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("iterate sag requests: %w", err)
+	}
+	return requests, nil
+}
+
+func (s *SQLiteStore) SaveSAGVehicle(v SAGVehicle) error {
+	var division interface{}
+	if v.Division != nil {
+		division = *v.Division
+	}
+
+	updatedAt := v.UpdatedAt
+	if updatedAt.IsZero() {
+		updatedAt = time.Now().UTC()
+	}
+
+	_, err := s.db.Exec(`
+		INSERT OR REPLACE INTO sag_vehicles
+			(net_id, check_in_id, division, seats, rack_slots, notes, updated_at)
+		VALUES (?, ?, ?, ?, ?, ?, ?)`,
+		v.NetID, v.CheckInID, division, v.Seats, v.RackSlots, v.Notes, updatedAt.UTC(),
+	)
+	if err != nil {
+		return fmt.Errorf("save sag vehicle: %w", err)
+	}
+	return nil
+}
+
+func (s *SQLiteStore) LoadSAGVehicles(netID string) ([]SAGVehicle, error) {
+	rows, err := s.db.Query(`
+		SELECT net_id, check_in_id, division, seats, rack_slots, notes, updated_at
+		FROM sag_vehicles WHERE net_id = ? ORDER BY check_in_id ASC`, netID)
+	if err != nil {
+		return nil, fmt.Errorf("query sag vehicles: %w", err)
+	}
+	defer rows.Close()
+
+	vehicles := []SAGVehicle{}
+	for rows.Next() {
+		var v SAGVehicle
+		var division sql.NullString
+		var updatedAt string
+
+		if err := rows.Scan(&v.NetID, &v.CheckInID, &division, &v.Seats, &v.RackSlots, &v.Notes, &updatedAt); err != nil {
+			return nil, fmt.Errorf("scan sag vehicle: %w", err)
+		}
+		if division.Valid {
+			d := division.String
+			v.Division = &d
+		}
+		if v.UpdatedAt, err = parseTime(updatedAt); err != nil {
+			return nil, fmt.Errorf("parse updated_at: %w", err)
+		}
+		vehicles = append(vehicles, v)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("iterate sag vehicles: %w", err)
+	}
+	return vehicles, nil
+}
+
+func (s *SQLiteStore) DeleteSAGVehicle(netID, checkInID string) error {
+	_, err := s.db.Exec(`DELETE FROM sag_vehicles WHERE net_id = ? AND check_in_id = ?`, netID, checkInID)
+	if err != nil {
+		return fmt.Errorf("delete sag vehicle: %w", err)
+	}
+	return nil
+}
+
+// migrateV27 adds internal/course's course-closure tables: per-net policy
+// config, scheduled shutoffs, rider exceptions (the ONLY place an individual
+// rider appears — bib is a label, never indexed as a key), sweep reports,
+// and the per-station closure ladder. All five are brand new (no ALTER on an
+// existing table), so — like v26 — CREATE TABLE IF NOT EXISTS makes this
+// idempotent on its own with no present-table guard needed. checkpoint_meta
+// is reused as-is; aid/start/finish annotations simply start appearing in it
+// once internal/checkpoint's SetMeta relaxation lands.
+func (s *SQLiteStore) migrateV27() error {
+	ddl := `
+CREATE TABLE IF NOT EXISTS course_config (
+    net_id TEXT PRIMARY KEY,
+    division TEXT NOT NULL DEFAULT '',
+    sweep_label TEXT NOT NULL DEFAULT 'SWEEP',
+    lead_label TEXT NOT NULL DEFAULT 'LEAD',
+    close_requires_sweep INTEGER NOT NULL DEFAULT 1,
+    auto_sweep_from_passage INTEGER NOT NULL DEFAULT 1,
+    updated_at DATETIME NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS course_shutoffs (
+    id TEXT PRIMARY KEY,
+    net_id TEXT NOT NULL,
+    division TEXT NOT NULL DEFAULT '',
+    name TEXT NOT NULL,
+    lat REAL NOT NULL,
+    lon REAL NOT NULL,
+    route_mile REAL,
+    annotation_id TEXT NOT NULL DEFAULT '',
+    scheduled_at DATETIME NOT NULL,
+    reroute_direction TEXT NOT NULL DEFAULT '',
+    reroute_destination TEXT NOT NULL DEFAULT '',
+    reroute_instructions TEXT NOT NULL DEFAULT '',
+    staffed_by_checkin_id TEXT NOT NULL DEFAULT '',
+    status TEXT NOT NULL DEFAULT 'planned',
+    fired_at DATETIME,
+    fired_by TEXT NOT NULL DEFAULT '',
+    fire_note TEXT NOT NULL DEFAULT '',
+    reroute_count INTEGER NOT NULL DEFAULT 0,
+    created_at DATETIME NOT NULL,
+    updated_at DATETIME NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_course_shutoffs_net ON course_shutoffs(net_id);
+CREATE INDEX IF NOT EXISTS idx_course_shutoffs_sched ON course_shutoffs(net_id, scheduled_at);
+
+CREATE TABLE IF NOT EXISTS course_rider_exceptions (
+    id TEXT PRIMARY KEY,
+    net_id TEXT NOT NULL,
+    division TEXT NOT NULL DEFAULT '',
+    bib TEXT NOT NULL DEFAULT '',
+    bib_withheld INTEGER NOT NULL DEFAULT 0,
+    kind TEXT NOT NULL,
+    support_status TEXT NOT NULL DEFAULT 'supported',
+    reason TEXT NOT NULL DEFAULT '',
+    route_label TEXT NOT NULL DEFAULT '',
+    route_mile REAL,
+    lat REAL,
+    lon REAL,
+    shutoff_id TEXT NOT NULL DEFAULT '',
+    sag_request_id TEXT NOT NULL DEFAULT '',
+    reported_by TEXT NOT NULL DEFAULT '',
+    recorded_at DATETIME NOT NULL,
+    status_changed_at DATETIME NOT NULL,
+    status_changed_by TEXT NOT NULL DEFAULT '',
+    note TEXT NOT NULL DEFAULT ''
+);
+CREATE INDEX IF NOT EXISTS idx_course_riders_net ON course_rider_exceptions(net_id);
+CREATE INDEX IF NOT EXISTS idx_course_riders_status ON course_rider_exceptions(net_id, support_status);
+
+CREATE TABLE IF NOT EXISTS course_sweep_reports (
+    id TEXT PRIMARY KEY,
+    net_id TEXT NOT NULL,
+    division TEXT NOT NULL DEFAULT '',
+    route_label TEXT NOT NULL DEFAULT '',
+    checkin_id TEXT NOT NULL DEFAULT '',
+    reported_by TEXT NOT NULL DEFAULT '',
+    route_mile REAL,
+    lat REAL,
+    lon REAL,
+    last_rider_bib TEXT NOT NULL DEFAULT '',
+    estimated_speed_mph REAL,
+    note TEXT NOT NULL DEFAULT '',
+    reported_at DATETIME NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_course_sweep_net_time ON course_sweep_reports(net_id, reported_at);
+
+CREATE TABLE IF NOT EXISTS course_station_closures (
+    net_id TEXT NOT NULL,
+    checkpoint_id TEXT NOT NULL,
+    division TEXT NOT NULL DEFAULT '',
+    state TEXT NOT NULL DEFAULT 'open',
+    riders_clear_at DATETIME,
+    riders_clear_by TEXT NOT NULL DEFAULT '',
+    sweep_passed_at DATETIME,
+    sweep_passed_by TEXT NOT NULL DEFAULT '',
+    sweep_passage_id TEXT NOT NULL DEFAULT '',
+    closed_at DATETIME,
+    closed_by TEXT NOT NULL DEFAULT '',
+    closed_by_override INTEGER NOT NULL DEFAULT 0,
+    override_reason TEXT NOT NULL DEFAULT '',
+    reopen_count INTEGER NOT NULL DEFAULT 0,
+    note TEXT NOT NULL DEFAULT '',
+    updated_at DATETIME NOT NULL,
+    PRIMARY KEY (net_id, checkpoint_id)
+);
+`
+	if _, err := s.db.Exec(ddl); err != nil {
+		return fmt.Errorf("migrate v27 create course tables: %w", err)
+	}
+	if _, err := s.db.Exec(`DELETE FROM schema_version`); err != nil {
+		return fmt.Errorf("clear schema version: %w", err)
+	}
+	if _, err := s.db.Exec(`INSERT INTO schema_version (version) VALUES (?)`, 27); err != nil {
+		return fmt.Errorf("set schema version: %w", err)
+	}
+	return nil
+}
+
+// --- Course closure CRUD (internal/course) ---
+
+func (s *SQLiteStore) SaveCourseConfig(c CourseConfig) error {
+	updatedAt := c.UpdatedAt
+	if updatedAt.IsZero() {
+		updatedAt = time.Now().UTC()
+	}
+	_, err := s.db.Exec(`
+		INSERT OR REPLACE INTO course_config
+			(net_id, division, sweep_label, lead_label, close_requires_sweep, auto_sweep_from_passage, updated_at)
+		VALUES (?, ?, ?, ?, ?, ?, ?)`,
+		c.NetID, c.Division, c.SweepLabel, c.LeadLabel, c.CloseRequiresSweep, c.AutoSweepFromPassage, updatedAt.UTC(),
+	)
+	if err != nil {
+		return fmt.Errorf("save course config: %w", err)
+	}
+	return nil
+}
+
+func (s *SQLiteStore) LoadCourseConfig(netID string) (*CourseConfig, error) {
+	var c CourseConfig
+	var updatedAt string
+	err := s.db.QueryRow(`
+		SELECT net_id, division, sweep_label, lead_label, close_requires_sweep, auto_sweep_from_passage, updated_at
+		FROM course_config WHERE net_id = ?`, netID).Scan(
+		&c.NetID, &c.Division, &c.SweepLabel, &c.LeadLabel, &c.CloseRequiresSweep, &c.AutoSweepFromPassage, &updatedAt,
+	)
+	if err == sql.ErrNoRows {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, fmt.Errorf("load course config: %w", err)
+	}
+	if c.UpdatedAt, err = parseTime(updatedAt); err != nil {
+		return nil, fmt.Errorf("parse updated_at: %w", err)
+	}
+	return &c, nil
+}
+
+func (s *SQLiteStore) SaveShutoffPoint(sp ShutoffPoint) error {
+	_, err := s.db.Exec(`
+		INSERT OR REPLACE INTO course_shutoffs
+			(id, net_id, division, name, lat, lon, route_mile, annotation_id, scheduled_at,
+			 reroute_direction, reroute_destination, reroute_instructions, staffed_by_checkin_id,
+			 status, fired_at, fired_by, fire_note, reroute_count, created_at, updated_at)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		sp.ID, sp.NetID, sp.Division, sp.Name, sp.Lat, sp.Lon, nullFloatPtr(sp.RouteMile), sp.AnnotationID, sp.ScheduledAt.UTC(),
+		sp.RerouteDirection, sp.RerouteDestination, sp.RerouteInstructions, sp.StaffedByCheckInID,
+		sp.Status, nullTimePtr(sp.FiredAt), sp.FiredBy, sp.FireNote, sp.RerouteCount, sp.CreatedAt.UTC(), sp.UpdatedAt.UTC(),
+	)
+	if err != nil {
+		return fmt.Errorf("save shutoff point: %w", err)
+	}
+	return nil
+}
+
+func (s *SQLiteStore) LoadShutoffPoints(netID string) ([]ShutoffPoint, error) {
+	rows, err := s.db.Query(`
+		SELECT id, net_id, division, name, lat, lon, route_mile, annotation_id, scheduled_at,
+		       reroute_direction, reroute_destination, reroute_instructions, staffed_by_checkin_id,
+		       status, fired_at, fired_by, fire_note, reroute_count, created_at, updated_at
+		FROM course_shutoffs WHERE net_id = ? ORDER BY scheduled_at ASC`, netID)
+	if err != nil {
+		return nil, fmt.Errorf("query shutoff points: %w", err)
+	}
+	defer rows.Close()
+
+	points := []ShutoffPoint{}
+	for rows.Next() {
+		var sp ShutoffPoint
+		var routeMile sql.NullFloat64
+		var scheduledAt, createdAt, updatedAt string
+		var firedAt sql.NullString
+
+		if err := rows.Scan(
+			&sp.ID, &sp.NetID, &sp.Division, &sp.Name, &sp.Lat, &sp.Lon, &routeMile, &sp.AnnotationID, &scheduledAt,
+			&sp.RerouteDirection, &sp.RerouteDestination, &sp.RerouteInstructions, &sp.StaffedByCheckInID,
+			&sp.Status, &firedAt, &sp.FiredBy, &sp.FireNote, &sp.RerouteCount, &createdAt, &updatedAt,
+		); err != nil {
+			return nil, fmt.Errorf("scan shutoff point: %w", err)
+		}
+		if routeMile.Valid {
+			v := routeMile.Float64
+			sp.RouteMile = &v
+		}
+		if sp.ScheduledAt, err = parseTime(scheduledAt); err != nil {
+			return nil, fmt.Errorf("parse scheduled_at: %w", err)
+		}
+		if firedAt.Valid {
+			t, err := parseTime(firedAt.String)
+			if err != nil {
+				return nil, fmt.Errorf("parse fired_at: %w", err)
+			}
+			sp.FiredAt = &t
+		}
+		if sp.CreatedAt, err = parseTime(createdAt); err != nil {
+			return nil, fmt.Errorf("parse created_at: %w", err)
+		}
+		if sp.UpdatedAt, err = parseTime(updatedAt); err != nil {
+			return nil, fmt.Errorf("parse updated_at: %w", err)
+		}
+		points = append(points, sp)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("iterate shutoff points: %w", err)
+	}
+	return points, nil
+}
+
+func (s *SQLiteStore) DeleteShutoffPoint(id string) error {
+	_, err := s.db.Exec(`DELETE FROM course_shutoffs WHERE id = ?`, id)
+	if err != nil {
+		return fmt.Errorf("delete shutoff point: %w", err)
+	}
+	return nil
+}
+
+func (s *SQLiteStore) SaveRiderException(r RiderException) error {
+	_, err := s.db.Exec(`
+		INSERT OR REPLACE INTO course_rider_exceptions
+			(id, net_id, division, bib, bib_withheld, kind, support_status, reason, route_label,
+			 route_mile, lat, lon, shutoff_id, sag_request_id, reported_by, recorded_at,
+			 status_changed_at, status_changed_by, note)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		r.ID, r.NetID, r.Division, r.Bib, r.BibWithheld, r.Kind, r.SupportStatus, r.Reason, r.RouteLabel,
+		nullFloatPtr(r.RouteMile), nullFloatPtr(r.Lat), nullFloatPtr(r.Lon), r.ShutoffID, r.SAGRequestID, r.ReportedBy, r.RecordedAt.UTC(),
+		r.StatusChangedAt.UTC(), r.StatusChangedBy, r.Note,
+	)
+	if err != nil {
+		return fmt.Errorf("save rider exception: %w", err)
+	}
+	return nil
+}
+
+func (s *SQLiteStore) LoadRiderExceptions(netID string) ([]RiderException, error) {
+	rows, err := s.db.Query(`
+		SELECT id, net_id, division, bib, bib_withheld, kind, support_status, reason, route_label,
+		       route_mile, lat, lon, shutoff_id, sag_request_id, reported_by, recorded_at,
+		       status_changed_at, status_changed_by, note
+		FROM course_rider_exceptions WHERE net_id = ? ORDER BY recorded_at ASC`, netID)
+	if err != nil {
+		return nil, fmt.Errorf("query rider exceptions: %w", err)
+	}
+	defer rows.Close()
+
+	riders := []RiderException{}
+	for rows.Next() {
+		var r RiderException
+		var routeMile, lat, lon sql.NullFloat64
+		var recordedAt, statusChangedAt string
+
+		if err := rows.Scan(
+			&r.ID, &r.NetID, &r.Division, &r.Bib, &r.BibWithheld, &r.Kind, &r.SupportStatus, &r.Reason, &r.RouteLabel,
+			&routeMile, &lat, &lon, &r.ShutoffID, &r.SAGRequestID, &r.ReportedBy, &recordedAt,
+			&statusChangedAt, &r.StatusChangedBy, &r.Note,
+		); err != nil {
+			return nil, fmt.Errorf("scan rider exception: %w", err)
+		}
+		if routeMile.Valid {
+			v := routeMile.Float64
+			r.RouteMile = &v
+		}
+		if lat.Valid {
+			v := lat.Float64
+			r.Lat = &v
+		}
+		if lon.Valid {
+			v := lon.Float64
+			r.Lon = &v
+		}
+		if r.RecordedAt, err = parseTime(recordedAt); err != nil {
+			return nil, fmt.Errorf("parse recorded_at: %w", err)
+		}
+		if r.StatusChangedAt, err = parseTime(statusChangedAt); err != nil {
+			return nil, fmt.Errorf("parse status_changed_at: %w", err)
+		}
+		riders = append(riders, r)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("iterate rider exceptions: %w", err)
+	}
+	return riders, nil
+}
+
+func (s *SQLiteStore) SaveSweepReport(r SweepReport) error {
+	_, err := s.db.Exec(`
+		INSERT OR REPLACE INTO course_sweep_reports
+			(id, net_id, division, route_label, checkin_id, reported_by, route_mile, lat, lon,
+			 last_rider_bib, estimated_speed_mph, note, reported_at)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		r.ID, r.NetID, r.Division, r.RouteLabel, r.CheckInID, r.ReportedBy, nullFloatPtr(r.RouteMile), nullFloatPtr(r.Lat), nullFloatPtr(r.Lon),
+		r.LastRiderBib, nullFloatPtr(r.EstimatedSpeedMph), r.Note, r.ReportedAt.UTC(),
+	)
+	if err != nil {
+		return fmt.Errorf("save sweep report: %w", err)
+	}
+	return nil
+}
+
+func (s *SQLiteStore) LoadSweepReports(netID string, limit int) ([]SweepReport, error) {
+	query := `
+		SELECT id, net_id, division, route_label, checkin_id, reported_by, route_mile, lat, lon,
+		       last_rider_bib, estimated_speed_mph, note, reported_at
+		FROM course_sweep_reports WHERE net_id = ? ORDER BY reported_at DESC`
+	args := []interface{}{netID}
+	if limit > 0 {
+		query += ` LIMIT ?`
+		args = append(args, limit)
+	}
+
+	rows, err := s.db.Query(query, args...)
+	if err != nil {
+		return nil, fmt.Errorf("query sweep reports: %w", err)
+	}
+	defer rows.Close()
+
+	reports := []SweepReport{}
+	for rows.Next() {
+		var r SweepReport
+		var routeMile, lat, lon, speed sql.NullFloat64
+		var reportedAt string
+
+		if err := rows.Scan(
+			&r.ID, &r.NetID, &r.Division, &r.RouteLabel, &r.CheckInID, &r.ReportedBy, &routeMile, &lat, &lon,
+			&r.LastRiderBib, &speed, &r.Note, &reportedAt,
+		); err != nil {
+			return nil, fmt.Errorf("scan sweep report: %w", err)
+		}
+		if routeMile.Valid {
+			v := routeMile.Float64
+			r.RouteMile = &v
+		}
+		if lat.Valid {
+			v := lat.Float64
+			r.Lat = &v
+		}
+		if lon.Valid {
+			v := lon.Float64
+			r.Lon = &v
+		}
+		if speed.Valid {
+			v := speed.Float64
+			r.EstimatedSpeedMph = &v
+		}
+		if r.ReportedAt, err = parseTime(reportedAt); err != nil {
+			return nil, fmt.Errorf("parse reported_at: %w", err)
+		}
+		reports = append(reports, r)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("iterate sweep reports: %w", err)
+	}
+	return reports, nil
+}
+
+func (s *SQLiteStore) SaveStationClosure(c StationClosure) error {
+	updatedAt := c.UpdatedAt
+	if updatedAt.IsZero() {
+		updatedAt = time.Now().UTC()
+	}
+	_, err := s.db.Exec(`
+		INSERT OR REPLACE INTO course_station_closures
+			(net_id, checkpoint_id, division, state, riders_clear_at, riders_clear_by,
+			 sweep_passed_at, sweep_passed_by, sweep_passage_id, closed_at, closed_by,
+			 closed_by_override, override_reason, reopen_count, note, updated_at)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		c.NetID, c.CheckpointID, c.Division, c.State, nullTimePtr(c.RidersClearAt), c.RidersClearBy,
+		nullTimePtr(c.SweepPassedAt), c.SweepPassedBy, c.SweepPassageID, nullTimePtr(c.ClosedAt), c.ClosedBy,
+		c.ClosedByOverride, c.OverrideReason, c.ReopenCount, c.Note, updatedAt.UTC(),
+	)
+	if err != nil {
+		return fmt.Errorf("save station closure: %w", err)
+	}
+	return nil
+}
+
+func (s *SQLiteStore) LoadStationClosures(netID string) ([]StationClosure, error) {
+	rows, err := s.db.Query(`
+		SELECT net_id, checkpoint_id, division, state, riders_clear_at, riders_clear_by,
+		       sweep_passed_at, sweep_passed_by, sweep_passage_id, closed_at, closed_by,
+		       closed_by_override, override_reason, reopen_count, note, updated_at
+		FROM course_station_closures WHERE net_id = ?`, netID)
+	if err != nil {
+		return nil, fmt.Errorf("query station closures: %w", err)
+	}
+	defer rows.Close()
+
+	closures := []StationClosure{}
+	for rows.Next() {
+		var c StationClosure
+		var ridersClearAt, sweepPassedAt, closedAt sql.NullString
+		var updatedAt string
+
+		if err := rows.Scan(
+			&c.NetID, &c.CheckpointID, &c.Division, &c.State, &ridersClearAt, &c.RidersClearBy,
+			&sweepPassedAt, &c.SweepPassedBy, &c.SweepPassageID, &closedAt, &c.ClosedBy,
+			&c.ClosedByOverride, &c.OverrideReason, &c.ReopenCount, &c.Note, &updatedAt,
+		); err != nil {
+			return nil, fmt.Errorf("scan station closure: %w", err)
+		}
+		if ridersClearAt.Valid {
+			t, err := parseTime(ridersClearAt.String)
+			if err != nil {
+				return nil, fmt.Errorf("parse riders_clear_at: %w", err)
+			}
+			c.RidersClearAt = &t
+		}
+		if sweepPassedAt.Valid {
+			t, err := parseTime(sweepPassedAt.String)
+			if err != nil {
+				return nil, fmt.Errorf("parse sweep_passed_at: %w", err)
+			}
+			c.SweepPassedAt = &t
+		}
+		if closedAt.Valid {
+			t, err := parseTime(closedAt.String)
+			if err != nil {
+				return nil, fmt.Errorf("parse closed_at: %w", err)
+			}
+			c.ClosedAt = &t
+		}
+		if c.UpdatedAt, err = parseTime(updatedAt); err != nil {
+			return nil, fmt.Errorf("parse updated_at: %w", err)
+		}
+		closures = append(closures, c)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("iterate station closures: %w", err)
+	}
+	return closures, nil
+}
+
+func (s *SQLiteStore) DeleteCourseDataForNet(netID string) error {
+	tables := []string{
+		"course_config", "course_shutoffs", "course_rider_exceptions",
+		"course_sweep_reports", "course_station_closures",
+	}
+	for _, table := range tables {
+		col := "net_id"
+		if _, err := s.db.Exec(fmt.Sprintf("DELETE FROM %s WHERE %s = ?", table, col), netID); err != nil {
+			return fmt.Errorf("delete %s for net: %w", table, err)
+		}
+	}
+	return nil
+}
+
+// migrateV28 adds internal/ride's supply-request and medical-notification
+// tables (WP4). Both are brand new — no ALTER on an existing table — so
+// CREATE TABLE IF NOT EXISTS makes this idempotent on its own, mirroring
+// migrateV19/migrateV26/migrateV27. division is NULLABLE on both, matching
+// SAGRequest's own division column (fact 9: single net for v1, parallel
+// Route/RestStop/Medical/Supply nets land later without a migration).
+func (s *SQLiteStore) migrateV28() error {
+	ddl := `
+CREATE TABLE IF NOT EXISTS ride_supply_requests (
+    id                        TEXT PRIMARY KEY,
+    net_id                    TEXT NOT NULL,
+    division                  TEXT,                       -- nullable on purpose (fact 9)
+    requested_by_checkin_id   TEXT NOT NULL DEFAULT '',
+    requested_by_call         TEXT NOT NULL DEFAULT '',
+    location                  TEXT NOT NULL DEFAULT '',
+    location_annotation_id    TEXT NOT NULL DEFAULT '',
+    miles_remaining           REAL,
+    route_id                  TEXT NOT NULL DEFAULT '',
+    lat                       REAL,
+    lon                       REAL,
+    items                     TEXT NOT NULL DEFAULT '[]', -- JSON []SupplyItem
+    asked_what_else           INTEGER NOT NULL DEFAULT 0,
+    priority                  TEXT NOT NULL DEFAULT 'medium',
+    notes                     TEXT NOT NULL DEFAULT '',
+    status                    TEXT NOT NULL DEFAULT 'draft',
+    created_at                DATETIME NOT NULL,
+    read_back_at              DATETIME,
+    read_back_by              TEXT NOT NULL DEFAULT '',
+    relayed_at                DATETIME,
+    relayed_to                TEXT NOT NULL DEFAULT '',
+    etas                      TEXT NOT NULL DEFAULT '[]', -- JSON []SupplyETA
+    delivered_at              DATETIME,
+    cancelled_at              DATETIME,
+    cancel_reason             TEXT NOT NULL DEFAULT '',
+    merged_into_id            TEXT NOT NULL DEFAULT '',
+    updated_at                DATETIME NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_ride_supply_net    ON ride_supply_requests(net_id);
+CREATE INDEX IF NOT EXISTS idx_ride_supply_status ON ride_supply_requests(net_id, status);
+
+CREATE TABLE IF NOT EXISTS ride_medical_notifications (
+    id                        TEXT PRIMARY KEY,
+    net_id                    TEXT NOT NULL,
+    division                  TEXT,
+    reported_by_checkin_id    TEXT NOT NULL DEFAULT '',
+    reported_by_call          TEXT NOT NULL DEFAULT '',
+    bib                       TEXT NOT NULL DEFAULT '',
+    bib_withheld              INTEGER NOT NULL DEFAULT 0,
+    sex                       TEXT NOT NULL DEFAULT 'U',
+    age                       TEXT NOT NULL DEFAULT '',
+    location                  TEXT NOT NULL DEFAULT '',
+    miles_remaining           REAL,
+    route_id                  TEXT NOT NULL DEFAULT '',
+    location_annotation_id    TEXT NOT NULL DEFAULT '',
+    lat                       REAL,
+    lon                       REAL,
+    chief_complaint           TEXT NOT NULL DEFAULT '',
+    read_back_at              DATETIME,
+    read_back_by              TEXT NOT NULL DEFAULT '',
+    severity                  TEXT NOT NULL DEFAULT 'routine',
+    priority                  TEXT NOT NULL DEFAULT 'priority',
+    status                    TEXT NOT NULL DEFAULT 'reported',
+    ems_unit                  TEXT NOT NULL DEFAULT '',
+    eta_minutes               INTEGER,
+    eta_given_at              DATETIME,
+    eta_due_at                DATETIME,
+    on_scene_at               DATETIME,
+    departed_at               DATETIME,
+    on_scene_seconds          INTEGER,
+    destination               TEXT NOT NULL DEFAULT '',
+    destination_name          TEXT NOT NULL DEFAULT '',
+    patient_count             INTEGER NOT NULL DEFAULT 0,
+    patient_name              TEXT NOT NULL DEFAULT '',   -- only for hospital/start transports
+    released_at               DATETIME,
+    cancelled_at              DATETIME,
+    cancel_reason             TEXT NOT NULL DEFAULT '',
+    notes                     TEXT NOT NULL DEFAULT '',
+    created_at                DATETIME NOT NULL,
+    updated_at                DATETIME NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_ride_medical_net    ON ride_medical_notifications(net_id);
+CREATE INDEX IF NOT EXISTS idx_ride_medical_status ON ride_medical_notifications(net_id, status);
+`
+	if _, err := s.db.Exec(ddl); err != nil {
+		return fmt.Errorf("migrate v28 create ride traffic tables: %w", err)
+	}
+	if _, err := s.db.Exec(`DELETE FROM schema_version`); err != nil {
+		return fmt.Errorf("clear schema version: %w", err)
+	}
+	if _, err := s.db.Exec(`INSERT INTO schema_version (version) VALUES (?)`, 28); err != nil {
+		return fmt.Errorf("set schema version: %w", err)
+	}
+	return nil
+}
+
+// nullIntPtr converts a nullable int column value the same explicit way
+// nullFloatPtr does for floats.
+func nullIntPtr(i *int) any {
+	if i == nil {
+		return nil
+	}
+	return *i
+}
+
+// --- Ride traffic CRUD (internal/ride, WP4) ---
+
+func (s *SQLiteStore) SaveSupplyRequest(r SupplyRequest) error {
+	var division any
+	if r.Division != nil {
+		division = *r.Division
+	}
+
+	itemsJSON := "[]"
+	if len(r.Items) > 0 {
+		b, err := json.Marshal(r.Items)
+		if err != nil {
+			return fmt.Errorf("marshal items: %w", err)
+		}
+		itemsJSON = string(b)
+	}
+	etasJSON := "[]"
+	if len(r.ETAs) > 0 {
+		b, err := json.Marshal(r.ETAs)
+		if err != nil {
+			return fmt.Errorf("marshal etas: %w", err)
+		}
+		etasJSON = string(b)
+	}
+
+	_, err := s.db.Exec(`
+		INSERT OR REPLACE INTO ride_supply_requests
+			(id, net_id, division, requested_by_checkin_id, requested_by_call, location,
+			 location_annotation_id, miles_remaining, route_id, lat, lon, items, asked_what_else,
+			 priority, notes, status, created_at, read_back_at, read_back_by, relayed_at, relayed_to,
+			 etas, delivered_at, cancelled_at, cancel_reason, merged_into_id, updated_at)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		r.ID, r.NetID, division, r.RequestedByCheckInID, r.RequestedByCall, r.Location,
+		r.LocationAnnotationID, nullFloatPtr(r.MilesRemaining), r.RouteID, nullFloatPtr(r.Lat), nullFloatPtr(r.Lon),
+		itemsJSON, r.AskedWhatElse, r.Priority, r.Notes, r.Status, r.CreatedAt.UTC(),
+		nullTimePtr(r.ReadBackAt), r.ReadBackBy, nullTimePtr(r.RelayedAt), r.RelayedTo,
+		etasJSON, nullTimePtr(r.DeliveredAt), nullTimePtr(r.CancelledAt), r.CancelReason, r.MergedIntoID, r.UpdatedAt.UTC(),
+	)
+	if err != nil {
+		return fmt.Errorf("save supply request: %w", err)
+	}
+	return nil
+}
+
+func (s *SQLiteStore) LoadSupplyRequests(netID string) ([]SupplyRequest, error) {
+	rows, err := s.db.Query(`
+		SELECT id, net_id, division, requested_by_checkin_id, requested_by_call, location,
+		       location_annotation_id, miles_remaining, route_id, lat, lon, items, asked_what_else,
+		       priority, notes, status, created_at, read_back_at, read_back_by, relayed_at, relayed_to,
+		       etas, delivered_at, cancelled_at, cancel_reason, merged_into_id, updated_at
+		FROM ride_supply_requests WHERE net_id = ? ORDER BY created_at ASC`, netID)
+	if err != nil {
+		return nil, fmt.Errorf("query supply requests: %w", err)
+	}
+	defer rows.Close()
+
+	requests := []SupplyRequest{}
+	for rows.Next() {
+		var r SupplyRequest
+		var division sql.NullString
+		var milesRemaining, lat, lon sql.NullFloat64
+		var itemsJSON, etasJSON string
+		var createdAt, updatedAt string
+		var readBackAt, relayedAt, deliveredAt, cancelledAt sql.NullString
+
+		if err := rows.Scan(
+			&r.ID, &r.NetID, &division, &r.RequestedByCheckInID, &r.RequestedByCall, &r.Location,
+			&r.LocationAnnotationID, &milesRemaining, &r.RouteID, &lat, &lon, &itemsJSON, &r.AskedWhatElse,
+			&r.Priority, &r.Notes, &r.Status, &createdAt, &readBackAt, &r.ReadBackBy, &relayedAt, &r.RelayedTo,
+			&etasJSON, &deliveredAt, &cancelledAt, &r.CancelReason, &r.MergedIntoID, &updatedAt,
+		); err != nil {
+			return nil, fmt.Errorf("scan supply request: %w", err)
+		}
+
+		if division.Valid {
+			d := division.String
+			r.Division = &d
+		}
+		if milesRemaining.Valid {
+			v := milesRemaining.Float64
+			r.MilesRemaining = &v
+		}
+		if lat.Valid {
+			v := lat.Float64
+			r.Lat = &v
+		}
+		if lon.Valid {
+			v := lon.Float64
+			r.Lon = &v
+		}
+
+		r.Items = []SupplyItem{}
+		if itemsJSON != "" && itemsJSON != "[]" {
+			if err := json.Unmarshal([]byte(itemsJSON), &r.Items); err != nil {
+				return nil, fmt.Errorf("unmarshal items: %w", err)
+			}
+		}
+		if r.Items == nil {
+			r.Items = []SupplyItem{}
+		}
+		r.ETAs = []SupplyETA{}
+		if etasJSON != "" && etasJSON != "[]" {
+			if err := json.Unmarshal([]byte(etasJSON), &r.ETAs); err != nil {
+				return nil, fmt.Errorf("unmarshal etas: %w", err)
+			}
+		}
+		if r.ETAs == nil {
+			r.ETAs = []SupplyETA{}
+		}
+
+		if r.CreatedAt, err = parseTime(createdAt); err != nil {
+			return nil, fmt.Errorf("parse created_at: %w", err)
+		}
+		if r.UpdatedAt, err = parseTime(updatedAt); err != nil {
+			return nil, fmt.Errorf("parse updated_at: %w", err)
+		}
+		if readBackAt.Valid {
+			t, err := parseTime(readBackAt.String)
+			if err != nil {
+				return nil, fmt.Errorf("parse read_back_at: %w", err)
+			}
+			r.ReadBackAt = &t
+		}
+		if relayedAt.Valid {
+			t, err := parseTime(relayedAt.String)
+			if err != nil {
+				return nil, fmt.Errorf("parse relayed_at: %w", err)
+			}
+			r.RelayedAt = &t
+		}
+		if deliveredAt.Valid {
+			t, err := parseTime(deliveredAt.String)
+			if err != nil {
+				return nil, fmt.Errorf("parse delivered_at: %w", err)
+			}
+			r.DeliveredAt = &t
+		}
+		if cancelledAt.Valid {
+			t, err := parseTime(cancelledAt.String)
+			if err != nil {
+				return nil, fmt.Errorf("parse cancelled_at: %w", err)
+			}
+			r.CancelledAt = &t
+		}
+
+		requests = append(requests, r)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("iterate supply requests: %w", err)
+	}
+	return requests, nil
+}
+
+func (s *SQLiteStore) SaveMedicalNotification(n MedicalNotification) error {
+	var division any
+	if n.Division != nil {
+		division = *n.Division
+	}
+
+	_, err := s.db.Exec(`
+		INSERT OR REPLACE INTO ride_medical_notifications
+			(id, net_id, division, reported_by_checkin_id, reported_by_call, bib, bib_withheld, sex, age,
+			 location, miles_remaining, route_id, location_annotation_id, lat, lon, chief_complaint,
+			 read_back_at, read_back_by, severity, priority, status, ems_unit, eta_minutes, eta_given_at,
+			 eta_due_at, on_scene_at, departed_at, on_scene_seconds, destination, destination_name,
+			 patient_count, patient_name, released_at, cancelled_at, cancel_reason, notes,
+			 created_at, updated_at)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		n.ID, n.NetID, division, n.ReportedByCheckInID, n.ReportedByCall, n.Bib, n.BibWithheld, n.Sex, n.Age,
+		n.Location, nullFloatPtr(n.MilesRemaining), n.RouteID, n.LocationAnnotationID, nullFloatPtr(n.Lat), nullFloatPtr(n.Lon), n.ChiefComplaint,
+		nullTimePtr(n.ReadBackAt), n.ReadBackBy, n.Severity, n.Priority, n.Status, n.EMSUnit, nullIntPtr(n.ETAMinutes), nullTimePtr(n.ETAGivenAt),
+		nullTimePtr(n.ETADueAt), nullTimePtr(n.OnSceneAt), nullTimePtr(n.DepartedAt), nullIntPtr(n.OnSceneSeconds), n.Destination, n.DestinationName,
+		n.PatientCount, n.PatientName, nullTimePtr(n.ReleasedAt), nullTimePtr(n.CancelledAt), n.CancelReason, n.Notes,
+		n.CreatedAt.UTC(), n.UpdatedAt.UTC(),
+	)
+	if err != nil {
+		return fmt.Errorf("save medical notification: %w", err)
+	}
+	return nil
+}
+
+func (s *SQLiteStore) LoadMedicalNotifications(netID string) ([]MedicalNotification, error) {
+	rows, err := s.db.Query(`
+		SELECT id, net_id, division, reported_by_checkin_id, reported_by_call, bib, bib_withheld, sex, age,
+		       location, miles_remaining, route_id, location_annotation_id, lat, lon, chief_complaint,
+		       read_back_at, read_back_by, severity, priority, status, ems_unit, eta_minutes, eta_given_at,
+		       eta_due_at, on_scene_at, departed_at, on_scene_seconds, destination, destination_name,
+		       patient_count, patient_name, released_at, cancelled_at, cancel_reason, notes,
+		       created_at, updated_at
+		FROM ride_medical_notifications WHERE net_id = ? ORDER BY created_at ASC`, netID)
+	if err != nil {
+		return nil, fmt.Errorf("query medical notifications: %w", err)
+	}
+	defer rows.Close()
+
+	notifications := []MedicalNotification{}
+	for rows.Next() {
+		var n MedicalNotification
+		var division sql.NullString
+		var milesRemaining, lat, lon sql.NullFloat64
+		var readBackAt, etaGivenAt, etaDueAt, onSceneAt, departedAt, releasedAt, cancelledAt sql.NullString
+		var etaMinutes, onSceneSeconds sql.NullInt64
+		var createdAt, updatedAt string
+
+		if err := rows.Scan(
+			&n.ID, &n.NetID, &division, &n.ReportedByCheckInID, &n.ReportedByCall, &n.Bib, &n.BibWithheld, &n.Sex, &n.Age,
+			&n.Location, &milesRemaining, &n.RouteID, &n.LocationAnnotationID, &lat, &lon, &n.ChiefComplaint,
+			&readBackAt, &n.ReadBackBy, &n.Severity, &n.Priority, &n.Status, &n.EMSUnit, &etaMinutes, &etaGivenAt,
+			&etaDueAt, &onSceneAt, &departedAt, &onSceneSeconds, &n.Destination, &n.DestinationName,
+			&n.PatientCount, &n.PatientName, &releasedAt, &cancelledAt, &n.CancelReason, &n.Notes,
+			&createdAt, &updatedAt,
+		); err != nil {
+			return nil, fmt.Errorf("scan medical notification: %w", err)
+		}
+
+		if division.Valid {
+			d := division.String
+			n.Division = &d
+		}
+		if milesRemaining.Valid {
+			v := milesRemaining.Float64
+			n.MilesRemaining = &v
+		}
+		if lat.Valid {
+			v := lat.Float64
+			n.Lat = &v
+		}
+		if lon.Valid {
+			v := lon.Float64
+			n.Lon = &v
+		}
+		if etaMinutes.Valid {
+			v := int(etaMinutes.Int64)
+			n.ETAMinutes = &v
+		}
+		if onSceneSeconds.Valid {
+			v := int(onSceneSeconds.Int64)
+			n.OnSceneSeconds = &v
+		}
+
+		if n.CreatedAt, err = parseTime(createdAt); err != nil {
+			return nil, fmt.Errorf("parse created_at: %w", err)
+		}
+		if n.UpdatedAt, err = parseTime(updatedAt); err != nil {
+			return nil, fmt.Errorf("parse updated_at: %w", err)
+		}
+		for _, pair := range []struct {
+			col  sql.NullString
+			dest **time.Time
+		}{
+			{readBackAt, &n.ReadBackAt}, {etaGivenAt, &n.ETAGivenAt}, {etaDueAt, &n.ETADueAt},
+			{onSceneAt, &n.OnSceneAt}, {departedAt, &n.DepartedAt}, {releasedAt, &n.ReleasedAt},
+			{cancelledAt, &n.CancelledAt},
+		} {
+			if pair.col.Valid {
+				t, err := parseTime(pair.col.String)
+				if err != nil {
+					return nil, fmt.Errorf("parse timestamp: %w", err)
+				}
+				*pair.dest = &t
+			}
+		}
+
+		notifications = append(notifications, n)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("iterate medical notifications: %w", err)
+	}
+	return notifications, nil
+}
+
+func (s *SQLiteStore) DeleteRideTraffic(netID string) error {
+	for _, table := range []string{"ride_supply_requests", "ride_medical_notifications"} {
+		if _, err := s.db.Exec(fmt.Sprintf("DELETE FROM %s WHERE net_id = ?", table), netID); err != nil {
+			return fmt.Errorf("delete %s for net: %w", table, err)
+		}
+	}
+	return nil
+}
+
+// migrateV29 adds the ride-reconciliation (WP5) tables: SAG driver shift
+// summaries and the NCS shift-relief handoff paper trail. Rider exceptions
+// reuse internal/course's ride_rider_exceptions table (migrateV27) — see
+// store.go's own doc comment on SAGShiftSummary for why this WP does not
+// add a second, differently-shaped rider table.
+func (s *SQLiteStore) migrateV29() error {
+	ddl := `
+CREATE TABLE IF NOT EXISTS ride_sag_shift_summaries (
+    id                 TEXT PRIMARY KEY,
+    net_id             TEXT NOT NULL,
+    division           TEXT NOT NULL DEFAULT '',
+    check_in_id        TEXT NOT NULL,
+    callsign           TEXT NOT NULL DEFAULT '',
+    tactical_call      TEXT NOT NULL DEFAULT '',
+    driver_name        TEXT NOT NULL DEFAULT '',
+    vehicle            TEXT NOT NULL DEFAULT '',
+    shift_start        DATETIME,
+    shift_end          DATETIME,
+    odometer_start     REAL,
+    odometer_end       REAL,
+    transports         INTEGER,                    -- NULL = not entered (falls back to derived)
+    assists            INTEGER,
+    tubes_provided     INTEGER,
+    tires_provided     INTEGER,
+    minor_first_aid    INTEGER,
+    incidents_attended INTEGER,
+    notes              TEXT NOT NULL DEFAULT '',
+    status             TEXT NOT NULL DEFAULT 'draft',
+    filed_at           DATETIME,
+    filed_by           TEXT NOT NULL DEFAULT '',
+    created_at         DATETIME NOT NULL,
+    updated_at         DATETIME NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_ride_shift_net     ON ride_sag_shift_summaries(net_id);
+CREATE INDEX IF NOT EXISTS idx_ride_shift_checkin ON ride_sag_shift_summaries(check_in_id);
+
+CREATE TABLE IF NOT EXISTS ride_handoff_items (
+    id             TEXT PRIMARY KEY,
+    net_id         TEXT NOT NULL,
+    division       TEXT NOT NULL DEFAULT '',
+    kind           TEXT NOT NULL,
+    summary        TEXT NOT NULL,
+    sent_to        TEXT NOT NULL DEFAULT '',
+    reply_to       TEXT NOT NULL DEFAULT 'NCS',
+    ref_type       TEXT NOT NULL DEFAULT '',
+    ref_id         TEXT NOT NULL DEFAULT '',
+    due_at         DATETIME,
+    status         TEXT NOT NULL DEFAULT 'open',
+    handover_count INTEGER NOT NULL DEFAULT 0,
+    created_by     TEXT NOT NULL DEFAULT '',
+    created_at     DATETIME NOT NULL,
+    resolved_by    TEXT NOT NULL DEFAULT '',
+    resolved_at    DATETIME,
+    resolution     TEXT NOT NULL DEFAULT ''
+);
+CREATE INDEX IF NOT EXISTS idx_ride_handoff_net_status ON ride_handoff_items(net_id, status);
+
+CREATE TABLE IF NOT EXISTS ride_shift_handoffs (
+    id              TEXT PRIMARY KEY,
+    net_id          TEXT NOT NULL,
+    division        TEXT NOT NULL DEFAULT '',
+    from_callsign   TEXT NOT NULL DEFAULT '',
+    to_callsign     TEXT NOT NULL DEFAULT '',
+    at              DATETIME NOT NULL,
+    open_item_ids   TEXT NOT NULL DEFAULT '[]',    -- JSON []string, never nil
+    briefing        TEXT NOT NULL DEFAULT '{}',    -- frozen ShiftBriefing JSON
+    acknowledged_at DATETIME,
+    acknowledged_by TEXT NOT NULL DEFAULT ''
+);
+CREATE INDEX IF NOT EXISTS idx_ride_shift_handoffs_net ON ride_shift_handoffs(net_id, at);
+`
+	if _, err := s.db.Exec(ddl); err != nil {
+		return fmt.Errorf("migrate v29 create ride reconciliation tables: %w", err)
+	}
+	if _, err := s.db.Exec(`DELETE FROM schema_version`); err != nil {
+		return fmt.Errorf("clear schema version: %w", err)
+	}
+	if _, err := s.db.Exec(`INSERT INTO schema_version (version) VALUES (?)`, 29); err != nil {
+		return fmt.Errorf("set schema version: %w", err)
+	}
+	return nil
+}
+
+// migrateV30 adds the ride-phase table (internal/ride/phase, WP5b): one row
+// per net recording the operator-set ride phase (pre-start | launched |
+// mid-ride | closing | collapse | reconcile). Brand new table — no ALTER on
+// an existing one — so CREATE TABLE IF NOT EXISTS makes this idempotent on
+// its own, mirroring migrateV26/27/28/29. A net with no row is simply
+// pre-start (the manager's default); this table only ever gains a row once
+// an operator makes the net's first phase change.
+func (s *SQLiteStore) migrateV30() error {
+	ddl := `
+CREATE TABLE IF NOT EXISTS ride_phase_state (
+    net_id     TEXT PRIMARY KEY,
+    phase      TEXT NOT NULL,
+    set_by     TEXT NOT NULL DEFAULT '',
+    reason     TEXT NOT NULL DEFAULT '',
+    updated_at DATETIME NOT NULL
+);
+`
+	if _, err := s.db.Exec(ddl); err != nil {
+		return fmt.Errorf("migrate v30 create ride_phase_state: %w", err)
+	}
+	if _, err := s.db.Exec(`DELETE FROM schema_version`); err != nil {
+		return fmt.Errorf("clear schema version: %w", err)
+	}
+	if _, err := s.db.Exec(`INSERT INTO schema_version (version) VALUES (?)`, 30); err != nil {
+		return fmt.Errorf("set schema version: %w", err)
+	}
+	return nil
+}
+
+// --- Ride phase CRUD (internal/ride/phase, WP5b) ---
+
+// SaveRidePhase persists the current ride phase for one net (INSERT OR
+// REPLACE — one row per net, mirroring SaveCourseConfig).
+func (s *SQLiteStore) SaveRidePhase(p RidePhaseState) error {
+	_, err := s.db.Exec(`
+		INSERT OR REPLACE INTO ride_phase_state (net_id, phase, set_by, reason, updated_at)
+		VALUES (?, ?, ?, ?, ?)`,
+		p.NetID, p.Phase, p.SetBy, p.Reason, p.UpdatedAt.UTC(),
+	)
+	if err != nil {
+		return fmt.Errorf("save ride phase: %w", err)
+	}
+	return nil
+}
+
+// LoadRidePhase returns the net's current ride phase row, or nil,nil when
+// no phase has ever been set for it (the manager's default is pre-start).
+func (s *SQLiteStore) LoadRidePhase(netID string) (*RidePhaseState, error) {
+	var p RidePhaseState
+	var updatedAt string
+	err := s.db.QueryRow(`
+		SELECT net_id, phase, set_by, reason, updated_at
+		FROM ride_phase_state WHERE net_id = ?`, netID).Scan(
+		&p.NetID, &p.Phase, &p.SetBy, &p.Reason, &updatedAt,
+	)
+	if err != nil {
+		if err == sql.ErrNoRows {
+			return nil, nil
+		}
+		return nil, fmt.Errorf("load ride phase: %w", err)
+	}
+	if p.UpdatedAt, err = parseTime(updatedAt); err != nil {
+		return nil, fmt.Errorf("parse updated_at: %w", err)
+	}
+	return &p, nil
+}
+
+// --- Ride reconciliation CRUD (WP5) ---
+
+func (s *SQLiteStore) SaveSAGShiftSummary(sm SAGShiftSummary) error {
+	_, err := s.db.Exec(`
+		INSERT OR REPLACE INTO ride_sag_shift_summaries
+			(id, net_id, division, check_in_id, callsign, tactical_call, driver_name, vehicle,
+			 shift_start, shift_end, odometer_start, odometer_end,
+			 transports, assists, tubes_provided, tires_provided, minor_first_aid, incidents_attended,
+			 notes, status, filed_at, filed_by, created_at, updated_at)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		sm.ID, sm.NetID, sm.Division, sm.CheckInID, sm.Callsign, sm.TacticalCall, sm.DriverName, sm.Vehicle,
+		nullTimePtr(sm.ShiftStart), nullTimePtr(sm.ShiftEnd), nullFloatPtr(sm.OdometerStart), nullFloatPtr(sm.OdometerEnd),
+		nullIntPtr(sm.Entered.Transports), nullIntPtr(sm.Entered.Assists), nullIntPtr(sm.Entered.TubesProvided),
+		nullIntPtr(sm.Entered.TiresProvided), nullIntPtr(sm.Entered.MinorFirstAid), nullIntPtr(sm.Entered.IncidentsAttended),
+		sm.Notes, sm.Status, nullTimePtr(sm.FiledAt), sm.FiledBy, sm.CreatedAt.UTC(), sm.UpdatedAt.UTC(),
+	)
+	if err != nil {
+		return fmt.Errorf("save sag shift summary: %w", err)
+	}
+	return nil
+}
+
+func (s *SQLiteStore) LoadSAGShiftSummaries(netID string) ([]SAGShiftSummary, error) {
+	rows, err := s.db.Query(`
+		SELECT id, net_id, division, check_in_id, callsign, tactical_call, driver_name, vehicle,
+		       shift_start, shift_end, odometer_start, odometer_end,
+		       transports, assists, tubes_provided, tires_provided, minor_first_aid, incidents_attended,
+		       notes, status, filed_at, filed_by, created_at, updated_at
+		FROM ride_sag_shift_summaries WHERE net_id = ? ORDER BY created_at ASC`, netID)
+	if err != nil {
+		return nil, fmt.Errorf("query sag shift summaries: %w", err)
+	}
+	defer rows.Close()
+
+	out := []SAGShiftSummary{}
+	for rows.Next() {
+		var sm SAGShiftSummary
+		var shiftStart, shiftEnd, filedAt sql.NullString
+		var odoStart, odoEnd sql.NullFloat64
+		var transports, assists, tubes, tires, minorAid, incidents sql.NullInt64
+		var createdAt, updatedAt string
+
+		if err := rows.Scan(
+			&sm.ID, &sm.NetID, &sm.Division, &sm.CheckInID, &sm.Callsign, &sm.TacticalCall, &sm.DriverName, &sm.Vehicle,
+			&shiftStart, &shiftEnd, &odoStart, &odoEnd,
+			&transports, &assists, &tubes, &tires, &minorAid, &incidents,
+			&sm.Notes, &sm.Status, &filedAt, &sm.FiledBy, &createdAt, &updatedAt,
+		); err != nil {
+			return nil, fmt.Errorf("scan sag shift summary: %w", err)
+		}
+
+		if sm.ShiftStart, err = nullStringToTimePtr(shiftStart); err != nil {
+			return nil, fmt.Errorf("parse shift_start: %w", err)
+		}
+		if sm.ShiftEnd, err = nullStringToTimePtr(shiftEnd); err != nil {
+			return nil, fmt.Errorf("parse shift_end: %w", err)
+		}
+		if sm.FiledAt, err = nullStringToTimePtr(filedAt); err != nil {
+			return nil, fmt.Errorf("parse filed_at: %w", err)
+		}
+		if odoStart.Valid {
+			v := odoStart.Float64
+			sm.OdometerStart = &v
+		}
+		if odoEnd.Valid {
+			v := odoEnd.Float64
+			sm.OdometerEnd = &v
+		}
+		sm.Entered.Transports = nullInt64Ptr(transports)
+		sm.Entered.Assists = nullInt64Ptr(assists)
+		sm.Entered.TubesProvided = nullInt64Ptr(tubes)
+		sm.Entered.TiresProvided = nullInt64Ptr(tires)
+		sm.Entered.MinorFirstAid = nullInt64Ptr(minorAid)
+		sm.Entered.IncidentsAttended = nullInt64Ptr(incidents)
+
+		if sm.CreatedAt, err = parseTime(createdAt); err != nil {
+			return nil, fmt.Errorf("parse created_at: %w", err)
+		}
+		if sm.UpdatedAt, err = parseTime(updatedAt); err != nil {
+			return nil, fmt.Errorf("parse updated_at: %w", err)
+		}
+
+		out = append(out, sm)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("iterate sag shift summaries: %w", err)
+	}
+	return out, nil
+}
+
+func (s *SQLiteStore) SaveHandoffItem(h HandoffItem) error {
+	_, err := s.db.Exec(`
+		INSERT OR REPLACE INTO ride_handoff_items
+			(id, net_id, division, kind, summary, sent_to, reply_to, ref_type, ref_id, due_at,
+			 status, handover_count, created_by, created_at, resolved_by, resolved_at, resolution)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		h.ID, h.NetID, h.Division, h.Kind, h.Summary, h.SentTo, h.ReplyTo, h.RefType, h.RefID, nullTimePtr(h.DueAt),
+		h.Status, h.HandoverCount, h.CreatedBy, h.CreatedAt.UTC(), h.ResolvedBy, nullTimePtr(h.ResolvedAt), h.Resolution,
+	)
+	if err != nil {
+		return fmt.Errorf("save handoff item: %w", err)
+	}
+	return nil
+}
+
+func (s *SQLiteStore) LoadHandoffItems(netID string) ([]HandoffItem, error) {
+	rows, err := s.db.Query(`
+		SELECT id, net_id, division, kind, summary, sent_to, reply_to, ref_type, ref_id, due_at,
+		       status, handover_count, created_by, created_at, resolved_by, resolved_at, resolution
+		FROM ride_handoff_items WHERE net_id = ? ORDER BY created_at ASC`, netID)
+	if err != nil {
+		return nil, fmt.Errorf("query handoff items: %w", err)
+	}
+	defer rows.Close()
+
+	out := []HandoffItem{}
+	for rows.Next() {
+		var h HandoffItem
+		var dueAt, resolvedAt sql.NullString
+		var createdAt string
+
+		if err := rows.Scan(
+			&h.ID, &h.NetID, &h.Division, &h.Kind, &h.Summary, &h.SentTo, &h.ReplyTo, &h.RefType, &h.RefID, &dueAt,
+			&h.Status, &h.HandoverCount, &h.CreatedBy, &createdAt, &h.ResolvedBy, &resolvedAt, &h.Resolution,
+		); err != nil {
+			return nil, fmt.Errorf("scan handoff item: %w", err)
+		}
+
+		if h.DueAt, err = nullStringToTimePtr(dueAt); err != nil {
+			return nil, fmt.Errorf("parse due_at: %w", err)
+		}
+		if h.ResolvedAt, err = nullStringToTimePtr(resolvedAt); err != nil {
+			return nil, fmt.Errorf("parse resolved_at: %w", err)
+		}
+		if h.CreatedAt, err = parseTime(createdAt); err != nil {
+			return nil, fmt.Errorf("parse created_at: %w", err)
+		}
+
+		out = append(out, h)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("iterate handoff items: %w", err)
+	}
+	return out, nil
+}
+
+func (s *SQLiteStore) SaveShiftHandoff(h ShiftHandoff) error {
+	openItemsJSON := "[]"
+	if len(h.OpenItemIDs) > 0 {
+		b, err := json.Marshal(h.OpenItemIDs)
+		if err != nil {
+			return fmt.Errorf("marshal open item ids: %w", err)
+		}
+		openItemsJSON = string(b)
+	}
+	briefing := h.Briefing
+	if briefing == "" {
+		briefing = "{}"
+	}
+	_, err := s.db.Exec(`
+		INSERT OR REPLACE INTO ride_shift_handoffs
+			(id, net_id, division, from_callsign, to_callsign, at, open_item_ids, briefing,
+			 acknowledged_at, acknowledged_by)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		h.ID, h.NetID, h.Division, h.FromCallsign, h.ToCallsign, h.At.UTC(), openItemsJSON, briefing,
+		nullTimePtr(h.AcknowledgedAt), h.AcknowledgedBy,
+	)
+	if err != nil {
+		return fmt.Errorf("save shift handoff: %w", err)
+	}
+	return nil
+}
+
+func (s *SQLiteStore) LoadShiftHandoffs(netID string) ([]ShiftHandoff, error) {
+	rows, err := s.db.Query(`
+		SELECT id, net_id, division, from_callsign, to_callsign, at, open_item_ids, briefing,
+		       acknowledged_at, acknowledged_by
+		FROM ride_shift_handoffs WHERE net_id = ? ORDER BY at ASC`, netID)
+	if err != nil {
+		return nil, fmt.Errorf("query shift handoffs: %w", err)
+	}
+	defer rows.Close()
+
+	out := []ShiftHandoff{}
+	for rows.Next() {
+		var h ShiftHandoff
+		var at string
+		var openItemsJSON, briefing string
+		var ackAt sql.NullString
+
+		if err := rows.Scan(
+			&h.ID, &h.NetID, &h.Division, &h.FromCallsign, &h.ToCallsign, &at, &openItemsJSON, &briefing,
+			&ackAt, &h.AcknowledgedBy,
+		); err != nil {
+			return nil, fmt.Errorf("scan shift handoff: %w", err)
+		}
+
+		if h.At, err = parseTime(at); err != nil {
+			return nil, fmt.Errorf("parse at: %w", err)
+		}
+		h.Briefing = briefing
+
+		h.OpenItemIDs = []string{}
+		if openItemsJSON != "" && openItemsJSON != "[]" {
+			if err := json.Unmarshal([]byte(openItemsJSON), &h.OpenItemIDs); err != nil {
+				return nil, fmt.Errorf("unmarshal open item ids: %w", err)
+			}
+		}
+		if h.OpenItemIDs == nil {
+			h.OpenItemIDs = []string{}
+		}
+
+		if h.AcknowledgedAt, err = nullStringToTimePtr(ackAt); err != nil {
+			return nil, fmt.Errorf("parse acknowledged_at: %w", err)
+		}
+
+		out = append(out, h)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("iterate shift handoffs: %w", err)
+	}
+	return out, nil
+}
+
+// nullStringToTimePtr parses a nullable DATETIME column scanned as
+// sql.NullString into a *time.Time, nil when the column was NULL.
+func nullStringToTimePtr(v sql.NullString) (*time.Time, error) {
+	if !v.Valid {
+		return nil, nil
+	}
+	t, err := parseTime(v.String)
+	if err != nil {
+		return nil, err
+	}
+	return &t, nil
+}
+
+// nullInt64Ptr converts a nullable INTEGER column scanned as sql.NullInt64
+// into a *int, nil when the column was NULL.
+func nullInt64Ptr(v sql.NullInt64) *int {
+	if !v.Valid {
+		return nil
+	}
+	i := int(v.Int64)
+	return &i
 }
 
 // Compile-time check that SQLiteStore implements Store.
