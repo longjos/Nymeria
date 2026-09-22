@@ -178,12 +178,81 @@ type CreateRequestInput struct {
 	Division    *string           `json:"division,omitempty"`
 }
 
-// SlotInput is one rider on a create/add-slot request.
+// SlotInput is one rider on a create/add-slot/update-slot request.
+//
+// AttachToLegID is the answer to "SAG 4, make that TWO riders": it puts the
+// new rider straight onto a leg that is already dispatched/en route/on
+// scene, so the vehicle's committed seats move the moment the operator logs
+// what was just said on the air. Without it the rider is added unassigned
+// and the request goes back to needing a vehicle — which is the truth when
+// the van has already loaded and driven off.
+//
+// AllowOvercommit covers the BIKE RACKS only; a rider with no seatbelt to
+// sit in is refused outright (see OverCapacityError).
 type SlotInput struct {
 	Bib       string `json:"bib"`
 	RiderName string `json:"riderName"`
 	Note      string `json:"note"`
-	HasBike   *bool  `json:"hasBike"` // nil -> true
+	HasBike   *bool  `json:"hasBike"`        // legacy; nil -> true. Bike wins when both are set.
+	Bike      string `json:"bike,omitempty"` // ride.Bike*; "" -> derived from HasBike
+
+	AttachToLegID   string `json:"attachToLegId,omitempty"` // AddSlot only
+	AllowOvercommit bool   `json:"allowOvercommit,omitempty"`
+}
+
+// checkCapacity applies the asymmetric capacity rule shared by Dispatch and
+// AddSlot's attach path. It returns (overcommitRacks, error):
+//
+//   - seats short  -> always an error, whatever allowOvercommit says. A seat
+//     is a seatbelt; there is no operator judgement to exercise.
+//   - racks short  -> an error unless allowOvercommit, in which case it
+//     returns true and the caller flags the leg Overcommitted. A bike can
+//     ride in the bed of a truck.
+//
+// Both dimensions are reported in the error so the UI can say what is short
+// even when only one of them is fatal.
+func checkCapacity(v store.SAGVehicle, committedSeats, committedRacks, needSeats, needRacks int, allowOvercommit bool) (bool, error) {
+	// A dimension can only be "exceeded" by an action that actually adds to
+	// it. Without the needX > 0 guard, a vehicle whose racks are ALREADY over
+	// (from an earlier knowing override) would refuse a rider who has no bike
+	// at all — a refusal the operator cannot act on and did not cause.
+	seatsExceeded := needSeats > 0 && committedSeats+needSeats > v.Seats
+	racksExceeded := needRacks > 0 && committedRacks+needRacks > v.RackSlots
+	if !seatsExceeded && !racksExceeded {
+		return false, nil
+	}
+	if seatsExceeded || !allowOvercommit {
+		return false, &OverCapacityError{
+			CommittedSeats: committedSeats, Seats: v.Seats, NeedSeats: needSeats,
+			CommittedRacks: committedRacks, RackSlots: v.RackSlots, NeedRacks: needRacks,
+			SeatsExceeded: seatsExceeded, RacksExceeded: racksExceeded,
+		}
+	}
+	return true, nil
+}
+
+// bikeFromInput resolves a SlotInput's bike disposition, preferring the
+// explicit axis over the legacy bool. Returns an error for an unrecognised
+// value rather than silently storing it.
+func bikeFromInput(in SlotInput) (string, error) {
+	if in.Bike != "" {
+		if !ValidBikeDispositions[in.Bike] {
+			return "", fmt.Errorf("invalid bike disposition %q", in.Bike)
+		}
+		return in.Bike, nil
+	}
+	if in.HasBike != nil && !*in.HasBike {
+		return BikeNone, nil
+	}
+	return BikeWithRider, nil
+}
+
+// LoadInput is what LoadSlots takes. Bike maps a slot id being loaded to its
+// bike disposition AS REPORTED BY THE DRIVER at the scene — the only moment
+// anybody actually knows whether the bike went on the rack.
+type LoadInput struct {
+	SlotIDs []string          `json:"slotIds"`
+	Bike    map[string]string `json:"bike,omitempty"`
 }
 
 // UpdateRequestInput is the input to UpdateRequest: everything editable
@@ -379,18 +448,20 @@ func (m *Manager) CreateRequest(netID string, in CreateRequestInput, createdByNa
 	var slots []store.SAGSlot
 	if len(in.Slots) == 0 {
 		slots = []store.SAGSlot{{
-			ID: uuid.New().String(), HasBike: true, Disposition: SlotWaiting, UpdatedAt: now,
+			ID: uuid.New().String(), Bike: BikeWithRider, HasBike: true, Disposition: SlotWaiting, UpdatedAt: now,
 		}}
 	} else {
 		for _, si := range in.Slots {
-			hasBike := true
-			if si.HasBike != nil {
-				hasBike = *si.HasBike
+			bike, err := bikeFromInput(si)
+			if err != nil {
+				return nil, err
 			}
-			slots = append(slots, store.SAGSlot{
+			slot := store.SAGSlot{
 				ID: uuid.New().String(), Bib: si.Bib, RiderName: si.RiderName, Note: si.Note,
-				HasBike: hasBike, Disposition: SlotWaiting, UpdatedAt: now,
-			})
+				Bike: bike, Disposition: SlotWaiting, UpdatedAt: now,
+			}
+			NormalizeSlotBike(&slot)
+			slots = append(slots, slot)
 		}
 	}
 
@@ -622,15 +693,60 @@ func (m *Manager) AddSlot(netID, reqID string, in SlotInput) (*store.SAGRequest,
 		return nil, fmt.Errorf("sag request is cancelled, cannot add a rider")
 	}
 
-	now := time.Now().UTC()
-	hasBike := true
-	if in.HasBike != nil {
-		hasBike = *in.HasBike
+	bike, err := bikeFromInput(in)
+	if err != nil {
+		m.mu.Unlock()
+		return nil, err
 	}
-	req.Slots = append(req.Slots, store.SAGSlot{
+
+	now := time.Now().UTC()
+	slot := store.SAGSlot{
 		ID: uuid.New().String(), Bib: in.Bib, RiderName: in.RiderName, Note: in.Note,
-		HasBike: hasBike, Disposition: SlotWaiting, UpdatedAt: now,
-	})
+		Bike: bike, Disposition: SlotWaiting, UpdatedAt: now,
+	}
+	NormalizeSlotBike(&slot)
+
+	// "SAG 4, make that TWO riders at Maxwell." The van is already rolling,
+	// so the rider joins its leg rather than sitting unassigned behind a
+	// board that would then say nothing had changed.
+	attached := ""
+	if in.AttachToLegID != "" {
+		leg, ok := findLeg(&req, in.AttachToLegID)
+		if !ok {
+			m.mu.Unlock()
+			return nil, fmt.Errorf("leg %q not found: %w", in.AttachToLegID, ErrNotFound)
+		}
+		switch leg.Status {
+		case LegDispatched, LegEnroute, LegOnScene:
+		default:
+			m.mu.Unlock()
+			return nil, fmt.Errorf("%s is %s — it cannot take another rider; dispatch a vehicle instead", leg.VehicleLabel, leg.Status)
+		}
+
+		vehicle := m.vehicleOrDefaultLocked(netID, leg.VehicleCheckInID)
+		allReqs := make([]store.SAGRequest, len(reqs))
+		copy(allReqs, reqs)
+		allReqs[idx] = req
+		committedSeats, committedRacks, _, _ := Capacity(vehicle, allReqs)
+		newRacks := 0
+		if SlotTakesRack(slot) {
+			newRacks = 1
+		}
+		overRacks, capErr := checkCapacity(vehicle, committedSeats, committedRacks, 1, newRacks, in.AllowOvercommit)
+		if capErr != nil {
+			m.mu.Unlock()
+			return nil, capErr
+		}
+		if overRacks {
+			leg.Overcommitted = true
+		}
+
+		slot.LegID = leg.ID
+		leg.SlotIDs = append(leg.SlotIDs, slot.ID)
+		attached = leg.VehicleLabel
+	}
+
+	req.Slots = append(req.Slots, slot)
 	recomputeStatus(&req, now)
 	reqs[idx] = req
 	m.requests[netID] = reqs
@@ -639,7 +755,13 @@ func (m *Manager) AddSlot(netID, reqID string, in SlotInput) (*store.SAGRequest,
 	if err := m.store.SaveSAGRequest(req); err != nil {
 		return nil, fmt.Errorf("persist sag request: %w", err)
 	}
-	m.logTimeline(netID, TLSAGUpdated, req.RequestedBy, fmt.Sprintf("SAG %d: rider added", req.Sequence), "")
+	summary := fmt.Sprintf("SAG %d: rider added", req.Sequence)
+	if attached != "" {
+		summary += fmt.Sprintf(" to %s", attached)
+	} else {
+		summary += " — needs a vehicle"
+	}
+	m.logTimeline(netID, TLSAGUpdated, req.RequestedBy, summary, "")
 	m.emitRequestChanged(netID, req)
 
 	out := req
@@ -667,13 +789,22 @@ func (m *Manager) UpdateSlot(netID, reqID, slotID string, in SlotInput) (*store.
 		return nil, fmt.Errorf("slot %q not found: %w", slotID, ErrNotFound)
 	}
 
+	if in.Bike != "" && !ValidBikeDispositions[in.Bike] {
+		m.mu.Unlock()
+		return nil, fmt.Errorf("invalid bike disposition %q", in.Bike)
+	}
+
 	now := time.Now().UTC()
 	slot.Bib = in.Bib
 	slot.RiderName = in.RiderName
 	slot.Note = in.Note
-	if in.HasBike != nil {
+	if in.Bike != "" {
+		slot.Bike = in.Bike
+	} else if in.HasBike != nil {
+		slot.Bike = ""
 		slot.HasBike = *in.HasBike
 	}
+	NormalizeSlotBike(slot)
 	slot.UpdatedAt = now
 	req.UpdatedAt = now
 	reqs[idx] = req
@@ -786,9 +917,11 @@ func (m *Manager) ResolveSlot(netID, reqID, slotID, disposition, note, byCallsig
 
 // Dispatch assigns a vehicle to some or all of a request's currently
 // waiting, unassigned slots, creating a new leg. Capacity is checked across
-// every request the vehicle is already committed to in the net; over
-// capacity is refused unless AllowOvercommit is set, in which case the leg
-// is created anyway and flagged Overcommitted.
+// every request the vehicle is already committed to in the net, and the two
+// dimensions are NOT symmetric (see OverCapacityError): too many riders for
+// the seatbelts is refused outright and AllowOvercommit does not open it;
+// too many bikes for the racks is refused unless AllowOvercommit is set, in
+// which case the leg is created and flagged Overcommitted.
 func (m *Manager) Dispatch(netID, reqID string, in DispatchInput, byCallsign string) (*store.SAGRequest, error) {
 	if _, err := m.requireNet(netID); err != nil {
 		return nil, err
@@ -854,16 +987,10 @@ func (m *Manager) Dispatch(netID, reqID string, in DispatchInput, byCallsign str
 	}
 	newSeats := len(targetIDs)
 
-	overCommitted := false
-	if committedSeats+newSeats > vehicle.Seats || committedRacks+newRacks > vehicle.RackSlots {
-		if !in.AllowOvercommit {
-			m.mu.Unlock()
-			return nil, &OverCapacityError{
-				CommittedSeats: committedSeats, Seats: vehicle.Seats,
-				CommittedRacks: committedRacks, RackSlots: vehicle.RackSlots,
-			}
-		}
-		overCommitted = true
+	overCommitted, capErr := checkCapacity(vehicle, committedSeats, committedRacks, newSeats, newRacks, in.AllowOvercommit)
+	if capErr != nil {
+		m.mu.Unlock()
+		return nil, capErr
 	}
 
 	now := time.Now().UTC()
@@ -893,7 +1020,9 @@ func (m *Manager) Dispatch(netID, reqID string, in DispatchInput, byCallsign str
 	}
 	summary := fmt.Sprintf("%s dispatched to SAG %d (%d rider(s))", leg.VehicleLabel, req.Sequence, len(targetIDs))
 	if overCommitted {
-		summary += " — OVER CAPACITY"
+		// Overcommitted can only ever mean bikes now — a seat overflow is
+		// refused outright — so the row says which, not "over capacity".
+		summary += " — BIKES OVER RACK CAPACITY"
 	}
 	m.logTimeline(netID, TLSAGDispatched, byCallsign, summary, "")
 	m.emitRequestChanged(netID, req)
@@ -965,7 +1094,13 @@ func (m *Manager) AdvanceLeg(netID, reqID, legID, status, byCallsign string) (*s
 // listed detach back to waiting (their legId is cleared) — the leg keeps
 // only whoever was actually loaded, so the rest can be dispatched to a
 // different vehicle.
-func (m *Manager) LoadSlots(netID, reqID, legID string, slotIDs []string, byCallsign string) (*store.SAGRequest, error) {
+func (m *Manager) LoadSlots(netID, reqID, legID string, in LoadInput, byCallsign string) (*store.SAGRequest, error) {
+	slotIDs := in.SlotIDs
+	for _, b := range in.Bike {
+		if !ValidBikeDispositions[b] {
+			return nil, fmt.Errorf("invalid bike disposition %q", b)
+		}
+	}
 	if _, err := m.requireNet(netID); err != nil {
 		return nil, err
 	}
@@ -1007,15 +1142,38 @@ func (m *Manager) LoadSlots(netID, reqID, legID string, slotIDs []string, byCall
 		}
 	}
 
+	// A bike disposition may only be reported for a rider actually being
+	// loaded onto this leg: anything else is a mis-click that would silently
+	// rewrite an unrelated rider's record.
+	for sid := range in.Bike {
+		if !targetSet[sid] {
+			m.mu.Unlock()
+			return nil, fmt.Errorf("slot %q is not being loaded onto leg %q", sid, legID)
+		}
+	}
+
 	now := time.Now().UTC()
 	total := len(leg.SlotIDs)
 	loadedCount := 0
+	bikesCarried, bikesLeft, bikesSeparate := 0, 0, 0
 	keptSlotIDs := []string{}
 	for _, sid := range leg.SlotIDs {
 		slot, _ := findSlot(&req, sid)
 		if targetSet[sid] {
 			if slot != nil {
 				slot.Disposition = SlotLoaded
+				if b, ok := in.Bike[sid]; ok {
+					slot.Bike = b
+				}
+				NormalizeSlotBike(slot)
+				switch slot.Bike {
+				case BikeWithRider:
+					bikesCarried++
+				case BikeLeftBehind:
+					bikesLeft++
+				case BikeOtherVehicle:
+					bikesSeparate++
+				}
 				slot.UpdatedAt = now
 			}
 			keptSlotIDs = append(keptSlotIDs, sid)
@@ -1040,7 +1198,24 @@ func (m *Manager) LoadSlots(netID, reqID, legID string, slotIDs []string, byCall
 	if err := m.store.SaveSAGRequest(req); err != nil {
 		return nil, fmt.Errorf("persist sag request: %w", err)
 	}
-	m.logTimeline(netID, TLSAGLoaded, byCallsign, fmt.Sprintf("%s loaded %d of %d", leg.VehicleLabel, loadedCount, total), "")
+	// What happened to the bikes belongs in the log: a bike left at a rest
+	// stop is somebody's property and an ICS-214 line item, and a bike
+	// travelling apart from its rider is a second thing to reunite later.
+	loadSummary := fmt.Sprintf("%s loaded %d of %d", leg.VehicleLabel, loadedCount, total)
+	bikeParts := []string{}
+	if bikesCarried > 0 {
+		bikeParts = append(bikeParts, fmt.Sprintf("%d bike(s) on the rack", bikesCarried))
+	}
+	if bikesLeft > 0 {
+		bikeParts = append(bikeParts, fmt.Sprintf("%d bike left behind", bikesLeft))
+	}
+	if bikesSeparate > 0 {
+		bikeParts = append(bikeParts, fmt.Sprintf("%d bike on another vehicle", bikesSeparate))
+	}
+	if len(bikeParts) > 0 {
+		loadSummary += "; " + strings.Join(bikeParts, ", ")
+	}
+	m.logTimeline(netID, TLSAGLoaded, byCallsign, loadSummary, "")
 	m.emitRequestChanged(netID, req)
 
 	out := req

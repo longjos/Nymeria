@@ -33,7 +33,8 @@ import type {
 } from '$lib/types';
 import {
 	tierById, ageState, ageText, elapsedHM, heatIndexF, tierStyle,
-	STOP_GLYPHS, PENDING_GLYPH, SAG_REASON_LABELS, enumLabel
+	STOP_GLYPHS, PENDING_GLYPH, SAG_REASON_LABELS, enumLabel,
+	unassignedRiders
 } from '$lib/rideMeta';
 import { countdown, clock } from '$lib/wxAlertTime';
 import { convertTemp, formatTempShort } from '$lib/units';
@@ -268,22 +269,34 @@ export const ridePending = derived([handoffOpen, minuteClock], ([items, _m]) => 
 
 // ---- derived: SAG summary ----
 
+/**
+ * `open` used to mean "not complete or cancelled", which counted every job a
+ * van was already driving and reported it to the strip as work outstanding.
+ * The number that changes an NCS decision is how many jobs are BLOCKED ON
+ * NCS — riders with no vehicle assigned to them — and `ridersWaiting` is now
+ * the same set counted per rider (spec section 2, B5: "how many humans are at
+ * the roadside and for how long"). `inMotion` carries the rest, so nothing is
+ * hidden; it is just not the headline.
+ */
 export const rideSagSummary = derived(sagBoard, (board) => {
 	const requests = board?.requests ?? [];
 	const vehicles = board?.vehicles ?? [];
-	const open = requests.filter((r) => r.status !== 'complete' && r.status !== 'cancelled');
+	const active = requests.filter((r) => r.status !== 'complete' && r.status !== 'cancelled');
+	const needing = active.filter((r) => unassignedRiders(r) > 0);
 	let ridersWaiting = 0;
 	let oldestOpenAt: string | null = null;
-	for (const r of open) {
-		ridersWaiting += r.slots.filter((s) => s.disposition === 'waiting').length;
+	for (const r of needing) {
+		ridersWaiting += unassignedRiders(r);
 		if (!oldestOpenAt || Date.parse(r.createdAt) < Date.parse(oldestOpenAt)) oldestOpenAt = r.createdAt;
 	}
+	const open = needing;
+	const inMotion = active.length - needing.length;
 	const seatsAvail = vehicles.reduce((s, v) => s + v.availableSeats, 0);
 	const seats = vehicles.reduce((s, v) => s + v.seats, 0);
 	const racksAvail = vehicles.reduce((s, v) => s + v.availableRacks, 0);
 	const racks = vehicles.reduce((s, v) => s + v.rackSlots, 0);
 	const noUnits = vehicles.filter((v) => v.checkInStatus !== 'released').length === 0;
-	return { open: open.length, ridersWaiting, oldestOpenAt, seatsAvail, seats, racksAvail, racks, noUnits };
+	return { open: open.length, inMotion, active: active.length, ridersWaiting, oldestOpenAt, seatsAvail, seats, racksAvail, racks, noUnits };
 });
 
 // ---- derived: stops / course closure ----
@@ -710,11 +723,24 @@ export const rideZones = derived(
 			: {
 					id: 'sag', label: 'SAG',
 					lines: [
-						{ text: `⬒ ${sag.open} open`, size: 'value' },
-						{ text: `${sag.ridersWaiting} riders${sag.oldestOpenAt ? ` · ${ageText(sag.oldestOpenAt, Date.now())}` : ''}`, size: 'body' },
-						{ text: `seats ${sag.seatsAvail}/${sag.seats}`, size: 'label', tone: 'muted' }
+						{
+							text: sag.open > 0 ? `⬒ ${sag.open} waiting` : '⬒ none waiting',
+							size: 'value',
+							tone: sag.open > 0 ? 'warning' : undefined
+						},
+						{
+							text:
+								sag.open > 0
+									? `${sag.ridersWaiting} roadside${sag.oldestOpenAt ? ` · ${ageText(sag.oldestOpenAt, Date.now())}` : ''}`
+									: `${sag.inMotion} in motion`,
+							size: 'body'
+						},
+						{ text: `${sag.seatsAvail} free of ${sag.seats} seats`, size: 'label', tone: 'muted' }
 					],
-					aria: `SAG: ${sag.open} open, ${sag.ridersWaiting} riders waiting, ${sag.seatsAvail} of ${sag.seats} seats available`
+					aria:
+						sag.open > 0
+							? `SAG: ${sag.open} request${sag.open === 1 ? '' : 's'} needing a vehicle, ${sag.ridersWaiting} riders at the roadside, ${sag.seatsAvail} of ${sag.seats} seats free`
+							: `SAG: nobody waiting for a vehicle, ${sag.inMotion} in motion, ${sag.seatsAvail} of ${sag.seats} seats free`
 				};
 
 		const nextShutoffZone: RideZoneDescriptor | null = shutoffs.none
@@ -843,7 +869,10 @@ export const rideZones = derived(
 			// units at all" is the one absence PRE-START most needs to know
 			// about (an operator can still fix it before launch). Every other
 			// phase always shows SAG, in whichever of its two forms.
-			sag: phaseId === 'pre-start' ? (sag.noUnits ? sagZone : null) : sagZone,
+			// PRE-START swaps SAG out for CHECKED IN — but only while there is
+			// genuinely no SAG activity. A net still marked pre-start with riders
+			// in a vehicle used to show NOTHING about them anywhere on the strip.
+			sag: phaseId === 'pre-start' && !sag.noUnits && sag.active === 0 ? null : sagZone,
 			traffic: trafficZ,
 			// COLLAPSE hides WX unless an alert is active — stricter than B7's
 			// normal "hidden only with neither a reading nor an alert" rule.

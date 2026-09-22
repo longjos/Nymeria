@@ -28,7 +28,14 @@
 	<div class="sp-subnav" role="tablist" aria-label="SAG, supply and medical">
 		<button class="sp-tab" role="tab" aria-selected={subTab === 'sag'} class:active={subTab === 'sag'} onclick={() => (subTab = 'sag')}>
 			SAG
-			{#if $rideSagSummary.open > 0}<span class="sp-count">{$rideSagSummary.open}</span>{/if}
+			<!-- Two different numbers, because they mean two different things:
+			     how much work is live, and how much of it is blocked on NCS. -->
+			{#if $rideSagSummary.active > 0}<span class="sp-count">{$rideSagSummary.active}</span>{/if}
+			{#if $rideSagSummary.open > 0}
+				<span class="sp-count sp-count-wait" title="{$rideSagSummary.ridersWaiting} rider(s) waiting for a vehicle">
+					⬒ {$rideSagSummary.open}
+				</span>
+			{/if}
 		</button>
 		<button class="sp-tab" role="tab" aria-selected={subTab === 'supply'} class:active={subTab === 'supply'} onclick={() => (subTab = 'supply')}>
 			Supply
@@ -99,6 +106,11 @@
 		display: inline-flex;
 		align-items: center;
 		justify-content: center;
+	}
+
+	.sp-count-wait {
+		background: var(--color-ride-priority-soft);
+		color: var(--color-warning);
 	}
 
 	.sp-count-alert {

@@ -347,7 +347,8 @@ type SAGSlot struct {
 	Bib         string       `json:"bib,omitempty"`
 	RiderName   string       `json:"riderName,omitempty"`
 	Note        string       `json:"note,omitempty"`
-	HasBike     bool         `json:"hasBike"`     // consumes a rack slot; defaults true on create
+	HasBike     bool         `json:"hasBike"`     // legacy mirror of Bike == "with_rider"; kept in step by ride.NormalizeSlotBike
+	Bike        string       `json:"bike"`        // ride.Bike*: a SEPARATE axis from Disposition; only "with_rider" consumes a rack
 	Disposition string       `json:"disposition"` // see internal/ride's state machine
 	LegID       string       `json:"legId,omitempty"`
 	DeliveredTo *SAGLocation `json:"deliveredTo,omitempty"` // actual dropoff, set on delivery
@@ -363,7 +364,7 @@ type SAGLeg struct {
 	SlotIDs          []string   `json:"slotIds"`          // never nil
 	Status           string     `json:"status"`
 	ReleaseReason    string     `json:"releaseReason,omitempty"`
-	Overcommitted    bool       `json:"overcommitted"` // NCS knowingly exceeded capacity
+	Overcommitted    bool       `json:"overcommitted"` // NCS knowingly exceeded the BIKE RACK count (seats are a hard stop and can never be exceeded)
 	DispatchedAt     time.Time  `json:"dispatchedAt"`
 	EnrouteAt        *time.Time `json:"enrouteAt,omitempty"`
 	OnSceneAt        *time.Time `json:"onSceneAt,omitempty"`

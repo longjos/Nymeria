@@ -14,7 +14,7 @@ import type {
 	WxZoneRef, WxZone, WxEventType, WxNetWatch, WxNetWatchZones, WxRelayRequest,
 	WxRelayResult, WxAlertsSettings,
 	NetProfileView, NetProfile, NetRideConfig, RidePhaseStatus, CourseState, SAGBoard, SAGRequest, SAGVehicleStatus,
-	SAGConfigResponse, SAGLocation, CreateRequestInput, UpdateRequestInput, SlotInput, DispatchInput,
+	SAGConfigResponse, SAGLocation, CreateRequestInput, UpdateRequestInput, SlotInput, LoadInput, DispatchInput,
 	MedicalNotification, SupplyRequest, SupplyCatalogEntry, CreateSupplyInput, AddItemsInput,
 	ReadbackInput, RelayInput, RideETAInput, CancelInput, CreateMedicalInput, MedicalETAInput,
 	OnSceneInput, DepartInput, ReleaseInput,
@@ -492,8 +492,8 @@ export const api = {
 		post<SAGRequest>(`/nets/${netId}/sag/requests/${reqId}/legs`, data),
 	advanceSagLeg: (netId: string, reqId: string, legId: string, status: string) =>
 		post<SAGRequest>(`/nets/${netId}/sag/requests/${reqId}/legs/${legId}/status`, { status }),
-	loadSagSlots: (netId: string, reqId: string, legId: string, slotIds: string[]) =>
-		post<SAGRequest>(`/nets/${netId}/sag/requests/${reqId}/legs/${legId}/load`, { slotIds }),
+	loadSagSlots: (netId: string, reqId: string, legId: string, data: LoadInput) =>
+		post<SAGRequest>(`/nets/${netId}/sag/requests/${reqId}/legs/${legId}/load`, data),
 	deliverSagSlots: (netId: string, reqId: string, legId: string, data: { slotIds?: string[]; destination?: SAGLocation }) =>
 		post<SAGRequest>(`/nets/${netId}/sag/requests/${reqId}/legs/${legId}/deliver`, data),
 	releaseSagLeg: (netId: string, reqId: string, legId: string, reason?: string) =>

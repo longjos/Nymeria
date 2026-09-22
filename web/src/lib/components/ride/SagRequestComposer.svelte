@@ -9,7 +9,7 @@
 	import { rideLadder, upsertSagRequest } from '$lib/stores/ride';
 	import { netAnnotations, activeCheckIns } from '$lib/stores/netcontrol';
 	import { currentUser } from '$lib/stores/session';
-	import { tierById } from '$lib/rideMeta';
+	import { tierById, SAG_BIKE_LABELS, SAG_BIKE_GLYPHS, SAG_REASON_LABELS, enumLabel, BIKE_ORDER } from '$lib/rideMeta';
 	import { showToast } from '$lib/stores/toast';
 	import RideTierGlyph from '../RideTierGlyph.svelte';
 	import SagLocationField from './SagLocationField.svelte';
@@ -30,8 +30,9 @@
 		bib: string;
 		riderName: string;
 		note: string;
-		hasBike: boolean;
+		bike: string;
 	}
+
 
 	let config = $state<SAGConfigResponse | null>(null);
 	let configError = $state<string | null>(null);
@@ -43,7 +44,7 @@
 	let priorityTouched = $state(!!editing);
 	let notes = $state(editing?.notes ?? '');
 	let requestedBy = $state(editing?.requestedBy ?? $currentUser?.callsign ?? $currentUser?.name ?? '');
-	let slots = $state<SlotRow[]>([{ bib: '', riderName: '', note: '', hasBike: true }]);
+	let slots = $state<SlotRow[]>([{ bib: '', riderName: '', note: '', bike: 'with_rider' }]);
 
 	let submitting = $state(false);
 	let error = $state<string | null>(null);
@@ -74,7 +75,20 @@
 	}
 
 	function addSlot(): void {
-		slots = [...slots, { bib: '', riderName: '', note: '', hasBike: true }];
+		slots = [...slots, { bib: '', riderName: '', note: '', bike: 'with_rider' }];
+		// Bibs arrive at pencil speed, one after another: "334, 335, and 512."
+		// Typing the next one must never need the mouse.
+		queueMicrotask(() => {
+			const inputs = dialogEl?.querySelectorAll<HTMLInputElement>('.src-slot-row input[type="text"]');
+			inputs?.[(slots.length - 1) * 3]?.focus();
+		});
+	}
+
+	/** Enter in a bib field opens the next rider row — the on-air rhythm. */
+	function bibKeydown(e: KeyboardEvent, i: number): void {
+		if (e.key !== 'Enter') return;
+		e.preventDefault();
+		if (i === slots.length - 1) addSlot();
 	}
 
 	function removeSlot(i: number): void {
@@ -98,7 +112,7 @@
 			} else {
 				const created = await api.createSagRequest(netId, {
 					pickup, dropoff, reason, priority, notes, requestedBy,
-					slots: slots.map((s) => ({ bib: s.bib.trim(), riderName: s.riderName.trim(), note: s.note.trim(), hasBike: s.hasBike }))
+						slots: slots.map((s) => ({ bib: s.bib.trim(), riderName: s.riderName.trim(), note: s.note.trim(), bike: s.bike }))
 				});
 				upsertSagRequest(created);
 				showToast(`SAG ${created.sequence} requested`, 'success');
@@ -112,8 +126,20 @@
 	}
 
 	let dialogEl = $state<HTMLElement | null>(null);
+	/**
+	 * Focus the FIRST BIB, once the body actually exists. The old version ran
+	 * while `config` was still null — the only focusable thing in the dialog
+	 * at that moment was the Cancel button, so every new request opened with
+	 * focus on Cancel and the operator's first keystroke went nowhere.
+	 */
+	let focused = $state(false);
 	$effect(() => {
-		dialogEl?.querySelector<HTMLElement>('input, select, button, textarea')?.focus();
+		if (!dialogEl || !config || focused) return;
+		const target =
+			dialogEl.querySelector<HTMLElement>('.src-slot-row input[type="text"]') ??
+			dialogEl.querySelector<HTMLElement>('input, select, textarea');
+		target?.focus();
+		focused = true;
 	});
 
 	function trapTab(e: KeyboardEvent): void {
@@ -162,6 +188,33 @@
 			<p class="src-loading">Loading…</p>
 		{:else}
 			<div class="src-body">
+				{#if !editing}
+					<!-- RIDERS FIRST. Bibs are passed at pencil speed, in the first
+					     breath of the call ("SAG at Maxwell, bib 334, flat"); burying
+					     them under six location fields made the operator scroll to
+					     reach the one thing being dictated. Enter opens the next row. -->
+					<fieldset class="src-slots">
+						<legend class="src-legend">Riders ({slots.length})</legend>
+						{#each slots as slot, i (i)}
+							<div class="src-slot-row">
+								<input type="text" placeholder="bib" bind:value={slot.bib} aria-label="Bib for rider {i + 1}" onkeydown={(e) => bibKeydown(e, i)} />
+								<input type="text" placeholder="name (hospital/start only)" bind:value={slot.riderName} aria-label="Name for rider {i + 1}" />
+								<input type="text" placeholder="note" bind:value={slot.note} aria-label="Note for rider {i + 1}" />
+								<select class="src-bike-select" bind:value={slot.bike} aria-label="Bike for rider {i + 1}">
+									{#each BIKE_ORDER as b (b)}
+										<option value={b}>{SAG_BIKE_GLYPHS[b]} {SAG_BIKE_LABELS[b]}</option>
+									{/each}
+								</select>
+								<button type="button" class="src-slot-remove" onclick={() => removeSlot(i)} disabled={slots.length <= 1} aria-label="Remove rider {i + 1}">×</button>
+							</div>
+						{/each}
+						<button type="button" class="src-add-slot" onclick={addSlot}>+ Add rider</button>
+						<p class="src-hint">The bike answer here is the caller's; the driver confirms it at Load.</p>
+					</fieldset>
+				{:else}
+					<p class="src-hint">Riders are managed from the request card ({editing.slots.length} on this request).</p>
+				{/if}
+
 				<SagLocationField
 					legend="Pickup"
 					idPrefix="src-pickup"
@@ -179,13 +232,21 @@
 					onChange={(v) => (dropoff = v)}
 				/>
 
-				<label class="src-field" for="src-reason">
-					<span class="src-label">Reason</span>
-					<input id="src-reason" type="text" list="src-reasons" bind:value={reason} placeholder="flat, mechanical, fatigue…" />
-					<datalist id="src-reasons">
-						{#each config.config.reasons as r (r)}<option value={r}></option>{/each}
-					</datalist>
-				</label>
+				<div class="src-field">
+					<span class="src-label" id="src-reason-label">Reason</span>
+					<!-- One click, not seven keystrokes, for the six things it almost
+					     always is. All three of the operator's real requests were
+					     logged with an EMPTY reason: a free-text box with a datalist
+					     is a box you skip when somebody is talking. -->
+					<div class="src-tiers" role="group" aria-labelledby="src-reason-label">
+						{#each config.config.reasons as rsn (rsn)}
+							<button type="button" class="src-tier-chip" class:active={reason === rsn} onclick={() => (reason = reason === rsn ? '' : rsn)}>
+								{enumLabel(rsn, SAG_REASON_LABELS)}
+							</button>
+						{/each}
+					</div>
+					<input id="src-reason" type="text" bind:value={reason} placeholder="or type it" aria-label="Reason" />
+				</div>
 
 				<div class="src-field">
 					<span class="src-label">Priority</span>
@@ -212,24 +273,6 @@
 					<span class="src-label">Notes</span>
 					<textarea id="src-notes" rows="2" bind:value={notes} placeholder="anything else NCS should know"></textarea>
 				</label>
-
-				{#if !editing}
-					<fieldset class="src-slots">
-						<legend class="src-legend">Riders ({slots.length})</legend>
-						{#each slots as slot, i (i)}
-							<div class="src-slot-row">
-								<input type="text" placeholder="bib (optional)" bind:value={slot.bib} aria-label="Bib for rider {i + 1}" />
-								<input type="text" placeholder="rider name (optional)" bind:value={slot.riderName} aria-label="Name for rider {i + 1}" />
-								<input type="text" placeholder="note" bind:value={slot.note} aria-label="Note for rider {i + 1}" />
-								<label class="src-bike"><input type="checkbox" bind:checked={slot.hasBike} /> bike</label>
-								<button type="button" class="src-slot-remove" onclick={() => removeSlot(i)} disabled={slots.length <= 1} aria-label="Remove rider {i + 1}">×</button>
-							</div>
-						{/each}
-						<button type="button" class="src-add-slot" onclick={addSlot}>+ Add rider</button>
-					</fieldset>
-				{:else if editing}
-					<p class="src-hint">Riders are managed from the request card ({editing.slots.length} on this request).</p>
-				{/if}
 			</div>
 		{/if}
 
@@ -364,9 +407,20 @@
 
 	.src-slot-row {
 		display: grid;
-		grid-template-columns: 70px 1fr 1fr auto auto;
+		grid-template-columns: 70px 1fr 1fr minmax(0, 140px) auto;
 		gap: 6px;
 		align-items: center;
+	}
+
+	.src-bike-select {
+		min-height: 36px;
+		min-width: 0;
+		padding: 0 4px;
+		background: var(--color-bg);
+		border: 1px solid var(--color-primary);
+		border-radius: var(--radius-sm);
+		color: var(--color-text);
+		font-size: 0.72rem;
 	}
 
 	.src-slot-row input[type='text'] {
@@ -378,15 +432,6 @@
 		color: var(--color-text);
 		font: inherit;
 		min-width: 0;
-	}
-
-	.src-bike {
-		display: flex;
-		align-items: center;
-		gap: var(--space-xs);
-		font-size: 0.72rem;
-		color: var(--color-text-muted);
-		white-space: nowrap;
 	}
 
 	.src-slot-remove {

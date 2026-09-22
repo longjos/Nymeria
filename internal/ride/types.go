@@ -73,15 +73,55 @@ const (
 	LocOther        = "other"
 )
 
-// ValidPickupKinds and ValidDropoffKinds are the allowed store.SAGLocation
-// Kind values on each end of a SAG job.
-var ValidPickupKinds = map[string]bool{
-	LocCourse: true, LocRestStop: true, LocCheckpoint: true,
-	LocStart: true, LocFinish: true, LocOther: true,
+// PickupKindOrder and DropoffKindOrder are the allowed store.SAGLocation
+// Kind values on each end of a SAG job, IN THE ORDER THE COMPOSER SHOWS
+// THEM. The order is operator-facing, so it is a slice and not a map: Go
+// randomises map iteration, and a picker whose options reshuffle between two
+// openings of the same dialog cannot be driven at radio speed. The first
+// entry of each is the composer's default — a SAG call almost always comes
+// from a rider stopped on the course, heading for the next rest stop.
+var PickupKindOrder = []string{
+	LocCourse, LocRestStop, LocCheckpoint, LocStart, LocFinish, LocOther,
 }
-var ValidDropoffKinds = map[string]bool{
-	LocNextRestStop: true, LocRestStop: true, LocFinish: true,
-	LocStart: true, LocHospital: true, LocOther: true,
+var DropoffKindOrder = []string{
+	LocNextRestStop, LocRestStop, LocFinish, LocStart, LocHospital, LocOther,
+}
+
+// ValidPickupKinds and ValidDropoffKinds are the validity sets, derived from
+// the ordered slices so the two can never disagree.
+var ValidPickupKinds = kindSet(PickupKindOrder)
+var ValidDropoffKinds = kindSet(DropoffKindOrder)
+
+func kindSet(kinds []string) map[string]bool {
+	out := make(map[string]bool, len(kinds))
+	for _, k := range kinds {
+		out[k] = true
+	}
+	return out
+}
+
+// Bike dispositions. Whether the bike travels is a SEPARATE AXIS from what
+// happens to the rider: a rider can be transported while the bike is left
+// at the rest stop, or ride in one van while the bike follows in another.
+// It is decided by the driver at LOAD time, not by the caller at request
+// time, so it is settable all the way through LoadSlots.
+//
+// Only BikeWithRider consumes one of the vehicle's rack slots.
+const (
+	BikeWithRider    = "with_rider"    // on the rack of the vehicle carrying the rider
+	BikeNone         = "none"          // no bike to carry
+	BikeLeftBehind   = "left_behind"   // stays at the scene — somebody's property, an ICS-214 line
+	BikeOtherVehicle = "other_vehicle" // travelling separately from its rider
+)
+
+// BikeDispositionOrder is the order the load control offers them in: the
+// overwhelmingly common answer first.
+var BikeDispositionOrder = []string{BikeWithRider, BikeNone, BikeLeftBehind, BikeOtherVehicle}
+
+// ValidBikeDispositions is the accepted set. An unrecognised value is
+// refused rather than stored, so the board never has to render an unknown.
+var ValidBikeDispositions = map[string]bool{
+	BikeWithRider: true, BikeNone: true, BikeLeftBehind: true, BikeOtherVehicle: true,
 }
 
 // Event types for the WebSocket hub.
@@ -115,22 +155,58 @@ type Event struct {
 }
 
 // Sentinel errors so handlers can pick the right HTTP status with errors.Is.
+//
+// ErrSeatsExceeded is a SUBSET of ErrOverCapacity: every seat refusal is also
+// an over-capacity condition, so an existing errors.Is(err, ErrOverCapacity)
+// check keeps working, but a caller that needs to know whether the operator
+// may override can ask for ErrSeatsExceeded specifically.
 var (
-	ErrNotFound     = errors.New("not found")
-	ErrOverCapacity = errors.New("vehicle over capacity")
+	ErrNotFound      = errors.New("not found")
+	ErrOverCapacity  = errors.New("vehicle over capacity")
+	ErrSeatsExceeded = errors.New("vehicle has no seat for this rider")
 )
 
-// OverCapacityError carries the numbers a 409 response reports alongside
-// ErrOverCapacity (Unwrap makes errors.Is(err, ErrOverCapacity) true).
+// OverCapacityError carries the numbers a 409 response reports, and — the
+// load-bearing part — WHICH DIMENSION overflowed.
+//
+// The two dimensions are NOT symmetric:
+//
+//   - SEATS are a seatbelt count, a legal limit and not a judgement call.
+//     SeatsExceeded is FATAL: AllowOvercommit does not open it, on any path.
+//   - RACKS are a preference. A bike can ride in the bed of a truck if the
+//     rider is happy with that, so RacksExceeded is a question the operator
+//     is allowed to answer yes to via AllowOvercommit, and the resulting leg
+//     carries Overcommitted.
+//
+// Consequently store.SAGLeg.Overcommitted now means "bikes exceed the rack
+// count", never "riders exceed the seat count" — the latter cannot happen.
 type OverCapacityError struct {
 	CommittedSeats int
 	Seats          int
+	NeedSeats      int // seats this action would add
 	CommittedRacks int
 	RackSlots      int
+	NeedRacks      int // racks this action would add
+
+	SeatsExceeded bool // fatal, never overridable
+	RacksExceeded bool // overridable with AllowOvercommit
 }
 
-func (e *OverCapacityError) Error() string { return ErrOverCapacity.Error() }
-func (e *OverCapacityError) Unwrap() error { return ErrOverCapacity }
+func (e *OverCapacityError) Error() string {
+	if e.SeatsExceeded {
+		return ErrSeatsExceeded.Error()
+	}
+	return ErrOverCapacity.Error()
+}
+
+// Unwrap returns both sentinels for a seat refusal so errors.Is matches
+// either one.
+func (e *OverCapacityError) Unwrap() []error {
+	if e.SeatsExceeded {
+		return []error{ErrOverCapacity, ErrSeatsExceeded}
+	}
+	return []error{ErrOverCapacity}
+}
 
 // Config is the agency-configurable vocabulary. A future net-profile
 // integration may supply this per net; until then DefaultConfig() ships the
@@ -163,12 +239,17 @@ func DefaultConfig() Config {
 // requests.
 type SAGVehicleStatus struct {
 	store.SAGVehicle
-	Callsign         string   `json:"callsign"`
-	TacticalCall     string   `json:"tacticalCall"`
-	CheckInStatus    string   `json:"checkInStatus"` // NetCheckIn.Status
-	CommittedSeats   int      `json:"committedSeats"`
-	CommittedRacks   int      `json:"committedRacks"`
-	AvailableSeats   int      `json:"availableSeats"` // may be negative when Overcommitted
+	Callsign       string `json:"callsign"`
+	TacticalCall   string `json:"tacticalCall"`
+	CheckInStatus  string `json:"checkInStatus"` // NetCheckIn.Status
+	CommittedSeats int    `json:"committedSeats"`
+	CommittedRacks int    `json:"committedRacks"`
+	// AvailableSeats never goes negative through a DISPATCH — a seat overflow
+	// is refused outright — but it can if SetVehicle later shrinks a vehicle
+	// below what is already committed to it, which the board must still be
+	// able to render. AvailableRacks additionally goes negative after a
+	// knowing rack overcommit.
+	AvailableSeats   int      `json:"availableSeats"`
 	AvailableRacks   int      `json:"availableRacks"`
 	ActiveLegIDs     []string `json:"activeLegIds"`     // never nil
 	ActiveRequestIDs []string `json:"activeRequestIds"` // never nil

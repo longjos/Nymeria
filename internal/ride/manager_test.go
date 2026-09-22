@@ -325,7 +325,7 @@ func TestPartialPickupTrace(t *testing.T) {
 	}
 
 	// LoadSlots(leg1, [A,B]) -> A,B loaded; leg1 loaded -> partial (C waiting+unlegged).
-	req, err = m.LoadSlots(net.ID, req.ID, leg1, []string{slotA, slotB}, "NCS")
+	req, err = m.LoadSlots(net.ID, req.ID, leg1, LoadInput{SlotIDs: []string{slotA, slotB}}, "NCS")
 	if err != nil {
 		t.Fatalf("LoadSlots: %v", err)
 	}
@@ -418,6 +418,8 @@ func TestDispatch_CapacityGuard(t *testing.T) {
 	slotIDs := []string{req.Slots[0].ID, req.Slots[1].ID, req.Slots[2].ID, req.Slots[3].ID}
 
 	drainEvents(m.Events())
+	// 4 riders into 3 seats: a seatbelt count, so this is refused outright and
+	// AllowOvercommit does not open it (see TestDispatch_SeatsAreAHardStop).
 	_, err = m.Dispatch(net.ID, req.ID, DispatchInput{VehicleCheckInID: sag2.ID, SlotIDs: slotIDs}, "NCS")
 	if err == nil {
 		t.Fatal("Dispatch over capacity = nil error, want ErrOverCapacity")
@@ -435,12 +437,17 @@ func TestDispatch_CapacityGuard(t *testing.T) {
 	default:
 	}
 
-	req2, err := m.Dispatch(net.ID, req.ID, DispatchInput{VehicleCheckInID: sag2.ID, SlotIDs: slotIDs, AllowOvercommit: true}, "NCS")
-	if err != nil {
-		t.Fatalf("Dispatch with AllowOvercommit: %v", err)
+	if _, err := m.Dispatch(net.ID, req.ID, DispatchInput{VehicleCheckInID: sag2.ID, SlotIDs: slotIDs, AllowOvercommit: true}, "NCS"); !errors.Is(err, ErrSeatsExceeded) {
+		t.Fatalf("Dispatch with AllowOvercommit over SEATS = %v, want ErrSeatsExceeded (no override)", err)
 	}
-	if len(req2.Legs) != 1 || !req2.Legs[0].Overcommitted {
-		t.Fatalf("Legs = %+v, want one Overcommitted leg", req2.Legs)
+
+	// Three of them fit the belts exactly, and the racks are not short.
+	req2, err := m.Dispatch(net.ID, req.ID, DispatchInput{VehicleCheckInID: sag2.ID, SlotIDs: slotIDs[:3]}, "NCS")
+	if err != nil {
+		t.Fatalf("Dispatch of 3 into 3 seats / 3 racks: %v", err)
+	}
+	if len(req2.Legs) != 1 || req2.Legs[0].Overcommitted {
+		t.Fatalf("Legs = %+v, want one leg that is NOT overcommitted", req2.Legs)
 	}
 
 	// Racks exceeded with seats OK is also refused.
@@ -461,6 +468,9 @@ func TestDispatch_CapacityGuard(t *testing.T) {
 	}, "NCS")
 	if !errors.Is(err, ErrOverCapacity) {
 		t.Errorf("racks-exceeded dispatch error = %v, want ErrOverCapacity", err)
+	}
+	if errors.Is(err, ErrSeatsExceeded) {
+		t.Error("racks-exceeded dispatch must not present as a seat refusal")
 	}
 }
 
@@ -545,7 +555,9 @@ func TestDispatch_AcrossRequests_SharesCapacity(t *testing.T) {
 	m, netMgr, _, _ := newTestManager(t)
 	net := createTestNet(t, netMgr)
 	sag2 := sagCheckIn(t, netMgr, net.ID, "SAG2")
-	if _, err := m.SetVehicle(net.ID, sag2.ID, 3, 3, ""); err != nil {
+	// Belts for everyone, racks for three: the shared-capacity refusal lands
+	// on the RACKS, which is the dimension an operator may still override.
+	if _, err := m.SetVehicle(net.ID, sag2.ID, 5, 3, ""); err != nil {
 		t.Fatalf("SetVehicle: %v", err)
 	}
 
@@ -602,7 +614,7 @@ func TestLoadSlots_SubsetDetachesRest(t *testing.T) {
 	}
 	legID := req.Legs[0].ID
 
-	req, err = m.LoadSlots(net.ID, req.ID, legID, []string{a, b}, "NCS")
+	req, err = m.LoadSlots(net.ID, req.ID, legID, LoadInput{SlotIDs: []string{a, b}}, "NCS")
 	if err != nil {
 		t.Fatalf("LoadSlots: %v", err)
 	}
@@ -656,7 +668,7 @@ func TestLoadSlots_Skips(t *testing.T) {
 		t.Fatalf("leg status = %q, want dispatched", req.Legs[0].Status)
 	}
 
-	req, err = m.LoadSlots(net.ID, req.ID, legID, nil, "NCS")
+	req, err = m.LoadSlots(net.ID, req.ID, legID, LoadInput{}, "NCS")
 	if err != nil {
 		t.Fatalf("LoadSlots (skipping enroute/onscene): %v", err)
 	}
@@ -688,7 +700,7 @@ func TestDeliverSlots_PartialDelivery(t *testing.T) {
 		t.Fatalf("Dispatch: %v", err)
 	}
 	legID := req.Legs[0].ID
-	req, err = m.LoadSlots(net.ID, req.ID, legID, nil, "NCS")
+	req, err = m.LoadSlots(net.ID, req.ID, legID, LoadInput{}, "NCS")
 	if err != nil {
 		t.Fatalf("LoadSlots: %v", err)
 	}
@@ -746,7 +758,7 @@ func TestDeliverSlots_HospitalRequiresName(t *testing.T) {
 		if err != nil {
 			t.Fatalf("Dispatch: %v", err)
 		}
-		req, err = m.LoadSlots(net.ID, req.ID, req.Legs[0].ID, nil, "NCS")
+		req, err = m.LoadSlots(net.ID, req.ID, req.Legs[0].ID, LoadInput{}, "NCS")
 		if err != nil {
 			t.Fatalf("LoadSlots: %v", err)
 		}
@@ -787,7 +799,7 @@ func TestDeliverSlots_HospitalRequiresName(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Dispatch req3: %v", err)
 	}
-	req3, err = m.LoadSlots(net.ID, req3.ID, req3.Legs[0].ID, nil, "NCS")
+	req3, err = m.LoadSlots(net.ID, req3.ID, req3.Legs[0].ID, LoadInput{}, "NCS")
 	if err != nil {
 		t.Fatalf("LoadSlots req3: %v", err)
 	}
@@ -887,7 +899,7 @@ func TestResolveSlot_LoadedOnlyHandedOff(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Dispatch: %v", err)
 	}
-	req, err = m.LoadSlots(net.ID, req.ID, req.Legs[0].ID, nil, "NCS")
+	req, err = m.LoadSlots(net.ID, req.ID, req.Legs[0].ID, LoadInput{}, "NCS")
 	if err != nil {
 		t.Fatalf("LoadSlots: %v", err)
 	}
@@ -947,7 +959,7 @@ func TestReleaseLeg(t *testing.T) {
 		t.Fatalf("re-dispatch: %v", err)
 	}
 	legID2 := req.Legs[len(req.Legs)-1].ID
-	req, err = m.LoadSlots(net.ID, req.ID, legID2, nil, "NCS")
+	req, err = m.LoadSlots(net.ID, req.ID, legID2, LoadInput{}, "NCS")
 	if err != nil {
 		t.Fatalf("LoadSlots: %v", err)
 	}
@@ -974,7 +986,7 @@ func TestCancelRequest(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Dispatch: %v", err)
 	}
-	req, err = m.LoadSlots(net.ID, req.ID, req.Legs[0].ID, nil, "NCS")
+	req, err = m.LoadSlots(net.ID, req.ID, req.Legs[0].ID, LoadInput{}, "NCS")
 	if err != nil {
 		t.Fatalf("LoadSlots: %v", err)
 	}
@@ -1027,7 +1039,7 @@ func TestAddSlot_ReopensComplete(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Dispatch: %v", err)
 	}
-	req, err = m.LoadSlots(net.ID, req.ID, req.Legs[0].ID, nil, "NCS")
+	req, err = m.LoadSlots(net.ID, req.ID, req.Legs[0].ID, LoadInput{}, "NCS")
 	if err != nil {
 		t.Fatalf("LoadSlots: %v", err)
 	}
@@ -1119,7 +1131,7 @@ func TestReleaseVehicle_OnCheckout(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Dispatch req2: %v", err)
 	}
-	req2, err = m.LoadSlots(net.ID, req2.ID, req2.Legs[0].ID, nil, "NCS")
+	req2, err = m.LoadSlots(net.ID, req2.ID, req2.Legs[0].ID, LoadInput{}, "NCS")
 	if err != nil {
 		t.Fatalf("LoadSlots req2: %v", err)
 	}
@@ -1300,7 +1312,7 @@ func TestLoadPersistence(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Dispatch: %v", err)
 	}
-	req, err = m1.LoadSlots(net.ID, req.ID, req.Legs[0].ID, nil, "NCS")
+	req, err = m1.LoadSlots(net.ID, req.ID, req.Legs[0].ID, LoadInput{}, "NCS")
 	if err != nil {
 		t.Fatalf("LoadSlots: %v", err)
 	}
@@ -1436,7 +1448,7 @@ func TestCapacityChangingOpsEmitVehicleUpdated(t *testing.T) {
 			t.Fatalf("Dispatch: %v", err)
 		}
 		legID := req.Legs[0].ID
-		if _, err := m.LoadSlots(net.ID, req.ID, legID, nil, "NCS"); err != nil {
+		if _, err := m.LoadSlots(net.ID, req.ID, legID, LoadInput{}, "NCS"); err != nil {
 			t.Fatalf("LoadSlots: %v", err)
 		}
 
@@ -1476,7 +1488,7 @@ func TestCapacityChangingOpsEmitVehicleUpdated(t *testing.T) {
 		}
 
 		drainEvents(m.Events())
-		if _, err := m.LoadSlots(net.ID, req.ID, req.Legs[0].ID, nil, "NCS"); err != nil {
+		if _, err := m.LoadSlots(net.ID, req.ID, req.Legs[0].ID, LoadInput{}, "NCS"); err != nil {
 			t.Fatalf("LoadSlots: %v", err)
 		}
 
@@ -1488,4 +1500,531 @@ func TestCapacityChangingOpsEmitVehicleUpdated(t *testing.T) {
 			t.Errorf("committedSeats = %d, want 1 while aboard", st.CommittedSeats)
 		}
 	})
+}
+
+// --- defect 1: "I added another rider and the seat count didn't go up" ---
+//
+// The radio exchange is "SAG 4, make that TWO riders at Maxwell." The van is
+// already rolling. AddSlot with AttachToLegID puts the new rider on the leg
+// that is already on its way, which is what was said on the air, and the
+// vehicle's committed seats move immediately.
+
+func TestAddSlot_AttachesToAnInFlightLeg(t *testing.T) {
+	m, netMgr, _, _ := newTestManager(t)
+	net := createTestNet(t, netMgr)
+	van := sagCheckIn(t, netMgr, net.ID, "sag1")
+
+	req, err := m.CreateRequest(net.ID, CreateRequestInput{
+		Pickup:  store.SAGLocation{Kind: LocCourse},
+		Dropoff: store.SAGLocation{Kind: LocNextRestStop},
+		Slots:   []SlotInput{{Bib: "334"}},
+	}, "NCS")
+	if err != nil {
+		t.Fatalf("CreateRequest: %v", err)
+	}
+	req, err = m.Dispatch(net.ID, req.ID, DispatchInput{VehicleCheckInID: van.ID}, "NCS")
+	if err != nil {
+		t.Fatalf("Dispatch: %v", err)
+	}
+	if _, err := m.AdvanceLeg(net.ID, req.ID, req.Legs[0].ID, LegEnroute, "NCS"); err != nil {
+		t.Fatalf("AdvanceLeg: %v", err)
+	}
+	legID := req.Legs[0].ID
+
+	before, _ := m.VehicleStatus(net.ID, van.ID)
+	if before.CommittedSeats != 1 {
+		t.Fatalf("committed seats before = %d, want 1", before.CommittedSeats)
+	}
+
+	req, err = m.AddSlot(net.ID, req.ID, SlotInput{Bib: "512", AttachToLegID: legID})
+	if err != nil {
+		t.Fatalf("AddSlot(attach): %v", err)
+	}
+
+	after, _ := m.VehicleStatus(net.ID, van.ID)
+	if after.CommittedSeats != 2 || after.CommittedRacks != 2 {
+		t.Errorf("committed = (%d seats, %d racks), want (2, 2) — the seat count must move when a rider joins a rolling van",
+			after.CommittedSeats, after.CommittedRacks)
+	}
+	if req.NeedsVehicle {
+		t.Error("NeedsVehicle = true; the new rider is on the van that is already en route")
+	}
+	if req.Status != ReqEnroute {
+		t.Errorf("Status = %q, want %q — attaching must not knock the request back to open", req.Status, ReqEnroute)
+	}
+	var newSlot *store.SAGSlot
+	for i := range req.Slots {
+		if req.Slots[i].Bib == "512" {
+			newSlot = &req.Slots[i]
+		}
+	}
+	if newSlot == nil || newSlot.LegID != legID {
+		t.Fatalf("new slot legId = %v, want %q", newSlot, legID)
+	}
+	if len(req.Legs[0].SlotIDs) != 2 {
+		t.Errorf("leg slotIds = %v, want both riders", req.Legs[0].SlotIDs)
+	}
+}
+
+func TestAddSlot_AttachValidation(t *testing.T) {
+	m, netMgr, _, _ := newTestManager(t)
+	net := createTestNet(t, netMgr)
+	van := sagCheckIn(t, netMgr, net.ID, "sag1")
+
+	// Seats to spare, one rack: only the bike can overflow, and a bike may ride
+	// in the bed of a truck, so the override is legitimate here. (Seats are a
+	// hard stop on this path too — TestAddSlot_AttachSeatsAreAHardStop.)
+	if _, err := m.SetVehicle(net.ID, van.ID, 4, 1, ""); err != nil {
+		t.Fatalf("SetVehicle: %v", err)
+	}
+	req, err := m.CreateRequest(net.ID, CreateRequestInput{
+		Pickup:  store.SAGLocation{Kind: LocCourse},
+		Dropoff: store.SAGLocation{Kind: LocNextRestStop},
+		Slots:   []SlotInput{{Bib: "334"}},
+	}, "NCS")
+	if err != nil {
+		t.Fatalf("CreateRequest: %v", err)
+	}
+	req, err = m.Dispatch(net.ID, req.ID, DispatchInput{VehicleCheckInID: van.ID}, "NCS")
+	if err != nil {
+		t.Fatalf("Dispatch: %v", err)
+	}
+	legID := req.Legs[0].ID
+
+	// Unknown leg.
+	if _, err := m.AddSlot(net.ID, req.ID, SlotInput{Bib: "1", AttachToLegID: "nope"}); !errors.Is(err, ErrNotFound) {
+		t.Errorf("AddSlot to unknown leg err = %v, want ErrNotFound", err)
+	}
+
+	// Over capacity is refused with the numbers, exactly like Dispatch.
+	_, err = m.AddSlot(net.ID, req.ID, SlotInput{Bib: "512", AttachToLegID: legID})
+	if !errors.Is(err, ErrOverCapacity) {
+		t.Fatalf("AddSlot over capacity err = %v, want ErrOverCapacity", err)
+	}
+	var capErr *OverCapacityError
+	if !errors.As(err, &capErr) || capErr.RackSlots != 1 || capErr.CommittedRacks != 1 {
+		t.Errorf("OverCapacityError = %+v, want rackSlots 1 committed 1", capErr)
+	}
+	if capErr.SeatsExceeded {
+		t.Error("a rack overflow must not be reported as a seat refusal")
+	}
+
+	// ...and accepted when the operator knowingly overrides.
+	req, err = m.AddSlot(net.ID, req.ID, SlotInput{Bib: "512", AttachToLegID: legID, AllowOvercommit: true})
+	if err != nil {
+		t.Fatalf("AddSlot(allowOvercommit): %v", err)
+	}
+	if !req.Legs[0].Overcommitted {
+		t.Error("leg must be flagged Overcommitted after a knowing override")
+	}
+
+	// A loaded leg has physically left; nobody can join it.
+	if _, err := m.LoadSlots(net.ID, req.ID, legID, LoadInput{}, "NCS"); err != nil {
+		t.Fatalf("LoadSlots: %v", err)
+	}
+	if _, err := m.AddSlot(net.ID, req.ID, SlotInput{Bib: "999", AttachToLegID: legID}); err == nil {
+		t.Error("AddSlot to a loaded leg must be refused — the van has already left")
+	}
+}
+
+func TestAddSlot_WithoutAttachStillNeedsAVehicle(t *testing.T) {
+	m, netMgr, _, _ := newTestManager(t)
+	net := createTestNet(t, netMgr)
+	van := sagCheckIn(t, netMgr, net.ID, "sag1")
+
+	req, _ := m.CreateRequest(net.ID, CreateRequestInput{
+		Pickup:  store.SAGLocation{Kind: LocCourse},
+		Dropoff: store.SAGLocation{Kind: LocNextRestStop},
+		Slots:   []SlotInput{{Bib: "334"}},
+	}, "NCS")
+	req, _ = m.Dispatch(net.ID, req.ID, DispatchInput{VehicleCheckInID: van.ID}, "NCS")
+	if _, err := m.LoadSlots(net.ID, req.ID, req.Legs[0].ID, LoadInput{}, "NCS"); err != nil {
+		t.Fatalf("LoadSlots: %v", err)
+	}
+
+	req, err := m.AddSlot(net.ID, req.ID, SlotInput{Bib: "512"})
+	if err != nil {
+		t.Fatalf("AddSlot: %v", err)
+	}
+	if !req.NeedsVehicle || UnassignedRiders(*req) != 1 {
+		t.Errorf("NeedsVehicle=%v unassigned=%d, want true/1 — a rider added after the van loaded is standing on the roadside",
+			req.NeedsVehicle, UnassignedRiders(*req))
+	}
+	if req.Status != ReqPartial {
+		t.Errorf("Status = %q, want %q", req.Status, ReqPartial)
+	}
+}
+
+// --- defect 2: "there's no way to indicate the load includes the bike" ---
+//
+// Bike disposition is decided by the driver at LOAD time, not by the caller
+// at request time, and it is a separate axis from what happens to the rider.
+
+func TestLoadSlots_RecordsBikeDisposition(t *testing.T) {
+	m, netMgr, _, db := newTestManager(t)
+	net := createTestNet(t, netMgr)
+	van := sagCheckIn(t, netMgr, net.ID, "sag1")
+
+	req, _ := m.CreateRequest(net.ID, CreateRequestInput{
+		Pickup:  store.SAGLocation{Kind: LocCourse},
+		Dropoff: store.SAGLocation{Kind: LocNextRestStop},
+		Slots:   []SlotInput{{Bib: "334"}, {Bib: "335"}},
+	}, "NCS")
+	req, err := m.Dispatch(net.ID, req.ID, DispatchInput{VehicleCheckInID: van.ID}, "NCS")
+	if err != nil {
+		t.Fatalf("Dispatch: %v", err)
+	}
+	legID := req.Legs[0].ID
+	a, b := req.Slots[0].ID, req.Slots[1].ID
+
+	// Both bikes were assumed at request time; on scene the driver reports
+	// one bike on the rack and one frame too bent to carry.
+	req, err = m.LoadSlots(net.ID, req.ID, legID, LoadInput{
+		SlotIDs: []string{a, b},
+		Bike:    map[string]string{a: BikeWithRider, b: BikeLeftBehind},
+	}, "NCS")
+	if err != nil {
+		t.Fatalf("LoadSlots: %v", err)
+	}
+	for _, s := range req.Slots {
+		switch s.ID {
+		case a:
+			if s.Bike != BikeWithRider || !s.HasBike {
+				t.Errorf("slot a bike = %q/%v, want with_rider/true", s.Bike, s.HasBike)
+			}
+		case b:
+			if s.Bike != BikeLeftBehind || s.HasBike {
+				t.Errorf("slot b bike = %q/%v, want left_behind/false", s.Bike, s.HasBike)
+			}
+		}
+	}
+
+	st, _ := m.VehicleStatus(net.ID, van.ID)
+	if st.CommittedSeats != 2 || st.CommittedRacks != 1 {
+		t.Errorf("committed = (%d, %d), want (2 seats, 1 rack) — the abandoned bike must free its rack",
+			st.CommittedSeats, st.CommittedRacks)
+	}
+
+	// The timeline has to say what happened to the bikes: a bike left at a
+	// rest stop is somebody's property and an ICS-214 line item.
+	evs, _ := db.LoadNetEvents(net.ID)
+	found := false
+	for _, e := range evs {
+		if e.Type == TLSAGLoaded && strings.Contains(e.Summary, "1 bike left behind") {
+			found = true
+		}
+	}
+	if !found {
+		t.Error("expected the load timeline row to name the bike left behind")
+	}
+}
+
+func TestLoadSlots_BikeValidation(t *testing.T) {
+	m, netMgr, _, _ := newTestManager(t)
+	net := createTestNet(t, netMgr)
+	van := sagCheckIn(t, netMgr, net.ID, "sag1")
+
+	req, _ := m.CreateRequest(net.ID, CreateRequestInput{
+		Pickup:  store.SAGLocation{Kind: LocCourse},
+		Dropoff: store.SAGLocation{Kind: LocNextRestStop},
+		Slots:   []SlotInput{{Bib: "334"}},
+	}, "NCS")
+	req, _ = m.Dispatch(net.ID, req.ID, DispatchInput{VehicleCheckInID: van.ID}, "NCS")
+	legID := req.Legs[0].ID
+	a := req.Slots[0].ID
+
+	if _, err := m.LoadSlots(net.ID, req.ID, legID, LoadInput{Bike: map[string]string{a: "in the trunk"}}, "NCS"); err == nil {
+		t.Error("an unknown bike disposition must be refused, not silently stored")
+	}
+	if _, err := m.LoadSlots(net.ID, req.ID, legID, LoadInput{Bike: map[string]string{"not-a-slot": BikeNone}}, "NCS"); err == nil {
+		t.Error("a bike disposition for a slot that is not being loaded must be refused")
+	}
+}
+
+func TestCreateAndUpdateSlot_BikeDisposition(t *testing.T) {
+	m, netMgr, _, _ := newTestManager(t)
+	net := createTestNet(t, netMgr)
+
+	req, err := m.CreateRequest(net.ID, CreateRequestInput{
+		Pickup:  store.SAGLocation{Kind: LocCourse},
+		Dropoff: store.SAGLocation{Kind: LocNextRestStop},
+		Slots:   []SlotInput{{Bib: "334"}, {Bib: "335", Bike: BikeNone}},
+	}, "NCS")
+	if err != nil {
+		t.Fatalf("CreateRequest: %v", err)
+	}
+	if req.Slots[0].Bike != BikeWithRider {
+		t.Errorf("default bike = %q, want %q", req.Slots[0].Bike, BikeWithRider)
+	}
+	if req.Slots[1].Bike != BikeNone || req.Slots[1].HasBike {
+		t.Errorf("slot 1 bike = %q/%v, want none/false", req.Slots[1].Bike, req.Slots[1].HasBike)
+	}
+
+	// The rider's bike went with a different vehicle — rider and bike part ways.
+	req, err = m.UpdateSlot(net.ID, req.ID, req.Slots[0].ID, SlotInput{Bib: "334", Bike: BikeOtherVehicle})
+	if err != nil {
+		t.Fatalf("UpdateSlot: %v", err)
+	}
+	if req.Slots[0].Bike != BikeOtherVehicle || req.Slots[0].HasBike {
+		t.Errorf("slot bike = %q/%v, want other_vehicle/false", req.Slots[0].Bike, req.Slots[0].HasBike)
+	}
+	if _, err := m.UpdateSlot(net.ID, req.ID, req.Slots[0].ID, SlotInput{Bike: "nonsense"}); err == nil {
+		t.Error("UpdateSlot must refuse an unknown bike disposition")
+	}
+}
+
+// Slots written before the bike axis existed carry only hasBike. Loading
+// them must produce an explicit disposition, never an empty string the UI
+// would have to guess at.
+func TestLoad_NormalizesLegacyBikeFlag(t *testing.T) {
+	m, netMgr, _, db := newTestManager(t)
+	net := createTestNet(t, netMgr)
+
+	legacy := store.SAGRequest{
+		ID: "legacy-1", NetID: net.ID, Sequence: 1,
+		Pickup: store.SAGLocation{Kind: LocCourse}, Dropoff: store.SAGLocation{Kind: LocNextRestStop},
+		Priority: PriorityHigh, Status: ReqOpen, NeedsVehicle: true,
+		Slots: []store.SAGSlot{
+			{ID: "s1", Bib: "334", HasBike: true, Disposition: SlotWaiting},
+			{ID: "s2", Bib: "335", HasBike: false, Disposition: SlotWaiting},
+		},
+		Legs: []store.SAGLeg{}, CreatedAt: time.Now().UTC(), UpdatedAt: time.Now().UTC(),
+	}
+	if err := db.SaveSAGRequest(legacy); err != nil {
+		t.Fatalf("SaveSAGRequest: %v", err)
+	}
+
+	m2 := NewManager(db, netMgr, nil, DefaultConfig())
+	if err := m2.Load(); err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	got, ok := m2.GetRequest(net.ID, "legacy-1")
+	if !ok {
+		t.Fatal("legacy request not loaded")
+	}
+	if got.Slots[0].Bike != BikeWithRider {
+		t.Errorf("legacy hasBike=true -> %q, want %q", got.Slots[0].Bike, BikeWithRider)
+	}
+	if got.Slots[1].Bike != BikeNone {
+		t.Errorf("legacy hasBike=false -> %q, want %q", got.Slots[1].Bike, BikeNone)
+	}
+	_ = m
+}
+
+// --- asymmetric capacity: seats are a legal limit, racks are a judgement call ---
+//
+// A seat is a seatbelt. Exceeding it is refused outright and AllowOvercommit
+// does not open it. A bike can ride in the bed of a truck, so exceeding the
+// rack count is a question the operator is allowed to answer yes to.
+
+func TestDispatch_SeatsAreAHardStop(t *testing.T) {
+	m, netMgr, _, _ := newTestManager(t)
+	net := createTestNet(t, netMgr)
+	van := sagCheckIn(t, netMgr, net.ID, "sag1")
+	// Three belts, plenty of rack space: only the seat count can bite.
+	if _, err := m.SetVehicle(net.ID, van.ID, 3, 9, ""); err != nil {
+		t.Fatalf("SetVehicle: %v", err)
+	}
+
+	req, err := m.CreateRequest(net.ID, CreateRequestInput{
+		Pickup: store.SAGLocation{Kind: LocCourse}, Dropoff: store.SAGLocation{Kind: LocNextRestStop},
+		Slots: []SlotInput{{Bib: "A"}, {Bib: "B"}, {Bib: "C"}, {Bib: "D"}},
+	}, "NCS")
+	if err != nil {
+		t.Fatalf("CreateRequest: %v", err)
+	}
+	all := []string{req.Slots[0].ID, req.Slots[1].ID, req.Slots[2].ID, req.Slots[3].ID}
+
+	for _, allow := range []bool{false, true} {
+		drainEvents(m.Events())
+		_, err := m.Dispatch(net.ID, req.ID, DispatchInput{
+			VehicleCheckInID: van.ID, SlotIDs: all, AllowOvercommit: allow,
+		}, "NCS")
+		if !errors.Is(err, ErrSeatsExceeded) {
+			t.Fatalf("AllowOvercommit=%v: err = %v, want ErrSeatsExceeded", allow, err)
+		}
+		// Still an over-capacity error for every existing handler.
+		if !errors.Is(err, ErrOverCapacity) {
+			t.Errorf("AllowOvercommit=%v: err = %v, want errors.Is ErrOverCapacity too", allow, err)
+		}
+		var capErr *OverCapacityError
+		if !errors.As(err, &capErr) {
+			t.Fatalf("err is not an *OverCapacityError: %v", err)
+		}
+		if !capErr.SeatsExceeded || capErr.RacksExceeded {
+			t.Errorf("seatsExceeded/racksExceeded = %v/%v, want true/false", capErr.SeatsExceeded, capErr.RacksExceeded)
+		}
+		if capErr.Seats != 3 || capErr.CommittedSeats != 0 || capErr.NeedSeats != 4 {
+			t.Errorf("seat numbers = seats %d committed %d need %d, want 3/0/4",
+				capErr.Seats, capErr.CommittedSeats, capErr.NeedSeats)
+		}
+		got, _ := m.GetRequest(net.ID, req.ID)
+		if len(got.Legs) != 0 {
+			t.Errorf("AllowOvercommit=%v: a leg was created despite the refusal", allow)
+		}
+		select {
+		case evt := <-m.Events():
+			t.Errorf("AllowOvercommit=%v: unexpected event on refusal: %+v", allow, evt)
+		default:
+		}
+	}
+
+	// Exactly at the limit is fine — the refusal is "more than", not "at".
+	if _, err := m.Dispatch(net.ID, req.ID, DispatchInput{
+		VehicleCheckInID: van.ID, SlotIDs: all[:3],
+	}, "NCS"); err != nil {
+		t.Fatalf("Dispatch of exactly 3 into 3 seats: %v", err)
+	}
+}
+
+func TestDispatch_RacksStayOverridable(t *testing.T) {
+	m, netMgr, _, db := newTestManager(t)
+	net := createTestNet(t, netMgr)
+	// Four belts, one rack: two riders with bikes fit the cab, not the rack.
+	van := sagCheckIn(t, netMgr, net.ID, "sag1")
+	if _, err := m.SetVehicle(net.ID, van.ID, 4, 1, ""); err != nil {
+		t.Fatalf("SetVehicle: %v", err)
+	}
+
+	req, err := m.CreateRequest(net.ID, CreateRequestInput{
+		Pickup: store.SAGLocation{Kind: LocCourse}, Dropoff: store.SAGLocation{Kind: LocNextRestStop},
+		Slots: []SlotInput{{Bib: "E"}, {Bib: "F"}},
+	}, "NCS")
+	if err != nil {
+		t.Fatalf("CreateRequest: %v", err)
+	}
+	both := []string{req.Slots[0].ID, req.Slots[1].ID}
+
+	_, err = m.Dispatch(net.ID, req.ID, DispatchInput{VehicleCheckInID: van.ID, SlotIDs: both}, "NCS")
+	if !errors.Is(err, ErrOverCapacity) {
+		t.Fatalf("err = %v, want ErrOverCapacity", err)
+	}
+	if errors.Is(err, ErrSeatsExceeded) {
+		t.Fatal("a rack overflow must never present as a seat refusal")
+	}
+	var capErr *OverCapacityError
+	if !errors.As(err, &capErr) || capErr.SeatsExceeded || !capErr.RacksExceeded {
+		t.Fatalf("capErr = %+v, want racksExceeded only", capErr)
+	}
+	if capErr.RackSlots != 1 || capErr.NeedRacks != 2 {
+		t.Errorf("rack numbers = slots %d need %d, want 1/2", capErr.RackSlots, capErr.NeedRacks)
+	}
+
+	// The operator says "toss it in the bed" and it goes through.
+	req2, err := m.Dispatch(net.ID, req.ID, DispatchInput{
+		VehicleCheckInID: van.ID, SlotIDs: both, AllowOvercommit: true,
+	}, "NCS")
+	if err != nil {
+		t.Fatalf("Dispatch with AllowOvercommit: %v", err)
+	}
+	if len(req2.Legs) != 1 || !req2.Legs[0].Overcommitted {
+		t.Fatalf("Legs = %+v, want one leg flagged Overcommitted", req2.Legs)
+	}
+
+	// Overcommitted means BIKES, and the timeline has to say which.
+	evs, _ := db.LoadNetEvents(net.ID)
+	found := false
+	for _, e := range evs {
+		if e.Type == TLSAGDispatched && strings.Contains(strings.ToLower(e.Summary), "rack") {
+			found = true
+		}
+	}
+	if !found {
+		t.Error("the dispatch timeline row must name the rack overflow, not say 'over capacity'")
+	}
+
+	// A seat is never negative, because seats can never be overcommitted.
+	st, _ := m.VehicleStatus(net.ID, van.ID)
+	if st.AvailableSeats < 0 {
+		t.Errorf("AvailableSeats = %d; seats can no longer go negative", st.AvailableSeats)
+	}
+	if st.AvailableRacks >= 0 {
+		t.Errorf("AvailableRacks = %d, want negative after a knowing rack overcommit", st.AvailableRacks)
+	}
+}
+
+func TestAddSlot_AttachSeatsAreAHardStop(t *testing.T) {
+	m, netMgr, _, _ := newTestManager(t)
+	net := createTestNet(t, netMgr)
+	van := sagCheckIn(t, netMgr, net.ID, "sag1")
+	// One belt, nine racks.
+	if _, err := m.SetVehicle(net.ID, van.ID, 1, 9, ""); err != nil {
+		t.Fatalf("SetVehicle: %v", err)
+	}
+
+	req, _ := m.CreateRequest(net.ID, CreateRequestInput{
+		Pickup: store.SAGLocation{Kind: LocCourse}, Dropoff: store.SAGLocation{Kind: LocNextRestStop},
+		Slots: []SlotInput{{Bib: "334"}},
+	}, "NCS")
+	req, err := m.Dispatch(net.ID, req.ID, DispatchInput{VehicleCheckInID: van.ID}, "NCS")
+	if err != nil {
+		t.Fatalf("Dispatch: %v", err)
+	}
+	legID := req.Legs[0].ID
+
+	for _, allow := range []bool{false, true} {
+		_, err := m.AddSlot(net.ID, req.ID, SlotInput{Bib: "512", AttachToLegID: legID, AllowOvercommit: allow})
+		if !errors.Is(err, ErrSeatsExceeded) {
+			t.Fatalf("AllowOvercommit=%v: err = %v, want ErrSeatsExceeded", allow, err)
+		}
+		got, _ := m.GetRequest(net.ID, req.ID)
+		if len(got.Slots) != 1 {
+			t.Fatalf("AllowOvercommit=%v: the rider was added despite the seat refusal", allow)
+		}
+		if len(got.Legs[0].SlotIDs) != 1 {
+			t.Errorf("AllowOvercommit=%v: the leg grew despite the seat refusal", allow)
+		}
+	}
+
+	// Leaving them unassigned is always allowed — that is the fallback the
+	// refusal is supposed to push the operator toward.
+	got, err := m.AddSlot(net.ID, req.ID, SlotInput{Bib: "512"})
+	if err != nil {
+		t.Fatalf("AddSlot unassigned: %v", err)
+	}
+	if !got.NeedsVehicle || UnassignedRiders(*got) != 1 {
+		t.Errorf("unassigned rider not recorded: needsVehicle=%v unassigned=%d", got.NeedsVehicle, UnassignedRiders(*got))
+	}
+}
+
+func TestAddSlot_AttachRacksStayOverridable(t *testing.T) {
+	m, netMgr, _, _ := newTestManager(t)
+	net := createTestNet(t, netMgr)
+	van := sagCheckIn(t, netMgr, net.ID, "sag1")
+	// Room for the person, no room for their bike.
+	if _, err := m.SetVehicle(net.ID, van.ID, 4, 1, ""); err != nil {
+		t.Fatalf("SetVehicle: %v", err)
+	}
+
+	req, _ := m.CreateRequest(net.ID, CreateRequestInput{
+		Pickup: store.SAGLocation{Kind: LocCourse}, Dropoff: store.SAGLocation{Kind: LocNextRestStop},
+		Slots: []SlotInput{{Bib: "334"}},
+	}, "NCS")
+	req, _ = m.Dispatch(net.ID, req.ID, DispatchInput{VehicleCheckInID: van.ID}, "NCS")
+	legID := req.Legs[0].ID
+
+	_, err := m.AddSlot(net.ID, req.ID, SlotInput{Bib: "512", AttachToLegID: legID})
+	var capErr *OverCapacityError
+	if !errors.As(err, &capErr) || capErr.SeatsExceeded || !capErr.RacksExceeded {
+		t.Fatalf("err = %v (capErr %+v), want a racks-only overflow", err, capErr)
+	}
+
+	req, err = m.AddSlot(net.ID, req.ID, SlotInput{Bib: "512", AttachToLegID: legID, AllowOvercommit: true})
+	if err != nil {
+		t.Fatalf("AddSlot(allowOvercommit): %v", err)
+	}
+	if !req.Legs[0].Overcommitted {
+		t.Error("leg must be flagged Overcommitted after a knowing rack override")
+	}
+
+	// The same rider WITHOUT a bike needs no override at all: the rack is the
+	// only thing that was short.
+	req2, _ := m.CreateRequest(net.ID, CreateRequestInput{
+		Pickup: store.SAGLocation{Kind: LocCourse}, Dropoff: store.SAGLocation{Kind: LocNextRestStop},
+		Slots: []SlotInput{{Bib: "700"}},
+	}, "NCS")
+	req2, _ = m.Dispatch(net.ID, req2.ID, DispatchInput{VehicleCheckInID: van.ID, AllowOvercommit: true}, "NCS")
+	if _, err := m.AddSlot(net.ID, req2.ID, SlotInput{Bib: "701", Bike: BikeNone, AttachToLegID: req2.Legs[0].ID}); err != nil {
+		t.Fatalf("AddSlot of a bike-less rider with a free seat: %v", err)
+	}
 }

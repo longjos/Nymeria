@@ -16,6 +16,67 @@ func isTerminalDisposition(d string) bool {
 	return terminalSlotDispositions[d]
 }
 
+// UnassignedRiders counts the riders on a request who are standing at the
+// roadside with no vehicle assigned to them: waiting, with no leg. This is
+// the number that answers "who is still waiting for a ride" — it is NOT the
+// count of waiting slots, because a slot reserved on a leg that is already
+// rolling is waiting but is not anybody's problem.
+func UnassignedRiders(r store.SAGRequest) int {
+	n := 0
+	for _, s := range r.Slots {
+		if s.Disposition == SlotWaiting && s.LegID == "" {
+			n++
+		}
+	}
+	return n
+}
+
+// ActiveUnloadedLegs returns the legs a LATE rider can still be added to, in
+// leg order: a vehicle that is dispatched, en route or on scene has not shut
+// its doors yet. A loaded leg has physically left the scene and a released
+// or delivered one is over, so neither can take one more.
+//
+// This is what makes "SAG 4, make that TWO riders at Maxwell" a single
+// operator action instead of a second dispatch.
+func ActiveUnloadedLegs(r store.SAGRequest) []store.SAGLeg {
+	out := []store.SAGLeg{}
+	for _, leg := range r.Legs {
+		switch leg.Status {
+		case LegDispatched, LegEnroute, LegOnScene:
+			out = append(out, leg)
+		}
+	}
+	return out
+}
+
+// SlotTakesRack reports whether a slot occupies one of the vehicle's bike
+// racks. Only a bike travelling WITH its rider does. A slot written before
+// the bike axis existed carries only HasBike, so that is the fallback.
+func SlotTakesRack(s store.SAGSlot) bool {
+	if ValidBikeDispositions[s.Bike] {
+		return s.Bike == BikeWithRider
+	}
+	return s.HasBike
+}
+
+// NormalizeSlotBike gives a slot an explicit bike disposition and keeps the
+// legacy HasBike mirror in step with it. Called on create, on load from the
+// store and after every edit, so no surface ever has to render an empty
+// disposition or reason about which of the two fields is authoritative.
+func NormalizeSlotBike(s *store.SAGSlot) {
+	if s == nil {
+		return
+	}
+	if !ValidBikeDispositions[s.Bike] {
+		if s.HasBike {
+			s.Bike = BikeWithRider
+		} else {
+			s.Bike = BikeNone
+		}
+	}
+	s.HasBike = s.Bike == BikeWithRider
+}
+
 // activeLegStatuses are the leg statuses that still represent a vehicle
 // committed to a job (dispatched all the way through loaded, but not yet
 // delivered or released).
@@ -48,12 +109,7 @@ var legRank = map[string]int{
 // still waiting with no leg assigned, even under transporting (a rider
 // added after the vehicle left still needs a ride).
 func DeriveStatus(r store.SAGRequest) (status string, needsVehicle bool) {
-	for _, s := range r.Slots {
-		if s.Disposition == SlotWaiting && s.LegID == "" {
-			needsVehicle = true
-			break
-		}
-	}
+	needsVehicle = UnassignedRiders(r) > 0
 
 	if r.CancelReason != "" {
 		return ReqCancelled, needsVehicle
@@ -211,7 +267,7 @@ func Capacity(v store.SAGVehicle, reqs []store.SAGRequest) (committedSeats, comm
 					continue
 				}
 				committedSeats++
-				if slot.HasBike {
+				if SlotTakesRack(slot) {
 					committedRacks++
 				}
 			}
@@ -231,6 +287,9 @@ func normalize(r *store.SAGRequest) {
 	}
 	if r.Slots == nil {
 		r.Slots = []store.SAGSlot{}
+	}
+	for i := range r.Slots {
+		NormalizeSlotBike(&r.Slots[i])
 	}
 	if r.Legs == nil {
 		r.Legs = []store.SAGLeg{}

@@ -278,6 +278,82 @@ export const SAG_DISPOSITION_LABELS: Record<string, string> = {
 	cancelled: 'Cancelled'
 };
 
+/**
+ * internal/ride's bike dispositions, in on-air language. The bike is a
+ * SEPARATE axis from the rider: the rider can be transported while the bike
+ * stays at the rest stop, or travel in a different vehicle entirely. Only
+ * 'with_rider' consumes one of the vehicle's rack slots.
+ */
+export const SAG_BIKE_LABELS: Record<string, string> = {
+	with_rider: 'Bike on the rack',
+	none: 'No bike',
+	left_behind: 'Bike left behind',
+	other_vehicle: 'Bike on another vehicle'
+};
+
+/**
+ * The ONE display order for bike dispositions — mirrors
+ * ride.BikeDispositionOrder, and every picker reads it rather than declaring
+ * its own array, so the two can never drift.
+ *
+ * `with_rider` is first because it is the default and the overwhelmingly
+ * common answer. `other_vehicle` is LAST and is never the default or the
+ * first alternative an operator tabs into: shuttle trucks and bike-rack
+ * trucks are real on very large rides but are not the norm, and a rare
+ * option sitting high in a list is a mis-selection waiting to happen.
+ */
+export const BIKE_ORDER = ['with_rider', 'none', 'left_behind', 'other_vehicle'] as const;
+
+/** The short form for a rider line, where the rider's name is already there. */
+export const SAG_BIKE_SHORT: Record<string, string> = {
+	with_rider: 'bike',
+	none: 'no bike',
+	left_behind: 'bike left behind',
+	other_vehicle: 'bike separate'
+};
+
+/**
+ * Geometric, monochrome, and never emoji-presentation — same rule the stop
+ * glyphs follow. A bike that is NOT on the rack must be distinguishable from
+ * one that is without relying on colour.
+ */
+export const SAG_BIKE_GLYPHS: Record<string, string> = {
+	with_rider: '◉',
+	none: '·',
+	left_behind: '⊘',
+	other_vehicle: '⇄'
+};
+
+/** Only a bike travelling with its rider occupies a rack. Mirrors ride.SlotTakesRack. */
+export function slotTakesRack(slot: { bike?: string; hasBike?: boolean }): boolean {
+	if (slot.bike && SAG_BIKE_LABELS[slot.bike]) return slot.bike === 'with_rider';
+	return !!slot.hasBike;
+}
+
+/** Explicit disposition for a slot, falling back to the legacy boolean. */
+export function slotBike(slot: { bike?: string; hasBike?: boolean }): string {
+	if (slot.bike && SAG_BIKE_LABELS[slot.bike]) return slot.bike;
+	return slot.hasBike ? 'with_rider' : 'none';
+}
+
+/**
+ * The riders on a request who are standing at the roadside with nobody
+ * coming for them. Mirrors ride.UnassignedRiders: NOT the count of waiting
+ * slots, because a slot reserved on a leg already rolling is waiting but is
+ * nobody's problem.
+ */
+export function unassignedRiders(r: { slots: { disposition: string; legId?: string }[] }): number {
+	return r.slots.filter((s) => s.disposition === 'waiting' && !s.legId).length;
+}
+
+/**
+ * The legs a LATE rider can still join — "SAG 4, make that TWO riders."
+ * Mirrors ride.ActiveUnloadedLegs: a loaded van has physically left.
+ */
+export function activeUnloadedLegs<T extends { status: string }>(legs: T[]): T[] {
+	return legs.filter((l) => l.status === 'dispatched' || l.status === 'enroute' || l.status === 'onscene');
+}
+
 /** internal/ride's SAGLeg.Status values, in on-air language. */
 export const SAG_LEG_STATUS_LABELS: Record<string, string> = {
 	dispatched: 'Dispatched',

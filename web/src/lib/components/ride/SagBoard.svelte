@@ -8,7 +8,7 @@
 	import { api, ApiError } from '$lib/api';
 	import type { SAGRequest, SAGLeg, SAGLocation, SAGVehicleStatus, OverCapacityBody } from '$lib/types';
 	import {
-		sagBoard, rideLadder, sagComposerSeed, upsertSagRequest, upsertSagVehicle
+		sagBoard, rideLadder, rideSagSummary, sagComposerSeed, upsertSagRequest, upsertSagVehicle
 	} from '$lib/stores/ride';
 	import { activeNetId } from '$lib/stores/netcontrol';
 	import { canOperate } from '$lib/stores/session';
@@ -17,7 +17,9 @@
 	import {
 		tierById, tierStyle, ageText, enumLabel,
 		SAG_STATUS_LABELS, SAG_TERMINAL_STATUSES, SAG_DISPOSITION_LABELS, SAG_LEG_STATUS_LABELS,
-		SAG_LOCATION_KIND_LABELS, SAG_REASON_LABELS
+		SAG_LOCATION_KIND_LABELS, SAG_REASON_LABELS,
+		SAG_BIKE_LABELS, SAG_BIKE_SHORT, SAG_BIKE_GLYPHS,
+		slotBike, unassignedRiders, activeUnloadedLegs, BIKE_ORDER
 	} from '$lib/rideMeta';
 	import RideTierGlyph from '../RideTierGlyph.svelte';
 	import SagRequestComposer from './SagRequestComposer.svelte';
@@ -53,11 +55,34 @@
 		composerOpen = true;
 	}
 
+	/**
+	 * Order is "what is blocked on ME, worst first", not "newest first".
+	 * Newest-first buries the request that has had nobody coming for it for
+	 * forty minutes under the one logged ten seconds ago, which is exactly
+	 * backwards: a job a van is already driving needs nothing from NCS.
+	 * 1. needs a vehicle  2. priority rank  3. oldest first  4. everything else.
+	 */
+	function sortKey(r: SAGRequest): [number, number, number] {
+		const rank = tierById($rideLadder, r.priority)?.rank ?? 99;
+		const blocked = r.needsVehicle && !SAG_TERMINAL_STATUSES.has(r.status) ? 0 : 1;
+		return [blocked, rank, Date.parse(r.createdAt)];
+	}
+
 	let requests = $derived(
 		($sagBoard?.requests ?? [])
 			.filter((r) => showAll || !SAG_TERMINAL_STATUSES.has(r.status))
-			.sort((a, b) => Date.parse(b.createdAt) - Date.parse(a.createdAt))
+			.sort((a, b) => {
+				const ka = sortKey(a);
+				const kb = sortKey(b);
+				return ka[0] - kb[0] || ka[1] - kb[1] || ka[2] - kb[2];
+			})
 	);
+
+	/** Requests blocked on NCS finding a vehicle — the board's whole headline. */
+	let blockedRequests = $derived(
+		($sagBoard?.requests ?? []).filter((r) => !SAG_TERMINAL_STATUSES.has(r.status) && r.needsVehicle)
+	);
+	let ridersRoadside = $derived(blockedRequests.reduce((n, r) => n + unassignedRiders(r), 0));
 	let vehicles = $derived($sagBoard?.vehicles ?? []);
 	/**
 	 * The dispatch picker's actual candidate list. Kept as one derived value
@@ -75,9 +100,33 @@
 		return loc.description || loc.route || enumLabel(loc.kind, SAG_LOCATION_KIND_LABELS);
 	}
 
-	function riderCountText(r: SAGRequest): string {
-		const waiting = r.slots.filter((s) => s.disposition === 'waiting').length;
-		return waiting > 0 ? `${r.slots.length} (${waiting} waiting)` : `${r.slots.length}`;
+	/**
+	 * The full one-line form, mile marker AND place name, with no repeat: the
+	 * detail grid used to render "Rest Stop Maxwell Chapel — Rest Stop Maxwell
+	 * Chapel" because it appended the description to a value that had already
+	 * fallen through to the description.
+	 */
+	function locationText(loc: SAGLocation): string {
+		const head = pickupText(loc);
+		const desc = loc.description?.trim();
+		return desc && desc !== head ? `${head} — ${desc}` : head;
+	}
+
+	/** Bibs are the on-air identifier. The board has to answer "where is 334?". */
+	function bibText(r: SAGRequest): string {
+		const labels = r.slots
+			.filter((s) => s.disposition !== 'cancelled')
+			.map((s) => s.bib || s.riderName || '?')
+			.filter(Boolean);
+		if (labels.length === 0) return '';
+		if (labels.length <= 3) return labels.join(' · ');
+		return `${labels.slice(0, 3).join(' · ')} +${labels.length - 3}`;
+	}
+
+	/** The vehicle(s) currently carrying or fetching this request. */
+	function vehicleText(r: SAGRequest): string {
+		const live = r.legs.filter((l) => l.status !== 'released' && l.status !== 'delivered');
+		return Array.from(new Set(live.map((l) => l.vehicleLabel))).join(', ');
 	}
 
 	// Both reasons below are written to the timeline + ICS-214 and used to be
@@ -136,23 +185,44 @@
 	let newBib = $state('');
 	let newName = $state('');
 	let newNote = $state('');
-	let newHasBike = $state(true);
+	let newBike = $state('with_rider');
+	/** '' = leave unassigned; otherwise the leg the rider joins. */
+	let newAttachLegId = $state('');
+	let addRiderOvercapacity = $state<OverCapacityBody | null>(null);
 
-	function openAddRider(id: string): void {
-		addRiderOpenFor = id;
+	function openAddRider(r: SAGRequest): void {
+		addRiderOpenFor = r.id;
 		newBib = '';
 		newName = '';
 		newNote = '';
-		newHasBike = true;
+		newBike = 'with_rider';
+		addRiderOvercapacity = null;
+		// "SAG 4, make that TWO riders at Maxwell" is the common case, so the
+		// van already on its way is preselected. Exactly one live leg means
+		// there is nothing to choose; more than one and the operator picks.
+		const live = activeUnloadedLegs(r.legs);
+		newAttachLegId = live.length === 1 ? live[0].id : '';
 	}
 
-	async function submitAddRider(r: SAGRequest): Promise<void> {
+	async function submitAddRider(r: SAGRequest, allowOvercommit = false): Promise<void> {
 		try {
-			const updated = await api.addSagSlot(netId, r.id, { bib: newBib.trim(), riderName: newName.trim(), note: newNote.trim(), hasBike: newHasBike });
+			const updated = await api.addSagSlot(netId, r.id, {
+				bib: newBib.trim(),
+				riderName: newName.trim(),
+				note: newNote.trim(),
+				bike: newBike,
+				attachToLegId: newAttachLegId || undefined,
+				allowOvercommit
+			});
 			upsertSagRequest(updated);
 			addRiderOpenFor = null;
+			addRiderOvercapacity = null;
 		} catch (e) {
-			showToast(e instanceof ApiError ? e.message : 'Could not add rider', 'error');
+			if (e instanceof ApiError && e.status === 409) {
+				addRiderOvercapacity = e.body as unknown as OverCapacityBody;
+			} else {
+				showToast(e instanceof ApiError ? e.message : 'Could not add rider', 'error');
+			}
 		}
 	}
 
@@ -230,10 +300,27 @@
 
 	let loadOpenFor = $state<string | null>(null);
 	let loadSlotIds = $state<Set<string>>(new Set());
+	/**
+	 * slotId -> bike disposition, as the DRIVER reports it at the scene. This
+	 * is the only moment anybody knows whether the bike actually went on the
+	 * rack: the request-time checkbox was the caller's guess. It seeds from
+	 * whatever the request assumed, so the common case is still zero clicks.
+	 */
+	let loadBike = $state<Record<string, string>>({});
 
-	function openLoad(leg: SAGLeg): void {
+	function openLoad(r: SAGRequest, leg: SAGLeg): void {
 		loadOpenFor = leg.id;
 		loadSlotIds = new Set(leg.slotIds);
+		const seed: Record<string, string> = {};
+		for (const sid of leg.slotIds) {
+			const slot = r.slots.find((x) => x.id === sid);
+			if (slot) seed[sid] = slotBike(slot);
+		}
+		loadBike = seed;
+	}
+
+	function setLoadBike(sid: string, value: string): void {
+		loadBike = { ...loadBike, [sid]: value };
 	}
 
 	function toggleLoadSlot(id: string): void {
@@ -245,7 +332,10 @@
 
 	async function submitLoad(r: SAGRequest, leg: SAGLeg): Promise<void> {
 		try {
-			upsertSagRequest(await api.loadSagSlots(netId, r.id, leg.id, Array.from(loadSlotIds)));
+			const ids = Array.from(loadSlotIds);
+			const bike: Record<string, string> = {};
+			for (const sid of ids) if (loadBike[sid]) bike[sid] = loadBike[sid];
+			upsertSagRequest(await api.loadSagSlots(netId, r.id, leg.id, { slotIds: ids, bike }));
 			loadOpenFor = null;
 		} catch (e) {
 			showToast(e instanceof ApiError ? e.message : 'Could not record load', 'error');
@@ -311,6 +401,48 @@
 		if (!s) return slotId.slice(0, 6);
 		return s.bib ? `bib ${s.bib}` : s.riderName || 'rider';
 	}
+
+	/** Change a bike disposition after the fact — a wrong one is one select away. */
+	async function setSlotBike(r: SAGRequest, slotId: string, bike: string): Promise<void> {
+		const s = r.slots.find((x) => x.id === slotId);
+		if (!s || !bike) return;
+		try {
+			upsertSagRequest(
+				await api.updateSagSlot(netId, r.id, slotId, {
+					bib: s.bib ?? '', riderName: s.riderName ?? '', note: s.note ?? '', bike
+				})
+			);
+		} catch (e) {
+			showToast(e instanceof ApiError ? e.message : 'Could not update the bike', 'error');
+		}
+	}
+
+
+	/**
+	 * A seat refusal STATES A LIMIT; a rack overflow ASKS A QUESTION. They are
+	 * rendered by different blocks, in different colours, and only one of them
+	 * has an "anyway" button — retrying a seat refusal with allowOvercommit is
+	 * refused by the server again, so offering the button would be a lie.
+	 */
+	function seatRefusalText(b: OverCapacityBody, vehicleLabel: string): string {
+		const would = b.committedSeats + b.needSeats;
+		return `${vehicleLabel} has ${b.seats} seat${b.seats === 1 ? '' : 's'}; this would be ${would}.`;
+	}
+
+	function rackQuestionText(b: OverCapacityBody, vehicleLabel: string): string {
+		const would = b.committedRacks + b.needRacks;
+		return `${vehicleLabel} has ${b.rackSlots} rack${b.rackSlots === 1 ? '' : 's'}; this would be ${would}.`;
+	}
+
+	/** The label of the vehicle a refusal is about, for either flow. */
+	function dispatchVehicleLabel(): string {
+		const v = availableVehicles.find((x) => x.checkInId === dispatchVehicleId);
+		return v ? v.tacticalCall || v.callsign : 'That vehicle';
+	}
+
+	function attachVehicleLabel(r: SAGRequest): string {
+		return r.legs.find((l) => l.id === newAttachLegId)?.vehicleLabel ?? 'That vehicle';
+	}
 </script>
 
 <div class="sb">
@@ -334,9 +466,22 @@
 						<button class="sb-vehicle-save" onclick={() => submitVehicle(v.checkInId)}>Save</button>
 						<button class="sb-vehicle-cancel" onclick={() => (vehicleEditFor = null)}>Cancel</button>
 					{:else}
-						<span class="sb-vehicle-cap" class:warn={v.availableSeats < 0}>seats {v.availableSeats}/{v.seats}</span>
-						<span class="sb-vehicle-cap" class:warn={v.availableRacks < 0}>racks {v.availableRacks}/{v.rackSlots}</span>
-						{#if $canOperate}<button class="sb-vehicle-edit" onclick={() => openVehicleEdit(v)}>Edit</button>{/if}
+						{#if v.checkInStatus === 'released'}
+							<!-- A checked-out unit used to be told apart by opacity alone,
+							     while still advertising its full seat count. -->
+							<span class="sb-vehicle-out">CHECKED OUT</span>
+						{:else}
+							<span class="sb-vehicle-cap" class:warn={v.availableSeats <= 0}>
+								{v.availableSeats} free of {v.seats} seats
+							</span>
+							<span class="sb-vehicle-cap" class:warn={v.availableRacks <= 0}>
+								{v.availableRacks} of {v.rackSlots} racks
+							</span>
+							{#if v.availableSeats <= 0 || v.availableRacks <= 0}
+								<span class="sb-vehicle-full">{v.availableSeats < 0 || v.availableRacks < 0 ? 'OVER' : 'FULL'}</span>
+							{/if}
+						{/if}
+						{#if $canOperate && v.checkInStatus !== 'released'}<button class="sb-vehicle-edit" onclick={() => openVehicleEdit(v)}>Edit</button>{/if}
 					{/if}
 				</div>
 			{/each}
@@ -345,8 +490,27 @@
 		<p class="sb-no-vehicles">No SAG vehicles checked in — check in a unit with category "sag" to dispatch.</p>
 	{/if}
 
+	<!-- The board's single most important sentence, and the one that used to be
+	     missing entirely: how many people are standing at the roadside with
+	     nobody coming for them. Word + count + glyph, never colour alone. -->
+	{#if blockedRequests.length > 0}
+		<p class="sb-blocked" role="status">
+			⬒ {ridersRoadside} rider{ridersRoadside === 1 ? '' : 's'} waiting for a vehicle
+			across {blockedRequests.length} request{blockedRequests.length === 1 ? '' : 's'}
+			{#if $rideSagSummary.seatsAvail <= 0 && availableVehicles.length > 0}· no free seats{/if}
+		</p>
+	{/if}
+
 	{#if requests.length === 0}
-		<p class="sb-empty">No {showAll ? '' : 'open '}SAG requests.</p>
+		<p class="sb-empty">
+			{#if showAll}
+				Nothing logged yet. A SAG request is a transport job — log one when a rider needs a lift.
+			{:else}
+				Nobody is waiting for a ride.{#if $rideSagSummary.inMotion > 0}
+					{$rideSagSummary.inMotion} job{$rideSagSummary.inMotion === 1 ? '' : 's'} in motion.
+				{/if}
+			{/if}
+		</p>
 	{/if}
 
 	<div class="sb-list">
@@ -364,17 +528,25 @@
 						</span>
 					{/if}
 					<span class="sb-status" data-status={r.status}>{SAG_STATUS_LABELS[r.status] ?? r.status}</span>
-					<span class="sb-riders">{riderCountText(r)} rider{r.slots.length === 1 ? '' : 's'}</span>
+					{#if r.needsVehicle && !SAG_TERMINAL_STATUSES.has(r.status)}
+						{@const n = unassignedRiders(r)}
+						<!-- The one thing the board exists to answer. Word + glyph, never
+						     colour alone, and it says the NUMBER of people standing there. -->
+						<span class="sb-needs">⬒ NEEDS VEHICLE · {n} rider{n === 1 ? '' : 's'}</span>
+					{:else if vehicleText(r)}
+						<span class="sb-onveh">{vehicleText(r)}</span>
+					{/if}
+					{#if bibText(r)}<span class="sb-bibs" title="Bibs on this request">{bibText(r)}</span>{/if}
 					<span class="sb-age" title={new Date(r.createdAt).toLocaleString()}>{ageText(r.createdAt, $secondClock)} old</span>
-					<span class="sb-pickup">{pickupText(r.pickup)}</span>
+					<span class="sb-pickup">{pickupText(r.pickup)} → {pickupText(r.dropoff)}</span>
 					<span class="sb-chevron" aria-hidden="true">{expanded ? '▾' : '▸'}</span>
 				</div>
 
 				{#if expanded}
 					<div class="sb-detail">
 						<div class="sb-detail-grid">
-							<div><span class="sb-detail-label">Pickup</span><span>{pickupText(r.pickup)}{r.pickup.description ? ` — ${r.pickup.description}` : ''}</span></div>
-							<div><span class="sb-detail-label">Dropoff</span><span>{r.dropoff.description || enumLabel(r.dropoff.kind, SAG_LOCATION_KIND_LABELS)}</span></div>
+							<div><span class="sb-detail-label">Pickup</span><span>{locationText(r.pickup)}</span></div>
+							<div><span class="sb-detail-label">Dropoff</span><span>{locationText(r.dropoff)}</span></div>
 							<div><span class="sb-detail-label">Reason</span><span>{enumLabel(r.reason, SAG_REASON_LABELS) || '—'}</span></div>
 							<div><span class="sb-detail-label">Requested by</span><span>{r.requestedBy || '—'}</span></div>
 						</div>
@@ -391,8 +563,25 @@
 						<h4 class="sb-section-h">Riders</h4>
 						<div class="sb-slots">
 							{#each r.slots as s (s.id)}
+								{@const bike = slotBike(s)}
 								<div class="sb-slot">
-									<span class="sb-slot-label">{s.bib ? `Bib ${s.bib}` : s.riderName || 'Rider'}{s.note ? ` — ${s.note}` : ''}{s.hasBike ? '' : ' (no bike)'}</span>
+									<span class="sb-slot-label">{s.bib ? `Bib ${s.bib}` : s.riderName || 'Rider'}{s.note ? ` — ${s.note}` : ''}</span>
+									<!-- The bike is its own axis: a rider can be transported
+									     while the bike stays behind or rides another vehicle. -->
+									{#if $canOperate && s.disposition !== 'cancelled'}
+										<select
+											class="sb-slot-bike"
+											value={bike}
+											aria-label="Bike for {s.bib ? `bib ${s.bib}` : 'this rider'}"
+											onchange={(e) => setSlotBike(r, s.id, (e.target as HTMLSelectElement).value)}
+										>
+											{#each BIKE_ORDER as b (b)}
+												<option value={b}>{SAG_BIKE_GLYPHS[b]} {SAG_BIKE_LABELS[b]}</option>
+											{/each}
+										</select>
+									{:else}
+										<span class="sb-slot-bike-ro">{SAG_BIKE_GLYPHS[bike]} {SAG_BIKE_SHORT[bike]}</span>
+									{/if}
 									<span class="sb-slot-disp" data-disp={s.disposition}>{SAG_DISPOSITION_LABELS[s.disposition] ?? s.disposition}</span>
 									{#if $canOperate && legalResolutions(s.disposition).length > 0}
 										<select class="sb-slot-resolve" onchange={(e) => { resolveSlot(r, s.id, (e.target as HTMLSelectElement).value); (e.target as HTMLSelectElement).value = ''; }}>
@@ -406,16 +595,63 @@
 							{/each}
 							{#if $canOperate && r.status !== 'cancelled'}
 								{#if addRiderOpenFor === r.id}
+									{@const live = activeUnloadedLegs(r.legs)}
 									<div class="sb-add-rider">
 										<input type="text" placeholder="bib" bind:value={newBib} aria-label="New rider bib" />
 										<input type="text" placeholder="name" bind:value={newName} aria-label="New rider name" />
 										<input type="text" placeholder="note" bind:value={newNote} aria-label="New rider note" />
-										<label class="sb-bike"><input type="checkbox" bind:checked={newHasBike} /> bike</label>
+										<select class="sb-slot-bike" bind:value={newBike} aria-label="Bike for the new rider">
+											{#each BIKE_ORDER as b (b)}
+												<option value={b}>{SAG_BIKE_GLYPHS[b]} {SAG_BIKE_LABELS[b]}</option>
+											{/each}
+										</select>
 										<button class="sb-action" disabled={busy !== null} aria-busy={busy === 'add-rider'} onclick={() => run('add-rider', () => submitAddRider(r))}>{busy === 'add-rider' ? 'Adding…' : 'Add'}</button>
 										<button class="sb-action" disabled={busy !== null} onclick={() => (addRiderOpenFor = null)}>Cancel</button>
 									</div>
+									<!-- "SAG 4, make that TWO riders at Maxwell": the van is
+									     already rolling, so the rider joins its leg and the seat
+									     count moves. A van that has already LOADED has left, so
+									     it is not offered and the rider stays unassigned. -->
+									{#if live.length > 0}
+										<div class="sb-attach">
+											<span class="sb-attach-label">Put them on</span>
+											<select bind:value={newAttachLegId} class="sb-dest-select" aria-label="Vehicle for the new rider">
+												{#each live as l (l.id)}
+													<option value={l.id}>{l.vehicleLabel} ({SAG_LEG_STATUS_LABELS[l.status] ?? l.status})</option>
+												{/each}
+												<option value="">Nobody yet — needs a vehicle</option>
+											</select>
+										</div>
+									{:else}
+										<p class="sb-attach-none">No vehicle is on its way to this request — the rider will show as waiting.</p>
+									{/if}
+									{#if addRiderOvercapacity?.seatsExceeded}
+										<!-- A REFUSAL. States the limit. No override: a seatbelt
+										     count is not a judgement call, and the server would
+										     refuse the retry anyway. -->
+										<p class="sb-refusal">
+											<span class="sb-refusal-head">⊘ No seat</span>
+											{seatRefusalText(addRiderOvercapacity, attachVehicleLabel(r))}
+											Add them unassigned, or dispatch another vehicle.
+										</p>
+										<div class="sb-inline-actions">
+											<button class="sb-action" disabled={busy !== null} aria-busy={busy === 'add-rider-unassigned'} onclick={() => run('add-rider-unassigned', async () => { newAttachLegId = ''; addRiderOvercapacity = null; await submitAddRider(r); })}>Add as waiting</button>
+											<button class="sb-action" onclick={() => { addRiderOpenFor = null; addRiderOvercapacity = null; }}>Cancel</button>
+										</div>
+									{:else if addRiderOvercapacity}
+										<!-- A QUESTION. The bike can go in the bed of a truck. -->
+										<p class="sb-overcap">
+											<span class="sb-overcap-head">⚠ Not enough racks</span>
+											{rackQuestionText(addRiderOvercapacity, attachVehicleLabel(r))}
+											Carry it anyway?
+										</p>
+										<div class="sb-inline-actions">
+											<button class="sb-action" disabled={busy !== null} aria-busy={busy === 'add-rider-over'} onclick={() => run('add-rider-over', () => submitAddRider(r, true))}>Yes — bike rides in the bed</button>
+											<button class="sb-action" onclick={() => { newAttachLegId = ''; addRiderOvercapacity = null; }}>Leave them waiting instead</button>
+										</div>
+									{/if}
 								{:else}
-									<button class="sb-add-rider-btn" onclick={() => openAddRider(r.id)}>+ Add rider</button>
+									<button class="sb-add-rider-btn" onclick={() => openAddRider(r)}>+ Add rider</button>
 								{/if}
 							{/if}
 						</div>
@@ -429,7 +665,9 @@
 								<div class="sb-leg-head">
 									<span class="sb-leg-vehicle">{leg.vehicleLabel}</span>
 									<span class="sb-leg-status" data-legstatus={leg.status}>{SAG_LEG_STATUS_LABELS[leg.status] ?? leg.status}</span>
-									{#if leg.overcommitted}<span class="sb-leg-over">OVER CAPACITY</span>{/if}
+									<!-- Overcommitted can only mean bikes: a seat overflow is
+									     refused outright, so it can never reach a leg. -->
+									{#if leg.overcommitted}<span class="sb-leg-over">BIKES OVER RACKS</span>{/if}
 									<span class="sb-leg-slots">{leg.slotIds.map((sid) => slotLabel(r, sid)).join(', ')}</span>
 								</div>
 								{#if $canOperate}
@@ -441,7 +679,7 @@
 											<button class="sb-action" disabled={busy !== null} aria-busy={busy === `onscene-${leg.id}`} onclick={() => run(`onscene-${leg.id}`, () => advanceLeg(r, leg, 'onscene'))}>{busy === `onscene-${leg.id}` ? 'Saving…' : 'Mark on scene'}</button>
 										{/if}
 										{#if leg.status === 'dispatched' || leg.status === 'enroute' || leg.status === 'onscene'}
-											<button class="sb-action" disabled={busy !== null} onclick={() => openLoad(leg)}>Load…</button>
+											<button class="sb-action" disabled={busy !== null} onclick={() => openLoad(r, leg)}>Load…</button>
 											<button class="sb-action sb-action-danger" disabled={busy !== null} onclick={() => (releaseTarget = { r, leg })}>Release</button>
 										{:else if leg.status === 'loaded'}
 											<button class="sb-action" disabled={busy !== null} onclick={() => openDeliver(r, leg)}>Deliver…</button>
@@ -451,9 +689,24 @@
 
 								{#if loadOpenFor === leg.id}
 									<div class="sb-inline-form">
-										<span class="sb-inline-label">Who was actually loaded?</span>
+										<span class="sb-inline-label">Who was actually loaded — and did the bike go?</span>
 										{#each leg.slotIds as sid (sid)}
-											<label class="sb-checkline"><input type="checkbox" checked={loadSlotIds.has(sid)} onchange={() => toggleLoadSlot(sid)} /> {slotLabel(r, sid)}</label>
+											<div class="sb-loadline">
+												<label class="sb-checkline"><input type="checkbox" checked={loadSlotIds.has(sid)} onchange={() => toggleLoadSlot(sid)} /> {slotLabel(r, sid)}</label>
+												<!-- Whether the bike is physically on the rack is known
+												     HERE, by the driver, not by whoever called it in. -->
+												<select
+													class="sb-slot-bike"
+													value={loadBike[sid] ?? 'with_rider'}
+													disabled={!loadSlotIds.has(sid)}
+													aria-label="Bike for {slotLabel(r, sid)}"
+													onchange={(e) => setLoadBike(sid, (e.target as HTMLSelectElement).value)}
+												>
+													{#each BIKE_ORDER as b (b)}
+														<option value={b}>{SAG_BIKE_GLYPHS[b]} {SAG_BIKE_LABELS[b]}</option>
+													{/each}
+												</select>
+											</div>
 										{/each}
 										<div class="sb-inline-actions">
 											<button class="sb-action" disabled={busy !== null} aria-busy={busy === 'load'} onclick={() => run('load', () => submitLoad(r, leg))}>{busy === 'load' ? 'Recording…' : 'Confirm load'}</button>
@@ -511,19 +764,33 @@
 										<select bind:value={dispatchVehicleId} class="sb-dest-select">
 											<option value="">Choose a vehicle…</option>
 											{#each availableVehicles as v (v.checkInId)}
-												<option value={v.checkInId}>{v.tacticalCall || v.callsign} — {v.availableSeats}/{v.seats} seats, {v.availableRacks}/{v.rackSlots} racks</option>
+												<option value={v.checkInId}>
+													{v.tacticalCall || v.callsign} — {v.availableSeats} free of {v.seats} seats, {v.availableRacks} of {v.rackSlots} racks{v.availableSeats <= 0 ? ' — NO SEATS' : ''}
+												</option>
 											{/each}
 										</select>
 										<span class="sb-inline-label">Which riders?</span>
 										{#each r.slots.filter((s) => s.disposition === 'waiting' && !s.legId) as s (s.id)}
 											<label class="sb-checkline"><input type="checkbox" checked={dispatchSlotIds.has(s.id)} onchange={() => toggleDispatchSlot(s.id)} /> {s.bib ? `Bib ${s.bib}` : s.riderName || 'Rider'}</label>
 										{/each}
-										{#if dispatchOvercapacity}
-											<p class="sb-overcap">
-												{dispatchOvercapacity.error}: {dispatchOvercapacity.committedSeats}/{dispatchOvercapacity.seats} seats and {dispatchOvercapacity.committedRacks}/{dispatchOvercapacity.rackSlots} racks already committed.
+										{#if dispatchOvercapacity?.seatsExceeded}
+											<p class="sb-refusal">
+												<span class="sb-refusal-head">⊘ No seat</span>
+												{seatRefusalText(dispatchOvercapacity, dispatchVehicleLabel())}
+												Send fewer riders, or pick another vehicle.
 											</p>
 											<div class="sb-inline-actions">
-												<button class="sb-action sb-action-danger" disabled={dispatching} aria-busy={dispatching} onclick={() => submitDispatch(r, true)}>{dispatching ? 'Dispatching…' : 'Dispatch anyway (over capacity)'}</button>
+												<button class="sb-action" onclick={() => (dispatchOvercapacity = null)}>Change the selection</button>
+												<button class="sb-action" onclick={() => (dispatchOpenFor = null)}>Cancel</button>
+											</div>
+										{:else if dispatchOvercapacity}
+											<p class="sb-overcap">
+												<span class="sb-overcap-head">⚠ Not enough racks</span>
+												{rackQuestionText(dispatchOvercapacity, dispatchVehicleLabel())}
+												Carry them anyway?
+											</p>
+											<div class="sb-inline-actions">
+												<button class="sb-action" disabled={dispatching} aria-busy={dispatching} onclick={() => submitDispatch(r, true)}>{dispatching ? 'Dispatching…' : 'Yes — bikes ride in the bed'}</button>
 												<button class="sb-action" onclick={() => (dispatchOpenFor = null)}>Cancel</button>
 											</div>
 										{:else}
@@ -645,6 +912,112 @@
 		color: var(--color-warning);
 	}
 
+	.sb-vehicle-out,
+	.sb-vehicle-full {
+		font-size: 0.64rem;
+		font-weight: 700;
+		letter-spacing: 0.06em;
+		padding: 2px 6px;
+		border-radius: var(--radius-sm);
+		background: var(--color-ride-priority-soft);
+		color: var(--color-warning);
+	}
+
+	.sb-vehicle-out {
+		background: var(--color-raised);
+		color: var(--color-text-muted);
+	}
+
+	.sb-blocked {
+		display: flex;
+		align-items: center;
+		gap: 6px;
+		font-size: 0.85rem;
+		font-weight: 700;
+		color: var(--color-warning);
+		padding: var(--space-sm);
+		border-left: 3px solid var(--color-warning);
+		background: var(--color-ride-priority-soft);
+		border-radius: var(--radius-sm);
+	}
+
+	.sb-needs {
+		font-size: 0.68rem;
+		font-weight: 700;
+		letter-spacing: 0.04em;
+		white-space: nowrap;
+		padding: 2px 6px;
+		border-radius: var(--radius-sm);
+		background: var(--color-ride-priority-soft);
+		color: var(--color-warning);
+		flex-shrink: 0;
+	}
+
+	.sb-onveh {
+		font-size: 0.72rem;
+		font-weight: 700;
+		color: var(--color-text);
+		white-space: nowrap;
+		flex-shrink: 0;
+	}
+
+	.sb-bibs {
+		font-size: 0.75rem;
+		font-variant-numeric: tabular-nums;
+		color: var(--color-text);
+		white-space: nowrap;
+		flex-shrink: 0;
+	}
+
+	.sb-slot-bike,
+	.sb-slot-bike-ro {
+		font-size: 0.72rem;
+		color: var(--color-text-muted);
+		white-space: nowrap;
+	}
+
+	.sb-slot-bike {
+		min-height: 32px;
+		max-width: 160px;
+		padding: 0 4px;
+		background: var(--color-bg);
+		border: 1px solid var(--color-primary);
+		border-radius: var(--radius-sm);
+		color: var(--color-text);
+	}
+
+	.sb-slot-bike:disabled {
+		opacity: 0.4;
+	}
+
+	.sb-loadline {
+		display: flex;
+		align-items: center;
+		gap: var(--space-sm);
+		flex-wrap: wrap;
+	}
+
+	.sb-attach {
+		display: flex;
+		align-items: center;
+		gap: var(--space-xs);
+		margin-top: var(--space-xs);
+	}
+
+	.sb-attach-label {
+		font-size: 0.72rem;
+		font-weight: 700;
+		text-transform: uppercase;
+		letter-spacing: 0.04em;
+		color: var(--color-text-muted);
+	}
+
+	.sb-attach-none {
+		font-size: 0.75rem;
+		color: var(--color-text-muted);
+		margin-top: var(--space-xs);
+	}
+
 	.sb-vehicle-input {
 		width: 40px;
 		min-height: 28px;
@@ -706,10 +1079,27 @@
 	.sb-row {
 		display: flex;
 		align-items: center;
-		gap: var(--space-sm);
+		flex-wrap: wrap;
+		gap: 4px var(--space-sm);
 		min-height: 44px;
 		padding: 6px var(--space-sm);
 		cursor: pointer;
+	}
+
+	/* The where-to-where must never be the thing that gets ellipsed away: it
+	   wraps to its own line in a narrow panel rather than shrinking to "m…". */
+	.sb-row .sb-pickup {
+		flex: 1 1 100%;
+		text-align: left;
+		order: 9;
+	}
+
+	@media (min-width: 1500px) {
+		.sb-row .sb-pickup {
+			flex: 1 1 auto;
+			text-align: right;
+			order: 0;
+		}
 	}
 
 	.sb-row:hover,
@@ -861,14 +1251,20 @@
 	.sb-slot {
 		display: flex;
 		align-items: center;
-		gap: var(--space-sm);
+		flex-wrap: wrap;
+		gap: 4px var(--space-sm);
 		font-size: 0.78rem;
 		padding: 4px 0;
 	}
 
 	.sb-slot-label {
-		flex: 1;
+		flex: 1 1 auto;
 		min-width: 0;
+		/* "Bib 700" must never break across two lines: the bib is what is read
+		   back on the air. */
+		white-space: nowrap;
+		overflow: hidden;
+		text-overflow: ellipsis;
 	}
 
 	.sb-slot-disp {
@@ -1018,9 +1414,35 @@
 		margin-top: 4px;
 	}
 
+	/* A QUESTION the operator may answer yes to: amber, the same tone as every
+	   other "are you sure" on this board. */
 	.sb-overcap {
 		font-size: 0.78rem;
 		color: var(--color-warning);
+		padding: var(--space-sm);
+		border-left: 3px solid var(--color-warning);
+		background: var(--color-ride-priority-soft);
+		border-radius: var(--radius-sm);
+	}
+
+	/* A REFUSAL, not a question — deliberately NOT the same component or the
+	   same colour as .sb-overcap, so the two never read as interchangeable.
+	   --color-error-text, never --color-error: the latter is 4.16:1 on
+	   --color-surface and fails AA at body size (strip spec section 3). */
+	.sb-refusal {
+		font-size: 0.78rem;
+		color: var(--color-error-text);
+		padding: var(--space-sm);
+		border: 1px solid var(--color-error-text);
+		background: var(--color-ride-emergency-soft);
+		border-radius: var(--radius-sm);
+	}
+
+	.sb-refusal-head,
+	.sb-overcap-head {
+		display: block;
+		font-weight: 700;
+		letter-spacing: 0.03em;
 	}
 
 	.sb-dispatch-btn {

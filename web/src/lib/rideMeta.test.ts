@@ -13,7 +13,15 @@ import {
 	RIDE_PHASE_ORDER,
 	SAG_REASON_LABELS,
 	AGE_FRESH_MS,
-	AGE_AGING_MS
+	AGE_AGING_MS,
+	SAG_BIKE_LABELS,
+	SAG_BIKE_SHORT,
+	SAG_BIKE_GLYPHS,
+	slotTakesRack,
+	slotBike,
+	unassignedRiders,
+	activeUnloadedLegs,
+	BIKE_ORDER
 } from './rideMeta';
 import type { PriorityTier } from './types';
 
@@ -214,5 +222,92 @@ describe('enumLabel', () => {
 		expect(enumLabel('rider_waving', SAG_REASON_LABELS)).toBe('Rider waving');
 		expect(enumLabel(undefined)).toBe('');
 		expect(enumLabel('')).toBe('');
+	});
+});
+
+// --- bike disposition: a separate axis from rider disposition ---
+
+describe('slotTakesRack', () => {
+	it('only counts a bike travelling with its rider', () => {
+		expect(slotTakesRack({ bike: 'with_rider' })).toBe(true);
+		expect(slotTakesRack({ bike: 'none', hasBike: true })).toBe(false);
+		expect(slotTakesRack({ bike: 'left_behind', hasBike: true })).toBe(false);
+		expect(slotTakesRack({ bike: 'other_vehicle', hasBike: true })).toBe(false);
+	});
+
+	it('falls back to the legacy boolean for a slot written before the axis existed', () => {
+		expect(slotTakesRack({ hasBike: true })).toBe(true);
+		expect(slotTakesRack({ hasBike: false })).toBe(false);
+		expect(slotTakesRack({ bike: '', hasBike: true })).toBe(true);
+	});
+});
+
+describe('slotBike', () => {
+	it('never returns an empty disposition the UI would have to guess at', () => {
+		expect(slotBike({ hasBike: true })).toBe('with_rider');
+		expect(slotBike({ hasBike: false })).toBe('none');
+		expect(slotBike({ bike: 'left_behind', hasBike: true })).toBe('left_behind');
+		expect(slotBike({ bike: 'nonsense', hasBike: false })).toBe('none');
+	});
+
+	it('has a label, a short form and a glyph for every disposition', () => {
+		for (const d of ['with_rider', 'none', 'left_behind', 'other_vehicle']) {
+			expect(SAG_BIKE_LABELS[d]).toBeTruthy();
+			expect(SAG_BIKE_SHORT[d]).toBeTruthy();
+			expect(SAG_BIKE_GLYPHS[d]).toBeTruthy();
+		}
+	});
+});
+
+// --- "who is waiting for a ride" ---
+
+describe('unassignedRiders', () => {
+	it('counts only riders with nobody coming for them', () => {
+		expect(unassignedRiders({ slots: [{ disposition: 'waiting' }] })).toBe(1);
+		// Reserved on a leg that is already rolling: waiting, but not waiting on NCS.
+		expect(unassignedRiders({ slots: [{ disposition: 'waiting', legId: 'leg1' }] })).toBe(0);
+		expect(unassignedRiders({ slots: [{ disposition: 'loaded', legId: 'leg1' }] })).toBe(0);
+		expect(unassignedRiders({ slots: [{ disposition: 'delivered' }] })).toBe(0);
+	});
+
+	it('counts the rider added after the van already loaded and left', () => {
+		expect(
+			unassignedRiders({
+				slots: [
+					{ disposition: 'loaded', legId: 'leg1' },
+					{ disposition: 'waiting' }
+				]
+			})
+		).toBe(1);
+	});
+});
+
+describe('activeUnloadedLegs', () => {
+	it('offers the legs a late rider can still join', () => {
+		const legs = [
+			{ id: 'a', status: 'dispatched' },
+			{ id: 'b', status: 'enroute' },
+			{ id: 'c', status: 'onscene' },
+			{ id: 'd', status: 'loaded' },
+			{ id: 'e', status: 'delivered' },
+			{ id: 'f', status: 'released' }
+		];
+		expect(activeUnloadedLegs(legs).map((l) => l.id)).toEqual(['a', 'b', 'c']);
+	});
+});
+
+describe('BIKE_ORDER', () => {
+	it('defaults to the common answer and buries the rare one', () => {
+		// with_rider is the default and by far the most common; other_vehicle
+		// (shuttles, bike-rack trucks) is real on very large rides but rare, so
+		// it must never be the default or the first alternative tabbed into.
+		expect(BIKE_ORDER[0]).toBe('with_rider');
+		expect(BIKE_ORDER[BIKE_ORDER.length - 1]).toBe('other_vehicle');
+		expect(BIKE_ORDER[1]).not.toBe('other_vehicle');
+	});
+
+	it('covers every disposition exactly once', () => {
+		expect([...BIKE_ORDER].sort()).toEqual(Object.keys(SAG_BIKE_LABELS).sort());
+		expect(new Set(BIKE_ORDER).size).toBe(BIKE_ORDER.length);
 	});
 });

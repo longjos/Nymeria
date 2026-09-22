@@ -953,7 +953,10 @@ export interface SAGSlot {
 	bib?: string;
 	riderName?: string;
 	note?: string;
+	/** Legacy mirror of `bike === 'with_rider'`. Read `bike`. */
 	hasBike: boolean;
+	/** ride.Bike* — a SEPARATE axis from `disposition`; only 'with_rider' takes a rack. */
+	bike: string;
 	disposition: string;
 	legId?: string;
 	deliveredTo?: SAGLocation;
@@ -1138,8 +1141,20 @@ export interface SlotInput {
 	bib: string;
 	riderName: string;
 	note: string;
-	/** Omitted -> server defaults to true. */
+	/** Legacy; omitted -> server defaults to true. Prefer `bike`. */
 	hasBike?: boolean | null;
+	/** ride.Bike*; omitted -> derived from hasBike. */
+	bike?: string;
+	/** AddSlot only: put this rider straight onto a leg already on its way. */
+	attachToLegId?: string;
+	/** BIKE RACKS only — a seat overflow is refused outright. */
+	allowOvercommit?: boolean;
+}
+
+/** POST .../legs/{legId}/load — `bike` is slotId -> ride.Bike*, as the driver reported it. */
+export interface LoadInput {
+	slotIds?: string[];
+	bike?: Record<string, string>;
 }
 
 export interface CreateRequestInput {
@@ -1175,15 +1190,31 @@ export interface SAGConfigResponse {
 	config: RideSagConfig;
 	pickupKinds: string[];
 	dropoffKinds: string[];
+	bikeKinds: string[];
 }
 
-/** The 409 body writeSAGError sends for an *ride.OverCapacityError. */
+/**
+ * The 409 body writeSAGError sends for an *ride.OverCapacityError.
+ *
+ * The two dimensions are NOT the same kind of answer:
+ *  - `code: 'seats_exceeded'` (`fatal: true`) is a REFUSAL. A seat is a
+ *    seatbelt. Never offer an override — retrying with allowOvercommit is
+ *    refused again by the server.
+ *  - `code: 'racks_exceeded'` is a QUESTION. A bike can ride in the bed of a
+ *    truck, so confirm-and-proceed is legitimate.
+ */
 export interface OverCapacityBody {
 	error: string;
+	code: 'seats_exceeded' | 'racks_exceeded';
+	fatal: boolean;
+	seatsExceeded: boolean;
+	racksExceeded: boolean;
 	committedSeats: number;
 	seats: number;
+	needSeats: number;
 	committedRacks: number;
 	rackSlots: number;
+	needRacks: number;
 }
 
 export interface SupplyItemInput {

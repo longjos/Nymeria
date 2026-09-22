@@ -23,16 +23,34 @@ func writeRideUnavailable(w http.ResponseWriter) {
 // ride.ErrNotFound -> 404, an *ride.OverCapacityError -> 409 with the
 // numbers the client needs to show, everything else -> 400 (a manager
 // validation error).
+//
+// The 409 body distinguishes the two dimensions, because they are not the
+// same kind of answer. `code: "seats_exceeded"` is FATAL — the client must
+// state the limit and must NOT offer an override, since retrying with
+// allowOvercommit will be refused again. `code: "racks_exceeded"` is a
+// question the operator may answer yes to.
 func writeSAGError(w http.ResponseWriter, err error) {
 	var capErr *ride.OverCapacityError
 	switch {
 	case errors.As(err, &capErr):
+		code := "racks_exceeded"
+		msg := "not enough bike racks"
+		if capErr.SeatsExceeded {
+			code = "seats_exceeded"
+			msg = "not enough seats"
+		}
 		writeJSON(w, http.StatusConflict, map[string]any{
-			"error":          "vehicle over capacity",
+			"error":          msg,
+			"code":           code,
+			"fatal":          capErr.SeatsExceeded,
+			"seatsExceeded":  capErr.SeatsExceeded,
+			"racksExceeded":  capErr.RacksExceeded,
 			"committedSeats": capErr.CommittedSeats,
 			"seats":          capErr.Seats,
+			"needSeats":      capErr.NeedSeats,
 			"committedRacks": capErr.CommittedRacks,
 			"rackSlots":      capErr.RackSlots,
+			"needRacks":      capErr.NeedRacks,
 		})
 	case errors.Is(err, ride.ErrNotFound):
 		writeJSON(w, http.StatusNotFound, map[string]string{"error": err.Error()})
@@ -133,6 +151,7 @@ type sagConfigResponse struct {
 	Config       ride.Config `json:"config"`
 	PickupKinds  []string    `json:"pickupKinds"`
 	DropoffKinds []string    `json:"dropoffKinds"`
+	BikeKinds    []string    `json:"bikeKinds"`
 }
 
 func (s *Server) handleGetSAGConfig(w http.ResponseWriter, r *http.Request) {
@@ -140,18 +159,15 @@ func (s *Server) handleGetSAGConfig(w http.ResponseWriter, r *http.Request) {
 		writeRideUnavailable(w)
 		return
 	}
-	pickupKinds := make([]string, 0, len(ride.ValidPickupKinds))
-	for k := range ride.ValidPickupKinds {
-		pickupKinds = append(pickupKinds, k)
-	}
-	dropoffKinds := make([]string, 0, len(ride.ValidDropoffKinds))
-	for k := range ride.ValidDropoffKinds {
-		dropoffKinds = append(dropoffKinds, k)
-	}
+	// Ordered slices, never a map range: the composer builds its pickers
+	// straight from these, and Go randomises map iteration — an options list
+	// that reshuffles between two openings of the same dialog (and a default
+	// that changes with it) cannot be driven at radio speed.
 	writeJSON(w, http.StatusOK, sagConfigResponse{
 		Config:       s.rideMgr.ConfigForNet(chi.URLParam(r, "id")),
-		PickupKinds:  pickupKinds,
-		DropoffKinds: dropoffKinds,
+		PickupKinds:  append([]string(nil), ride.PickupKindOrder...),
+		DropoffKinds: append([]string(nil), ride.DropoffKindOrder...),
+		BikeKinds:    append([]string(nil), ride.BikeDispositionOrder...),
 	})
 }
 
@@ -361,14 +377,12 @@ func (s *Server) handleLoadSAGSlots(w http.ResponseWriter, r *http.Request) {
 	id := chi.URLParam(r, "id")
 	reqID := chi.URLParam(r, "reqId")
 	legID := chi.URLParam(r, "legId")
-	var body struct {
-		SlotIDs []string `json:"slotIds"`
-	}
-	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+	var in ride.LoadInput
+	if err := json.NewDecoder(r.Body).Decode(&in); err != nil {
 		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid request body"})
 		return
 	}
-	req, err := s.rideMgr.LoadSlots(id, reqID, legID, body.SlotIDs, s.sagUserName(r))
+	req, err := s.rideMgr.LoadSlots(id, reqID, legID, in, s.sagUserName(r))
 	if err != nil {
 		writeSAGError(w, err)
 		return

@@ -206,7 +206,7 @@ func TestShiftSummaryDerivedTally(t *testing.T) {
 		t.Fatal("GetRequest: not found")
 	}
 	legID := req.Legs[0].ID
-	if _, err := ts.SAG.LoadSlots(netID, req.ID, legID, []string{req.Slots[0].ID}, "K6ABC"); err != nil {
+	if _, err := ts.SAG.LoadSlots(netID, req.ID, legID, ride.LoadInput{SlotIDs: []string{req.Slots[0].ID}}, "K6ABC"); err != nil {
 		t.Fatalf("LoadSlots: %v", err)
 	}
 	if _, err := ts.SAG.DeliverSlots(netID, req.ID, legID, []string{req.Slots[0].ID}, nil, "K6ABC"); err != nil {
