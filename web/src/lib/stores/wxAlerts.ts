@@ -14,6 +14,16 @@ import { openWeather, wxPanelTab, panelMode, sheetState } from './ui';
 import type { WxAlert, WxLinkStatus, WxFootprintSummary, WxEffectivePolicy, WxPolygonGeometry, WxNetAck, WxAffects } from '$lib/types';
 import { tierRank, toastLine, sortAlerts } from '$lib/wxAlertMeta';
 import { clock } from '$lib/wxAlertTime';
+import { secondClock, minuteClock, startClock } from './clock';
+
+// Promoted to $lib/stores/clock.ts (one ticking interval app-wide). Local
+// const bindings (not a bare `export { x as y }`, which creates no local
+// name) so derived stores further down this same module — wxExpiredAlerts —
+// can keep referencing `wxMinute`, while WxInterruptBanner, WxAlertPanel,
+// +page.svelte and every other existing wx consumer still import these two
+// names from here unchanged.
+export const wxClock = secondClock;
+export const wxMinute = minuteClock;
 
 type WxApplyReason = 'poll' | 'footprint' | 'settings' | 'netwatch' | 'restore';
 
@@ -84,10 +94,6 @@ export const wxUnackedOnly = writable<boolean>(false);
 export const wxFootprintPreview = writable<WxPolygonGeometry | null>(null);
 /** "Show on map" target — Map.svelte fits bounds then calls back to clear this. */
 export const wxFocusAlertId = writable<string | null>(null);
-/** 1 s tick, started by initWxAlertStore(). */
-export const wxClock = writable<number>(Date.now());
-/** Rows only need to re-render once a minute except under the 5-minute countdown threshold. */
-export const wxMinute = derived(wxClock, ($t) => Math.floor($t / 60000));
 
 if (browser) {
 	wxAcked.subscribe((m) => {
@@ -406,7 +412,7 @@ export function initWxAlertStore(): void {
 	wsClient.on('wx_link_status', (msg) => handleWxMessage('wx_link_status', msg.data));
 	wsClient.on('wx_alert_ack_net', (msg) => handleWxMessage('wx_alert_ack_net', msg.data));
 
-	if (browser) setInterval(() => wxClock.set(Date.now()), 1000);
+	startClock();
 }
 
 // ---- actions ----
