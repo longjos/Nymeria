@@ -3120,3 +3120,115 @@ func TestGeneralNetJSONUnchangedExceptProfile(t *testing.T) {
 	}
 }
 
+// A station that checked out and checks back in — commonly under a different
+// SSID of the same base callsign, e.g. KG4YFA then KG4YFA-4 — used to come
+// back as CatGeneral, silently losing an operational role the NCS had already
+// assigned. A SAG vehicle that reverts to "general" disappears from the SAG
+// dispatch picker with no visible cause, which is exactly how this was found.
+func TestCheckInInheritsCategoryFromReleasedSameBaseCallsign(t *testing.T) {
+	tests := []struct {
+		name         string
+		firstCall    string
+		firstCat     string
+		secondCall   string
+		secondCat    string
+		wantCategory string
+		wantInherit  bool
+	}{
+		{"same callsign, bare re-checkin", "KG4YFA", CatSAG, "KG4YFA", "", CatSAG, true},
+		{"ssid added", "KG4YFA", CatSAG, "KG4YFA-4", "", CatSAG, true},
+		{"ssid removed", "KG4YFA-4", CatSAG, "KG4YFA", "", CatSAG, true},
+		{"ssid changed", "KG4YFA-4", CatMedical, "KG4YFA-9", "", CatMedical, true},
+		{"explicit category wins over inheritance", "KG4YFA", CatSAG, "KG4YFA-4", CatMarshal, CatMarshal, false},
+		{"different base callsign does not inherit", "KG4YFA", CatSAG, "KD7BBC", "", CatGeneral, false},
+		{"general is not worth inheriting", "KG4YFA", CatGeneral, "KG4YFA-4", "", CatGeneral, false},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			mgr := newTestManager(t)
+			n, _ := mgr.CreateNet(store.Net{Name: "Ride Net"})
+			mgr.OpenNet(n.ID)
+
+			first, err := mgr.CheckIn(n.ID, tt.firstCall, "", tt.firstCat)
+			if err != nil {
+				t.Fatalf("first CheckIn: %v", err)
+			}
+			if err := mgr.CheckOut(n.ID, first.ID); err != nil {
+				t.Fatalf("CheckOut: %v", err)
+			}
+
+			second, err := mgr.CheckIn(n.ID, tt.secondCall, "", tt.secondCat)
+			if err != nil {
+				t.Fatalf("second CheckIn: %v", err)
+			}
+			if second.Category != tt.wantCategory {
+				t.Errorf("category: got %q, want %q", second.Category, tt.wantCategory)
+			}
+		})
+	}
+}
+
+// Inheritance must only ever look at check-ins that are actually gone. An
+// active station keeps its own category and must not donate it to an
+// unrelated new check-in of the same base callsign.
+func TestCheckInDoesNotInheritFromActiveCheckIn(t *testing.T) {
+	mgr := newTestManager(t)
+	n, _ := mgr.CreateNet(store.Net{Name: "Ride Net"})
+	mgr.OpenNet(n.ID)
+
+	if _, err := mgr.CheckIn(n.ID, "KG4YFA", "", CatSAG); err != nil {
+		t.Fatalf("first CheckIn: %v", err)
+	}
+
+	// Still checked in — a second SSID is a separate unit, not a return.
+	second, err := mgr.CheckIn(n.ID, "KG4YFA-4", "", "")
+	if err != nil {
+		t.Fatalf("second CheckIn: %v", err)
+	}
+	if second.Category != CatGeneral {
+		t.Errorf("category: got %q, want %q (must not inherit from a live check-in)", second.Category, CatGeneral)
+	}
+}
+
+// With several prior releases of the same base callsign, the most recent one
+// wins — an NCS who corrects a role expects the correction to stick.
+func TestCheckInInheritsMostRecentReleasedCategory(t *testing.T) {
+	mgr := newTestManager(t)
+	n, _ := mgr.CreateNet(store.Net{Name: "Ride Net"})
+	mgr.OpenNet(n.ID)
+
+	older, _ := mgr.CheckIn(n.ID, "KG4YFA", "", CatMedical)
+	if err := mgr.CheckOut(n.ID, older.ID); err != nil {
+		t.Fatalf("CheckOut older: %v", err)
+	}
+	newer, _ := mgr.CheckIn(n.ID, "KG4YFA-4", "", CatSAG)
+	if err := mgr.CheckOut(n.ID, newer.ID); err != nil {
+		t.Fatalf("CheckOut newer: %v", err)
+	}
+
+	got, err := mgr.CheckIn(n.ID, "KG4YFA-7", "", "")
+	if err != nil {
+		t.Fatalf("CheckIn: %v", err)
+	}
+	if got.Category != CatSAG {
+		t.Errorf("category: got %q, want %q (most recent release wins)", got.Category, CatSAG)
+	}
+}
+
+func TestBaseCallsign(t *testing.T) {
+	tests := []struct{ in, want string }{
+		{"KG4YFA", "KG4YFA"},
+		{"KG4YFA-4", "KG4YFA"},
+		{"KG4YFA-15", "KG4YFA"},
+		{"kg4yfa-4", "KG4YFA"},
+		{"  KG4YFA-4  ", "KG4YFA"},
+		{"-4", ""},
+		{"", ""},
+	}
+	for _, tt := range tests {
+		if got := baseCallsign(tt.in); got != tt.want {
+			t.Errorf("baseCallsign(%q) = %q, want %q", tt.in, got, tt.want)
+		}
+	}
+}

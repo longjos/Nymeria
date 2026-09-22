@@ -308,6 +308,49 @@ func (m *Manager) SetOpsView(netID string, lat, lon, zoom float64) error {
 	return nil
 }
 
+// baseCallsign strips an APRS SSID suffix, so KG4YFA-4 and KG4YFA resolve to
+// the same operator. Returns "" for input with no callsign part.
+func baseCallsign(cs string) string {
+	cs = strings.ToUpper(strings.TrimSpace(cs))
+	if i := strings.IndexByte(cs, '-'); i >= 0 {
+		cs = cs[:i]
+	}
+	return cs
+}
+
+// inheritedCategory returns the category of the most recently checked-out
+// check-in in this net sharing callsign's base callsign, or "" if there is
+// none. Only released check-ins are considered: a station that is still on
+// the roster is a separate live unit, not a returning one. CatGeneral is
+// never inherited — it carries no information and would mask nothing.
+func (m *Manager) inheritedCategory(netID, callsign string) string {
+	base := baseCallsign(callsign)
+	if base == "" {
+		return ""
+	}
+
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+
+	var best string
+	var bestAt time.Time
+	for _, ci := range m.checkIns[netID] {
+		if ci.CheckedOutAt == nil {
+			continue
+		}
+		if ci.Category == "" || ci.Category == CatGeneral {
+			continue
+		}
+		if baseCallsign(ci.Callsign) != base {
+			continue
+		}
+		if best == "" || ci.CheckedOutAt.After(bestAt) {
+			best, bestAt = ci.Category, *ci.CheckedOutAt
+		}
+	}
+	return best
+}
+
 // CheckIn registers an operator in the net.
 func (m *Manager) CheckIn(netID, callsign, traffic, category string) (*store.NetCheckIn, error) {
 	m.mu.RLock()
@@ -327,6 +370,14 @@ func (m *Manager) CheckIn(netID, callsign, traffic, category string) (*store.Net
 		traffic = TrafficNone
 	}
 
+	if category == "" {
+		// A station that checked out and is checking back in — often under a
+		// different SSID of the same base callsign — keeps the operational
+		// role the NCS already gave it. Without this, a SAG vehicle that
+		// re-checks in reverts to CatGeneral and silently vanishes from the
+		// SAG dispatch picker with no visible cause.
+		category = m.inheritedCategory(netID, callsign)
+	}
 	if category == "" {
 		category = CatGeneral
 	}
