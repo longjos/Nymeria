@@ -496,7 +496,7 @@ func (m *Manager) UpdateRequest(netID, reqID string, in UpdateRequestInput) (*st
 		return nil, fmt.Errorf("persist sag request: %w", err)
 	}
 	m.logTimeline(netID, TLSAGUpdated, req.RequestedBy, fmt.Sprintf("SAG %d updated", req.Sequence), "")
-	m.emit(Event{Type: EventSAGRequestUpdated, Data: req})
+	m.emitRequestChanged(netID, req)
 
 	out := req
 	return &out, nil
@@ -552,7 +552,7 @@ func (m *Manager) CancelRequest(netID, reqID, reason, byCallsign string) (*store
 		return nil, fmt.Errorf("persist sag request: %w", err)
 	}
 	m.logTimeline(netID, TLSAGCancelled, byCallsign, fmt.Sprintf("SAG %d cancelled: %s", req.Sequence, reason), "")
-	m.emit(Event{Type: EventSAGRequestUpdated, Data: req})
+	m.emitRequestChanged(netID, req)
 
 	out := req
 	return &out, nil
@@ -640,7 +640,7 @@ func (m *Manager) AddSlot(netID, reqID string, in SlotInput) (*store.SAGRequest,
 		return nil, fmt.Errorf("persist sag request: %w", err)
 	}
 	m.logTimeline(netID, TLSAGUpdated, req.RequestedBy, fmt.Sprintf("SAG %d: rider added", req.Sequence), "")
-	m.emit(Event{Type: EventSAGRequestUpdated, Data: req})
+	m.emitRequestChanged(netID, req)
 
 	out := req
 	return &out, nil
@@ -683,7 +683,7 @@ func (m *Manager) UpdateSlot(netID, reqID, slotID string, in SlotInput) (*store.
 	if err := m.store.SaveSAGRequest(req); err != nil {
 		return nil, fmt.Errorf("persist sag request: %w", err)
 	}
-	m.emit(Event{Type: EventSAGRequestUpdated, Data: req})
+	m.emitRequestChanged(netID, req)
 
 	out := req
 	return &out, nil
@@ -776,7 +776,7 @@ func (m *Manager) ResolveSlot(netID, reqID, slotID, disposition, note, byCallsig
 		summary = fmt.Sprintf("bib %s -> %s", bib, disposition)
 	}
 	m.logTimeline(netID, TLSAGSlotResolved, byCallsign, summary+settledSummary, "")
-	m.emit(Event{Type: EventSAGRequestUpdated, Data: req})
+	m.emitRequestChanged(netID, req)
 
 	out := req
 	return &out, nil
@@ -896,7 +896,7 @@ func (m *Manager) Dispatch(netID, reqID string, in DispatchInput, byCallsign str
 		summary += " — OVER CAPACITY"
 	}
 	m.logTimeline(netID, TLSAGDispatched, byCallsign, summary, "")
-	m.emit(Event{Type: EventSAGRequestUpdated, Data: req})
+	m.emitRequestChanged(netID, req)
 
 	out := req
 	return &out, nil
@@ -954,7 +954,7 @@ func (m *Manager) AdvanceLeg(netID, reqID, legID, status, byCallsign string) (*s
 		evtType = TLSAGOnScene
 	}
 	m.logTimeline(netID, evtType, byCallsign, fmt.Sprintf("%s %s", leg.VehicleLabel, status), "")
-	m.emit(Event{Type: EventSAGRequestUpdated, Data: req})
+	m.emitRequestChanged(netID, req)
 
 	out := req
 	return &out, nil
@@ -1041,7 +1041,7 @@ func (m *Manager) LoadSlots(netID, reqID, legID string, slotIDs []string, byCall
 		return nil, fmt.Errorf("persist sag request: %w", err)
 	}
 	m.logTimeline(netID, TLSAGLoaded, byCallsign, fmt.Sprintf("%s loaded %d of %d", leg.VehicleLabel, loadedCount, total), "")
-	m.emit(Event{Type: EventSAGRequestUpdated, Data: req})
+	m.emitRequestChanged(netID, req)
 
 	out := req
 	return &out, nil
@@ -1147,7 +1147,7 @@ func (m *Manager) DeliverSlots(netID, reqID, legID string, slotIDs []string, des
 		return nil, fmt.Errorf("persist sag request: %w", err)
 	}
 	m.logTimeline(netID, TLSAGDelivered, byCallsign, fmt.Sprintf("%s delivered %d rider(s) to %s", leg.VehicleLabel, len(targetIDs), destination.Kind), "")
-	m.emit(Event{Type: EventSAGRequestUpdated, Data: req})
+	m.emitRequestChanged(netID, req)
 
 	out := req
 	return &out, nil
@@ -1204,7 +1204,7 @@ func (m *Manager) ReleaseLeg(netID, reqID, legID, reason, byCallsign string) (*s
 		summary += ": " + reason
 	}
 	m.logTimeline(netID, TLSAGReleased, byCallsign, summary, "")
-	m.emit(Event{Type: EventSAGRequestUpdated, Data: req})
+	m.emitRequestChanged(netID, req)
 
 	out := req
 	return &out, nil
@@ -1279,6 +1279,36 @@ func (m *Manager) SetVehicle(netID, checkInID string, seats, rackSlots int, note
 	status := m.vehicleStatusFor(netID, *ci, v)
 	m.emit(Event{Type: EventSAGVehicleUpdated, Data: status})
 	return &status, nil
+}
+
+// emitRequestChanged emits the request update plus a vehicle update for
+// every vehicle the request's legs touch. A vehicle's committed seats and
+// racks are DERIVED from live leg/slot state and never stored, so any leg
+// or slot change silently changes the capacity of the vehicles involved.
+// Emitting only the request would leave an already-loaded board showing
+// stale capacity until its next full GET /sag. Call this AFTER releasing
+// m.mu — vehicleStatusFor takes the read lock.
+func (m *Manager) emitRequestChanged(netID string, req store.SAGRequest) {
+	m.emit(Event{Type: EventSAGRequestUpdated, Data: req})
+	m.emitVehiclesFor(netID, req)
+}
+
+// emitVehiclesFor emits a vehicle update for each distinct vehicle
+// referenced by req's legs. Must be called with m.mu released.
+func (m *Manager) emitVehiclesFor(netID string, req store.SAGRequest) {
+	seen := make(map[string]bool, len(req.Legs))
+	for _, leg := range req.Legs {
+		if leg.VehicleCheckInID == "" || seen[leg.VehicleCheckInID] {
+			continue
+		}
+		seen[leg.VehicleCheckInID] = true
+		ci := m.findCheckIn(netID, leg.VehicleCheckInID)
+		if ci == nil {
+			continue
+		}
+		v := m.vehicleOrDefault(netID, leg.VehicleCheckInID)
+		m.emit(Event{Type: EventSAGVehicleUpdated, Data: m.vehicleStatusFor(netID, *ci, v)})
+	}
 }
 
 // VehicleStatus returns one vehicle's live status. ok is false only if the

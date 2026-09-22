@@ -1358,3 +1358,134 @@ func TestEventsNeverBlock(t *testing.T) {
 		t.Fatal("CreateRequest deadlocked on a full events channel")
 	}
 }
+
+// A vehicle's committed seats/racks are DERIVED from live leg and slot
+// state, never stored — so every operation that changes a leg or a slot
+// changes the vehicle's capacity too. Only SetVehicle and ReleaseVehicle
+// used to emit EventSAGVehicleUpdated, so a board that had already loaded
+// kept showing the vehicle at full capacity through dispatch, load and
+// delivery; the numbers only corrected themselves on a fresh GET /sag.
+func TestCapacityChangingOpsEmitVehicleUpdated(t *testing.T) {
+	// collectVehicleStatus drains pending events and returns the last
+	// vehicle status emitted for checkInID, if any.
+	collect := func(m *Manager, checkInID string) (SAGVehicleStatus, bool) {
+		var last SAGVehicleStatus
+		found := false
+		for {
+			select {
+			case evt := <-m.Events():
+				if evt.Type != EventSAGVehicleUpdated {
+					continue
+				}
+				st, ok := evt.Data.(SAGVehicleStatus)
+				if ok && st.CheckInID == checkInID {
+					last, found = st, true
+				}
+			default:
+				return last, found
+			}
+		}
+	}
+
+	t.Run("dispatch commits capacity", func(t *testing.T) {
+		m, netMgr, _, _ := newTestManager(t)
+		net := createTestNet(t, netMgr)
+		sag := sagCheckIn(t, netMgr, net.ID, "SAG1")
+		if _, err := m.SetVehicle(net.ID, sag.ID, 3, 2, ""); err != nil {
+			t.Fatalf("SetVehicle: %v", err)
+		}
+
+		req, _ := m.CreateRequest(net.ID, CreateRequestInput{
+			Pickup: store.SAGLocation{Kind: LocCourse}, Dropoff: store.SAGLocation{Kind: LocNextRestStop},
+		}, "")
+
+		drainEvents(m.Events())
+		if _, err := m.Dispatch(net.ID, req.ID, DispatchInput{
+			VehicleCheckInID: sag.ID, SlotIDs: []string{req.Slots[0].ID},
+		}, "NCS"); err != nil {
+			t.Fatalf("Dispatch: %v", err)
+		}
+
+		st, ok := collect(m, sag.ID)
+		if !ok {
+			t.Fatal("dispatch emitted no sag_vehicle_updated for the dispatched vehicle")
+		}
+		if st.CommittedSeats != 1 {
+			t.Errorf("committedSeats = %d, want 1", st.CommittedSeats)
+		}
+		if st.AvailableSeats != 2 {
+			t.Errorf("availableSeats = %d, want 2 (of 3)", st.AvailableSeats)
+		}
+	})
+
+	t.Run("delivery frees capacity", func(t *testing.T) {
+		m, netMgr, _, _ := newTestManager(t)
+		net := createTestNet(t, netMgr)
+		sag := sagCheckIn(t, netMgr, net.ID, "SAG1")
+		if _, err := m.SetVehicle(net.ID, sag.ID, 3, 2, ""); err != nil {
+			t.Fatalf("SetVehicle: %v", err)
+		}
+
+		req, _ := m.CreateRequest(net.ID, CreateRequestInput{
+			Pickup: store.SAGLocation{Kind: LocCourse}, Dropoff: store.SAGLocation{Kind: LocNextRestStop},
+		}, "")
+		req, err := m.Dispatch(net.ID, req.ID, DispatchInput{
+			VehicleCheckInID: sag.ID, SlotIDs: []string{req.Slots[0].ID},
+		}, "NCS")
+		if err != nil {
+			t.Fatalf("Dispatch: %v", err)
+		}
+		legID := req.Legs[0].ID
+		if _, err := m.LoadSlots(net.ID, req.ID, legID, nil, "NCS"); err != nil {
+			t.Fatalf("LoadSlots: %v", err)
+		}
+
+		drainEvents(m.Events())
+		if _, err := m.DeliverSlots(net.ID, req.ID, legID, nil, &store.SAGLocation{Kind: LocNextRestStop}, "NCS"); err != nil {
+			t.Fatalf("DeliverSlots: %v", err)
+		}
+
+		st, ok := collect(m, sag.ID)
+		if !ok {
+			t.Fatal("delivery emitted no sag_vehicle_updated for the vehicle")
+		}
+		if st.CommittedSeats != 0 {
+			t.Errorf("committedSeats = %d, want 0 after delivery", st.CommittedSeats)
+		}
+		if st.AvailableSeats != 3 {
+			t.Errorf("availableSeats = %d, want 3 (of 3)", st.AvailableSeats)
+		}
+	})
+
+	t.Run("load keeps capacity committed", func(t *testing.T) {
+		m, netMgr, _, _ := newTestManager(t)
+		net := createTestNet(t, netMgr)
+		sag := sagCheckIn(t, netMgr, net.ID, "SAG1")
+		if _, err := m.SetVehicle(net.ID, sag.ID, 3, 2, ""); err != nil {
+			t.Fatalf("SetVehicle: %v", err)
+		}
+
+		req, _ := m.CreateRequest(net.ID, CreateRequestInput{
+			Pickup: store.SAGLocation{Kind: LocCourse}, Dropoff: store.SAGLocation{Kind: LocNextRestStop},
+		}, "")
+		req, err := m.Dispatch(net.ID, req.ID, DispatchInput{
+			VehicleCheckInID: sag.ID, SlotIDs: []string{req.Slots[0].ID},
+		}, "NCS")
+		if err != nil {
+			t.Fatalf("Dispatch: %v", err)
+		}
+
+		drainEvents(m.Events())
+		if _, err := m.LoadSlots(net.ID, req.ID, req.Legs[0].ID, nil, "NCS"); err != nil {
+			t.Fatalf("LoadSlots: %v", err)
+		}
+
+		st, ok := collect(m, sag.ID)
+		if !ok {
+			t.Fatal("load emitted no sag_vehicle_updated for the vehicle")
+		}
+		if st.CommittedSeats != 1 {
+			t.Errorf("committedSeats = %d, want 1 while aboard", st.CommittedSeats)
+		}
+	})
+}
