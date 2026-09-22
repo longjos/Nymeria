@@ -169,7 +169,7 @@
 
 	.error {
 		font-size: 0.8rem;
-		color: var(--color-error);
+		color: var(--color-error-text);
 	}
 
 	button[type="submit"] {
@@ -239,7 +239,7 @@
 		align-items: center;
 		justify-content: center;
 		background: color-mix(in srgb, var(--color-error) 15%, transparent);
-		color: var(--color-error);
+		color: var(--color-error-text);
 		border-radius: 50%;
 		font-size: 1.5rem;
 		font-weight: 700;

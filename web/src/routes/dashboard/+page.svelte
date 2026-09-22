@@ -417,7 +417,7 @@
 	}
 
 	.error-text {
-		color: var(--color-error);
+		color: var(--color-error-text);
 	}
 
 	.retry-btn {

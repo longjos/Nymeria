@@ -161,9 +161,9 @@
 		overflow: hidden;
 		text-overflow: ellipsis;
 	}
-	.wx-in-alert-warning { border-left-color: var(--color-wx-warning); color: var(--color-wx-warning); }
+	.wx-in-alert-warning { border-left-color: var(--color-wx-warning); color: var(--color-wx-warning-text); }
 	.wx-in-alert-watch { border-left-color: var(--color-wx-watch); color: var(--color-wx-watch); }
-	.wx-in-alert-advisory { border-left-color: var(--color-wx-advisory); color: var(--color-wx-advisory); }
+	.wx-in-alert-advisory { border-left-color: var(--color-wx-advisory); color: var(--color-wx-advisory-text); }
 	.wx-in-alert-statement { border-left-color: var(--color-wx-statement); }
 
 	.wx-ago {

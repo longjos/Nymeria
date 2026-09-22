@@ -34,6 +34,14 @@ export interface TierMeta {
 	label: string;
 	/** CSS custom property name, always '--color-wx-*' — never '--color-warning'/'--color-error' directly. */
 	colorVar: string;
+	/**
+	 * TEXT-SAFE counterpart of colorVar (WCAG AA, >=4.5:1 on --color-surface /
+	 * --color-bg / --color-primary — see app.css). colorVar itself is only
+	 * guaranteed >=3:1 and is for glyph fills, borders and rules; the moment a
+	 * tier colors a WORD or a NUMERAL, read textVar instead. watch already
+	 * clears 4.5:1 as colorVar, so its textVar is the same token.
+	 */
+	textVar: string;
 	softVar: string;
 	dashVar: string;
 	/** SVG path for a 16x16 viewBox (WxTierGlyph). */
@@ -46,6 +54,7 @@ export const tierMeta: Record<WxTier, TierMeta> = {
 	warning: {
 		label: 'Warning',
 		colorVar: '--color-wx-warning',
+		textVar: '--color-wx-warning-text',
 		softVar: '--color-wx-warning-soft',
 		dashVar: '--wx-dash-warning',
 		// Filled incident triangle; WxTierGlyph draws the "!" as a second path in --color-bg.
@@ -56,6 +65,7 @@ export const tierMeta: Record<WxTier, TierMeta> = {
 	watch: {
 		label: 'Watch',
 		colorVar: '--color-wx-watch',
+		textVar: '--color-wx-watch',
 		softVar: '--color-wx-watch-soft',
 		dashVar: '--wx-dash-watch',
 		// Open diamond with a centre dot.
@@ -66,6 +76,7 @@ export const tierMeta: Record<WxTier, TierMeta> = {
 	advisory: {
 		label: 'Advisory',
 		colorVar: '--color-wx-advisory',
+		textVar: '--color-wx-advisory-text',
 		softVar: '--color-wx-advisory-soft',
 		dashVar: '--wx-dash-advisory',
 		// Open circle with an "i".
@@ -76,6 +87,7 @@ export const tierMeta: Record<WxTier, TierMeta> = {
 	statement: {
 		label: 'Statement',
 		colorVar: '--color-wx-statement',
+		textVar: '--color-wx-statement-text',
 		softVar: '--color-wx-statement-soft',
 		dashVar: '--wx-dash-statement',
 		// Note/rectangle glyph.

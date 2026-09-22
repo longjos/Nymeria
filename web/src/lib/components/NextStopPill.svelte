@@ -850,7 +850,7 @@
 		gap: 2px;
 		font-size: 11px;
 		font-weight: 700;
-		color: var(--color-wx-warning);
+		color: var(--color-wx-warning-text);
 		flex-shrink: 0;
 	}
 

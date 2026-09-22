@@ -444,7 +444,7 @@
 
 	.warn-tx {
 		background: rgba(231, 76, 60, 0.2);
-		color: var(--color-error);
+		color: var(--color-error-text);
 	}
 
 	.warn-text {
@@ -494,7 +494,7 @@
 	.batch-error {
 		font-size: 0.75rem;
 		line-height: 1.4;
-		color: var(--color-error);
+		color: var(--color-error-text);
 		padding: var(--space-sm);
 		background: rgba(231, 76, 60, 0.1);
 		border-radius: var(--radius-sm);

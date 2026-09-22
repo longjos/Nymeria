@@ -417,7 +417,7 @@
 
 	.chip.error {
 		background: color-mix(in srgb, var(--color-error) 18%, transparent);
-		color: var(--color-error);
+		color: var(--color-error-text);
 	}
 
 	.counts {

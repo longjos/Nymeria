@@ -1777,7 +1777,7 @@
 
 	.batch-remove:hover,
 	.batch-remove:focus-visible {
-		color: var(--color-error);
+		color: var(--color-error-text);
 		border-color: var(--color-error);
 	}
 

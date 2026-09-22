@@ -295,7 +295,7 @@
 
 	.error-msg {
 		padding: var(--space-md);
-		color: var(--color-error);
+		color: var(--color-error-text);
 		text-align: center;
 	}
 

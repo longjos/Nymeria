@@ -477,7 +477,7 @@
 
 	.state-label.error {
 		background: color-mix(in srgb, var(--color-error) 15%, transparent);
-		color: var(--color-error);
+		color: var(--color-error-text);
 	}
 
 	.card-stats {
@@ -520,7 +520,7 @@
 		background: color-mix(in srgb, var(--color-error) 10%, transparent);
 		border-radius: var(--radius-sm);
 		font-size: 0.75rem;
-		color: var(--color-error);
+		color: var(--color-error-text);
 		word-break: break-word;
 	}
 

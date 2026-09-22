@@ -384,7 +384,7 @@
 	}
 
 	.wx-row-time.wx-row-expired-text .wx-row-countdown {
-		color: var(--color-wx-expired);
+		color: var(--color-wx-expired-text);
 		text-decoration: line-through;
 	}
 

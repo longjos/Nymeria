@@ -209,7 +209,7 @@
 		font-size: 0.75rem;
 		font-weight: 600;
 		background: transparent;
-		color: var(--color-error);
+		color: var(--color-error-text);
 		border: 1px solid var(--color-error);
 		border-radius: var(--radius-sm);
 		cursor: pointer;

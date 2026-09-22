@@ -1157,7 +1157,7 @@
 
 	.loc-strip-danger:hover:not(:disabled) {
 		border-color: var(--color-error);
-		color: var(--color-error);
+		color: var(--color-error-text);
 	}
 
 	/* "Show" marks the set's members without disturbing sortOrder. */

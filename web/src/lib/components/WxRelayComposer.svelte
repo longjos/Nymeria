@@ -267,12 +267,12 @@
 	}
 
 	.wx-relay-counter.over {
-		color: var(--color-wx-warning);
+		color: var(--color-wx-warning-text);
 	}
 
 	.wx-relay-error {
 		font-size: 0.75rem;
-		color: var(--color-wx-warning);
+		color: var(--color-wx-warning-text);
 	}
 
 	.wx-relay-footer {

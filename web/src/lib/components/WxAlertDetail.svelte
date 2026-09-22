@@ -267,7 +267,7 @@
 
 		{#if displayed.instruction}
 			<div class="wx-instruction" style="background: var({meta.softVar}); border-left-color: var({meta.colorVar})">
-				<h3 class="wx-section-title" style="color: var({meta.colorVar})">Instruction</h3>
+				<h3 class="wx-section-title" style="color: var({meta.textVar})">Instruction</h3>
 				{@render nwsBlockList(instructionBlocks)}
 			</div>
 		{/if}
@@ -635,7 +635,7 @@
 	}
 
 	.wx-timing-countdown.urgent {
-		color: var(--color-wx-warning);
+		color: var(--color-wx-warning-text);
 	}
 
 	.wx-timing-bar {

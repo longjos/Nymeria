@@ -251,10 +251,10 @@
 		text-transform: uppercase;
 		flex: 1;
 	}
-	.wx-alert-link-name.wx-in-alert-warning { color: var(--color-wx-warning); }
+	.wx-alert-link-name.wx-in-alert-warning { color: var(--color-wx-warning-text); }
 	.wx-alert-link-name.wx-in-alert-watch { color: var(--color-wx-watch); }
-	.wx-alert-link-name.wx-in-alert-advisory { color: var(--color-wx-advisory); }
-	.wx-alert-link-name.wx-in-alert-statement { color: var(--color-wx-statement); }
+	.wx-alert-link-name.wx-in-alert-advisory { color: var(--color-wx-advisory-text); }
+	.wx-alert-link-name.wx-in-alert-statement { color: var(--color-wx-statement-text); }
 
 	.wx-alert-link-cta {
 		font-size: 0.7rem;

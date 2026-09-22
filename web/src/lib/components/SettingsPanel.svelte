@@ -1713,7 +1713,7 @@
 		border-color: var(--color-error);
 	}
 	.field-help-error {
-		color: var(--color-error);
+		color: var(--color-error-text);
 	}
 
 	.wx-floor-text {

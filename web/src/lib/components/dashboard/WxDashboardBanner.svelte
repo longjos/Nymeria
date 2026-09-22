@@ -65,11 +65,11 @@
 	.wx-event {
 		font-weight: 800;
 		text-transform: uppercase;
-		color: var(--color-wx-warning);
+		color: var(--color-wx-warning-text);
 	}
 	.wx-tier-watch .wx-event { color: var(--color-wx-watch); }
-	.wx-tier-advisory .wx-event { color: var(--color-wx-advisory); }
-	.wx-tier-statement .wx-event { color: var(--color-wx-statement); }
+	.wx-tier-advisory .wx-event { color: var(--color-wx-advisory-text); }
+	.wx-tier-statement .wx-event { color: var(--color-wx-statement-text); }
 
 	.wx-sep {
 		color: var(--color-text-muted);

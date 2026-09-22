@@ -53,7 +53,7 @@
 
 	.wx-link-pill.down {
 		border-color: var(--color-wx-warning);
-		color: var(--color-wx-warning);
+		color: var(--color-wx-warning-text);
 	}
 
 	.wx-link-dot {

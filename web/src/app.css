@@ -57,6 +57,19 @@
 	/* Info blue — promoted from the literal Toast.svelte used to hard-code. */
 	--color-info: #3b82f6;
 
+	/* TEXT-SAFE variants of the two semantic colors that fail WCAG AA at
+	   body size. Measured against --color-surface #16213e:
+	     --color-error #e74c3c -> 4.16:1  FAIL
+	     --color-info  #3b82f6 -> 4.32:1  FAIL
+	     --color-error-text    -> 6.10:1  pass (4.79:1 on --color-primary)
+	     --color-info-text     -> 6.25:1  pass (4.92:1 on --color-primary)
+	   Rule (docs/ride-strip-spec.md §3): the base tokens are for GLYPH FILLS,
+	   BORDERS and RULES, where >=3:1 is the bar and both pass. The moment red
+	   or blue tints a WORD or a NUMERAL — an error message, a status chip's
+	   label, a countdown — use the -text variant. Never invent a third red. */
+	--color-error-text: #fa7a6a;
+	--color-info-text: #60a5fa;
+
 	/* NWS alert tiers (internal/wxalert) alias the semantic trio; deliberately
 	   NOT new hues. "wx-warning" is RED (--color-error). "--color-warning"
 	   (amber) is the WATCH tier. Always use the --color-wx-* aliases inside
@@ -71,6 +84,25 @@
 	   unambiguous. 3.69:1 on the map, 3.75:1 on the dark panel. */
 	--color-wx-statement: #8b5cf6;
 	--color-wx-expired: #6b7280; /* same gray the wx overlay uses for > 60 min stale */
+
+	/* TEXT-SAFE variants of the wx tier tokens, same rule as --color-error-text
+	   / --color-info-text above: the base tokens are for glyph fills, borders
+	   and rules (>=3:1); the moment a tier colors a WORD or a NUMERAL, use the
+	   -text variant. wx-warning and wx-advisory are pure aliases of
+	   --color-error / --color-info, so their -text variants alias
+	   --color-error-text / --color-info-text in turn — no new hue. wx-watch
+	   (amber, --color-warning) already clears 4.5:1 as text on every surface
+	   here (7.40 / 7.94 / 5.82), so it has no -text variant; use
+	   --color-wx-watch as-is. wx-statement and wx-expired are lightened the
+	   same way error/info were:
+	     --color-wx-statement #8b5cf6 -> 3.75:1 (surface) FAIL as text
+	     --color-wx-expired   #6b7280 -> 3.29:1 (surface) FAIL as text
+	     --color-wx-statement-text -> 6.34 / 6.80 / 4.98:1  pass
+	     --color-wx-expired-text   -> 6.06 / 6.51 / 4.77:1  pass */
+	--color-wx-warning-text: var(--color-error-text);
+	--color-wx-advisory-text: var(--color-info-text);
+	--color-wx-statement-text: #b292f9;
+	--color-wx-expired-text: #9ba0ab;
 
 	/* Tier-tinted surfaces (row hover, instruction box, banner band). */
 	--color-wx-warning-soft: rgba(231, 76, 60, 0.12);
@@ -90,6 +122,7 @@
 
 	/* Leaflet pane order: below overlayPane (400) so annotations, tracks and DR win. */
 	--z-wx-pane: 350;
+
 }
 
 * {
@@ -160,6 +193,16 @@ a {
 @media (max-width: 768px), (max-height: 499px) {
 	.map-palette-wrapper {
 		bottom: calc(var(--sheet-peek) + var(--space-md) + env(safe-area-inset-bottom)) !important;
+	}
+}
+
+/* Desktop sibling of the rule above: the ride strip lifts the FAB off the
+   bottom band exactly as the bottom sheet lifts it off the peek row on
+   mobile. --ride-strip-h defaults to 0px when the strip is not mounted, so
+   this is a no-op outside bike-ride mode. */
+@media (min-width: 769px) and (min-height: 500px) {
+	.map-palette-wrapper {
+		bottom: calc(30px + var(--ride-strip-h, 0px)) !important;
 	}
 }
 

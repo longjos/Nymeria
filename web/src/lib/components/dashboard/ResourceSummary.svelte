@@ -236,7 +236,7 @@
 	}
 
 	.stat-danger {
-		color: var(--color-error);
+		color: var(--color-error-text);
 		font-weight: 700;
 	}
 
@@ -284,11 +284,11 @@
 	}
 
 	.op-missing .op-name {
-		color: var(--color-error);
+		color: var(--color-error-text);
 	}
 
 	.op-missing .op-status {
-		color: var(--color-error);
+		color: var(--color-error-text);
 		font-weight: 700;
 	}
 </style>

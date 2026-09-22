@@ -592,7 +592,7 @@
 
 	.field-error {
 		font-size: 0.75rem;
-		color: var(--color-error);
+		color: var(--color-error-text);
 	}
 
 	.field-hint {
@@ -725,7 +725,7 @@
 
 	.error {
 		font-size: 0.8rem;
-		color: var(--color-error);
+		color: var(--color-error-text);
 	}
 
 	/* Buttons */
