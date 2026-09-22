@@ -93,13 +93,17 @@ describe('rankCandidates — distance and ordering', () => {
 		expect(ahead.direction).toBe('back');
 	});
 
-	it('puts every on-course vehicle above every off-course one, whatever the number', () => {
-		// The off-course van is physically closer but has no road distance; an
-		// unlabelled 0.5 next to a 12.0 that mean different things is unreadable.
+	it('ranks an off-course van on its straight-line distance, clearly labelled', () => {
+		// The roads are two-way and drivers use side roads, so a van 1.9 mi away
+		// across country is a better answer than one 12 road-miles up the course.
+		// The number is LABELLED `direct` rather than passed off as road miles —
+		// whether a connecting road exists is local knowledge we do not have.
 		const off = geo('off', null, { ...onCourse(20, 3000) });
 		const r = rankCandidates([off, geo('on', 8)], ctx());
-		expect(r.ranked.map((c) => c.id)).toEqual(['on', 'off']);
-		expect(r.ranked[1].distanceKind).toBe('direct');
+		expect(r.ranked.map((c) => c.id)).toEqual(['off', 'on']);
+		expect(r.ranked[0].distanceKind).toBe('direct');
+		expect(r.ranked[0].direction).toBeNull();
+		expect(r.ranked[1].distanceKind).toBe('road');
 	});
 
 	it('falls back to crow-flies for everyone when no course is loaded, and says so', () => {
@@ -255,7 +259,7 @@ describe('rankCandidates — ETA', () => {
 });
 
 describe('rankCandidates — the full sort, as a table', () => {
-	it('orders eligible > partial, unambiguous > ambiguous, on-course > off, fresh > stale, near > far', () => {
+	it('orders eligible > partial, unambiguous > ambiguous, fresh > stale, near > far', () => {
 		const mk = (id: string, miles: number | null, over: Partial<SagVehicleGeo> = {}, veh: Partial<SAGVehicleStatus> = {}) => {
 			const g = geo(id, miles, over);
 			g.vehicle = vehicle({ checkInId: id, tacticalCall: id, ...veh });
@@ -272,11 +276,13 @@ describe('rankCandidates — the full sort, as a table', () => {
 			],
 			ctx({ needSeats: 2 })
 		);
+		// off-course sits on its straight-line distance (1.2 mi) rather than
+		// below everything on-course: it is genuinely the closest fresh van.
 		expect(r.ranked.map((c) => c.id)).toEqual([
+			'off-course',
 			'near-eligible',
 			'far-eligible',
 			'stale-near',
-			'off-course',
 			'near-partial'
 		]);
 		expect(r.excluded.map((c) => c.id)).toEqual(['released']);
@@ -329,5 +335,90 @@ describe('joinVehiclePositions', () => {
 		);
 		expect(out[0].lat).toBe(35);
 		expect(out[1].lat).toBe(36);
+	});
+});
+
+
+// --- two-way roads and side roads (user's answer, 2026-09-22) ---------------
+// SAG vehicles are not confined to the course: the roads are two-way and
+// drivers take side roads to get where they need to go. On an OUT-AND-BACK
+// this changes the answer completely -- the return leg is usually the same
+// physical road as the outbound one, so a van 30 course-miles away can be a
+// hundred yards from the pickup and need only turn around.
+
+describe('rankCandidates — effective distance on a two-way course', () => {
+	// Out 10 mi east along lat 35, then back along the SAME road (offset a few
+	// metres so the fixture has two distinguishable legs, as a real GPX does).
+	const outBack = (() => {
+		const coords: [number, number][] = [];
+		for (let i = 0; i <= 200; i++) coords.push([-86 + i * 0.005, 35]);
+		for (let i = 199; i >= 0; i--) coords.push([-86 + i * 0.005, 35.0003]);
+		return buildRouteIndex(coords);
+	})();
+
+	it('prefers the van that is physically adjacent over one far up the course', () => {
+		// Pickup on the OUTBOUND leg; `near` sits on the RETURN leg directly
+		// across the road from it, `far` is genuinely 4 mi along the course.
+		const pickupLon = -86 + 0.2;
+		const near: SagVehicleGeo = {
+			vehicle: vehicle({ checkInId: 'across-the-road', tacticalCall: 'across-the-road' }),
+			lat: 35.0003,
+			lon: pickupLon,
+			lastHeard: minutesAgo(2),
+			source: 'aprs',
+			courseDeg: 270
+		};
+		const far: SagVehicleGeo = {
+			vehicle: vehicle({ checkInId: 'up-the-course', tacticalCall: 'up-the-course' }),
+			lat: 35,
+			lon: pickupLon + 0.06,
+			lastHeard: minutesAgo(2),
+			source: 'aprs',
+			courseDeg: 90
+		};
+		const r = rankCandidates([far, near], {
+			...ctx(),
+			routeIndex: outBack,
+			pickup: { lat: 35, lon: pickupLon, chainageMeters: 0.2 * M_PER_DEG_LON_AT_35 }
+		});
+		expect(r.ranked[0].id).toBe('across-the-road');
+		// and it is labelled as a straight-line number, not passed off as road miles
+		expect(r.ranked[0].distanceKind).toBe('direct');
+		expect(r.ranked[0].direction).toBeNull();
+	});
+
+	it('keeps road miles and their direction when the road IS the short way', () => {
+		const r = rankCandidates([geo('v', 18)], ctx());
+		expect(r.ranked[0].distanceKind).toBe('road');
+		expect(r.ranked[0].direction).toBe('ahead');
+		expect(r.ranked[0].routeMeters).toBeCloseTo(2 * MI, -1);
+	});
+
+	it('reports both numbers so the operator can judge whether a cut-through exists', () => {
+		const pickupLon = -86 + 0.2;
+		const across: SagVehicleGeo = {
+			vehicle: vehicle({ checkInId: 'across', tacticalCall: 'across' }),
+			lat: 35.0003,
+			lon: pickupLon,
+			lastHeard: minutesAgo(2),
+			source: 'aprs',
+			courseDeg: 270
+		};
+		const r = rankCandidates([across], {
+			...ctx(),
+			routeIndex: outBack,
+			pickup: { lat: 35, lon: pickupLon, chainageMeters: 0.2 * M_PER_DEG_LON_AT_35 }
+		});
+		const c = r.ranked[0];
+		expect(c.directMeters).not.toBeNull();
+		expect(c.routeMeters).not.toBeNull();
+		// The shortcut is real and large enough to be worth saying out loud.
+		expect(c.shortcut).toBe(true);
+		expect(c.directMeters!).toBeLessThan(c.routeMeters!);
+	});
+
+	it('does not cry shortcut when the two numbers substantially agree', () => {
+		const r = rankCandidates([geo('v', 18)], ctx());
+		expect(r.ranked[0].shortcut).toBe(false);
 	});
 });

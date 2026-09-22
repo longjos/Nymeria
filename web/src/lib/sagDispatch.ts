@@ -31,6 +31,20 @@ export const ETA_CAP_MINUTES = 45;
  *  produce an infinite ETA for the vehicle most able to respond. */
 export const DEFAULT_AVG_SPEED_MPH = 25;
 
+/** A straight line counts as a shortcut worth mentioning when it is under this
+ *  fraction of the road distance AND saves more than SHORTCUT_MIN_SAVING_M.
+ *  Both guards matter: without the ratio every number differs slightly, and
+ *  without the floor a 300 m saving on a 500 m trip would shout. */
+const SHORTCUT_RATIO = 0.6;
+const SHORTCUT_MIN_SAVING_M = 0.5 * METERS_PER_MILE;
+
+/** The straight line only DISPLACES road miles when it wins by a margin that
+ *  is real. On a straight stretch of course the two differ by centimetres
+ *  (a chord against a sum of segments), and letting that flip the label would
+ *  throw away the direction word over floating-point noise. */
+const DIRECT_WINS_RATIO = 0.95;
+const DIRECT_WINS_MIN_SAVING_M = 100;
+
 export type Eligibility = 'eligible' | 'partial';
 export type ExcludedReason = 'released' | 'no-seats' | 'no-position';
 export type Direction = 'ahead' | 'back';
@@ -73,9 +87,20 @@ export interface SagCandidate {
 	 *  asks about racks rather than refusing, so ranking must not invent a
 	 *  stricter rule than dispatch enforces. */
 	rackShortfall: number;
+	/** The number to act on: the SHORTER of the road and straight-line
+	 *  distances, because the roads are two-way and drivers use side roads. */
 	distanceMeters: number | null;
 	distanceKind: DistanceKind | null;
 	direction: Direction | null;
+	/** Distance along the course, when the vehicle is on it. */
+	routeMeters: number | null;
+	/** Straight-line distance to the pickup. */
+	directMeters: number | null;
+	/** The straight line is materially shorter than following the course —
+	 *  usually the opposite leg of an out-and-back, i.e. the same road. Worth
+	 *  saying out loud, because whether a cut-through exists is local
+	 *  knowledge the app does not have. */
+	shortcut: boolean;
 	ambiguous: boolean;
 	/** The two places an ambiguous vehicle might be, in miles along the course. */
 	ambiguityMiles: [number, number] | null;
@@ -105,6 +130,9 @@ function base(g: SagVehicleGeo, age: AgeState): SagCandidate {
 		distanceMeters: null,
 		distanceKind: null,
 		direction: null,
+		routeMeters: null,
+		directMeters: null,
+		shortcut: false,
 		ambiguous: false,
 		ambiguityMiles: null,
 		age,
@@ -135,9 +163,8 @@ function isStale(age: AgeState): boolean {
  * Total sort, first difference wins:
  *   1. eligible (can seat the whole party) before partial capacity
  *   2. unambiguous position                before ambiguous
- *   3. on-course (road miles)              before off-course (crow-flies)
- *   4. fresh/aging position                before stale
- *   5. shorter distance                    before longer
+ *   3. fresh/aging position                before stale
+ *   4. shorter effective distance          before longer
  *
  * Nothing is preselected. Ranking encodes distance, seats and staleness; it
  * cannot encode "SAG 1's driver just radioed that he's stuck behind the
@@ -221,16 +248,51 @@ export function rankCandidates(vehicles: SagVehicleGeo[], ctx: RankContext): Ran
 					meters = forward;
 					dir = (pickupChainage as number) >= vc ? 'ahead' : 'back';
 				}
-				c.distanceMeters = meters;
-				c.distanceKind = 'road';
+				c.routeMeters = meters;
 				c.direction = dir;
 			}
 		}
 
-		// --- off-course, ambiguous, or no route: crow-flies, always labelled ---
-		if (c.distanceMeters == null && ctx.pickup) {
-			c.distanceMeters = haversineMeters(g.lat, g.lon, ctx.pickup.lat, ctx.pickup.lon);
+		// --- straight-line distance, always computed ---
+		if (ctx.pickup) {
+			c.directMeters = haversineMeters(g.lat, g.lon, ctx.pickup.lat, ctx.pickup.lon);
+		}
+
+		// The effective distance is the SHORTER of the two.
+		//
+		// This is not a shortcut in the code; it is how these events actually
+		// run. The roads are two-way and drivers take side roads, so a van on
+		// the return leg of an out-and-back is frequently on the SAME PHYSICAL
+		// ROAD as the pickup and need only turn around — while `courseDistance`
+		// insists it is thirty miles away, because that is how far a RIDER
+		// would have to travel. Ranking by road miles alone would bury the
+		// nearest vehicle on the user's own Jack-and-Back course.
+		//
+		// The straight line is never passed off as road miles: whether a
+		// connecting road exists is local knowledge the app does not have, so
+		// the number is labelled `direct` and the operator judges it.
+		if (c.routeMeters != null && c.directMeters != null) {
+			const directWins =
+				c.directMeters < c.routeMeters * DIRECT_WINS_RATIO &&
+				c.routeMeters - c.directMeters > DIRECT_WINS_MIN_SAVING_M;
+			if (directWins) {
+				c.distanceMeters = c.directMeters;
+				c.distanceKind = 'direct';
+				c.direction = null;
+			} else {
+				c.distanceMeters = c.routeMeters;
+				c.distanceKind = 'road';
+			}
+			c.shortcut =
+				c.directMeters < c.routeMeters * SHORTCUT_RATIO &&
+				c.routeMeters - c.directMeters > SHORTCUT_MIN_SAVING_M;
+		} else if (c.routeMeters != null) {
+			c.distanceMeters = c.routeMeters;
+			c.distanceKind = 'road';
+		} else if (c.directMeters != null) {
+			c.distanceMeters = c.directMeters;
 			c.distanceKind = 'direct';
+			c.direction = null;
 		}
 		// An ambiguous vehicle keeps its "two possible positions" badge and gets
 		// no distance at all: a crow-flies number next to the ambiguity warning
@@ -239,6 +301,8 @@ export function rankCandidates(vehicles: SagVehicleGeo[], ctx: RankContext): Ran
 			c.distanceMeters = null;
 			c.distanceKind = null;
 			c.direction = null;
+			c.routeMeters = null;
+			c.shortcut = false;
 		}
 
 		const eta = etaFor(c.distanceMeters, ctx.avgSpeedMph);
@@ -253,12 +317,10 @@ export function rankCandidates(vehicles: SagVehicleGeo[], ctx: RankContext): Ran
 		if (partial(a) !== partial(b)) return partial(a) - partial(b);
 		// 2. a real position before "could be one of two places"
 		if (a.ambiguous !== b.ambiguous) return a.ambiguous ? 1 : -1;
-		// 3. road miles before crow-flies — mixing units silently is the sin
-		const offCourse = (c: SagCandidate) => (c.distanceKind === 'road' ? 0 : 1);
-		if (offCourse(a) !== offCourse(b)) return offCourse(a) - offCourse(b);
-		// 4. a position we believe before one we do not
+		// 3. a position we believe before one we do not
 		if (isStale(a.age) !== isStale(b.age)) return isStale(a.age) ? 1 : -1;
-		// 5. nearer
+		// 4. nearer — on the EFFECTIVE distance, each row labelled with which
+		//    kind of number it is, so the units are never mixed silently
 		const da = a.distanceMeters ?? Number.POSITIVE_INFINITY;
 		const db = b.distanceMeters ?? Number.POSITIVE_INFINITY;
 		if (da !== db) return da - db;

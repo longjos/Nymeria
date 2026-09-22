@@ -3189,7 +3189,10 @@
 		if (c.ambiguous) return 'two possible positions';
 		if (c.distanceMeters == null) return 'distance unknown';
 		const mi = (c.distanceMeters / SAG_METERS_PER_MILE).toFixed(1);
-		const where = c.distanceKind === 'direct' ? 'direct (off course)' : (c.direction ?? '');
+		// "direct" rather than "direct (off course)": with two-way roads and
+		// side roads a straight-line number is often the van simply turning
+		// round on the same road, not a vehicle that has left the course.
+		const where = c.distanceKind === 'direct' ? 'direct' : (c.direction ?? '');
 		const eta = c.etaMinutes == null ? '' : ` · ~${c.etaMinutes}${c.etaCapped ? '+' : ''} min`;
 		// A stale fix says so ON THE LINE. Without this the map hands the
 		// operator "3.1 mi ahead · ~7 min" computed from a half-hour-old

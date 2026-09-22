@@ -221,9 +221,24 @@
 	function distanceText(c: SagCandidate): string {
 		if (c.ambiguous || c.distanceMeters == null) return '';
 		if (c.distanceKind === 'direct') {
-			return $sagRoute.index ? `${miles(c.distanceMeters)} mi direct (off course)` : `${miles(c.distanceMeters)} mi direct`;
+			return $sagRoute.index ? `${miles(c.distanceMeters)} mi direct` : `${miles(c.distanceMeters)} mi direct`;
 		}
 		return `${miles(c.distanceMeters)} mi ${c.direction}`;
+	}
+
+	/**
+	 * The second number, shown only when the two disagree materially.
+	 *
+	 * The roads are two-way and drivers take side roads, so on an out-and-back
+	 * a van on the opposite leg is often on the SAME road as the pickup. The
+	 * app cannot know whether a cut-through exists; the driver does. So both
+	 * numbers go on screen and the operator decides, rather than the app
+	 * picking one and hiding the other.
+	 */
+	function shortcutText(c: SagCandidate): string {
+		if (!c.shortcut || c.routeMeters == null || c.directMeters == null) return '';
+		if (c.distanceKind === 'direct') return `${miles(c.routeMeters)} mi if they follow the course`;
+		return `${miles(c.directMeters)} mi direct`;
 	}
 
 	function distanceSpoken(c: SagCandidate): string {
@@ -231,7 +246,8 @@
 			return `two possible positions, mile ${c.ambiguityMiles[0].toFixed(0)} or mile ${c.ambiguityMiles[1].toFixed(0)}`;
 		}
 		if (c.distanceMeters == null) return 'distance unknown';
-		if (c.distanceKind === 'direct') return `${miles(c.distanceMeters)} miles in a straight line, off the course`;
+		const extra = c.shortcut && c.routeMeters != null ? `, or ${miles(c.routeMeters)} miles following the course` : '';
+		if (c.distanceKind === 'direct') return `${miles(c.distanceMeters)} miles in a straight line${extra}`;
 		return `${miles(c.distanceMeters)} miles ${c.direction} on the course`;
 	}
 
@@ -438,6 +454,9 @@
 
 						<div class="cp-row-sub" aria-hidden="true">
 							{#if etaText(c)}<span class="cp-eta">{etaText(c)}</span>{/if}
+							{#if shortcutText(c)}
+								<span class="cp-alt">{shortcutText(c)}</span>
+							{/if}
 							{#if c.age === 'stale'}
 								<span class="cp-stale">position {ageText(lastHeardOf(c), clock)} old — stale</span>
 							{:else if c.age === 'aging'}
@@ -580,6 +599,15 @@
 {/if}
 
 <style>
+	/* The second distance: quieter than the one being acted on, but present,
+	   because whether a cut-through exists is the driver's knowledge and not
+	   ours to decide by hiding a number. */
+	.cp-alt {
+		color: var(--color-text-muted);
+		font-size: var(--ride-t-label);
+		white-space: nowrap;
+	}
+
 	.cp-resort {
 		display: flex;
 		align-items: center;
