@@ -10,6 +10,7 @@ import {
 	projectStops,
 	nextStopsAhead,
 	courseDistance,
+	pointAtChainage,
 	parseLineString,
 	clearRouteIndexCache,
 	angularDiff,
@@ -553,6 +554,119 @@ describe('segment bearings are robust to near-duplicate vertices', () => {
 			const cands = projectOnRoute(idx, lat, lon);
 			expect(cands.length).toBeGreaterThan(0);
 			expect(angularDiff(cands[0].segBearing, 155.4)).toBeLessThanOrEqual(120);
+		}
+	});
+});
+
+// --- pointAtChainage --------------------------------------------------------
+// The inverse of Candidate.chainageMeters, and the function every SAG pickup
+// pin on the map depends on (docs/sag-map-spec.md §2). A wrong point here is
+// worse than no point: net control will believe it and send a van there.
+
+describe('pointAtChainage', () => {
+	// 11 vertices, 0.01 deg apart at lat 35 -> ~910.858 m per segment.
+	const idx = buildRouteIndex(eastWestLine(11));
+
+	it('returns the start at 0 and the end at totalMeters', () => {
+		expect(pointAtChainage(idx, 0)).toEqual({ lat: 35, lon: -86 });
+		const end = pointAtChainage(idx, idx.totalMeters)!;
+		expect(end.lat).toBeCloseTo(35, 9);
+		expect(end.lon).toBeCloseTo(-85.9, 9);
+	});
+
+	it('lands exactly on an interior vertex at that vertex chainage', () => {
+		// Driven off the index's own chainage, not off SEG: the metres-per-degree
+		// constant at the top of this file is rounded, so SEG * 4 misses vertex 4
+		// by about a centimetre and would be testing the fixture, not the code.
+		const p = pointAtChainage(idx, idx.cum[4])!;
+		expect(p.lon).toBeCloseTo(-86 + 0.04, 9);
+		expect(p.lat).toBeCloseTo(35, 9);
+	});
+
+	it('interpolates linearly inside a segment', () => {
+		const p = pointAtChainage(idx, (idx.cum[2] + idx.cum[3]) / 2)!;
+		expect(p.lon).toBeCloseTo(-86 + 0.025, 9);
+	});
+
+	it('refuses out-of-range chainage on an open course', () => {
+		expect(idx.closed).toBe(false);
+		expect(pointAtChainage(idx, -1)).toBeNull();
+		expect(pointAtChainage(idx, idx.totalMeters + 1)).toBeNull();
+	});
+
+	it('tolerates floating-point slop at the ends rather than refusing', () => {
+		// milesRemaining arithmetic (total - miles*1609.344) lands a few microns
+		// outside the range constantly; refusing there would make the finish
+		// unplaceable on a course whose length is a non-terminating conversion.
+		expect(pointAtChainage(idx, -0.0004)).toEqual({ lat: 35, lon: -86 });
+		expect(pointAtChainage(idx, idx.totalMeters + 0.0004)).not.toBeNull();
+	});
+
+	it('round-trips against projectOnRoute', () => {
+		for (const frac of [0.05, 0.2, 0.5, 0.77, 0.95]) {
+			const m = idx.totalMeters * frac;
+			const p = pointAtChainage(idx, m)!;
+			const cands = projectOnRoute(idx, p.lat, p.lon);
+			expect(cands.length, `frac ${frac}`).toBeGreaterThan(0);
+			expect(Math.abs(cands[0].chainageMeters - m), `frac ${frac}`).toBeLessThanOrEqual(1);
+		}
+	});
+
+	it('wraps on a closed loop instead of refusing', () => {
+		const loop = buildRouteIndex([
+			[-86, 35],
+			[-85.95, 35],
+			[-85.95, 35.04],
+			[-86, 35.04],
+			[-86, 35]
+		]);
+		expect(loop.closed).toBe(true);
+		const total = loop.totalMeters;
+		const wrapped = pointAtChainage(loop, total + total * 0.25)!;
+		const plain = pointAtChainage(loop, total * 0.25)!;
+		expect(wrapped.lat).toBeCloseTo(plain.lat, 9);
+		expect(wrapped.lon).toBeCloseTo(plain.lon, 9);
+		// And negative chainage wraps backwards off the start.
+		const back = pointAtChainage(loop, -total * 0.25)!;
+		const fwd = pointAtChainage(loop, total * 0.75)!;
+		expect(back.lat).toBeCloseTo(fwd.lat, 9);
+		expect(back.lon).toBeCloseTo(fwd.lon, 9);
+	});
+
+	it('steps over zero-length segments without dividing by zero', () => {
+		const dup = buildRouteIndex([
+			[-86, 35],
+			[-85.99, 35],
+			[-85.99, 35], // duplicate vertex -> zero-length segment
+			[-85.98, 35]
+		]);
+		const p = pointAtChainage(dup, dup.totalMeters / 2)!;
+		expect(Number.isFinite(p.lat)).toBe(true);
+		expect(Number.isFinite(p.lon)).toBe(true);
+		expect(p.lon).toBeCloseTo(-85.99, 6);
+	});
+
+	it.skipIf(!haveGpx)('places the real rest stops from their measured mileage', () => {
+		const xml = readFileSync(gpxPath, 'utf8');
+		const coords: [number, number][] = [];
+		const re = /<trkpt lat="([-\d.]+)" lon="([-\d.]+)"/g;
+		let m: RegExpExecArray | null;
+		while ((m = re.exec(xml)) !== null) coords.push([parseFloat(m[2]), parseFloat(m[1])]);
+		const idx48 = buildRouteIndex(coords);
+
+		// Same four stops as the projection test above, driven the other way:
+		// chainage in, coordinates out. Within 30 m of the surveyed point.
+		const stops: [string, number, number, number][] = [
+			['Maxwell Chapel', 35.61365266280593, -86.54982271163941, 21254],
+			['Eakin Elementary', 35.500702780314725, -86.44572066879583, 38785],
+			['Flat Creek', 35.39051937562392, -86.40947431325912, 56971],
+			['Finish', 35.28489503441051, -86.37205728115387, 76046]
+		];
+		for (const [name, lat, lon, chainage] of stops) {
+			const p = pointAtChainage(idx48, chainage)!;
+			expect(p, `${name}: refused`).not.toBeNull();
+			expect(haversineMeters(p.lat, p.lon, lat, lon), `${name}: off by too much`)
+				.toBeLessThanOrEqual(30);
 		}
 	});
 });

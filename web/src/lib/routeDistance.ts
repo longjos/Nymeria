@@ -509,3 +509,58 @@ export function courseDistance(origin: number, target: number, idx: RouteIndex):
 	}
 	return Math.abs(target - origin);
 }
+
+/** Slop tolerated at both ends before pointAtChainage refuses, in metres.
+ *  `milesRemaining` arithmetic (totalMeters - miles * 1609.344) lands a few
+ *  microns outside [0, total] routinely, and refusing there would make the
+ *  finish line unplaceable on any course whose length is not a round number of
+ *  miles. A millimetre is far below the precision of anything upstream. */
+const CHAINAGE_EPS_M = 0.001;
+
+/** The point `meters` along the course from its start — the exact inverse of
+ *  Candidate.chainageMeters, and the function that turns "mile 34" into a pin.
+ *
+ *  Clamps to the endpoints on an open course and refuses (null) beyond
+ *  CHAINAGE_EPS_M outside them, which is how a SAG location's `off-route` state
+ *  is detected. Wraps on a closed loop, where "mile 34" of a 30-mile loop is a
+ *  real place rather than an error.
+ *
+ *  Note the asymmetry with projectOnRoute: THIS direction is unambiguous. A
+ *  chainage is a single scalar and names exactly one vertex pair, whereas a
+ *  coordinate on an out-and-back can sit 25 m from two places 60 miles apart.
+ *  Mileage-derived pins are therefore the most trustworthy points on the map. */
+export function pointAtChainage(idx: RouteIndex, meters: number): { lat: number; lon: number } | null {
+	const total = idx.totalMeters;
+	const n = idx.cum.length;
+	if (n < 2 || !Number.isFinite(meters)) return null;
+
+	let m = meters;
+	if (idx.closed && total > 0) {
+		m = ((m % total) + total) % total;
+	} else {
+		if (m < -CHAINAGE_EPS_M || m > total + CHAINAGE_EPS_M) return null;
+		m = Math.min(Math.max(m, 0), total);
+	}
+
+	// Last vertex i with cum[i] <= m.
+	let lo = 0;
+	let hi = n - 1;
+	while (lo < hi) {
+		const mid = (lo + hi + 1) >> 1;
+		if (idx.cum[mid] <= m) lo = mid;
+		else hi = mid - 1;
+	}
+	if (lo >= n - 1) return { lat: idx.lats[n - 1], lon: idx.lons[n - 1] };
+
+	// Duplicate vertices make zero-length segments; walk forward off them so the
+	// interpolation below never divides by zero.
+	let i = lo;
+	while (i < n - 2 && idx.cum[i + 1] === idx.cum[i]) i++;
+
+	const segLen = idx.cum[i + 1] - idx.cum[i];
+	const t = segLen > 0 ? (m - idx.cum[i]) / segLen : 0;
+	return {
+		lat: idx.lats[i] + (idx.lats[i + 1] - idx.lats[i]) * t,
+		lon: idx.lons[i] + (idx.lons[i + 1] - idx.lons[i]) * t
+	};
+}
