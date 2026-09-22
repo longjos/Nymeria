@@ -8,7 +8,8 @@
 	import { api, ApiError } from '$lib/api';
 	import type { SAGRequest, SAGLeg, SAGLocation, SAGVehicleStatus, OverCapacityBody } from '$lib/types';
 	import {
-		sagBoard, rideLadder, rideSagSummary, sagComposerSeed, upsertSagRequest, upsertSagVehicle
+		sagBoard, rideLadder, rideSagSummary, sagComposerSeed, sagEditorSeed,
+		upsertSagRequest, upsertSagVehicle
 	} from '$lib/stores/ride';
 	import { activeNetId } from '$lib/stores/netcontrol';
 	import { canOperate } from '$lib/stores/session';
@@ -32,6 +33,7 @@
 	let composerOpen = $state(false);
 	let composerEditing = $state<SAGRequest | null>(null);
 	let composerReason = $state('');
+	let composerFocus = $state<'pickupMile' | null>(null);
 
 	// Command palette handoff (NetControlPanel's `case 'sag':`).
 	$effect(() => {
@@ -44,14 +46,30 @@
 		}
 	});
 
+	// SAG map dock handoff: "this request has no mile marker — add one".
+	$effect(() => {
+		const seed = $sagEditorSeed;
+		if (!seed) return;
+		const req = ($sagBoard?.requests ?? []).find((r) => r.id === seed.requestId);
+		sagEditorSeed.set(null);
+		if (!req) return;
+		expandedId = req.id;
+		composerEditing = req;
+		composerReason = '';
+		composerFocus = seed.focusField ?? null;
+		composerOpen = true;
+	});
+
 	function openCreate(): void {
 		composerEditing = null;
 		composerReason = '';
+		composerFocus = null;
 		composerOpen = true;
 	}
 
 	function openEdit(r: SAGRequest): void {
 		composerEditing = r;
+		composerFocus = null;
 		composerOpen = true;
 	}
 
@@ -813,7 +831,13 @@
 </div>
 
 {#if composerOpen}
-	<SagRequestComposer {netId} editing={composerEditing} initialReason={composerReason} onClose={() => (composerOpen = false)} />
+	<SagRequestComposer
+		{netId}
+		editing={composerEditing}
+		initialReason={composerReason}
+		focusField={composerFocus}
+		onClose={() => (composerOpen = false)}
+	/>
 {/if}
 
 {#if cancelTarget}

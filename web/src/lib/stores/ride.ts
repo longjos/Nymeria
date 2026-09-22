@@ -90,6 +90,18 @@ export const rideViewportClass = writable<RideViewportClass>('desktop');
  */
 export const sagComposerSeed = writable<{ reason?: string } | null>(null);
 
+/**
+ * One-shot handoff for EDITING an existing SAG request, the counterpart to
+ * sagComposerSeed's create path. The SAG map dock raises this when an
+ * unplaceable request needs a mile marker typed into it: on the radio the
+ * caller is usually still on the air saying the number, so typing it is faster
+ * than clicking a point on the map.
+ *
+ * SagBoard.svelte consumes and resets this to null, exactly as it does for
+ * sagComposerSeed.
+ */
+export const sagEditorSeed = writable<{ requestId: string; focusField?: 'pickupMile' } | null>(null);
+
 if (browser) {
 	rideAcked.subscribe((m) => {
 		try {

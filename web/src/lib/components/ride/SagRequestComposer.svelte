@@ -18,11 +18,15 @@
 		netId,
 		editing = null,
 		initialReason = '',
+		focusField = null,
 		onClose
 	}: {
 		netId: string;
 		editing?: SAGRequest | null;
 		initialReason?: string;
+		/** Put the caret straight in the pickup mile marker — the SAG map dock's
+		 *  "Add mile" path, where the caller is still on the air saying a number. */
+		focusField?: 'pickupMile' | null;
 		onClose: () => void;
 	} = $props();
 
@@ -136,9 +140,16 @@
 	$effect(() => {
 		if (!dialogEl || !config || focused) return;
 		const target =
+			(focusField === 'pickupMile'
+				? dialogEl.querySelector<HTMLElement>('#src-pickup-mile')
+				: null) ??
 			dialogEl.querySelector<HTMLElement>('.src-slot-row input[type="text"]') ??
 			dialogEl.querySelector<HTMLElement>('input, select, textarea');
 		target?.focus();
+		// The dock opens this straight off a radio call, so the operator types a
+		// number immediately — select what is there rather than making them
+		// clear it first.
+		(target as HTMLInputElement | null)?.select?.();
 		focused = true;
 	});
 

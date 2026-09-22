@@ -32,6 +32,8 @@
 	import WxInterruptBanner from '$lib/components/WxInterruptBanner.svelte';
 	import RideInterruptBanner from '$lib/components/RideInterruptBanner.svelte';
 	import RideStrip from '$lib/components/RideStrip.svelte';
+	import SagDock from '$lib/components/ride/SagDock.svelte';
+	import SagCandidatePanel from '$lib/components/ride/SagCandidatePanel.svelte';
 	import RidePeek from '$lib/components/RidePeek.svelte';
 	import RideShortcutHelp from '$lib/components/RideShortcutHelp.svelte';
 	import RidePendingList from '$lib/components/RidePendingList.svelte';
@@ -45,7 +47,7 @@
 	import { gpsStatus, gpsFollow, gpsAgeMs, gpsHasFix, initGpsStore } from '$lib/stores/gps';
 	import { showToast } from '$lib/stores/toast';
 	import { annotationList, initAnnotationStore } from '$lib/stores/annotations';
-	import { api } from '$lib/api';
+	import { api, ApiError } from '$lib/api';
 	import {
 		initNetControlStore,
 		activeNet, operatorsWithPosition, missionsWithPosition, assignmentLines,
@@ -68,7 +70,7 @@
 	import { initPacketStore } from '$lib/stores/packets';
 	import { initPathStore } from '$lib/stores/paths';
 	import { isLoggedIn, needsSetup, isApproved, isPending, isDenied, initSession, handleSessionEvent, currentUser, loadPendingRequests, canAdmin } from '$lib/stores/session';
-	import { mapSettings, AGE_FILTER_MS, TRACK_DURATION_MS } from '$lib/stores/mapSettings';
+	import { mapSettings, AGE_FILTER_MS, TRACK_DURATION_MS, toggleSagFocusPreset } from '$lib/stores/mapSettings';
 	import {
 		rosterCallsigns, netIsOpen, rosterMappedCount, rosterFilterActive, isRosterStation,
 		rosterScopedStations
@@ -77,17 +79,31 @@
 	import {
 		selectedStation, panelMode, detailTab, searchOpen, sheetState,
 		selectStation, closePanel, openStationList, openMessages, openConversation, openTransports, openActivity, openAnnotations, openNetControl, openBulletins, openICS309, openWeather, openTelemetry, openDF, openPackets, openSettings,
-		togglePanel, commandPaletteOpen, toggleCommandPalette, rideShortcutHelpOpen
+		togglePanel, commandPaletteOpen, toggleCommandPalette, rideShortcutHelpOpen, openSag
 	} from '$lib/stores/ui';
 	import type { SheetState, DetailTab, PanelMode } from '$lib/stores/ui';
 	import type { Annotation } from '$lib/types';
 	import { activeInterruptSource } from '$lib/stores/interrupts';
 	import {
 		rideMode, initRideStore, rideEmergency, rideLadder,
-		ackEmergency, seedPalette
+		ackEmergency, seedPalette, upsertSagRequest
 	} from '$lib/stores/ride';
+	import {
+		sagDockActive, sagFocus, sagOverlayActive, sagPlaced, sagVehiclesOnMap,
+		sagCandidates, sagLegLines, sagFocusedVehicleId, sagVehicleGeo,
+		focusSagRequest, focusSagVehicle, startDispatchFocus, clearSagFocus
+	} from '$lib/stores/sagMap';
+
+	/** The desktop SAG dock's width, and the tablet rail's. Shared with the
+	 *  map-fit padding so a `flyToBounds` can never put a pickup behind it. */
+	const SAG_DOCK_W = 260;
+	const SAG_RAIL_W = 44;
 
 	let isDesktop = $state(true);
+	let isTablet = $state(false);
+	/** The tablet rail's state. Desktop never collapses unless the operator
+	 *  asks; the tablet starts collapsed. */
+	let sagDockCollapsed = $state(false);
 	/** Landscape phone (spec §9: max-height: 499px) — same query as
 	 * `.desktop-only`/BottomSheet's SHORT_VH_BREAKPOINT. RidePeek is
 	 * suppressed there entirely rather than squeezed into an even shorter sheet. */
@@ -215,6 +231,19 @@
 		const handler = (e: MediaQueryListEvent) => { isDesktop = e.matches; };
 		mq.addEventListener('change', handler);
 
+		// The spec's tablet band: desktop layout, but a touch device whose map
+		// cannot spare 260px to a dock that is idle most of the ride.
+		const tabletMq = window.matchMedia('(min-width: 769px) and (max-width: 1199px) and (min-height: 500px)');
+		isTablet = tabletMq.matches;
+		const tabletHandler = (e: MediaQueryListEvent) => {
+			isTablet = e.matches;
+			// Collapse on the way in, expand on the way out: the rail is the
+			// tablet's resting state, the full dock is the desktop's.
+			sagDockCollapsed = e.matches;
+		};
+		tabletMq.addEventListener('change', tabletHandler);
+		sagDockCollapsed = tabletMq.matches;
+
 		const shortMq = window.matchMedia('(max-height: 499px)');
 		isShortViewport = shortMq.matches;
 		const shortHandler = (e: MediaQueryListEvent) => { isShortViewport = e.matches; };
@@ -222,6 +251,7 @@
 
 		return () => {
 			mq.removeEventListener('change', handler);
+			tabletMq.removeEventListener('change', tabletHandler);
 			shortMq.removeEventListener('change', shortHandler);
 		};
 	});
@@ -296,6 +326,75 @@
 		openNetControl();
 	}
 
+	/**
+	 * Clicking a pickup pin goes STRAIGHT to dispatch focus rather than merely
+	 * selecting the request (spec §6 step 1). There is exactly one reason an
+	 * operator clicks a pickup on the map, and making them click twice to reach
+	 * it would be asking them to confirm their own intention.
+	 */
+	function handleSagPickupClick(requestId: string) {
+		startDispatchFocus(requestId);
+	}
+
+	/** A chit click selects the vehicle's request when it has one, so the
+	 *  operator can see what it is carrying; otherwise it opens the roster. */
+	/**
+	 * `Place on map` — the dock's repair for a request the resolver could not
+	 * place. The map is not just a display for this feature; it is the tool
+	 * that supplies the coordinate the radio call never carried.
+	 */
+	let placingSagLocation = $state<{ requestId: string; which: 'pickup' | 'dropoff'; label: string } | null>(null);
+
+	function handleSagPlaceRequest(requestId: string, which: 'pickup' | 'dropoff') {
+		const p = $sagPlaced.find((x) => x.request.id === requestId);
+		placingSagLocation = { requestId, which, label: p ? `SAG ${p.request.sequence}` : 'request' };
+	}
+
+	async function handleSagLocationPlaced(
+		requestId: string,
+		which: 'pickup' | 'dropoff',
+		lat: number,
+		lon: number
+	) {
+		const p = $sagPlaced.find((x) => x.request.id === requestId);
+		placingSagLocation = null;
+		const netId = $activeNet?.id;
+		if (!p || !netId) return;
+		const r = p.request;
+		try {
+			const updated = await api.updateSagRequest(netId, r.id, {
+				pickup: which === 'pickup' ? { ...r.pickup, lat, lon } : r.pickup,
+				dropoff: which === 'dropoff' ? { ...r.dropoff, lat, lon } : r.dropoff,
+				reason: r.reason,
+				priority: r.priority,
+				notes: r.notes,
+				requestedBy: r.requestedBy
+			});
+			upsertSagRequest(updated);
+			showToast(`SAG ${updated.sequence} ${which} placed`, 'success');
+		} catch (e) {
+			showToast(e instanceof ApiError ? e.message : `Could not place the ${which}`, 'error');
+		}
+	}
+
+	/**
+	 * A chit click selects the VEHICLE (spec §7, row 2), not the request it
+	 * happens to be working. The operator is asking "what is this van doing",
+	 * and the answer is the selection ring plus that van's own leg lines —
+	 * which is why `SagFocus` carries a vehicle at all.
+	 */
+	function handleSagVehicleClick(checkInId: string) {
+		focusSagVehicle(checkInId);
+	}
+
+	/** `Place on map` for a SAG unit that has never reported a position. It is
+	 *  the same operator-placement pick mode the roster already uses — the dock
+	 *  asks for picking, it never implements it. */
+	function handleSagPlaceVehicle(checkInId: string) {
+		const g = $sagVehicleGeo.find((v) => v.vehicle.checkInId === checkInId);
+		handlePlaceOperator(checkInId, g?.vehicle.tacticalCall || g?.vehicle.callsign || 'unit');
+	}
+
 	function handleNetFlyTo(lat: number, lon: number, zoom?: number) {
 		flyToTarget = { lat, lon, zoom: zoom ?? 15 };
 	}
@@ -318,6 +417,64 @@
 		flyToBounds = coords;
 		setTimeout(() => { flyToBounds = null; }, 100);
 	}
+
+	/**
+	 * The insets the next map fit has to keep clear. Everything SAG puts on
+	 * screen — the desktop dock, the tablet rail's overlay, the phone sheet —
+	 * floats OVER the map rather than shrinking it, so a fit that only knows
+	 * the map's box hides the pickup behind the very panel that asked for it.
+	 * The sheet number is the same `half` snap the sheet itself uses.
+	 */
+	let sagFitPadding = $derived(
+		isDesktop && $sagDockActive
+			? {
+					top: 0,
+					right: 0,
+					bottom: 0,
+					left: sagDockCollapsed && $sagFocus?.mode !== 'dispatch' ? SAG_RAIL_W : SAG_DOCK_W
+				}
+			: !isDesktop && $panelMode === 'sag'
+				? { top: 0, right: 0, bottom: Math.round(window.innerHeight * 0.5), left: 0 }
+				: null
+	);
+
+	/**
+	 * Dispatch focus fits the map to the pickup plus the top three candidates
+	 * (spec §6 step 2) — the whole reason the decision happens on a map rather
+	 * than in a list, and worthless if the answer is off screen.
+	 *
+	 * Keyed on the request id so it fires ONCE per entry into dispatch focus.
+	 * `sagCandidates` recomputes every second on the shared clock; refitting on
+	 * every tick would be a map that will not hold still under an operator who
+	 * is trying to read it.
+	 */
+	let lastDispatchFit = '';
+	$effect(() => {
+		const f = $sagFocus;
+		const key = f?.mode === 'dispatch' ? (f.requestId ?? '') : '';
+		if (key === lastDispatchFit) return;
+		lastDispatchFit = key;
+		if (!key) return;
+		const p = $sagPlaced.find((x) => x.request.id === key);
+		// An unplaceable pickup moves the map NOWHERE. A map that jumps to
+		// somewhere it cannot justify is worse than a map that stays put.
+		if (!p?.pickup.placed) return;
+		const pts = [{ lat: p.pickup.lat, lon: p.pickup.lon }];
+		for (const c of ($sagCandidates?.ranked ?? []).slice(0, 3)) {
+			const g = $sagVehiclesOnMap.find((v) => v.vehicle.checkInId === c.id);
+			if (g?.lat != null && g.lon != null) pts.push({ lat: g.lat, lon: g.lon });
+		}
+		handleFlyToBounds(pts);
+	});
+
+	/** On a phone there is no dock, so dispatch focus opens the sheet's `sag`
+	 *  mode at `half` and the candidate list renders there (spec §11). */
+	$effect(() => {
+		if (isDesktop) return;
+		if ($sagFocus?.mode !== 'dispatch') return;
+		if (get(panelMode) !== 'sag') openSag();
+		if (get(sheetState) === 'peek') sheetState.set('half');
+	});
 
 	async function handleSetOpsView() {
 		const vp = mapRef?.getViewport();
@@ -394,7 +551,8 @@
 		telemetry: 'Telemetry',
 		df: 'Direction Finding',
 		packets: 'Packets',
-		settings: 'Settings'
+		settings: 'Settings',
+		sag: 'SAG'
 	};
 
 	let selectedAlertEvent = $derived.by(() => {
@@ -789,6 +947,19 @@
 			annotations={$annotationList}
 			selectedCallsign={$selectedStation ?? ''}
 			onStationClick={handleStationClick}
+			sagRequests={$sagPlaced}
+			sagVehicles={$sagVehiclesOnMap}
+			sagFocusId={$sagFocus?.requestId ?? null}
+			sagFocusVehicleId={$sagFocusedVehicleId}
+			sagDispatchMode={$sagFocus?.mode === 'dispatch'}
+			sagCandidates={$sagCandidates}
+			sagLegLines={$sagLegLines}
+			showSag={$sagOverlayActive}
+			onSagPickupClick={handleSagPickupClick}
+			onSagVehicleClick={handleSagVehicleClick}
+			{placingSagLocation}
+			onSagLocationPlaced={handleSagLocationPlaced}
+			onSagPlaceCancelled={() => (placingSagLocation = null)}
 			onAnnotationClick={handleAnnotationClick}
 			{flyToTarget}
 			panelOpen={panelIsOpen}
@@ -806,6 +977,7 @@
 			onNetOperatorClick={handleNetOperatorClick}
 			onNetMissionClick={handleNetMissionClick}
 			{flyToBounds}
+			fitPadding={sagFitPadding}
 			highlightedMissionId={$hoveredMissionId}
 			highlightedCheckInId={$hoveredCheckInId}
 			weatherOverlay={$weatherStations}
@@ -999,6 +1171,30 @@
 		</SidePanel>
 	{/if}
 
+	<!-- Desktop: SAG dock, left of the map (bike-ride nets with the overlay on).
+	     In dispatch focus the candidate panel takes its place — same column,
+	     same width, so the operator's eye does not have to move. -->
+	{#if isDesktop && $sagDockActive}
+		<div class="sag-dock-layer" class:sag-dock-layer--rail={sagDockCollapsed && $sagFocus?.mode !== 'dispatch'}>
+			{#if $sagFocus?.mode === 'dispatch'}
+				<!-- Deliberately NOT gated on $sagCandidates: that store is null
+				     when the pickup itself is unplaceable, and the panel is built
+				     to work in exactly that case. Somebody is standing at the
+				     roadside whether or not we can draw them. -->
+				<SagCandidatePanel />
+			{:else}
+				<SagDock
+					onPlaceRequest={handleSagPlaceRequest}
+					onPlaceVehicle={handleSagPlaceVehicle}
+					onSagFocusPreset={toggleSagFocusPreset}
+					collapsed={sagDockCollapsed}
+					onExpand={() => (sagDockCollapsed = false)}
+					onCollapse={isTablet ? () => (sagDockCollapsed = true) : undefined}
+				/>
+			{/if}
+		</div>
+	{/if}
+
 	<!-- Desktop: Ride status strip (bike-ride profile nets only) -->
 	{#if isDesktop && $rideMode}
 		<RideStrip
@@ -1153,6 +1349,18 @@
 				<ICS309Panel />
 			{:else if $panelMode === 'settings'}
 				<SettingsPanel />
+			{:else if $panelMode === 'sag'}
+				<!-- No dock below 769px: the dock's content, and in dispatch
+				     focus the candidate list, live here instead (spec §11). -->
+				{#if $sagFocus?.mode === 'dispatch'}
+					<SagCandidatePanel />
+				{:else}
+					<SagDock
+						onPlaceRequest={handleSagPlaceRequest}
+						onPlaceVehicle={handleSagPlaceVehicle}
+						onSagFocusPreset={toggleSagFocusPreset}
+					/>
+				{/if}
 			{/if}
 		</BottomSheet>
 	{/if}
@@ -1210,6 +1418,33 @@
 		   bike-ride mode, so this is a no-op everywhere else (spec §9). */
 		inset: 0 0 var(--ride-strip-h, 0px) 0;
 		z-index: var(--z-map);
+	}
+
+	/* An overlay INSIDE the map layer, like MapPalette and GpsStatusPill — not
+	   a layout sibling. Insetting the map's box instead would mean an
+	   invalidateSize() on every toggle, and spec §11 names that as the sign the
+	   dock has been built wrong. */
+	.sag-dock-layer {
+		position: fixed;
+		top: var(--space-sm);
+		left: var(--space-sm);
+		bottom: calc(var(--ride-strip-h, 0px) + var(--space-sm));
+		width: 260px;
+		z-index: var(--z-toolbar);
+		display: flex;
+		flex-direction: column;
+		min-height: 0;
+		pointer-events: auto;
+	}
+
+	/* Tablet: the rail takes 44px and is bottom-anchored content rather than a
+	   full-height column, so it never looks like an empty panel. Expanded, the
+	   dock overlays the map at its normal width — it does not reflow the map,
+	   which is what keeps invalidateSize() out of this feature entirely. */
+	.sag-dock-layer--rail {
+		width: 44px;
+		bottom: auto;
+		max-height: calc(100% - var(--ride-strip-h, 0px) - var(--space-sm) * 2);
 	}
 
 	.sheet-peek-row {

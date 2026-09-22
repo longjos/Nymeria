@@ -1,6 +1,6 @@
 import { writable, get } from 'svelte/store';
 
-export type PanelMode = 'closed' | 'stations' | 'detail' | 'messages' | 'convo' | 'transports' | 'activity' | 'annotations' | 'netcontrol' | 'bulletins' | 'ics309' | 'weather' | 'telemetry' | 'df' | 'packets' | 'settings';
+export type PanelMode = 'closed' | 'stations' | 'detail' | 'messages' | 'convo' | 'transports' | 'activity' | 'annotations' | 'netcontrol' | 'bulletins' | 'ics309' | 'weather' | 'telemetry' | 'df' | 'packets' | 'settings' | 'sag';
 export type DetailTab = 'info' | 'messages' | 'track';
 export type SheetState = 'peek' | 'half' | 'full';
 export type ConnectionState = 'connected' | 'disconnected' | 'reconnecting';
@@ -177,6 +177,17 @@ export const netControlRequestedTab = writable<'situation' | 'roster' | 'mission
  * to null) by CoursePanel once applied.
  */
 export const courseRequestedTab = writable<'stops' | 'shutoffs' | 'sweep' | 'riders' | 'closeout' | null>(null);
+
+/**
+ * The phone's SAG surface (docs/sag-map-spec.md §11). There is no dock below
+ * 769px, so the dock's content — and, in dispatch focus, the candidate list —
+ * lives in the bottom sheet. `half` rather than `full`: the map has to stay
+ * visible, because the spatial check is the whole point of doing this on a map.
+ */
+export function openSag(): void {
+	panelMode.set('sag');
+	sheetState.set('half');
+}
 
 /** Opens Net Control at the situation tab — the phone's whole ride surface (RidePeek's tap target). */
 export function openRideSituation(): void {

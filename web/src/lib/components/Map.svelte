@@ -20,6 +20,16 @@
 	import { tierRank, zoneLabel } from '$lib/wxAlertMeta';
 	import { clock } from '$lib/wxAlertTime';
 	import { ensureZoneGeometry } from '$lib/stores/wxAlerts';
+	import { tierById, tierStyle, ageState, ageText } from '$lib/rideMeta';
+	// The one store this component reads rather than receives. The SAG props
+	// below are deliberately prop-driven (the page owns the sagMap stores), but
+	// the priority ladder is agency data with no place in that contract and a
+	// pickup pin cannot be drawn without it — the tier names are configurable,
+	// so no tier may ever be hard-coded here. Same precedent as weatherUnits.
+	import { rideLadder } from '$lib/stores/ride';
+	import type { PlacedRequest } from '$lib/stores/sagMap';
+	import type { RankResult, SagCandidate, SagVehicleGeo } from '$lib/sagDispatch';
+	import type { SagLegLines } from '$lib/stores/mapSettings';
 
 	const DEFAULT_ANN_COLOR = '#e63946';
 
@@ -56,6 +66,7 @@
 		onNetOperatorClick,
 		onNetMissionClick,
 		flyToBounds = null,
+		fitPadding = null,
 		highlightedMissionId = null,
 		highlightedCheckInId = null,
 		weatherOverlay = [],
@@ -72,6 +83,7 @@
 		showDRCones = true,
 		showCallsigns = false,
 		placingAnnotation = null,
+		placingSagLocation = null,
 		onAnnotationPlaced,
 		onAnnotationPlaceCancelled,
 		placingMissionLocation = null,
@@ -96,6 +108,18 @@
 		wxFocusAlertId = null,
 		onWxAlertClick,
 		onWxFocusConsumed,
+		sagRequests = [],
+		sagVehicles = [],
+		sagFocusId = null,
+		sagFocusVehicleId = null,
+		sagDispatchMode = false,
+		sagCandidates = null,
+		sagLegLines = 'selected',
+		showSag = false,
+		onSagPickupClick,
+		onSagVehicleClick,
+		onSagLocationPlaced,
+		onSagPlaceCancelled,
 	}: {
 		stations?: Station[];
 		annotations?: Annotation[];
@@ -118,6 +142,11 @@
 		onNetOperatorClick?: (checkInId: string) => void;
 		onNetMissionClick?: (missionId: string) => void;
 		flyToBounds?: Array<{ lat: number; lon: number }> | null;
+		/** Screen-edge insets the next `flyToBounds` must keep clear, in px.
+		 *  The SAG dock and the phone bottom sheet sit OVER the map, so a fit
+		 *  that only knows the map's box puts the pickup behind them — which on
+		 *  a phone is the one marker the operator is trying to look at. */
+		fitPadding?: { top: number; right: number; bottom: number; left: number } | null;
 		highlightedMissionId?: string | null;
 		highlightedCheckInId?: string | null;
 		weatherOverlay?: Station[];
@@ -135,6 +164,12 @@
 		/** Draw permanent call-sign labels next to station markers. */
 		showCallsigns?: boolean;
 		placingAnnotation?: { id: string | null; name: string } | null;
+		/** The SAG dock's `Place on map` repair: the map is not just a display
+		 *  for this feature, it is the tool that supplies the coordinate the
+		 *  radio call never carried. */
+		placingSagLocation?: { requestId: string; which: 'pickup' | 'dropoff'; label: string } | null;
+		onSagLocationPlaced?: (requestId: string, which: 'pickup' | 'dropoff', lat: number, lon: number) => void;
+		onSagPlaceCancelled?: () => void;
 		onAnnotationPlaced?: (lat: number, lon: number) => void;
 		onAnnotationPlaceCancelled?: () => void;
 		placingMissionLocation?: { label: string } | null;
@@ -185,6 +220,37 @@
 		wxFocusAlertId?: string | null;
 		onWxAlertClick?: (id: string) => void;
 		onWxFocusConsumed?: () => void;
+		/* ---- SAG overlay (docs/sag-map-spec.md §3-§5). Every one of these is
+		   optional with a safe default: the overlay simply does not mount until
+		   the page wires it, and a non-ride net never sees it. ---- */
+		/** Open SAG requests with both ends already resolved by sagGeo. An
+		 *  UNPLACEABLE pickup is still passed in and is deliberately NOT drawn —
+		 *  it is a first-class dock state, not a filter (spec §2). */
+		sagRequests?: PlacedRequest[];
+		/** SAG vehicles that have a position. A vehicle with no position at all
+		 *  is never drawn at an invented location; it lives in the dock. */
+		sagVehicles?: SagVehicleGeo[];
+		/** The focused request id, or null. Never written from inside this
+		 *  component — see onSagPickupClick. */
+		sagFocusId?: string | null;
+		/** The SELECTED vehicle (spec §7). Drives the chit's selection ring and
+		 *  makes `sagLegLines: 'selected'` mean "this van's legs" as well as
+		 *  "this request's legs" — without it the ring CSS is unreachable and a
+		 *  chit click answers nothing. */
+		sagFocusVehicleId?: string | null;
+		/** True while dispatch focus is active: everything that is not SAG dims
+		 *  to 30% and the top three candidates gain rank caps and leader lines. */
+		sagDispatchMode?: boolean;
+		/** Ranked candidates for the focused request, for the rank caps, the
+		 *  leader-line labels and the greyed "why not" badges. */
+		sagCandidates?: RankResult | null;
+		/** How much leg spaghetti to draw: the focused request's legs only
+		 *  (default), every active leg, or none. */
+		sagLegLines?: SagLegLines;
+		/** Master layer toggle. */
+		showSag?: boolean;
+		onSagPickupClick?: (requestId: string) => void;
+		onSagVehicleClick?: (checkInId: string) => void;
 	} = $props();
 
 	let mapEl: HTMLDivElement;
@@ -228,6 +294,25 @@
 	let trackLines: Map<string, L.Polyline> = new Map();
 	let trackHighlights: Map<string, L.Polyline> = new Map();
 	let drCones: Map<string, L.Polygon> = new Map();
+	// SAG overlay layers, one collection per marker family so each $effect can
+	// clear exactly what it owns (spec §3-§5).
+	const sagPinMarkers: Map<string, L.Marker> = new Map();
+	const sagDropMarkers: Map<string, L.Marker> = new Map();
+	const sagChitMarkers: Map<string, L.Marker> = new Map();
+	const sagDriftHalos: Map<string, L.Circle> = new Map();
+	let sagLines: L.Layer[] = [];
+	let sagLinkRenderer: L.Renderer | null = null;
+	/** Requests whose pin has already been drawn once. The arrival pulse is a
+	 *  two-cycle animation and must not replay on every websocket frame. */
+	const sagPulsed: Set<string> = new Set();
+	/** Touch marker sizes below 1200px (spec §11 — a 1024px tablet IS a touch
+	 *  device). Read once and kept live, so a rotate re-draws at the right size. */
+	let sagTouch = $state(false);
+	let sagTouchQuery: MediaQueryList | null = null;
+	/** 60 s tick so chit age tags and drift halos grow on their own rather than
+	 *  at whatever moment the next APRS frame happens to arrive. */
+	let sagTick = $state(0);
+	let sagTickTimer: ReturnType<typeof setInterval> | null = null;
 	let drCenterLines: Map<string, L.Polyline> = new Map();
 	let drTimer: ReturnType<typeof setInterval> | null = null;
 	let annotationLayers: Map<string, L.Layer> = new Map();
@@ -410,6 +495,25 @@
 		const wxPane = map.createPane('wxAlertPane');
 		wxPane.style.zIndex = readWxTokens().zPane;
 		wxAlertRenderer = L.svg({ pane: 'wxAlertPane' });
+		// SAG panes (spec §4). Link lines above the route line (overlayPane 400)
+		// so a leg is never buried under the course, and below every marker so a
+		// line never crosses a pin's numerals; SAG markers above station markers
+		// (markerPane 600) because during a dispatch they ARE the subject, and
+		// below tooltipPane (650) so labels still win. z-indices come from CSS
+		// tokens exactly as readWxTokens() supplies --z-wx-pane above.
+		const sagTokens = readSagTokens();
+		const sagLinkPane = map.createPane('sagLinkPane');
+		sagLinkPane.style.zIndex = sagTokens.zLink;
+		const sagMarkerPane = map.createPane('sagMarkerPane');
+		sagMarkerPane.style.zIndex = sagTokens.zMarker;
+		sagLinkRenderer = L.svg({ pane: 'sagLinkPane' });
+		sagTickTimer = setInterval(() => { sagTick += 1; }, 60_000);
+		if (typeof window !== 'undefined' && typeof window.matchMedia === 'function') {
+			sagTouchQuery = window.matchMedia('(max-width: 1199px)');
+			sagTouch = sagTouchQuery.matches;
+			sagTouchQuery.addEventListener('change', onSagTouchChange);
+		}
+
 		wxChipTickTimer = setInterval(() => refreshWxChipLabels(), 60_000);
 		// Chip visibility (hide < z8) is zoom-driven only — no need to rebuild
 		// the whole alert layer set for it.
@@ -583,6 +687,8 @@
 		mapEl?.removeEventListener('pointercancel', cancelLongPress);
 		ownMarker?.remove();
 		ownAccuracyCircle?.remove();
+		if (sagTickTimer) clearInterval(sagTickTimer);
+		sagTouchQuery?.removeEventListener('change', onSagTouchChange);
 		map?.remove();
 	});
 
@@ -594,6 +700,9 @@
 		const _labels = showCallsigns;
 		// Viewport changes decide which stations survive culling in updateMarkers().
 		const _viewport = viewportEpoch;
+		// A SAG vehicle's station marker is replaced by its chit (spec §3.3), so
+		// the set of suppressed keys is an input to the station pass.
+		const _sagSuppressed = sagChitStationKeys;
 		// Read unconditionally so the effect always re-subscribes to it: while
 		// hidden the effect stops touching `stations`, and unhiding is the only
 		// thing that can bring it back.
@@ -624,7 +733,17 @@
 		if (map && flyToBounds && flyToBounds.length > 0) {
 			const bounds = L.latLngBounds(flyToBounds.map(p => [p.lat, p.lon] as L.LatLngExpression));
 			programmaticMove = true;
-			map.flyToBounds(bounds, { padding: [50, 50], maxZoom: 16 });
+			const pad = fitPadding;
+			map.flyToBounds(
+				bounds,
+				pad
+					? {
+							paddingTopLeft: [pad.left + 50, pad.top + 50],
+							paddingBottomRight: [pad.right + 50, pad.bottom + 50],
+							maxZoom: 16
+						}
+					: { padding: [50, 50], maxZoom: 16 }
+			);
 			map.once('moveend', () => { programmaticMove = false; });
 			onFollowBreak?.();
 		}
@@ -723,7 +842,8 @@
 	// cursor + double-click-zoom toggle, so no individual mode effect below
 	// needs to guard against the others still being active.
 	let anyPlaceMode = $derived(
-		!!drawingMode || !!placingOperator || !!placingAnnotation || !!placingMissionLocation
+		!!drawingMode || !!placingOperator || !!placingAnnotation || !!placingMissionLocation ||
+		!!placingSagLocation
 	);
 
 	$effect(() => {
@@ -955,10 +1075,15 @@
 		for (const [, layer] of netHalos) layer.remove();
 		netHalos.clear();
 
+		// A `sag` check-in's halo is suppressed while the overlay is on: the chit
+		// is that vehicle's marker (spec §4). Every other category keeps its halo.
+		const sagSuppressed = sagChitCheckInIds;
+
 		if (!_netId || !ops.length) return;
 
 		for (const ci of ops) {
 			if (ci.lat == null || ci.lon == null) continue;
+			if (sagSuppressed.has(ci.id)) continue;
 			const color = netStatusColors[ci.status] || '#6b7280';
 			const staleMs = Date.now() - new Date(ci.lastHeard).getTime();
 			const opacity = staleMs > 20 * 60 * 1000 ? 0.4 : 1;
@@ -1060,6 +1185,11 @@
 		// Clear old lines
 		for (const line of netAssignLines) line.remove();
 		netAssignLines = [];
+
+		// Suppressed while the SAG overlay is up (spec §4): a dashed blue line
+		// between two points is the same grammar as a leg line and the two would
+		// be unreadable side by side. Missions are near-unused in ride mode.
+		if (showSag) return;
 
 		if (!_netId || !lines.length) return;
 
@@ -1654,6 +1784,14 @@
 				onMissionLocationPlaceCancelled?.();
 				return;
 			}
+			if (placingSagLocation) {
+				// Same reasoning as the mission pick above: the dock and the
+				// candidate panel both take Escape, and without stopping it
+				// here cancelling the pick would also drop dispatch focus.
+				e.stopImmediatePropagation();
+				onSagPlaceCancelled?.();
+				return;
+			}
 			if (placingAnnotation) {
 				onAnnotationPlaceCancelled?.();
 				return;
@@ -1689,6 +1827,10 @@
 			} else {
 				onMissionLocationPlaced?.(lat, lon, src.kind === 'map' ? undefined : src.label);
 			}
+			return;
+		}
+		if (placingSagLocation) {
+			onSagLocationPlaced?.(placingSagLocation.requestId, placingSagLocation.which, lat, lon);
 			return;
 		}
 		if (placingAnnotation) {
@@ -1879,6 +2021,12 @@
 			const fillOpacity = (style.fillOpacity as number) || 0.25;
 
 			let layer: L.Layer | null = null;
+			// The course line and the stops are the SAG overlay's coordinate
+			// system and its dropoff vocabulary, so they alone keep full opacity
+			// while dispatch focus dims the rest of the map (spec §4). Marking
+			// them with a class rather than removing layers keeps the dim a
+			// single reversible CSS toggle with no $effect churn.
+			const className = SAG_KEEP_CATEGORIES.has(ann.category) ? 'sag-keep' : undefined;
 
 			if (geom.type === 'Point') {
 				const coords = geom.coordinates as [number, number]; // [lon, lat]
@@ -1889,15 +2037,16 @@
 					weight,
 					fillOpacity,
 					opacity,
+					className,
 				});
 			} else if (geom.type === 'LineString') {
 				const coords = geom.coordinates as [number, number][];
 				const latlngs = coords.map((c) => [c[1], c[0]] as L.LatLngExpression);
-				layer = L.polyline(latlngs, { color, weight, opacity });
+				layer = L.polyline(latlngs, { color, weight, opacity, className });
 			} else if (geom.type === 'Polygon') {
 				const rings = geom.coordinates as [number, number][][];
 				const latlngs = rings[0].map((c) => [c[1], c[0]] as L.LatLngExpression);
-				layer = L.polygon(latlngs, { color, weight, opacity, fillColor, fillOpacity });
+				layer = L.polygon(latlngs, { color, weight, opacity, fillColor, fillOpacity, className });
 			}
 
 			if (layer) {
@@ -2031,6 +2180,13 @@
 		for (const st of stations) {
 			if (!st.position) continue;
 			const key = stationKey(st);
+			// The chit replaces the station's APRS marker (spec §3.3). The chit
+			// already carries the call sign; drawing both is the same double
+			// labelling the operator-halo code below already declines to do, and
+			// it is the single largest clutter reduction this overlay can make.
+			// Skipping before currentKeys.add() means an existing marker is
+			// pruned by the same removal loop a disappeared station takes.
+			if (sagChitStationKeys.has(key.toUpperCase())) continue;
 			// A culled station never joins currentKeys, so the removal loops at
 			// the end of this function prune its marker, tooltip, track and
 			// highlight through the same path a disappeared station takes.
@@ -2638,11 +2794,838 @@
 		}
 		onWxFocusConsumed?.();
 	});
+
+	// ===================================================================
+	// SAG overlay — docs/sag-map-spec.md §3 (marker language), §4 (panes and
+	// suppression), §5 (lines).
+	//
+	// Three things, three silhouettes, and the test each has to pass is
+	// physical: printed in greyscale, at arm's length, on a phone in sunlight,
+	// can you name which of the three it is with no legend? A pin points DOWN
+	// at a spot (a pickup), a pennant hangs off a pole (a dropoff), a chit sits
+	// flat ON a spot (a vehicle). Colour is never the only channel.
+	//
+	// Unlike the existing .net-voice-marker / .net-mission-flag markers, which
+	// pass their colours inline, every SAG marker is classes-plus-`:global`
+	// CSS: the capacity bars need ::before/::after and a hatch fill that cannot
+	// be expressed as an inline style. This is a deliberate divergence (spec
+	// §9) — and because L.divIcon injects its html OUTSIDE the Svelte component
+	// tree, every one of those classes must be `:global(...)` or svelte drops
+	// the rule silently.
+	// ===================================================================
+
+	const SAG_METERS_PER_MILE = 1609.344;
+	/** Display convention for the stale-position drift halo, not a claim about
+	 *  any particular van. See spec §3.5 [Q3].
+	 *
+	 *  The cap is 15 mi rather than the spec's 8 because the halo is only drawn
+	 *  once a fix is STALE, which is 20 minutes — and 20 minutes at 35 mph is
+	 *  already 11.7 mi. An 8 mi cap was reached at 13.7 minutes, so every stale
+	 *  vehicle drew the identical maximum disc and the "grows with age" idea
+	 *  never fired at all. At 15 mi the halo grows across roughly 20-26 minutes
+	 *  and then holds; past that the dashed chit and the age tag carry the
+	 *  message, because a disc big enough to cover the whole course tells the
+	 *  operator nothing they can act on. */
+	const SAG_DRIFT_MPH = 35;
+	const SAG_DRIFT_CAP_METERS = 15 * SAG_METERS_PER_MILE;
+	/** Leg states that still have somewhere to be. `delivered` and `released`
+	 *  draw no line — the van is not going anywhere on this request's account. */
+	const SAG_ACTIVE_LEG = new Set(['dispatched', 'enroute', 'onscene', 'loaded']);
+	const SAG_RANK_CAPS = ['①', '②', '③'];
+	/** Annotation categories that keep full opacity under dispatch focus: the
+	 *  course is the coordinate system and the stops are the dropoff
+	 *  vocabulary (spec §4). */
+	const SAG_KEEP_CATEGORIES = new Set(['route', 'checkpoint', 'aid', 'start', 'finish']);
+
+	// A rounded-square body with a downward apex, in a 38x44 box. The ring is
+	// the same silhouette expanded by 3px so "needs a vehicle" reads as a
+	// halo, not as a thicker border.
+	const SAG_PIN_BODY =
+		'M9 4h20a5 5 0 0 1 5 5v18a5 5 0 0 1-5 5h-6l-4 7-4-7h-6a5 5 0 0 1-5-5V9a5 5 0 0 1 5-5z';
+	const SAG_PIN_RING =
+		'M10 1h18a8 8 0 0 1 8 8v18a8 8 0 0 1-8 8h-4.5L19 42.5 14.5 35H10a8 8 0 0 1-8-8V9a8 8 0 0 1 8-8z';
+
+	interface SagTokens {
+		unit: string;
+		drift: string;
+		casing: string;
+		muted: string;
+		zLink: string;
+		zMarker: string;
+		dashLeg: string;
+		dashTie: string;
+	}
+
+	const SAG_TOKEN_FALLBACKS: SagTokens = {
+		unit: '#f97316',
+		drift: 'rgba(249, 115, 22, 0.10)',
+		casing: 'rgba(255, 255, 255, 0.55)',
+		muted: '#9ba0ab',
+		zLink: '420',
+		zMarker: '620',
+		dashLeg: '6 5',
+		dashTie: '2 7'
+	};
+
+	/** One computed-style read per name. Custom properties resolve their own
+	 *  var() references at computed-value time, so an alias token like
+	 *  --color-ride-emergency comes back as a real colour. */
+	function cssVal(name: string, fallback: string): string {
+		if (typeof getComputedStyle !== 'function' || typeof document === 'undefined') return fallback;
+		return getComputedStyle(document.documentElement).getPropertyValue(name).trim() || fallback;
+	}
+
+	/** The SAG half of readWxTokens(): pane z-indices, stroke colours and dash
+	 *  patterns live in app.css so the map and the dock cannot drift apart. */
+	function readSagTokens(): SagTokens {
+		return {
+			unit: cssVal('--color-sag-unit', SAG_TOKEN_FALLBACKS.unit),
+			drift: cssVal('--color-sag-drift', SAG_TOKEN_FALLBACKS.drift),
+			casing: cssVal('--wx-casing', SAG_TOKEN_FALLBACKS.casing),
+			muted: cssVal('--color-text-muted', SAG_TOKEN_FALLBACKS.muted),
+			zLink: cssVal('--z-sag-link-pane', SAG_TOKEN_FALLBACKS.zLink),
+			zMarker: cssVal('--z-sag-marker-pane', SAG_TOKEN_FALLBACKS.zMarker),
+			dashLeg: cssVal('--sag-dash-leg-dispatched', SAG_TOKEN_FALLBACKS.dashLeg),
+			dashTie: cssVal('--sag-dash-pickup-dropoff', SAG_TOKEN_FALLBACKS.dashTie)
+		};
+	}
+
+	function onSagTouchChange(e: MediaQueryListEvent): void {
+		sagTouch = e.matches;
+	}
+
+	/** Station keys whose APRS marker the chit replaces (spec §3.3). */
+	const sagChitStationKeys = $derived.by(() => {
+		const keys = new Set<string>();
+		if (!showSag) return keys;
+		for (const g of sagVehicles) {
+			if (g.lat == null || g.lon == null) continue;
+			keys.add(g.vehicle.callsign.toUpperCase());
+		}
+		return keys;
+	});
+
+	/** Check-in ids whose net-operator halo the chit replaces (spec §4). */
+	const sagChitCheckInIds = $derived.by(() => {
+		const ids = new Set<string>();
+		if (!showSag) return ids;
+		for (const g of sagVehicles) {
+			if (g.lat == null || g.lon == null) continue;
+			ids.add(g.vehicle.checkInId);
+		}
+		return ids;
+	});
+
+	function sagEsc(s: string): string {
+		return s.replace(/[&<>"]/g, (c) =>
+			c === '&' ? '&amp;' : c === '<' ? '&lt;' : c === '>' ? '&gt;' : '&quot;'
+		);
+	}
+
+	interface SagTierPaint {
+		/** CSS value usable inside a style attribute (a var() reference). */
+		color: string;
+		soft: string;
+		/** Resolved colour, for a Leaflet stroke — SVG presentation attributes
+		 *  do not accept var(). */
+		stroke: string;
+		code: string;
+		word: string;
+	}
+
+	/**
+	 * Tier paint for one request. Keyed through tierById()/tierStyle() and
+	 * NEVER by tier name: the ladder is agency data, so "emergency" is not a
+	 * value this component is allowed to know. An unknown id falls back to the
+	 * lowest rung rather than inventing urgency.
+	 */
+	function sagTierPaint(priority: string): SagTierPaint {
+		const tier = tierById($rideLadder, priority);
+		if (!tier) {
+			return {
+				color: 'var(--color-ride-low)',
+				soft: 'var(--color-ride-low-soft)',
+				stroke: cssVal('--color-ride-low', SAG_TOKEN_FALLBACKS.muted),
+				code: 'SG',
+				word: 'Unranked'
+			};
+		}
+		const st = tierStyle(tier);
+		return {
+			color: `var(${st.colorVar})`,
+			soft: `var(${st.softVar})`,
+			stroke: cssVal(st.colorVar, SAG_TOKEN_FALLBACKS.muted),
+			code: st.code,
+			word: st.ariaWord
+		};
+	}
+
+	/** Desktop 1x, touch 1.25x (spec §11). One scalar, so every SAG marker
+	 *  grows together and the hit padding stays >= 44px either way. */
+	function sagScale(): number {
+		return sagTouch ? 1.25 : 1;
+	}
+
+	// ---- pickup pin (§3.1) -------------------------------------------------
+
+	function sagPinIcon(
+		p: PlacedRequest,
+		needs: boolean,
+		assigned: boolean,
+		focused: boolean,
+		pulse: boolean
+	): L.DivIconOptions {
+		const k = sagScale();
+		const w = Math.round(38 * k);
+		const h = Math.round(44 * k);
+		const paint = sagTierPaint(p.request.priority);
+		// needsVehicle is encoded three ways at once: a DASHED outer ring, the
+		// rider numeral (absent at zero), and a two-cycle arrival pulse. An
+		// assigned-but-not-loaded request keeps the ring but goes solid and
+		// loses the numeral — the tier did not change, so the colour does not.
+		const ring = needs
+			? `<path class="sag-pin-ring" d="${SAG_PIN_RING}"/>`
+			: assigned
+				? `<path class="sag-pin-ring sag-pin-ring--solid" d="${SAG_PIN_RING}"/>`
+				: '';
+		const count = needs ? `<span class="sag-pin-count">${p.waiting}</span>` : '';
+		const cls = [
+			'sag-marker',
+			'sag-pin',
+			needs ? 'sag-pin--needs' : '',
+			focused ? 'sag-pin--focused' : '',
+			pulse ? 'sag-pin--pulse' : ''
+		]
+			.filter(Boolean)
+			.join(' ');
+		return {
+			className: cls,
+			html:
+				`<div class="sag-pin-inner" style="--sag-tier:${paint.color};--sag-tier-soft:${paint.soft};width:${w}px;height:${h}px">` +
+				`<svg viewBox="0 0 38 44" width="${w}" height="${h}" aria-hidden="true" focusable="false">` +
+				ring +
+				// An opaque --color-surface base under the tier's soft tint, so
+				// the pin reads the same over a dark forest tile and a white
+				// snowfield. Casing next, coloured stroke on top: the
+				// established recipe for a stroke that has to survive a bright
+				// tile underneath.
+				`<path class="sag-pin-base" d="${SAG_PIN_BODY}"/>` +
+				`<path class="sag-pin-casing" d="${SAG_PIN_BODY}"/>` +
+				`<path class="sag-pin-body" d="${SAG_PIN_BODY}"/>` +
+				`</svg>` +
+				`<span class="sag-pin-text"><span class="sag-pin-code">${sagEsc(paint.code)}</span>${count}</span>` +
+				`</div>`,
+			iconSize: [w, h],
+			// The apex, at the point. The ring's 3px overhang is decoration and
+			// deliberately does not move the anchor.
+			iconAnchor: [Math.round(19 * k), Math.round(39 * k)]
+		};
+	}
+
+	/** Words, never geometry (spec §3.4/§8). */
+	function sagPinTooltip(p: PlacedRequest): string {
+		const paint = sagTierPaint(p.request.priority);
+		const pt = p.pickup;
+		const where = pt.placed ? pt.label : pt.label;
+		const who = p.waiting > 0 ? `${p.waiting} waiting for a vehicle` : 'no one waiting';
+		return `${paint.word} — SAG ${p.request.sequence}, ${where}, ${who}`;
+	}
+
+	// ---- dropoff pennant (§3.2) -------------------------------------------
+
+	function sagPennantIcon(kind: string): L.DivIconOptions {
+		const k = sagScale();
+		const w = Math.round(20 * k);
+		const h = Math.round(24 * k);
+		// Only one dropoff variant is loud. A hospital dropoff takes the van off
+		// the course for an hour, which is an operational fact worth seeing;
+		// every other destination is deliberately quiet and never tier-coloured,
+		// because the destination is not the urgent thing — the pickup is.
+		const hospital = kind === 'hospital';
+		const flagFill = hospital ? 'url(#sag-hatch)' : 'currentColor';
+		const cross = hospital
+			? '<path class="sag-pennant-cross" d="M8 4.2h2.2v2.1H12.4v2.1H10.2v2.1H8V8.4H5.8V6.3H8z"/>'
+			: '';
+		return {
+			className: `sag-marker sag-pennant${hospital ? ' sag-pennant--hospital' : ''}`,
+			html:
+				`<div class="sag-pennant-inner" style="width:${w}px;height:${h}px">` +
+				`<svg viewBox="0 0 20 24" width="${w}" height="${h}" aria-hidden="true" focusable="false">` +
+				`<path class="sag-pennant-casing" d="M3 2V24"/>` +
+				`<path class="sag-pennant-pole" d="M3 2V24"/>` +
+				`<path class="sag-pennant-flag" d="M3 2.5h13l-3.5 4.75L16 12H3z" fill="${flagFill}"/>` +
+				cross +
+				`</svg></div>`,
+			iconSize: [w, h],
+			// The pole's foot: the flag flies above the place, the pole marks it.
+			iconAnchor: [Math.round(3 * k), h]
+		};
+	}
+
+	// ---- vehicle chit (§3.3) and its load glyph (§3.4) --------------------
+
+	/**
+	 * One segmented capacity bar.
+	 *
+	 * Seats and racks are NOT symmetric, and this is where the marker says so.
+	 * A full seat row closes its frame (2px) and the chit gains a `⊘` badge: a
+	 * seat refusal STATES A LIMIT, and the server will refuse the dispatch. A
+	 * rack overflow instead draws a hatched nub OUTSIDE the frame — the bike
+	 * physically in the bed — because a rack overflow ASKS A QUESTION the
+	 * operator is allowed to answer yes to. Drawing these the same way would be
+	 * a correctness bug, not a style one.
+	 *
+	 * Above 6 slots the pip count is unreadable at 8px, so the row collapses to
+	 * one proportional bar plus an honest numeral.
+	 */
+	function sagBarHtml(kind: 'seats' | 'racks', total: number, committed: number): string {
+		const over = Math.max(0, committed - total);
+		const closed = kind === 'seats' && total > 0 && committed >= total;
+		const frameCls = `sag-bar sag-bar--${kind}${closed ? ' sag-bar--closed' : ''}`;
+		let frame: string;
+		if (total > 0 && total <= 6) {
+			let segs = '';
+			for (let i = 0; i < total; i++) {
+				segs += `<i class="sag-seg${i < committed ? ' sag-seg--on' : ''}"></i>`;
+			}
+			frame = `<span class="${frameCls}">${segs}</span>`;
+		} else {
+			const pct = total > 0 ? Math.min(100, Math.round((committed / total) * 100)) : 0;
+			frame =
+				`<span class="${frameCls} sag-bar--prop"><i class="sag-fill" style="width:${pct}%"></i></span>` +
+				`<span class="sag-bar-num">${committed}/${total}</span>`;
+		}
+		const nub = over > 0 && kind === 'racks' ? `<i class="sag-nub" data-over="${over}"></i>` : '';
+		return `<span class="sag-row sag-row--${kind}">${frame}${nub}</span>`;
+	}
+
+	/** 'SAG 3' | 'W1ABC…'. Full name lives in the tooltip and the aria-label. */
+	function sagChitLabel(g: SagVehicleGeo): string {
+		const raw = g.vehicle.tacticalCall || g.vehicle.callsign || '';
+		return raw.length > 7 ? `${raw.slice(0, 6)}…` : raw;
+	}
+
+	function sagChitTooltip(g: SagVehicleGeo, now: number): string {
+		const v = g.vehicle;
+		const name = v.tacticalCall ? `${v.tacticalCall} (${v.callsign})` : v.callsign;
+		const age = ageState(g.lastHeard, now);
+		// A never-reported value never renders as "0 minutes old".
+		const pos =
+			age === 'never'
+				? 'position never set'
+				: `position ${ageText(g.lastHeard, now)} old${age === 'stale' ? ' — stale' : ''}`;
+		const hand = g.source === 'voice' ? ', position set by hand' : '';
+		return (
+			`${name}, ${v.committedSeats} of ${v.seats} seats committed, ` +
+			`${v.committedRacks} of ${v.rackSlots} racks committed, ${pos}${hand}`
+		);
+	}
+
+	function sagChitIcon(
+		g: SagVehicleGeo,
+		now: number,
+		opts: { focused: boolean; rank: number; badge: string; dimmed: boolean }
+	): L.DivIconOptions {
+		const k = sagScale();
+		const w = Math.round(56 * k);
+		const h = Math.round(28 * k);
+		const v = g.vehicle;
+		const age = ageState(g.lastHeard, now);
+		const cls = [
+			'sag-marker',
+			'sag-chit',
+			`sag-chit--${age}`,
+			opts.focused ? 'sag-chit--focused' : '',
+			opts.dimmed ? 'sag-chit--dimmed' : '',
+			g.source === 'voice' ? 'sag-chit--hand' : ''
+		]
+			.filter(Boolean)
+			.join(' ');
+		// An `aging` or `stale` position wears its age; a fresh one does not,
+		// because a number that is always there stops being read.
+		const ageTag =
+			age === 'aging' || age === 'stale'
+				? `<span class="sag-chit-age">${sagEsc(ageText(g.lastHeard, now))}</span>`
+				: '';
+		const refusal = v.availableSeats <= 0 ? `<span class="sag-chit-stop">⊘</span>` : '';
+		const cap = opts.rank >= 0 && opts.rank < SAG_RANK_CAPS.length
+			? `<span class="sag-chit-rank">${SAG_RANK_CAPS[opts.rank]}</span>`
+			: '';
+		const badge = opts.badge ? `<span class="sag-chit-why">${sagEsc(opts.badge)}</span>` : '';
+		// Hand-placed positions get a dotted tail to a ground mark. Source is
+		// encoded by the tail, never by colour.
+		const tail = g.source === 'voice' ? `<span class="sag-chit-tail">✛</span>` : '';
+		return {
+			className: cls,
+			html:
+				// min-width, not width: --sag-chit-w is the nominal box the pane
+				// and the hit target are sized from, but a tactical call must
+				// never be squeezed to "S". The inner is centred on the anchor
+				// in CSS, so growing it stays anchored on the fix.
+				`<div class="sag-chit-inner" style="min-width:${w}px;height:${h}px">` +
+				`<span class="sag-chit-label">${sagEsc(sagChitLabel(g))}</span>` +
+				`<span class="sag-chit-bars">` +
+				sagBarHtml('seats', v.seats, v.committedSeats) +
+				sagBarHtml('racks', v.rackSlots, v.committedRacks) +
+				`</span>` +
+				refusal +
+				ageTag +
+				cap +
+				badge +
+				tail +
+				`</div>`,
+			iconSize: [w, h],
+			// CENTRE, not a point: a chit is an area the van is somewhere in.
+			iconAnchor: [Math.round(w / 2), Math.round(h / 2)]
+		};
+	}
+
+	// ---- candidate badges and distance words (§6) -------------------------
+
+	/** Every distance says what kind of distance it is. A bare number that
+	 *  silently means "backwards up a course full of oncoming riders" is the
+	 *  exact class of error this overlay exists to prevent. */
+	function sagDistanceText(c: SagCandidate): string {
+		if (c.ambiguous) return 'two possible positions';
+		if (c.distanceMeters == null) return 'distance unknown';
+		const mi = (c.distanceMeters / SAG_METERS_PER_MILE).toFixed(1);
+		const where = c.distanceKind === 'direct' ? 'direct (off course)' : (c.direction ?? '');
+		const eta = c.etaMinutes == null ? '' : ` · ~${c.etaMinutes}${c.etaCapped ? '+' : ''} min`;
+		// A stale fix says so ON THE LINE. Without this the map hands the
+		// operator "3.1 mi ahead · ~7 min" computed from a half-hour-old
+		// position while the chit it points at is dashed and wrapped in a
+		// twelve-mile drift halo — the two surfaces contradicting each other,
+		// with the confident one winning.
+		const stale = c.age === 'stale' || c.age === 'never' ? ' · from a stale fix' : '';
+		return `${mi} mi ${where}${eta}${stale}`.replace(/\s+/g, ' ').trim();
+	}
+
+	/** The reason a chit is greyed rather than ranked. Never an empty absence:
+	 *  a vehicle the operator cannot account for is worse than a greyed one. */
+	function sagCandidateBadge(c: SagCandidate | undefined): string {
+		if (!c) return '';
+		switch (c.excludedReason) {
+			case 'released':
+				return '⊘ checked out';
+			case 'no-seats':
+				return '⊘ no seat';
+			case 'no-position':
+				return '? no position';
+		}
+		if (c.ambiguous) return '? two positions';
+		if (c.eligibility === 'partial') return `seats ${c.seatsOffered}`;
+		if (c.age === 'stale') return 'stale';
+		return '';
+	}
+
+	// ---- effects -----------------------------------------------------------
+
+	// Pickup pins.
+	$effect(() => {
+		if (!map) return;
+		const on = showSag;
+		const reqs = sagRequests;
+		const focusId = sagFocusId;
+		const _touch = sagTouch;
+		const _ladder = $rideLadder;
+
+		for (const [, layer] of sagPinMarkers) layer.remove();
+		sagPinMarkers.clear();
+
+		if (!on) {
+			sagPulsed.clear();
+			return;
+		}
+
+		const live = new Set<string>();
+		for (const p of reqs) {
+			const pt = p.pickup;
+			// An unplaceable pickup is NOT drawn and is NOT dropped: it is a
+			// first-class dock state (spec §2). Guessing a location here would
+			// put a van on a road the rider is not on.
+			if (!pt.placed) continue;
+			const r = p.request;
+			live.add(r.id);
+			const assigned = r.legs.some((l) => SAG_ACTIVE_LEG.has(l.status));
+			const needs = p.waiting > 0;
+			// Two cycles, once, on arrival only. Nothing on this map pulses
+			// continuously, and prefers-reduced-motion kills even this.
+			const pulse = needs && !sagPulsed.has(r.id);
+			sagPulsed.add(r.id);
+
+			const marker = L.marker([pt.lat, pt.lon], {
+				icon: L.divIcon(sagPinIcon(p, needs, assigned, r.id === focusId, pulse)),
+				pane: 'sagMarkerPane',
+				// The dock is the keyboard surface, not the map: thirty markers
+				// would otherwise be thirty tab stops (spec §8).
+				keyboard: false,
+				interactive: true
+			}).addTo(map);
+			marker.bindTooltip(sagPinTooltip(p), {
+				permanent: false,
+				direction: 'top',
+				className: 'annotation-tooltip'
+			});
+			marker.on('click', (e: L.LeafletMouseEvent) => {
+				// Through the same choke point as operator halos and mission
+				// flags, which is what makes every pick mode work over this
+				// layer — including "Place on map" for a sibling request.
+				layerClick(e, { kind: 'map' }, marker.getLatLng(), () => onSagPickupClick?.(r.id));
+			});
+			marker.getElement()?.setAttribute('aria-hidden', 'true');
+			sagPinMarkers.set(r.id, marker);
+		}
+		// Forget the pulse memory of requests that have closed, so a recycled id
+		// is not silently denied its arrival animation.
+		for (const id of [...sagPulsed]) if (!live.has(id)) sagPulsed.delete(id);
+	});
+
+	// Vehicle chits and their drift halos.
+	$effect(() => {
+		if (!map) return;
+		const on = showSag;
+		const vehicles = sagVehicles;
+		const dispatch = sagDispatchMode;
+		const candidates = sagCandidates;
+		const focusVehicle = sagFocusVehicleId;
+		const _touch = sagTouch;
+		const _tick = sagTick;
+		const tokens = readSagTokens();
+		const now = Date.now();
+
+		for (const [, layer] of sagChitMarkers) layer.remove();
+		sagChitMarkers.clear();
+		for (const [, halo] of sagDriftHalos) halo.remove();
+		sagDriftHalos.clear();
+
+		if (!on) return;
+
+		// Rank caps and "why not" badges only exist inside dispatch focus.
+		const rankOf = new Map<string, number>();
+		const candOf = new Map<string, SagCandidate>();
+		if (dispatch && candidates) {
+			candidates.ranked.forEach((c, i) => {
+				rankOf.set(c.id, i);
+				candOf.set(c.id, c);
+			});
+			for (const c of candidates.excluded) candOf.set(c.id, c);
+		}
+
+		for (const g of vehicles) {
+			if (g.lat == null || g.lon == null) continue; // `never` is a dock state, not a pin
+			const id = g.vehicle.checkInId;
+			const age = ageState(g.lastHeard, now);
+			const cand = candOf.get(id);
+			const rank = rankOf.get(id) ?? -1;
+
+			// The drift halo: a 40-minute-old fix is not where the driver is,
+			// and a crisp chit there claims it is. The halo says "somewhere in
+			// here", and its being visually enormous is the point — a stale unit
+			// SHOULD look untrustworthy beside a fresh one.
+			if (age === 'stale' && g.lastHeard) {
+				const minutes = Math.max(0, (now - Date.parse(g.lastHeard)) / 60_000);
+				const radius = Math.min(
+					SAG_DRIFT_CAP_METERS,
+					(minutes / 60) * SAG_DRIFT_MPH * SAG_METERS_PER_MILE
+				);
+				if (radius > 0) {
+					const halo = L.circle([g.lat, g.lon], {
+						radius,
+						pane: 'sagLinkPane',
+						renderer: sagLinkRenderer ?? undefined,
+						// A dashed edge, not a filled blob: the circle has to read
+						// as "somewhere inside this radius", which is a boundary,
+						// not a region anything is true of.
+						stroke: true,
+						color: tokens.unit,
+						weight: 1,
+						opacity: 0.45,
+						dashArray: '3 6',
+						fillColor: tokens.drift,
+						fillOpacity: 1,
+						interactive: false,
+						className: 'sag-drift'
+					}).addTo(map);
+					sagDriftHalos.set(id, halo);
+				}
+			}
+
+			const marker = L.marker([g.lat, g.lon], {
+				icon: L.divIcon(
+					sagChitIcon(g, now, {
+						focused: id === focusVehicle,
+						rank: dispatch ? rank : -1,
+						badge: dispatch ? sagCandidateBadge(cand) : '',
+						dimmed: dispatch && rank < 0
+					})
+				),
+				pane: 'sagMarkerPane',
+				keyboard: false,
+				interactive: true
+			}).addTo(map);
+			marker.bindTooltip(sagChitTooltip(g, now), {
+				permanent: false,
+				direction: 'top',
+				className: 'annotation-tooltip'
+			});
+			marker.on('click', (e: L.LeafletMouseEvent) => {
+				// A chit stands in for the vehicle's check-in, so a pick mode
+				// running over it gets the operator it would have got from the
+				// halo the chit replaced.
+				layerClick(
+					e,
+					{ kind: 'operator', id, label: g.vehicle.tacticalCall || g.vehicle.callsign },
+					marker.getLatLng(),
+					() => onSagVehicleClick?.(id)
+				);
+			});
+			marker.getElement()?.setAttribute('aria-hidden', 'true');
+			sagChitMarkers.set(id, marker);
+		}
+	});
+
+	// Lines (§5): the dropoff tie for the focused request, one leg line per
+	// active leg, and the dispatch-focus leader lines.
+	//
+	// All-lines-always is spaghetti, so the default is `selected`: the focused
+	// request's legs only. Drawing all eight legs of a bad hour is honest right
+	// up to the moment the map has to work.
+	$effect(() => {
+		if (!map) return;
+		const on = showSag;
+		const reqs = sagRequests;
+		const vehicles = sagVehicles;
+		const focusId = sagFocusId;
+		const focusVehicle = sagFocusVehicleId;
+		const dispatch = sagDispatchMode;
+		const candidates = sagCandidates;
+		const legMode = sagLegLines;
+		const _ladder = $rideLadder;
+		const _tick = sagTick;
+		const tokens = readSagTokens();
+
+		for (const layer of sagLines) layer.remove();
+		sagLines = [];
+		// The pennant is cleared here rather than in its own effect because it
+		// is drawn for the focused request only — same lifetime as the lines.
+		for (const [, layer] of sagDropMarkers) layer.remove();
+		sagDropMarkers.clear();
+
+		if (!on) return;
+
+		const focused = focusId ? (reqs.find((p) => p.request.id === focusId) ?? null) : null;
+
+		/** Every SAG stroke is drawn twice: casing first, colour on top. */
+		const stroke = (
+			pts: L.LatLngExpression[],
+			color: string,
+			weight: number,
+			dashArray: string | undefined,
+			className: string
+		) => {
+			const casing = L.polyline(pts, {
+				pane: 'sagLinkPane',
+				renderer: sagLinkRenderer ?? undefined,
+				color: tokens.casing,
+				weight: weight + 2,
+				dashArray,
+				interactive: false,
+				className: `${className} sag-line-casing`
+			}).addTo(map);
+			const line = L.polyline(pts, {
+				pane: 'sagLinkPane',
+				renderer: sagLinkRenderer ?? undefined,
+				color,
+				weight,
+				dashArray,
+				// The line is never a click target; the chit and the pin are.
+				interactive: false,
+				className
+			}).addTo(map);
+			sagLines.push(casing, line);
+			return line;
+		};
+
+		// 5.1 pickup -> dropoff. A STRAIGHT tie-line, never a route trace: we
+		// have no routing engine, and tracing the course between them would
+		// imply the van follows the course, which it frequently does not. A
+		// straight line reads "these two belong together", which is all it has
+		// to mean.
+		const pickup = focused?.pickup;
+		const dropoff = focused?.dropoff;
+		if (focused && pickup?.placed && dropoff?.placed) {
+			stroke(
+				[
+					[pickup.lat, pickup.lon],
+					[dropoff.lat, dropoff.lon]
+				],
+				tokens.muted,
+				2,
+				tokens.dashTie,
+				'sag-line sag-line--tie'
+			);
+			const mid = L.latLng(
+				(pickup.lat + dropoff.lat) / 2,
+				(pickup.lon + dropoff.lon) / 2
+			);
+			const chevron = L.marker(mid, {
+				icon: L.divIcon({
+					className: 'sag-marker sag-chevron',
+					html: '<span>›</span>',
+					iconSize: [12, 12],
+					iconAnchor: [6, 6]
+				}),
+				pane: 'sagLinkPane',
+				keyboard: false,
+				interactive: false
+			}).addTo(map);
+			chevron.getElement()?.setAttribute('aria-hidden', 'true');
+			sagLines.push(chevron);
+		}
+
+		// The dropoff pennant is drawn for the FOCUSED request only. All of them
+		// at once is a field of grey pennants sitting on top of the rest stops
+		// they usually already are.
+		if (focused && dropoff?.placed) {
+			const pennant = L.marker([dropoff.lat, dropoff.lon], {
+				icon: L.divIcon(sagPennantIcon(focused.request.dropoff.kind)),
+				pane: 'sagMarkerPane',
+				keyboard: false,
+				interactive: false
+			}).addTo(map);
+			pennant.bindTooltip(`Dropoff — ${sagEsc(dropoff.label)}`, {
+				permanent: false,
+				direction: 'top',
+				className: 'annotation-tooltip'
+			});
+			pennant.getElement()?.setAttribute('aria-hidden', 'true');
+			sagDropMarkers.set(focused.request.id, pennant);
+		}
+
+		const vehicleById = new Map(vehicles.map((g) => [g.vehicle.checkInId, g]));
+
+		// 5.2 vehicle -> where it is going NEXT. The line answers "where is this
+		// van headed", never "what is this van historically attached to", so it
+		// retargets the moment the riders are aboard.
+		// Which requests get leg lines. `selected` (the default) draws the
+		// focused request's legs only, which keeps a bad hour readable; `all`
+		// is the honest-but-crowded view; `off` is for an operator who wants
+		// the pins and nothing else. A dispatch must never be invisible
+		// SOLELY because nothing happens to be focused, so `all` is what a
+		// crowded map degrades to, not silence.
+		// `selected` means the focused REQUEST's legs *and* the focused
+		// VEHICLE's legs. A chit click asks "where is this van headed", and
+		// answering it from the request side only would mean the question is
+		// unanswerable for any van whose request is not the focused one.
+		const legRequests =
+			legMode === 'off'
+				? []
+				: legMode === 'all'
+					? reqs
+					: focusVehicle
+						? reqs.filter(
+								(p) =>
+									p === focused ||
+									p.request.legs.some(
+										(l) => l.vehicleCheckInId === focusVehicle && SAG_ACTIVE_LEG.has(l.status)
+									)
+							)
+						: focused
+							? [focused]
+							: [];
+
+		for (const p of legRequests) {
+			const pk = p.pickup;
+			const dp = p.dropoff;
+			const paint = sagTierPaint(p.request.priority);
+			for (const leg of p.request.legs) {
+				if (!SAG_ACTIVE_LEG.has(leg.status)) continue;
+				// In `selected` mode a request pulled in by the VEHICLE draws
+				// only that vehicle's leg — not every leg on that request.
+				if (legMode === 'selected' && focusVehicle && p !== focused && leg.vehicleCheckInId !== focusVehicle)
+					continue;
+				const g = vehicleById.get(leg.vehicleCheckInId);
+				if (!g || g.lat == null || g.lon == null) continue;
+				const target = leg.status === 'loaded' ? dp : pk;
+				if (!target.placed) continue;
+				stroke(
+					[
+						[g.lat, g.lon],
+						[target.lat, target.lon]
+					],
+					paint.stroke,
+					2,
+					// dashed = told, not yet rolling. Everything from `enroute` on is
+					// solid, because the van is actually moving.
+					leg.status === 'dispatched' ? tokens.dashLeg : undefined,
+					`sag-line sag-line--leg sag-line--${leg.status}`
+				);
+				if (leg.status === 'onscene' && pk.placed) {
+					const ring = L.circleMarker([pk.lat, pk.lon], {
+						pane: 'sagLinkPane',
+						renderer: sagLinkRenderer ?? undefined,
+						radius: 9,
+						weight: 2,
+						color: paint.stroke,
+						fill: false,
+						interactive: false,
+						className: 'sag-onscene-ring'
+					}).addTo(map);
+					sagLines.push(ring);
+				}
+			}
+		}
+
+		// Dispatch focus: a leader line from each of the top three candidates to
+		// the pickup, labelled with the distance AND its direction word.
+		if (dispatch && candidates && pickup?.placed) {
+			candidates.ranked.slice(0, SAG_RANK_CAPS.length).forEach((c) => {
+				const g = vehicleById.get(c.id);
+				if (!g || g.lat == null || g.lon == null) return;
+				const shaky = c.age === 'stale' || c.age === 'never' || c.ambiguous;
+				stroke(
+					[
+						[g.lat, g.lon],
+						[pickup.lat, pickup.lon]
+					],
+					shaky ? tokens.muted : tokens.unit,
+					1.5,
+					'2 4',
+					`sag-line sag-line--leader${shaky ? ' sag-line--leader-stale' : ''}`
+				);
+				// The label goes a third of the way along the line FROM THE VAN,
+				// not at the midpoint. On a linear course every candidate's
+				// leader line runs down the same corridor to the same pickup,
+				// so their midpoints cluster — and in practice landed squarely
+				// on top of the chits whose load the operator is comparing.
+				// Anchoring near the van spreads them out and keeps each label
+				// beside the thing it is about.
+				const anchor = L.marker(
+					[g.lat + (pickup.lat - g.lat) * 0.33, g.lon + (pickup.lon - g.lon) * 0.33],
+					{
+						icon: L.divIcon({ className: 'sag-marker sag-leader-anchor', html: '', iconSize: [1, 1] }),
+						pane: 'sagLinkPane',
+						keyboard: false,
+						interactive: false
+					}
+				).addTo(map);
+				anchor.getElement()?.setAttribute('aria-hidden', 'true');
+				anchor.bindTooltip(sagDistanceText(c), {
+					permanent: true,
+					direction: 'right',
+					offset: [6, 0],
+					className: `sag-leader-tip${shaky ? ' sag-leader-tip--stale' : ''}`
+				});
+				sagLines.push(anchor);
+			});
+		}
+	});
+
 </script>
 
 <svelte:window onkeydown={handleKeyDown} />
 
-<div class="map-container" class:drawing={drawingMode !== null} class:placing={placingOperator !== null || placingAnnotation !== null} bind:this={mapEl}></div>
+<div class="map-container" class:drawing={drawingMode !== null} class:placing={placingOperator !== null || placingAnnotation !== null || placingSagLocation !== null} class:sag-dim={showSag && sagDispatchMode} bind:this={mapEl}></div>
 
 <!-- Hatch patterns for warning-tier Severe/Extreme NWS alert polygons. A
      sibling of the map container by design: fragment-id references
@@ -2655,6 +3638,13 @@
 		</pattern>
 		<pattern id="wx-hatch-warning-stale" patternUnits="userSpaceOnUse" width="6" height="6" patternTransform="rotate(45)">
 			<line x1="0" y1="0" x2="0" y2="6" stroke-width="1.5" style="stroke: var(--color-wx-expired)" />
+		</pattern>
+		<!-- The hospital dropoff pennant's fill. Same document-wide fragment-id
+		     trick as the wx hatches above: the <svg> Leaflet injects inside a
+		     divIcon can reference a pattern defined out here. -->
+		<pattern id="sag-hatch" patternUnits="userSpaceOnUse" width="4" height="4" patternTransform="rotate(45)">
+			<rect width="4" height="4" style="fill: var(--color-surface)" />
+			<line x1="0" y1="0" x2="0" y2="4" stroke-width="1.5" style="stroke: var(--color-text-muted)" />
 		</pattern>
 	</defs>
 </svg>
@@ -2675,6 +3665,13 @@
 {#if placingOperator}
 	<div class="place-hint">
 		Click to set position for <strong>{placingOperator.callsign}</strong>
+		<kbd>Esc</kbd> cancel
+	</div>
+{/if}
+
+{#if placingSagLocation}
+	<div class="place-hint" style="border-color: var(--color-sag-unit);">
+		Click to set the {placingSagLocation.which} for <strong>{placingSagLocation.label}</strong>
 		<kbd>Esc</kbd> cancel
 	</div>
 {/if}
@@ -3098,4 +4095,457 @@
 		color: var(--color-text-muted);
 		font-style: italic;
 	}
+
+	/* ===================================================================
+	   SAG map overlay — docs/sag-map-spec.md §3, §4, §9.
+
+	   Every selector below is :global, and has to be. L.divIcon injects its
+	   markup OUTSIDE the Svelte component tree, so a scoped rule never reaches
+	   it and svelte drops the rule without saying so. This is also a deliberate
+	   divergence from the sibling .net-voice-marker / .net-mission-flag
+	   markers, which pass their colours inline: the capacity bars need
+	   ::before/::after and a hatched fill, neither of which is expressible as
+	   an inline style. The tokens all resolve because they are declared on
+	   :root in app.css, an ancestor of the Leaflet container.
+	   =================================================================== */
+
+	:global(.sag-marker) {
+		background: none !important;
+		border: none !important;
+	}
+
+	/* ---- pickup pin (§3.1): a body that points DOWN at a spot ---- */
+
+	:global(.sag-pin-inner) {
+		position: relative;
+	}
+
+	:global(.sag-pin svg) {
+		display: block;
+		overflow: visible;
+	}
+
+	:global(.sag-pin .sag-pin-base) {
+		fill: var(--color-surface, #16213e);
+		stroke: none;
+	}
+
+	:global(.sag-pin .sag-pin-casing) {
+		fill: none;
+		stroke: var(--wx-casing);
+		stroke-width: 4;
+		stroke-linejoin: round;
+	}
+
+	:global(.sag-pin .sag-pin-body) {
+		fill: var(--sag-tier-soft);
+		stroke: var(--sag-tier);
+		stroke-width: 2;
+		stroke-linejoin: round;
+	}
+
+	/* NEEDS VEHICLE, channel one of three: a dashed outer ring. Channel two is
+	   the rider numeral, channel three the arrival pulse. Colour is never
+	   alone. An assigned request keeps the ring but goes solid — the tier did
+	   not change, so the fill does not either. */
+	:global(.sag-pin .sag-pin-ring) {
+		fill: none;
+		stroke: var(--sag-tier);
+		stroke-width: 1.5;
+		stroke-dasharray: 3 3;
+		opacity: 0.9;
+	}
+
+	:global(.sag-pin .sag-pin-ring--solid) {
+		stroke-dasharray: none;
+		opacity: 0.7;
+	}
+
+	:global(.sag-pin--focused .sag-pin-body) {
+		stroke-width: 3;
+	}
+
+	/* The two-letter code is drawn in --color-text, NEVER in the tier colour:
+	   --color-ride-emergency and --color-ride-medium alias --color-error and
+	   --color-info, which fail AA at normal text size (app.css says so). */
+	:global(.sag-pin-text) {
+		position: absolute;
+		inset: 0;
+		display: flex;
+		flex-direction: column;
+		align-items: center;
+		justify-content: center;
+		gap: 1px;
+		padding-bottom: 8px;
+		line-height: 1;
+		pointer-events: none;
+	}
+
+	:global(.sag-pin-code) {
+		font-size: 11px;
+		font-weight: 600;
+		letter-spacing: 0.02em;
+		color: var(--color-text, #eee);
+	}
+
+	:global(.sag-pin-count) {
+		font-size: 12px;
+		font-weight: 600;
+		color: var(--color-text, #eee);
+	}
+
+	/* The only animation in the whole overlay: two cycles, on arrival, once. */
+	@keyframes sag-pin-pulse {
+		0% { transform: scale(1); }
+		50% { transform: scale(1.12); }
+		100% { transform: scale(1); }
+	}
+
+	:global(.sag-pin--pulse .sag-pin-inner) {
+		animation: sag-pin-pulse 1.6s var(--ease-out, ease-out) 2;
+		transform-origin: 50% 89%;
+	}
+
+	@media (prefers-reduced-motion: reduce) {
+		:global(.sag-pin--pulse .sag-pin-inner) { animation: none; }
+	}
+
+	/* ---- dropoff pennant (§3.2): quieter, smaller, never tier-coloured ---- */
+
+	:global(.sag-pennant) {
+		color: var(--color-text-muted, #888);
+	}
+
+	:global(.sag-pennant svg) {
+		display: block;
+		overflow: visible;
+	}
+
+	:global(.sag-pennant .sag-pennant-casing) {
+		fill: none;
+		stroke: var(--wx-casing);
+		stroke-width: 3;
+	}
+
+	:global(.sag-pennant .sag-pennant-pole) {
+		fill: none;
+		stroke: currentColor;
+		stroke-width: 1.25;
+	}
+
+	:global(.sag-pennant .sag-pennant-flag) {
+		stroke: currentColor;
+		stroke-width: 1;
+		stroke-linejoin: round;
+	}
+
+	:global(.sag-pennant .sag-pennant-cross) {
+		fill: var(--color-text, #eee);
+		stroke: none;
+	}
+
+	/* ---- vehicle chit (§3.3): a card that sits ON a spot ---- */
+
+	:global(.sag-chit-inner) {
+		/* Centred on the marker's anchor, so a chit that grows to fit a long
+		   tactical call still sits ON the fix rather than beside it. */
+		position: absolute;
+		left: 50%;
+		top: 50%;
+		transform: translate(-50%, -50%);
+		width: max-content;
+		box-sizing: border-box;
+		display: grid;
+		grid-template-columns: auto auto;
+		justify-content: space-between;
+		align-items: center;
+		gap: 4px;
+		padding: 2px 4px;
+		background: var(--color-surface, #16213e);
+		border: 2px solid var(--color-sag-unit);
+		border-radius: var(--radius-sm, 4px);
+		box-shadow: 0 0 0 1px var(--wx-casing), var(--shadow-md, 0 2px 6px rgba(0, 0, 0, 0.35));
+		color: var(--color-sag-unit);
+		font-size: 11px;
+		font-weight: 600;
+		line-height: 1;
+	}
+
+	/* The chit is 28px tall; the hit target is 44 regardless (§8). */
+	:global(.sag-chit-inner::before) {
+		content: '';
+		position: absolute;
+		left: 50%;
+		top: 50%;
+		width: var(--sag-hit, 44px);
+		height: var(--sag-hit, 44px);
+		transform: translate(-50%, -50%);
+	}
+
+	:global(.sag-chit-label) {
+		white-space: nowrap;
+	}
+
+	/* Top row is ALWAYS seats, bottom row is ALWAYS racks. Position is the
+	   channel; there are no letter prefixes to read at arm's length. */
+	:global(.sag-chit-bars) {
+		display: flex;
+		flex-direction: column;
+		gap: 2px;
+	}
+
+	:global(.sag-row) {
+		display: flex;
+		align-items: center;
+	}
+
+	:global(.sag-bar) {
+		display: flex;
+		/* 2px is the minimum gap that survives a sun-washed screen at arm's
+		   length (§8, outdoor legibility). */
+		gap: 2px;
+		padding: 1px;
+		border: 1px solid currentColor;
+		border-radius: 2px;
+	}
+
+	/* Exactly full, seats only: the frame thickens and CLOSES. A seat limit is
+	   a wall you can see — the server will refuse the dispatch. */
+	:global(.sag-bar--closed) {
+		border-width: 2px;
+		padding: 0;
+	}
+
+	:global(.sag-seg) {
+		width: 3px;
+		height: 5px;
+		border: 1px solid currentColor;
+		border-radius: 1px;
+		background: transparent;
+	}
+
+	/* Position alone carries seats-vs-racks only for an operator who already
+	   knows the convention. Shape carries it for one who does not, and it
+	   survives greyscale and a sun-washed screen: a seat is TALL (a person
+	   upright in a belt), a rack slot is FLAT and WIDE (a bike lying in a
+	   bed). The same asymmetry SagCandidatePanel draws, so the two surfaces
+	   teach the same glyph. */
+	:global(.sag-row--racks .sag-seg) {
+		width: 5px;
+		height: 3px;
+	}
+
+	:global(.sag-seg--on) {
+		background: currentColor;
+	}
+
+	/* Above 6 slots the pip count is unreadable at 8px, so the row collapses to
+	   one proportional bar and an honest numeral. */
+	:global(.sag-bar--prop) {
+		width: 24px;
+		height: 7px;
+		padding: 0;
+		overflow: hidden;
+	}
+
+	:global(.sag-fill) {
+		display: block;
+		height: 100%;
+		background: currentColor;
+	}
+
+	:global(.sag-bar-num) {
+		margin-left: 3px;
+		font-size: 9px;
+	}
+
+	/* A rack overflow draws OUTSIDE the frame — the bike physically in the bed,
+	   spilling over a line rather than hitting a wall. This asymmetry with
+	   .sag-bar--closed is the point: a seat refusal STATES A LIMIT, a rack
+	   overflow ASKS A QUESTION. Making the two look alike would be a
+	   correctness bug, not a style one. */
+	:global(.sag-nub) {
+		width: 5px;
+		height: 7px;
+		margin-left: 3px;
+		border: 1px solid currentColor;
+		border-radius: 1px;
+		background: repeating-linear-gradient(
+			45deg,
+			currentColor 0 1px,
+			transparent 1px 3px
+		);
+	}
+
+	/* Seats full: the refusal badge, the third greyscale-safe channel after the
+	   closed frame and the filled pips. */
+	/* Anchored to the chit's TOP-LEFT rather than hanging off its top-right.
+	   At -8/-8 the glyph sat outside the chit's own casing, overlapping
+	   whatever road or label happened to be there, and read as a separate map
+	   symbol rather than as this vehicle's state. It now overlaps the chit's
+	   own border, which is the only surface guaranteed to be behind it. */
+	:global(.sag-chit-stop) {
+		position: absolute;
+		left: -6px;
+		top: -7px;
+		font-size: 13px;
+		line-height: 1;
+		color: var(--color-error-text, #ff8a80);
+		text-shadow:
+			0 0 2px var(--color-bg, #1a1a2e),
+			0 0 3px var(--color-bg, #1a1a2e);
+	}
+
+	:global(.sag-chit-age) {
+		position: absolute;
+		right: 2px;
+		bottom: -11px;
+		font-size: 9px;
+		font-weight: 600;
+		color: var(--color-warning, #f59e0b);
+		text-shadow: 0 0 2px var(--color-bg, #1a1a2e);
+	}
+
+	:global(.sag-chit--stale .sag-chit-age) {
+		color: var(--color-text-muted, #888);
+	}
+
+	:global(.sag-chit-rank) {
+		position: absolute;
+		left: -12px;
+		top: 50%;
+		transform: translateY(-50%);
+		font-size: 13px;
+		color: var(--color-sag-unit);
+		text-shadow: 0 0 2px var(--color-bg, #1a1a2e);
+	}
+
+	/* Why a chit is greyed rather than ranked. Never an empty absence: a
+	   vehicle the operator cannot account for is worse than a greyed one. */
+	:global(.sag-chit-why) {
+		position: absolute;
+		left: 0;
+		top: calc(100% + 2px);
+		white-space: nowrap;
+		font-size: 9px;
+		font-weight: 600;
+		color: var(--color-text-muted, #888);
+		text-shadow: 0 0 2px var(--color-bg, #1a1a2e);
+	}
+
+	/* Hand-placed position: a dotted tail to a ground mark. Source is encoded
+	   by the TAIL, never by colour. It still ages and still gets a drift halo —
+	   the van drove away regardless of who typed the coordinate. */
+	:global(.sag-chit-tail) {
+		position: absolute;
+		left: 50%;
+		top: 100%;
+		transform: translateX(-50%);
+		padding-top: 10px;
+		font-size: 10px;
+		line-height: 1;
+		color: currentColor;
+	}
+
+	:global(.sag-chit-tail::before) {
+		content: '';
+		position: absolute;
+		left: 50%;
+		top: 0;
+		height: 10px;
+		border-left: 1px dotted currentColor;
+	}
+
+	/* Stale (>20m): dashed border and a muted label, alongside the drift halo
+	   and the literal word "stale" in the tooltip. Three channels again. */
+	:global(.sag-chit--stale .sag-chit-inner) {
+		border-style: dashed;
+		/* The whole chit goes muted, frame included: a position we no longer
+		   believe should not keep wearing the unit colour a fresh one wears. */
+		border-color: var(--color-text-muted, #888);
+		color: var(--color-text-muted, #888);
+	}
+
+	/* The selection ring must not be the layer's own colour: a 2px orange ring
+	   around a 2px orange border is a thicker border, not a selection. The
+	   accent is what every other selected thing in the app wears. */
+	:global(.sag-chit--focused .sag-chit-inner) {
+		box-shadow:
+			0 0 0 2px var(--color-accent, #4ade80),
+			0 0 0 4px var(--wx-casing, rgba(255, 255, 255, 0.55)),
+			var(--shadow-md, 0 2px 6px rgba(0, 0, 0, 0.35));
+	}
+
+	:global(.sag-chit--dimmed .sag-chit-inner) {
+		opacity: 0.5;
+		filter: grayscale(1);
+	}
+
+	/* ---- lines (§5) ---- */
+
+	:global(.sag-chevron) {
+		color: var(--color-text-muted, #888);
+		font-size: 12px;
+		font-weight: 600;
+		line-height: 1;
+		text-align: center;
+		text-shadow: 0 0 2px var(--color-bg, #1a1a2e);
+	}
+
+	:global(.sag-leader-tip) {
+		background: var(--color-surface, #16213e);
+		border: 1px solid var(--color-sag-unit);
+		border-radius: var(--radius-sm, 4px);
+		padding: 1px 5px;
+		font-size: 10px;
+		font-weight: 600;
+		color: var(--color-text, #eee);
+		box-shadow: none;
+	}
+
+	:global(.sag-leader-tip--stale) {
+		border-color: var(--color-text-muted, #888);
+		border-style: dashed;
+		color: var(--color-text-muted, #bbb);
+	}
+
+	:global(.sag-leader-tip::before) {
+		display: none;
+	}
+
+	:global(.sag-leader-anchor) {
+		pointer-events: none;
+	}
+
+	/* ---- dispatch focus dimming (§4) ----
+	   One reversible CSS class on the container, not layer removal: no
+	   relayout, no $effect churn, and Esc restores it for free. The route line
+	   and the stops keep full opacity (.sag-keep, set in updateAnnotations)
+	   because they are the overlay's coordinate system and its dropoff
+	   vocabulary; NWS polygons keep theirs because an operator sending a van
+	   into a severe-storm polygon needs to see it, and they live in their own
+	   pane below all of this. */
+	:global(.map-container.sag-dim .leaflet-marker-pane > *:not(.sag-marker)) {
+		opacity: 0.3;
+		transition: opacity var(--duration-fast, 150ms) var(--ease-out, ease-out);
+	}
+
+	:global(.map-container.sag-dim .leaflet-overlay-pane path:not(.sag-keep)) {
+		opacity: 0.3;
+		transition: opacity var(--duration-fast, 150ms) var(--ease-out, ease-out);
+	}
+
+	:global(.map-container.sag-dim .leaflet-tooltip-pane > .station-label) {
+		opacity: 0.3;
+	}
+
+	/* Touch sizing (§11): a 1024px tablet IS a touch device. The marker boxes
+	   are scaled in script (one scalar, so they grow together); the type has to
+	   follow or an 11px code sits in a 48px pin. */
+	@media (max-width: 1199px) {
+		:global(.sag-pin-code) { font-size: 12px; }
+		:global(.sag-pin-count) { font-size: 14px; }
+		:global(.sag-chit-inner) { font-size: 12px; }
+	}
+
 </style>

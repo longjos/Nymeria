@@ -1,9 +1,11 @@
 <script lang="ts">
 	import {
 		mapSettings, updateMapSetting,
-		AGE_FILTER_LABELS, TRACK_DURATION_LABELS, WX_MAP_MODE_LABELS,
-		type StationAgeFilter, type TrackDuration
+		AGE_FILTER_LABELS, TRACK_DURATION_LABELS, WX_MAP_MODE_LABELS, SAG_LEG_LINE_LABELS,
+		sagFocusPresetOn, toggleSagFocusPreset,
+		type StationAgeFilter, type TrackDuration, type SagLegLines
 	} from '$lib/stores/mapSettings';
+	import { rideMode, sagBoard, rideSagSummary } from '$lib/stores/ride';
 	import type { WxMapMode } from '$lib/types';
 
 	let {
@@ -53,8 +55,17 @@
 		$mapSettings.showDFOverlay ||
 		!nextStopEnabled ||
 		$mapSettings.trackDuration !== 'all' ||
-		$mapSettings.showWxAlerts !== 'watches'
+		$mapSettings.showWxAlerts !== 'watches' ||
+		// SAG defaults to ON, so a FALSE here is the non-default worth warning
+		// about — the indicator dot's job is to say "the map is hiding
+		// something", and a hidden SAG layer is the worst case of that.
+		($mapSettings.showSagOverlay === false && $rideMode) ||
+		($mapSettings.sagLegLines !== 'selected' && $rideMode)
 	);
+
+	// The whole section exists only for a bike-ride net that actually has a SAG
+	// board. A search-and-rescue net never sees a SAG control.
+	let showSagSection = $derived($rideMode && !!$sagBoard);
 
 	function toggle() {
 		open = !open;
@@ -249,7 +260,73 @@
 						Distance to the next stop along the course
 					{/if}
 				</div>
+
 			</div>
+
+			{#if showSagSection}
+				<div class="palette-divider"></div>
+				<div class="palette-section">
+					<div class="palette-heading">SAG</div>
+					<div class="palette-row">
+						<label class="palette-checkbox">
+							<input
+								type="checkbox"
+								checked={$mapSettings.showSagOverlay}
+								onchange={(e) => updateMapSetting('showSagOverlay', (e.target as HTMLInputElement).checked)}
+							/>
+							SAG overlay
+						</label>
+						<span class="palette-count">{$rideSagSummary.open} open</span>
+					</div>
+					<div class="palette-row">
+						<label class="palette-label" for="sag-leg-lines">Leg lines</label>
+						<select
+							id="sag-leg-lines"
+							class="palette-select"
+							disabled={!$mapSettings.showSagOverlay}
+							value={$mapSettings.sagLegLines}
+							onchange={(e) => updateMapSetting('sagLegLines', (e.target as HTMLSelectElement).value as SagLegLines)}
+						>
+							{#each Object.entries(SAG_LEG_LINE_LABELS) as [value, label]}
+								<option {value}>{label}</option>
+							{/each}
+						</select>
+					</div>
+					<div class="palette-info">
+						Every leg at once is unreadable on a busy ride; "Selected" draws only the
+						request you are looking at.
+					</div>
+					<div class="palette-row">
+						<label class="palette-checkbox">
+							<input
+								type="checkbox"
+								checked={$mapSettings.showSagDock}
+								disabled={!$mapSettings.showSagOverlay}
+								onchange={(e) => updateMapSetting('showSagDock', (e.target as HTMLInputElement).checked)}
+							/>
+							SAG dock
+						</label>
+					</div>
+					<div class="palette-info">
+						Hiding the dock keeps the pins. Requests that cannot be placed on the
+						map live only in the dock, so they go with it.
+					</div>
+					<div class="palette-row">
+						<button
+							class="palette-preset"
+							class:palette-preset--on={$sagFocusPresetOn}
+							aria-pressed={$sagFocusPresetOn}
+							onclick={toggleSagFocusPreset}
+						>
+							{$sagFocusPresetOn ? 'Restore my layers' : 'SAG focus'}
+						</button>
+					</div>
+					<div class="palette-info">
+						Hides tracks, DR cones, callsigns, weather and DF, and shows only the
+						last hour of stations. Press it again to put every one of them back.
+					</div>
+				</div>
+			{/if}
 		</div>
 	{/if}
 </div>
@@ -342,6 +419,40 @@
 
 	.palette-section {
 		padding: 0.5rem 0.75rem;
+	}
+
+	.palette-heading {
+		font-size: 0.68rem;
+		font-weight: 700;
+		letter-spacing: 0.08em;
+		text-transform: uppercase;
+		color: var(--color-text-muted);
+		padding-bottom: 0.35rem;
+	}
+
+	.palette-count {
+		margin-left: auto;
+		font-size: 0.72rem;
+		color: var(--color-text-muted);
+		font-variant-numeric: tabular-nums;
+	}
+
+	.palette-preset {
+		flex: 1;
+		min-height: 32px;
+		padding: 0 var(--space-sm);
+		background: none;
+		border: 1px solid var(--color-primary);
+		border-radius: var(--radius-sm);
+		color: var(--color-text);
+		font-size: var(--font-sm, 0.8125rem);
+		font-weight: 600;
+		cursor: pointer;
+	}
+
+	.palette-preset--on {
+		border-color: var(--color-sag-unit);
+		color: var(--color-sag-unit);
 	}
 
 	.palette-divider {

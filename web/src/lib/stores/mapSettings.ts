@@ -4,6 +4,9 @@ import type { WxMapMode } from '$lib/types';
 
 export type StationAgeFilter = 'all' | '15m' | '30m' | '1h' | '2h' | '4h' | '8h';
 export type TrackDuration = '30m' | '1h' | '2h' | '5h' | '12h' | '24h' | 'all';
+/** How much of the SAG leg spaghetti to draw. Drawing every leg on a busy ride
+ *  is unreadable; drawing none hides the assignment the operator just made. */
+export type SagLegLines = 'selected' | 'all' | 'off';
 
 export interface MapSettings {
 	stationAgeFilter: StationAgeFilter;
@@ -16,6 +19,13 @@ export interface MapSettings {
 	showDFOverlay: boolean;
 	/** NWS Alerts map rendering — map only, never changes what notifies (§10.3). */
 	showWxAlerts: WxMapMode;
+	/** SAG pickups, dropoffs and vehicle chits. ON by default: a ride net
+	 *  exists to run SAG, and asking the operator to discover the toggle
+	 *  during their first emergency is not a default. Non-ride nets never
+	 *  mount the layer, so this costs them nothing. */
+	showSagOverlay: boolean;
+	sagLegLines: SagLegLines;
+	showSagDock: boolean;
 }
 
 const DEFAULTS: MapSettings = {
@@ -28,6 +38,9 @@ const DEFAULTS: MapSettings = {
 	showWeatherOverlay: false,
 	showDFOverlay: false,
 	showWxAlerts: 'watches',
+	showSagOverlay: true,
+	sagLegLines: 'selected',
+	showSagDock: true,
 };
 
 const STORAGE_KEY = 'nymeria_map_settings';
@@ -55,6 +68,50 @@ if (browser) {
 export function updateMapSetting<K extends keyof MapSettings>(key: K, value: MapSettings[K]): void {
 	mapSettings.update((s) => ({ ...s, [key]: value }));
 }
+
+/**
+ * The `SAG focus` preset (docs/sag-map-spec.md §4) — one button that clears the
+ * map of everything a SAG decision does not need, and a second press that puts
+ * it all back exactly as the operator had it.
+ *
+ * The snapshot lives here rather than in a component so that the dock and
+ * `MapPalette` cannot each hold their own idea of what "before" was. It is
+ * deliberately NOT persisted: a returning operator should come back to their
+ * real settings, not to a half-remembered filtered map.
+ */
+const SAG_FOCUS_PRESET: Partial<MapSettings> = {
+	showTracks: false,
+	showDRCones: false,
+	showCallsigns: false,
+	showWeatherOverlay: false,
+	showDFOverlay: false,
+	stationAgeFilter: '1h',
+};
+
+let preSagFocusSettings: MapSettings | null = null;
+
+export const sagFocusPresetOn = writable<boolean>(false);
+
+export function toggleSagFocusPreset(): void {
+	if (preSagFocusSettings) {
+		const restore = preSagFocusSettings;
+		preSagFocusSettings = null;
+		mapSettings.set(restore);
+		sagFocusPresetOn.set(false);
+		return;
+	}
+	mapSettings.update((s) => {
+		preSagFocusSettings = { ...s };
+		return { ...s, ...SAG_FOCUS_PRESET };
+	});
+	sagFocusPresetOn.set(true);
+}
+
+export const SAG_LEG_LINE_LABELS: Record<SagLegLines, string> = {
+	selected: 'Selected',
+	all: 'All',
+	off: 'Off',
+};
 
 export const AGE_FILTER_MS: Record<StationAgeFilter, number> = {
 	'all': Infinity,

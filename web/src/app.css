@@ -180,6 +180,42 @@
 	--ride-t-value: 1.375rem;
 	--ride-t-body: 0.875rem;
 	--ride-t-label: 0.6875rem;
+
+	/* SAG map overlay (docs/sag-map-spec.md §9). Four colour tokens and no new
+	   hues: --color-sag-unit is the value stationCategoryMeta.ts already
+	   assigns to the `sag` check-in category, promoted to a token so the map
+	   and the roster cannot drift apart.
+	   Contrast, computed against the two surfaces it is ever drawn on:
+	     #f97316 on --color-surface #16213e -> 5.67:1   pass AA as text
+	     #f97316 on --color-bg      #1a1a2e -> 6.09:1   pass AA as text
+	   Text-safe, so the vehicle chit's label may be drawn in it. Tier colours
+	   are NOT redefined here: pickup pins read --color-ride-* through
+	   tierStyle(), and anything that colours a WORD uses the -text variant. */
+	--color-sag-unit: #f97316;
+	--color-sag-unit-soft: rgba(249, 115, 22, 0.14);
+	/* The stale-position uncertainty disc. Fill only, never a text colour —
+	   at 10% alpha it has no contrast and must never carry meaning alone. */
+	--color-sag-drift: rgba(249, 115, 22, 0.10);
+
+	/* Leaflet pane order for the SAG overlay. Link lines sit above the route
+	   line (400) so a leg is never buried under the course, and below every
+	   marker (600) so a line never crosses a pin's numerals. SAG markers sit
+	   above station markers because during a dispatch the SAG markers ARE the
+	   subject, and below tooltips (650) so labels still win. */
+	--z-sag-link-pane: 420;
+	--z-sag-marker-pane: 620;
+
+	/* Map stroke patterns, joining the --wx-dash-* family. */
+	--sag-dash-leg-dispatched: 6 5;    /* told, not yet rolling */
+	--sag-dash-pickup-dropoff: 2 7;    /* the quietest dash in the app */
+
+	/* Marker geometry, so the dock and the map cannot disagree about hit
+	   targets. The -touch variants are the >=769px-and-below sizes. */
+	--sag-chit-w: 56px;
+	--sag-chit-h: 28px;
+	--sag-pin-w: 32px;
+	--sag-pin-h: 38px;
+	--sag-hit: 44px;
 }
 
 * {
