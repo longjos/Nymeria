@@ -16,6 +16,7 @@ import {
 	angularDiff,
 	headingHint,
 	MOVING_MIN_KMH,
+	projectStopsBySequence,
 	STOP_CATEGORIES,
 	type Candidate,
 	type Stop,
@@ -696,5 +697,107 @@ describe('headingHint', () => {
 
 	it('gates at 5 km/h — above walking pace, below any vehicle actually driving', () => {
 		expect(MOVING_MIN_KMH).toBe(5);
+	});
+});
+
+// A stop beside a road the course uses twice has two candidate places. The
+// old projection took whichever leg was a few metres closer, so "Stop 3" on
+// the 100-miler's shared 28-33 / 91-96 mi road could be drawn at mile 93,
+// between stops 9 and 10. The sequence number already says which leg is
+// meant: stops are numbered in course order, so chainage must not go
+// backwards along the sequence.
+describe('projectStopsBySequence', () => {
+	// An out-and-back: east along lat 35 for 0.1 deg (~9.1 km), then back west
+	// on a parallel 20 m north. Geometrically one road; two chainages.
+	const RET_OFFSET_DEG = 20 / M_PER_DEG_LAT;
+	const out = eastWestLine(11, 0.01); // -86.00 .. -85.90
+	const back = out
+		.slice()
+		.reverse()
+		.map(([lon, lat]) => [lon, lat + RET_OFFSET_DEG] as [number, number]);
+	const idx = buildRouteIndex([...out, ...back]);
+	const LEG = 10 * 0.01 * M_PER_DEG_LON_AT_35; // ~9108.6 m
+
+	// A point 2 km out, placed so the NEAREST leg is the wrong one for its
+	// sequence — nearest-first gets both stops wrong.
+	const at2km = (metresNorth: number) => ({
+		lat: LAT0 + metresNorth / M_PER_DEG_LAT,
+		lon: -86 + 2000 / M_PER_DEG_LON_AT_35
+	});
+	const stops = [
+		// seq 1 belongs on the OUTBOUND leg but sits nearer the return (12 m N).
+		{ id: 'out', seq: 1, ...at2km(12) },
+		{ id: 'turn', seq: 2, lat: LAT0 + 10 / M_PER_DEG_LAT, lon: -85.9 },
+		// seq 3 belongs on the RETURN leg but sits nearer the outbound (8 m N).
+		{ id: 'back', seq: 3, ...at2km(8) }
+	];
+
+	it('confirms the fixture: nearest-leg projection gets both shared-road stops wrong', () => {
+		const nearest = (s: { lat: number; lon: number }) => projectOnRoute(idx, s.lat, s.lon)[0].chainageMeters;
+		expect(nearest(stops[0])).toBeGreaterThan(LEG); // drawn on the return: wrong
+		expect(nearest(stops[2])).toBeLessThan(LEG); // drawn on the outbound: wrong
+	});
+
+	it('places each stop on the leg its sequence number says', () => {
+		const got = projectStopsBySequence(idx, stops);
+		expect(got.get('out')!.chainageMeters).toBeCloseTo(2000, -1);
+		expect(got.get('turn')!.chainageMeters).toBeCloseTo(LEG, -2);
+		expect(got.get('back')!.chainageMeters).toBeCloseTo(idx.totalMeters - 2000, -1);
+		for (const s of got.values()) expect(s.outOfSequence).toBe(false);
+	});
+
+	it('ignores input order: sequence is what counts', () => {
+		const got = projectStopsBySequence(idx, [stops[2], stops[0], stops[1]]);
+		expect(got.get('out')!.chainageMeters).toBeLessThan(got.get('back')!.chainageMeters);
+	});
+
+	it('flags a stop whose number cannot fit the course order, rather than hiding it', () => {
+		// On a road used only ONCE there is no second leg to fall back to, so
+		// numbering the far stop first makes a monotone order impossible. (On
+		// the shared road above the same mistake is silently repairable — the
+		// return leg fits — which is exactly the point of this function.)
+		const oneWay = buildRouteIndex(eastWestLine(11, 0.01));
+		const bad = [
+			{ id: 'far', seq: 1, lat: LAT0, lon: -85.91 }, // ~8.2 km
+			{ id: 'near', seq: 2, lat: LAT0, lon: -85.99 }, // ~0.9 km
+			{ id: 'end', seq: 3, lat: LAT0, lon: -85.9 } // ~9.1 km
+		];
+		const got = projectStopsBySequence(oneWay, bad);
+		expect(got.size).toBe(3); // placed where it physically is, never dropped
+		expect(got.get('near')!.outOfSequence).toBe(true);
+		expect(got.get('near')!.chainageMeters).toBeCloseTo(0.01 * M_PER_DEG_LON_AT_35, -1);
+		// One mis-numbered stop costs one flag: its correctly ordered
+		// neighbours are not dragged into looking wrong.
+		expect(got.get('far')!.outOfSequence).toBe(false);
+		expect(got.get('end')!.outOfSequence).toBe(false);
+	});
+
+	it('leaves out a stop that is not on the course at all', () => {
+		const got = projectStopsBySequence(idx, [
+			...stops,
+			{ id: 'far', seq: 4, lat: LAT0 + 0.05, lon: -85.95 } // ~5.5 km off
+		]);
+		expect(got.has('far')).toBe(false);
+		expect(got.size).toBe(3);
+	});
+
+	it.skipIf(!haveGpx)('agrees with nearest-leg projection on a course with no shared road (Day 1)', () => {
+		const xml = readFileSync(gpxPath, 'utf8');
+		const coords: [number, number][] = [];
+		const re = /<trkpt lat="([-\d.]+)" lon="([-\d.]+)"/g;
+		let m: RegExpExecArray | null;
+		while ((m = re.exec(xml)) !== null) coords.push([parseFloat(m[2]), parseFloat(m[1])]);
+		const real = buildRouteIndex(coords);
+		const got = projectStopsBySequence(real, [
+			{ id: 'rs1', seq: 1, lat: 35.61365266280593, lon: -86.54982271163941 },
+			{ id: 'rs2', seq: 2, lat: 35.500702780314725, lon: -86.44572066879583 },
+			{ id: 'rs3', seq: 3, lat: 35.39051937562392, lon: -86.40947431325912 },
+			{ id: 'fin', seq: 4, lat: 35.28489503441051, lon: -86.37205728115387 }
+		]);
+		const want: Record<string, number> = { rs1: 21254, rs2: 38785, rs3: 56971, fin: 76046 };
+		for (const [id, m] of Object.entries(want)) {
+			expect(Math.abs(got.get(id)!.chainageMeters - m), id).toBeLessThanOrEqual(30);
+			expect(got.get(id)!.outOfSequence, id).toBe(false);
+		}
 	});
 });

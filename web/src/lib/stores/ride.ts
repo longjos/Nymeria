@@ -38,7 +38,8 @@ import {
 } from '$lib/rideMeta';
 import { countdown, clock } from '$lib/wxAlertTime';
 import { convertTemp, formatTempShort } from '$lib/units';
-import { buildRouteIndex, parseLineString, projectStops, type RouteIndex } from '$lib/routeDistance';
+import { courseRoute, courseStopMiles } from './courseGeo';
+import { buildRailAxis, edgePositions, type EdgePassage } from '$lib/courseRail';
 
 const ACKED_KEY = 'nymeria_ride_acked';
 
@@ -391,30 +392,6 @@ export const rideShutoffs = derived([courseState, secondClock], ([c, now]) => {
 
 // ---- derived: the course rail's view model ----
 
-const routeIndexCache = new Map<string, RouteIndex>();
-
-function computeStopMiles(): Map<string, number> | undefined {
-	try {
-		const route = get(netAnnotations).find((a) => a.category === 'route');
-		if (!route) return undefined;
-		const cacheKey = `${route.id}:${route.updatedAt ?? ''}`;
-		let idx = routeIndexCache.get(cacheKey);
-		if (!idx) {
-			const coords = parseLineString(route.geometry);
-			if (!coords) return undefined;
-			idx = buildRouteIndex(coords);
-			routeIndexCache.set(cacheKey, idx);
-		}
-		const checkpoints = get(orderedCheckpoints);
-		const anns = checkpoints.map((cp) => cp.annotation);
-		const stops = projectStops(idx, anns);
-		const out = new Map<string, number>();
-		for (const s of stops) out.set(s.id, s.chainageMeters / 1609.344);
-		return out.size > 0 ? out : undefined;
-	} catch {
-		return undefined;
-	}
-}
 
 function hoursMinutes(hours: number): string {
 	const total = Math.max(0, Math.round(hours * 60));
@@ -424,9 +401,18 @@ function hoursMinutes(hours: number): string {
 }
 
 export const rideRail = derived(
-	[orderedCheckpoints, progressElements, courseState, rideOpenItems],
-	([cps, elements, c, openItems]) => {
-		const stopMiles = computeStopMiles();
+	// courseStopMiles and courseRoute are real dependencies now: stop miles
+	// used to be read through get() inside the callback, so re-importing the
+	// route line, or moving a stop, left the old miles on screen until some
+	// unrelated input happened to fire (course-rail-spec B5).
+	[orderedCheckpoints, progressElements, courseState, rideOpenItems, courseStopMiles, courseRoute],
+	([cps, elements, c, openItems, liveStopMiles, route]) => {
+		const stopMiles = liveStopMiles.size > 0 ? liveStopMiles : undefined;
+		const axis = buildRailAxis(
+			route.index,
+			new Map(Array.from(liveStopMiles, ([id, mi]) => [id, mi * 1609.344])),
+			cps.map((cp) => cp.meta.annotationId)
+		);
 		const closures = new Map<string, StationClosureState>();
 		// courseState.stations[].outOfOrder is the backend's own reconciliation
 		// (internal/course.State: a later-sequence station closed while an
@@ -443,25 +429,43 @@ export const rideRail = derived(
 		const leadLabel = c?.config.leadLabel || 'LEAD';
 		const sweepLabel = c?.config.sweepLabel || 'SWEEP';
 
-		const leadEl = elements.find((e) => e.label.toLowerCase() === leadLabel.toLowerCase());
-		const sweepEl = elements.find((e) => e.label.toLowerCase() === sweepLabel.toLowerCase());
-		const leadMile = leadEl && stopMiles ? stopMiles.get(leadEl.lastCheckpointId) : undefined;
-		const sweepMile =
-			(c?.sweep.latestReport?.routeMile ?? undefined) ??
-			(sweepEl && stopMiles ? stopMiles.get(sweepEl.lastCheckpointId) : undefined);
+		// LEAD and SWEEP come from REPORTED sources only — passages and sweep
+		// reports, newest wins (edgePositions). The user's rule: "We'd always
+		// take the reported sweep over the GPS." Nothing here reads a fix.
+		const passages: EdgePassage[] = cps.flatMap((cp) =>
+			(cp.passages ?? []).map((p) => ({
+				label: p.label,
+				checkpointId: cp.meta.annotationId,
+				seq: cp.meta.sequenceNumber,
+				at: p.passageTime
+			}))
+		);
+		const latest = c?.sweep.latestReport;
+		const edges = edgePositions({
+			passages,
+			sweepReport: latest ? { mile: latest.routeMile ?? null, at: latest.reportedAt } : null,
+			stopMiles: liveStopMiles,
+			leadLabel,
+			sweepLabel
+		});
+		const leadMile = edges.lead?.mile ?? undefined;
+		const sweepMile = edges.sweep?.mile ?? undefined;
 
-		const leadMileText = leadMile != null ? `mi ${leadMile.toFixed(1)}` : leadEl ? `CP${leadEl.lastCheckpointSeq}` : '—';
-		const sweepMileText = sweepMile != null ? `mi ${sweepMile.toFixed(1)}` : sweepEl ? `CP${sweepEl.lastCheckpointSeq}` : '—';
+		const edgeText = (e: typeof edges.lead) =>
+			!e ? '—' : e.mile != null ? `mi ${e.mile.toFixed(1)}` : e.seq != null ? `CP${e.seq}` : '—';
+		const leadMileText = edgeText(edges.lead);
+		const sweepMileText = edgeText(edges.sweep);
 		// Grafana's NoData rule (spec §6): `never` is a named state with its
 		// own words, visually distinct from `stale` and never rendered as 0.
-		const leadRead = leadMile != null || leadEl ? `${leadLabel} ${leadMileText}` : `${leadLabel} not reported`;
-		const sweepRead = sweepMile != null || sweepEl ? `${sweepLabel} ${sweepMileText}` : `${sweepLabel} not reported`;
-		// Spec §2/§6: the gap is asked for both ways on the radio, and a
-		// never-reported edge must read "not reported", never a bare dash.
-		const gapMiles = leadMile != null && sweepMile != null ? Math.max(0, leadMile - sweepMile) : null;
-		const sweepMph = c?.sweep.latestReport?.estimatedSpeedMph ?? null;
-		const gapText =
-			gapMiles == null
+		const leadRead = edges.lead ? `${leadLabel} ${leadMileText}` : `${leadLabel} not reported`;
+		const sweepRead = edges.sweep ? `${sweepLabel} ${sweepMileText}` : `${sweepLabel} not reported`;
+		// B12: sweep reported AHEAD of lead used to read a calm "gap 0.0 mi".
+		// It is a data problem worth a second look, so it says so.
+		const sweepMph = latest?.estimatedSpeedMph ?? null;
+		const gapMiles = edges.spreadMiles;
+		const gapText = edges.inverted
+			? 'order?'
+			: gapMiles == null
 				? ''
 				: sweepMph && sweepMph > 0
 					? `${gapMiles.toFixed(1)} mi / ~${hoursMinutes(gapMiles / sweepMph)}`
@@ -480,7 +484,9 @@ export const rideRail = derived(
 			stations: c?.stations ?? [],
 			stopMiles,
 			leadMile: leadMile ?? null,
-			leadReported: leadMile != null || leadEl != null,
+			leadReported: edges.lead != null,
+			edges,
+			axis,
 			leadMileText,
 			sweepMileText,
 			leadRead,
@@ -497,12 +503,16 @@ export const rideRail = derived(
 // ---- derived: sweep readout (B2) ----
 
 export const rideSweep = derived([courseState, rideRail, rideProfile, secondClock], ([c, rail, profile, now]) => {
-	const sweep = c?.sweep;
-	const latest = sweep?.latestReport;
-	const mile = latest?.routeMile ?? (sweep ? rail.stopMiles?.get(sweep.lastCheckpointId) : undefined) ?? null;
-	const reportedAt = latest?.reportedAt ?? sweep?.lastPassageTime ?? null;
-	const speed = latest?.estimatedSpeedMph ?? null;
-	const total = profile?.rideConfig?.routes?.[0]?.distanceMiles ?? (rail.stopMiles ? Math.max(0, ...Array.from(rail.stopMiles.values())) : null);
+	// One answer to "where is sweep", shared with the rail marker: the newest
+	// REPORTED position (B2 — the readout used to prefer any old report over
+	// every later passage, and sat 25 miles from the marker).
+	const e = rail.edges.sweep;
+	const mile = e?.mile ?? null;
+	const reportedAt = e?.at ?? null;
+	const speed = c?.sweep?.latestReport?.estimatedSpeedMph ?? null;
+	// "To go" is measured against the course line's own length (B3). The
+	// furthest numbered stop is not the end of the course.
+	const total = rail.axis.totalMiles ?? profile?.rideConfig?.routes?.[0]?.distanceMiles ?? null;
 	const toGo = mile != null && total != null ? Math.max(0, total - mile) : null;
 	return { mile, reportedAt, speed, toGo, age: ageState(reportedAt, now), ageText: ageText(reportedAt, now) };
 });
@@ -513,7 +523,7 @@ export const rideSweep = derived([courseState, rideRail, rideProfile, secondCloc
  * "to go" when the lead has never been reported (Grafana NoData, spec §6).
  */
 export const rideLead = derived([rideRail, rideProfile], ([rail, profile]) => {
-	const total = profile?.rideConfig?.routes?.[0]?.distanceMiles ?? (rail.stopMiles ? Math.max(0, ...Array.from(rail.stopMiles.values())) : null);
+	const total = rail.axis.totalMiles ?? profile?.rideConfig?.routes?.[0]?.distanceMiles ?? null;
 	const toGo = rail.leadMile != null && total != null ? Math.max(0, total - rail.leadMile) : null;
 	return { mile: rail.leadMile, reported: rail.leadReported, toGo };
 });

@@ -494,6 +494,109 @@ export function projectStops(
 	return out;
 }
 
+/** A numbered stop, as projectStopsBySequence needs it. */
+export interface SequencedStop {
+	id: string;
+	/** Course-order number (CheckpointMeta.sequenceNumber). */
+	seq: number;
+	lat: number;
+	lon: number;
+}
+
+export interface PlacedStop {
+	id: string;
+	chainageMeters: number;
+	offTrackMeters: number;
+	/** No placement consistent with the course order exists for this stop's
+	 *  number: it is drawn where it physically is, and flagged, never hidden. */
+	outOfSequence: boolean;
+}
+
+/** Chainage may tie (two stops at one place; start/finish of a loop). */
+const SEQUENCE_TIE_M = 1;
+
+/**
+ * Place numbered stops on the course, choosing each stop's leg from its
+ * sequence number rather than from which leg is a few metres closer.
+ *
+ * A stop beside a road the course uses twice has two candidate chainages, and
+ * projectStops takes the nearest — so on the 100-miler's shared 28-33 / 91-96
+ * mile road, "Stop 3" could be placed at mile 93, between stops 9 and 10.
+ * Stops are numbered in course order, so chainage must not decrease along the
+ * sequence. This chooses one candidate per stop minimising, in order:
+ *   1. the number of stops that go backwards (so a genuinely mis-numbered
+ *      stop costs one violation and does not drag its neighbours with it),
+ *   2. total off-track distance (so nearest still wins when order allows).
+ * A small exact dynamic programme: stops x candidates is tiny (tens x 1-3).
+ *
+ * Stops that project nowhere within `maxOffTrackMeters` are left out.
+ */
+export function projectStopsBySequence(
+	idx: RouteIndex,
+	stops: SequencedStop[],
+	maxOffTrackMeters = STOP_SNAP_M
+): Map<string, PlacedStop> {
+	const ordered = stops
+		.map((s) => ({ s, cands: projectOnRoute(idx, s.lat, s.lon, maxOffTrackMeters) }))
+		.filter((x) => x.cands.length > 0)
+		.sort((a, b) => a.s.seq - b.s.seq);
+
+	const out = new Map<string, PlacedStop>();
+	if (ordered.length === 0) return out;
+
+	type Cell = { viol: number; off: number; from: number };
+	const better = (a: Cell, b: Cell) => a.viol < b.viol || (a.viol === b.viol && a.off < b.off);
+
+	const table: Cell[][] = ordered.map(() => []);
+	ordered[0].cands.forEach((c, k) => {
+		table[0][k] = { viol: 0, off: c.offTrackMeters, from: -1 };
+	});
+	for (let i = 1; i < ordered.length; i++) {
+		const prev = ordered[i - 1].cands;
+		ordered[i].cands.forEach((c, k) => {
+			let best: Cell | null = null;
+			prev.forEach((p, j) => {
+				const back = c.chainageMeters < p.chainageMeters - SEQUENCE_TIE_M ? 1 : 0;
+				const cell: Cell = {
+					viol: table[i - 1][j].viol + back,
+					off: table[i - 1][j].off + c.offTrackMeters,
+					from: j
+				};
+				if (!best || better(cell, best)) best = cell;
+			});
+			table[i][k] = best as unknown as Cell;
+		});
+	}
+
+	// Backtrack from the best final cell.
+	const last = ordered.length - 1;
+	let k = 0;
+	table[last].forEach((cell, kk) => {
+		if (better(cell, table[last][k])) k = kk;
+	});
+	const chosen: number[] = new Array(ordered.length);
+	for (let i = last; i >= 0; i--) {
+		chosen[i] = k;
+		k = table[i][k].from;
+	}
+
+	let prevChain = -Infinity;
+	ordered.forEach(({ s, cands }, i) => {
+		const c = cands[chosen[i]];
+		const backwards = c.chainageMeters < prevChain - SEQUENCE_TIE_M;
+		out.set(s.id, {
+			id: s.id,
+			chainageMeters: c.chainageMeters,
+			offTrackMeters: c.offTrackMeters,
+			outOfSequence: backwards
+		});
+		// A backwards stop does not become the new floor: one mis-numbered stop
+		// must not make every later, correctly numbered stop look wrong.
+		if (!backwards) prevChain = c.chainageMeters;
+	});
+	return out;
+}
+
 /**
  * The next `count` stops ahead of `originChainage`, nearest first.
  *

@@ -15,17 +15,12 @@
  */
 import { derived, get, writable } from 'svelte/store';
 import { sagBoard, rideMode, rideProfile } from './ride';
-import { activeCheckIns, netAnnotations, orderedCheckpoints } from './netcontrol';
+import { activeCheckIns, netAnnotations } from './netcontrol';
 import { stations } from './stations';
 import { secondClock } from './clock';
 import { mapSettings } from './mapSettings';
-import {
-	buildRouteIndex,
-	parseLineString,
-	projectStops,
-	type RouteIndex,
-	type Stop
-} from '$lib/routeDistance';
+import type { Stop } from '$lib/routeDistance';
+import { courseRoute, courseStops } from './courseGeo';
 import {
 	resolveSagPoint,
 	courseMismatchNotice,
@@ -43,28 +38,10 @@ import {
 import { unassignedRiders } from '$lib/rideMeta';
 import type { SAGRequest } from '$lib/types';
 
-const routeIndexCache = new Map<string, RouteIndex>();
-
 /** The course this net is running, plus enough context to tell "no course
- *  loaded" from "several courses and the request didn't say which". */
-export const sagRoute = derived(netAnnotations, (anns) => {
-	const routes = anns.filter((a) => a.category === 'route');
-	const route = routes[0];
-	if (!route) return { index: null as RouteIndex | null, name: '', count: 0 };
-	try {
-		const key = `${route.id}:${route.updatedAt ?? ''}`;
-		let idx = routeIndexCache.get(key);
-		if (!idx) {
-			const coords = parseLineString(route.geometry);
-			if (!coords) return { index: null, name: route.label ?? '', count: routes.length };
-			idx = buildRouteIndex(coords);
-			routeIndexCache.set(key, idx);
-		}
-		return { index: idx, name: route.shortName || route.label || '', count: routes.length };
-	} catch {
-		return { index: null, name: route.label ?? '', count: routes.length };
-	}
-});
+ *  loaded" from "several courses and the request didn't say which". One
+ *  definition, in courseGeo, shared with the course rail. */
+export const sagRoute = courseRoute;
 
 /** Point annotations by id, for the resolver's rule 2. */
 const annotationPoints = derived(netAnnotations, (anns) => {
@@ -81,14 +58,18 @@ const annotationPoints = derived(netAnnotations, (anns) => {
 	return out;
 });
 
-const sagStops = derived([sagRoute, orderedCheckpoints], ([route, cps]) => {
-	if (!route.index) return [] as Stop[];
-	try {
-		return projectStops(route.index, cps.map((cp) => cp.annotation));
-	} catch {
-		return [] as Stop[];
-	}
-});
+/** Numbered stops in course order, for the "next rest stop" rule. Placed by
+ *  courseGeo: live annotations (a moved stop moves here too), and each on the
+ *  leg its sequence number implies rather than the nearer of a shared road. */
+const sagStops = derived(courseStops, (stops) =>
+	Array.from(stops.values(), (s): Stop => ({
+		id: s.id,
+		label: s.annotation.label,
+		shortName: s.annotation.shortName,
+		chainageMeters: s.chainageMeters,
+		offTrackMeters: s.offTrackMeters
+	})).sort((a, b) => a.chainageMeters - b.chainageMeters)
+);
 
 const geoContext = derived(
 	[sagRoute, annotationPoints, sagStops],
