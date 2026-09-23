@@ -9,7 +9,7 @@
 	import PhaseChangeDialog from './PhaseChangeDialog.svelte';
 	import SweepPassedConfirm from './SweepPassedConfirm.svelte';
 	import {
-		rideZones, rideRail, ridePhase, rideEmergency, rideHasCourse, rideAnnouncement,
+		rideZones, rideRail, ridePhase, rideEmergency, rideHasCourse, rideCourseGap, rideAnnouncement,
 		navigateZone, ackEmergency, markSweepPassed, registerRideFlyTo, rideViewportClass, zoneSpanSum
 	} from '$lib/stores/ride';
 	import { wxIsNcs } from '$lib/stores/wxAlerts';
@@ -136,9 +136,17 @@
 	style="height: {stripH}px"
 >
 	{#if !$rideHasCourse}
+		<!-- Two causes, two different remedies. Telling an operator who HAS
+		     imported the GPX to "import GPX" sent them round the loop again;
+		     what is actually missing is a sequence number on the stops. -->
 		<div class="ride-nocourse">
-			<span>No course loaded — import GPX to enable ride mode</span>
-			<button class="ride-nocourse-btn" onclick={() => openAnnotations()}>Import GPX</button>
+			{#if $rideCourseGap === 'no-sequenced-stops'}
+				<span>Course line loaded, but no stops are numbered — give each rest stop a Seq # to enable ride mode</span>
+				<button class="ride-nocourse-btn" onclick={() => openAnnotations()}>Number stops</button>
+			{:else}
+				<span>No course loaded — import GPX to enable ride mode</span>
+				<button class="ride-nocourse-btn" onclick={() => openAnnotations()}>Import GPX</button>
+			{/if}
 		</div>
 	{:else}
 		<div class="ride-rail">

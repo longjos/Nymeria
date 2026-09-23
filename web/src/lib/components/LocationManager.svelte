@@ -4,7 +4,7 @@
 	import type { Annotation, AnnotationBatch, AnnotationCategory, Net } from '$lib/types';
 	import { netAnnotations, orderedCheckpoints } from '$lib/stores/netcontrol';
 	import { annotations, annotationList } from '$lib/stores/annotations';
-	import { categoryMeta } from '$lib/annotationMeta';
+	import { categoryMeta, isSequenceable } from '$lib/annotationMeta';
 	import { eventTemplates, type LocationTemplate } from '$lib/data/locationTemplates';
 	import { showToast } from '$lib/stores/toast';
 	import { timeAgo } from '$lib/utils';
@@ -278,7 +278,7 @@
 				priority: 'routine',
 			});
 			// Auto-set checkpoint meta for new checkpoint annotations.
-			if (newCategory === 'checkpoint' && created?.id) {
+			if (isSequenceable(newCategory) && created?.id) {
 				const seq = nextCheckpointSeq();
 				await api.updateCheckpointMeta(net.id, created.id, { sequenceNumber: seq }).catch(() => {});
 			}
@@ -329,7 +329,7 @@
 				geometry: hasCoords ? makeGeometry(lat, lon) : makeGeometry(0, 0),
 			});
 			// Save checkpoint meta if category is checkpoint.
-			if (editCategory === 'checkpoint' && editSeqNum) {
+			if (isSequenceable(editCategory) && editSeqNum) {
 				await saveCheckpointMeta(editingId, editSeqNum);
 			}
 			editingId = null;
@@ -686,7 +686,7 @@
 						</select>
 					</div>
 					<textarea bind:value={editDescription} rows="2" placeholder="Description" class="loc-textarea"></textarea>
-					{#if editCategory === 'checkpoint'}
+					{#if isSequenceable(editCategory)}
 						<div class="loc-form-row loc-cp-row">
 							<label class="loc-cp-label" for="cp-seq">Seq #</label>
 							<input id="cp-seq" type="number" bind:value={editSeqNum} min="1" class="loc-input loc-input-seq" />
@@ -733,7 +733,7 @@
 							{#if ann.shortName}
 								<span class="loc-short-badge">{ann.shortName}</span>
 							{/if}
-							{#if ann.category === 'checkpoint'}
+							{#if isSequenceable(ann.category)}
 								{@const seq = getCheckpointSeq(ann.id)}
 								{#if seq != null}
 									<span class="loc-seq-badge">#{seq}</span>
@@ -750,7 +750,7 @@
 						{/if}
 					</div>
 					<div class="loc-actions">
-						{#if ann.category === 'checkpoint' && getCheckpointSeq(ann.id) != null}
+						{#if isSequenceable(ann.category) && getCheckpointSeq(ann.id) != null}
 							<button class="loc-action-btn loc-action-passage" onclick={() => handleLogPassage(ann.id)} title="Log passage">
 								<svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5">
 									<path d="M4 2v12M4 3h7l-2 3 2 3H4"/>

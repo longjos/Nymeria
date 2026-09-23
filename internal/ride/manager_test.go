@@ -2028,3 +2028,76 @@ func TestAddSlot_AttachRacksStayOverridable(t *testing.T) {
 		t.Fatalf("AddSlot of a bike-less rider with a free seat: %v", err)
 	}
 }
+
+// A station promoted to the sag category mid-net must reach every open SAG
+// board immediately. Before this, sag_vehicle_updated was emitted only from
+// SetVehicle and for vehicles already carrying a leg, so flipping a roster
+// station to SAG left the dispatch picker empty until a full page reload —
+// the operator saw "No SAG vehicles on the roster" with a SAG unit checked in.
+func TestAnnounceVehicle_OnCategoryChange(t *testing.T) {
+	m, netMgr, _, _ := newTestManager(t)
+	net := createTestNet(t, netMgr)
+
+	// Checked in as something else: not a vehicle, nothing to announce.
+	ci, err := netMgr.CheckIn(net.ID, "KG4YFA-4", netcontrol.TrafficNone, netcontrol.CatMedical)
+	if err != nil {
+		t.Fatalf("CheckIn: %v", err)
+	}
+	drainEvents(m.Events())
+
+	if ok := m.AnnounceVehicle(net.ID, ci.ID); ok {
+		t.Error("AnnounceVehicle on a non-sag check-in = true, want false")
+	}
+	if got := findVehicleEvent(m, ci.ID); got != nil {
+		t.Error("announced a vehicle for a non-sag check-in")
+	}
+
+	// Promote it in the roster, exactly as the category dropdown does.
+	ci.Category = netcontrol.CatSAG
+	if _, err := netMgr.UpdateCheckIn(*ci); err != nil {
+		t.Fatalf("UpdateCheckIn: %v", err)
+	}
+	drainEvents(m.Events())
+
+	if ok := m.AnnounceVehicle(net.ID, ci.ID); !ok {
+		t.Fatal("AnnounceVehicle on a sag check-in = false, want true")
+	}
+	got := findVehicleEvent(m, ci.ID)
+	if got == nil {
+		t.Fatal("no sag_vehicle_updated emitted for the promoted check-in")
+	}
+	if got.Callsign != "KG4YFA-4" {
+		t.Errorf("callsign = %q, want KG4YFA-4", got.Callsign)
+	}
+	// Unregistered vehicles must announce the configured defaults, not zeroes:
+	// a vehicle advertising 0 seats is refused every dispatch.
+	if got.Seats != m.cfg.DefaultSeats || got.RackSlots != m.cfg.DefaultRackSlots {
+		t.Errorf("seats/racks = %d/%d, want the config defaults %d/%d",
+			got.Seats, got.RackSlots, m.cfg.DefaultSeats, m.cfg.DefaultRackSlots)
+	}
+	if got.AvailableSeats != m.cfg.DefaultSeats {
+		t.Errorf("availableSeats = %d, want %d", got.AvailableSeats, m.cfg.DefaultSeats)
+	}
+
+	// A check-in that does not exist is a no-op, never a panic.
+	if ok := m.AnnounceVehicle(net.ID, "nope"); ok {
+		t.Error("AnnounceVehicle for an unknown check-in = true, want false")
+	}
+}
+
+// findVehicleEvent returns the first sag_vehicle_updated for checkInID.
+func findVehicleEvent(m *Manager, checkInID string) *SAGVehicleStatus {
+	for {
+		select {
+		case evt := <-m.Events():
+			if evt.Type != EventSAGVehicleUpdated {
+				continue
+			}
+			if v, ok := evt.Data.(SAGVehicleStatus); ok && v.CheckInID == checkInID {
+				return &v
+			}
+		default:
+			return nil
+		}
+	}
+}

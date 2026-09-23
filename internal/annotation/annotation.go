@@ -553,6 +553,56 @@ func (m *Manager) AllForNet(netID string) []Annotation {
 	return result
 }
 
+// ReleaseNetAnnotations hands a net's annotations back to the shared,
+// unscoped pool by clearing their NetID. Returns the annotations it released
+// (empty, and no error, when the net owned none).
+//
+// This is what makes a course reusable. "Link existing" offers only
+// annotations with no NetID, so without this a closed net kept its locations
+// forever and every past event's rest stops became permanently unreachable —
+// leaving Copy from, which duplicates rows, as the only way to run the same
+// ride twice.
+//
+// It releases OWNERSHIP ONLY. Status, geometry, labels and sequence history
+// are deliberately untouched: bulk-resolving a closed net's annotations
+// stamped a ResolvedAt nobody earned and destroyed the record of what was
+// still outstanding when the net ended (#117). Re-linking is the inverse, so
+// unlike that, this is reversible.
+func (m *Manager) ReleaseNetAnnotations(netID string) ([]Annotation, error) {
+	if netID == "" {
+		return nil, nil
+	}
+
+	m.mu.RLock()
+	var targets []Annotation
+	for _, a := range m.annotations {
+		if a.NetID == netID {
+			targets = append(targets, a)
+		}
+	}
+	m.mu.RUnlock()
+
+	sort.Slice(targets, func(i, j int) bool { return targets[i].SortOrder < targets[j].SortOrder })
+
+	released := make([]Annotation, 0, len(targets))
+	for _, a := range targets {
+		a.NetID = ""
+		a.UpdatedAt = time.Now().UTC()
+		if err := m.store.SaveAnnotation(a); err != nil {
+			// Partial release is safe to leave in place: every annotation
+			// already written is simply unscoped, which is the goal. Report
+			// the failure rather than rolling the rest back into the net.
+			return released, fmt.Errorf("release annotation %q: %w", a.ID, err)
+		}
+		m.mu.Lock()
+		m.annotations[a.ID] = a
+		m.mu.Unlock()
+		m.emit(Event{Type: EventAnnotationUpdated, Data: a})
+		released = append(released, a)
+	}
+	return released, nil
+}
+
 // ImportItem represents a parsed GPX/KML waypoint or geometry for import.
 type ImportItem struct {
 	Name        string

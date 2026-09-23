@@ -2372,3 +2372,86 @@ func TestDeleteBatchStoreFailureRollsBack(t *testing.T) {
 	}
 }
 
+
+// Closing a net must hand its locations back to the shared pool, so next
+// year's net can Link existing them. Before this, a closed net kept owning
+// its annotations forever: "Link existing" filters to annotations with no
+// netId, so after one event every location on file was unreachable and the
+// only way to reuse a course was Copy from, which duplicates rows.
+//
+// This releases OWNERSHIP only. Status, geometry and history are untouched —
+// bulk-resolving a closed net's annotations is a separate thing this
+// deliberately does not do (see the note in bridgeNetControlEvents, #117).
+func TestReleaseNetAnnotations(t *testing.T) {
+	m := newTestManager(t)
+
+	mk := func(label, netID string) Annotation {
+		a, err := m.Create(Annotation{
+			Type: "point", Label: label, NetID: netID,
+			Category: CategoryAid, Status: "active",
+			Geometry: `{"type":"Point","coordinates":[-86.6,35.7]}`,
+		})
+		if err != nil {
+			t.Fatalf("Create %s: %v", label, err)
+		}
+		return *a
+	}
+
+	keep := mk("Other net stop", "net-b")
+	a := mk("Rest Stop Maxwell Chapel", "net-a")
+	b := mk("Rest Stop Eakin", "net-a")
+	loose := mk("Never scoped", "")
+
+	released, err := m.ReleaseNetAnnotations("net-a")
+	if err != nil {
+		t.Fatalf("ReleaseNetAnnotations: %v", err)
+	}
+	if len(released) != 2 {
+		t.Fatalf("released %d annotations, want 2", len(released))
+	}
+
+	for _, id := range []string{a.ID, b.ID} {
+		got, ok := m.Get(id)
+		if !ok {
+			t.Fatalf("annotation %s vanished", id)
+		}
+		if got.NetID != "" {
+			t.Errorf("%s netID = %q, want released to \"\"", got.Label, got.NetID)
+		}
+		// Ownership only: the record itself must survive intact.
+		if got.Status != "active" {
+			t.Errorf("%s status = %q, want untouched \"active\"", got.Label, got.Status)
+		}
+		if got.Label == "" || len(got.Geometry) == 0 {
+			t.Errorf("%s lost label or geometry", id)
+		}
+	}
+
+	if got, _ := m.Get(keep.ID); got.NetID != "net-b" {
+		t.Errorf("another net's annotation was released (netID = %q)", got.NetID)
+	}
+	if got, _ := m.Get(loose.ID); got.NetID != "" {
+		t.Errorf("already-unscoped annotation changed (netID = %q)", got.NetID)
+	}
+
+	// Idempotent: closing an already-released net releases nothing and is not
+	// an error (EventNetUpdated fires more than once for a closed net).
+	again, err := m.ReleaseNetAnnotations("net-a")
+	if err != nil {
+		t.Fatalf("second ReleaseNetAnnotations: %v", err)
+	}
+	if len(again) != 0 {
+		t.Errorf("second release returned %d, want 0", len(again))
+	}
+
+	// And the released pair is now linkable again.
+	unscoped := 0
+	for _, x := range m.All() {
+		if x.NetID == "" {
+			unscoped++
+		}
+	}
+	if unscoped != 3 {
+		t.Errorf("unscoped = %d, want 3 (the two released + the never-scoped one)", unscoped)
+	}
+}

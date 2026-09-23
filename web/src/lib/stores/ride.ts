@@ -151,6 +151,26 @@ export const rideLadder = derived(rideProfile, (p) => p?.effectivePriorityTiers 
 
 export const rideHasCourse = derived([courseState, hasCheckpoints], ([c, has]) => has && (c?.stations.length ?? 0) > 0);
 
+/** Is a course LINE imported? Independent of whether any stop is sequenced. */
+export const rideHasRouteLine = derived(netAnnotations, (anns) =>
+	anns.some((a) => a.category === 'route')
+);
+
+/**
+ * Why the course rail is empty — the two causes need opposite instructions.
+ *
+ * `rideHasCourse` requires BOTH a course line and sequenced stops, so an
+ * operator who imported the GPX but never numbered the rest stops was told
+ * "import GPX" and did it again, to no effect. Worse, the sequence field was
+ * only offered on the Checkpoint category, so a rest stop imported as an Aid
+ * Station could not be numbered at all (see annotationMeta.sequenceableCategories).
+ */
+export type RideCourseGap = 'none' | 'no-route' | 'no-sequenced-stops';
+export const rideCourseGap = derived(
+	[rideHasCourse, rideHasRouteLine],
+	([has, hasLine]): RideCourseGap => (has ? 'none' : hasLine ? 'no-sequenced-stops' : 'no-route')
+);
+
 // ---- derived: open ride records (SAG / medical / supply), edge-based, never a bib ----
 
 export interface RideOpenItem {

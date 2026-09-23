@@ -260,6 +260,29 @@ export const allCategories: AnnotationCategory[] = [
 	'aid', 'staging', 'shelter', 'parking', 'start', 'finish',
 ];
 
+/**
+ * Categories that may carry CheckpointMeta, and so participate in route
+ * progress and course closure.
+ *
+ * This MIRRORS annotation.SequenceableCategories in
+ * internal/annotation/annotation.go — the server has always accepted all four.
+ * The UI used to offer the sequence field for 'checkpoint' alone, so a rest
+ * stop imported as an Aid Station could never be given a sequence number,
+ * which silently disabled the course rail, the ride strip ("No course
+ * loaded") and every SAG dropoff that resolves to "next rest stop".
+ */
+export const sequenceableCategories: readonly AnnotationCategory[] = [
+	'checkpoint',
+	'aid',
+	'start',
+	'finish'
+];
+
+/** Whether this category can be given a course sequence number. */
+export function isSequenceable(category: string): boolean {
+	return (sequenceableCategories as readonly string[]).includes(category);
+}
+
 /** Whether a status is terminal (annotation considered done). */
 export function isTerminalStatus(status: string): boolean {
 	return ['resolved', 'closed', 'cleared', 'complete', 'escalated'].includes(status);

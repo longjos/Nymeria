@@ -1486,6 +1486,27 @@ func (m *Manager) emitVehiclesFor(netID string, req store.SAGRequest) {
 	}
 }
 
+// AnnounceVehicle emits sag_vehicle_updated for one check-in, so a station
+// promoted to the sag category mid-net reaches every open board at once.
+//
+// Until this existed, EventSAGVehicleUpdated was emitted only by SetVehicle
+// and by emitVehiclesFor (which walks a request's LEGS). A roster category
+// change therefore reached nobody: the vehicle existed as far as Vehicles()
+// was concerned, but no open SAG board learned about it, so the dispatch
+// picker kept saying "No SAG vehicles on the roster" until a full reload.
+//
+// Reports false — and emits nothing — when the check-in is unknown or is not
+// a sag-category unit, so the caller can wire it to every check-in update
+// without filtering first.
+func (m *Manager) AnnounceVehicle(netID, checkInID string) bool {
+	ci := m.findCheckIn(netID, checkInID)
+	if ci == nil || ci.Category != catSAG {
+		return false
+	}
+	m.emit(Event{Type: EventSAGVehicleUpdated, Data: m.vehicleStatusFor(netID, *ci, m.vehicleOrDefault(netID, checkInID))})
+	return true
+}
+
 // VehicleStatus returns one vehicle's live status. ok is false only if the
 // check-in itself does not exist.
 func (m *Manager) VehicleStatus(netID, checkInID string) (*SAGVehicleStatus, bool) {

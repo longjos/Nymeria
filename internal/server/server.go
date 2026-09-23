@@ -589,16 +589,41 @@ func (s *Server) bridgeNetControlEvents() {
 		// type assertion is enough (mission_updated below round-trips
 		// because it also has to handle a Data shape from elsewhere).
 		if evt.Type == netcontrol.EventCheckInUpdated && s.rideMgr != nil {
-			if ci, ok := evt.Data.(store.NetCheckIn); ok && ci.Status == netcontrol.OpReleased && ci.Category == netcontrol.CatSAG {
-				s.rideMgr.ReleaseVehicle(ci.NetID, ci.ID, "vehicle checked out")
+			if ci, ok := evt.Data.(store.NetCheckIn); ok {
+				if ci.Status == netcontrol.OpReleased && ci.Category == netcontrol.CatSAG {
+					s.rideMgr.ReleaseVehicle(ci.NetID, ci.ID, "vehicle checked out")
+				}
+				// Any update to a sag unit re-announces it, which is what
+				// carries a roster CATEGORY change onto open SAG boards: the
+				// check-in only becomes a vehicle at the moment its category
+				// is set, and nothing else emits sag_vehicle_updated for it.
+				// AnnounceVehicle no-ops on non-sag units, so this needs no
+				// guard of its own.
+				s.rideMgr.AnnounceVehicle(ci.NetID, ci.ID)
 			}
 		}
 
-		// Closing a net deliberately does NOT touch its annotations. Bulk-resolving
+		// Closing a net deliberately does NOT resolve its annotations. Bulk-resolving
 		// them stamped a ResolvedAt nobody earned, destroyed the record of what was
 		// still outstanding when the net ended, and could not be undone. Whether a
 		// net's annotations are still live is already carried by the net's own
 		// Status/ClosedAt (#117).
+		//
+		// It DOES release their net scope. That is a different operation and a
+		// reversible one: the rows keep their status, geometry and history and
+		// simply return to the unscoped pool, where "Link existing" can find
+		// them again. Without it a course could be run exactly once — every
+		// location stayed owned by the net that closed, and the only way to
+		// reuse it was Copy from, which duplicates rows.
+		if evt.Type == netcontrol.EventNetUpdated && s.annMgr != nil {
+			if n, ok := evt.Data.(store.Net); ok && n.Status == netcontrol.StatusClosed {
+				if released, err := s.annMgr.ReleaseNetAnnotations(n.ID); err != nil {
+					log.Printf("[server] release annotations for net %s: %v", n.ID, err)
+				} else if len(released) > 0 {
+					log.Printf("[server] net %s closed: released %d annotation(s) back to the unscoped pool", n.ID, len(released))
+				}
+			}
+		}
 
 		// Sync mission status change → annotation status.
 		if evt.Type == "mission_updated" && s.annMgr != nil {
