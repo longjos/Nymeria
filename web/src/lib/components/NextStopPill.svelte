@@ -785,12 +785,10 @@
 
 <style>
 	.ns-wrap {
-		position: absolute;
-		/* Next free slot in the hand-placed left map-chip column, below the
-		   GPS status pill at 178px. */
-		top: 226px;
-		left: calc(10px + var(--map-left-inset, 0px));
-		z-index: var(--z-toolbar);
+		/* In flow inside the page's map HUD column, under the status chips and
+		   above the SAG dock — expanding the card pushes the dock down rather
+		   than covering it. */
+		position: relative;
 		max-width: 300px;
 	}
 

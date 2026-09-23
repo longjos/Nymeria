@@ -17,7 +17,7 @@
 {#if $gpsStatus.enabled}
 	<button
 		type="button"
-		class="gps-follow-btn"
+		class="map-hud-btn gps-follow-btn"
 		class:active={hasFix && following}
 		class:waiting={!hasFix}
 		disabled={!hasFix}
@@ -36,41 +36,18 @@
 {/if}
 
 <style>
-	.gps-follow-btn {
-		position: absolute;
-		top: 130px;
-		left: calc(10px + var(--map-left-inset, 0px));
-		z-index: var(--z-toolbar);
-		width: 40px;
-		height: 40px;
-		border-radius: 8px;
-		border: 2px solid var(--color-text-muted);
-		background: var(--color-surface);
-		color: var(--color-text-muted);
-		display: flex;
-		align-items: center;
-		justify-content: center;
-		cursor: pointer;
-		box-shadow: 0 2px 8px rgba(0, 0, 0, 0.3);
-		transition: background 0.15s, border-color 0.15s, color 0.15s;
-	}
-
-	.gps-follow-btn:hover:not(:disabled) {
-		background: color-mix(in srgb, var(--color-text-muted) 15%, transparent);
-	}
-
+	/* Size, surface and focus ring come from .map-hud-btn (app.css); the
+	   page's HUD row places it. Only the follow states live here. */
+	/* Dim the glyph, not the button: an opacity-faded button let map markers
+	   show through it and read as part of the map. */
 	.gps-follow-btn.waiting {
-		opacity: 0.5;
+		color: color-mix(in srgb, var(--color-text-muted) 55%, transparent);
 		cursor: not-allowed;
 	}
 
 	.gps-follow-btn.active {
 		border-color: var(--color-accent);
 		color: var(--color-accent);
-		background: rgba(233, 69, 96, 0.15);
-	}
-
-	.gps-follow-btn.active:hover:not(:disabled) {
-		background: rgba(233, 69, 96, 0.22);
+		background: color-mix(in srgb, var(--color-accent) 15%, var(--color-surface));
 	}
 </style>

@@ -29,6 +29,8 @@
 	} = $props();
 
 	let open = $state(false);
+	let fabEl = $state<HTMLButtonElement>();
+	let popEl = $state<HTMLDivElement>();
 
 	// The roster filter needs a net with someone on it; without that the toggle
 	// would silently blank the map, so it is disabled and says why.
@@ -67,24 +69,68 @@
 	// board. A search-and-rescue net never sees a SAG control.
 	let showSagSection = $derived($rideMode && !!$sagBoard);
 
-	function toggle() {
-		open = !open;
+	/**
+	 * The panel is a `popover`, so it renders in the browser's TOP LAYER.
+	 *
+	 * It used to be an ordinary absolutely-positioned child at the same
+	 * z-index as the GPS button, GPS pill and next-stop pill, and later in the
+	 * DOM than none of them — so it opened BEHIND all three. No z-index can
+	 * win that reliably against controls owned by other components; the top
+	 * layer is above every one of them by construction, and brings Esc and
+	 * click-outside dismissal with it.
+	 *
+	 * Where it opens: BESIDE the map HUD column when the window has room, so
+	 * the SAG dock, the GPS chip and the next-stop readout stay readable while
+	 * layers are being changed (toggling "Next stop readout" or "SAG dock"
+	 * shows its effect instead of happening underneath the panel). On a
+	 * phone there is no room beside anything, so it drops under its button.
+	 * Either way it is clamped to the viewport and scrolls inside.
+	 */
+	function place() {
+		if (!fabEl || !popEl) return;
+		const r = fabEl.getBoundingClientRect();
+		const gap = 8;
+		const width = Math.min(280, window.innerWidth - 2 * gap);
+		const column = fabEl.closest('.map-hud')?.getBoundingClientRect();
+		const beside = column && column.right + gap + width + gap <= window.innerWidth - 48;
+		const left = beside
+			? column.right + gap
+			: Math.max(gap, Math.min(r.left, window.innerWidth - width - gap));
+		const top = beside ? r.top : r.bottom + gap;
+		popEl.style.left = `${left}px`;
+		popEl.style.top = `${top}px`;
+		popEl.style.width = `${width}px`;
+		// Stop above whatever owns the bottom edge — the phone's bottom sheet or
+		// the desktop ride strip — rather than running over its controls.
+		let floor = window.innerHeight;
+		for (const sel of ['.bottom-sheet', '.ride-strip']) {
+			const el = document.querySelector(sel);
+			const t = el?.getBoundingClientRect().top;
+			if (t != null && t > top && t < floor && el!.getClientRects().length) floor = t;
+		}
+		popEl.style.maxHeight = `${Math.max(160, floor - top - gap)}px`;
 	}
 
-	function handleBlur() {
-		setTimeout(() => {
-			const popover = document.querySelector('.map-palette-popover');
-			if (popover && !popover.contains(document.activeElement)) {
-				open = false;
-			}
-		}, 150);
+	function handleToggle(e: ToggleEvent) {
+		open = e.newState === 'open';
+		if (open) place();
 	}
+
+	$effect(() => {
+		if (!open) return;
+		window.addEventListener('resize', place);
+		return () => window.removeEventListener('resize', place);
+	});
 </script>
 
 <div class="map-palette-wrapper">
 	<button
-		class="map-palette-fab"
-		onclick={toggle}
+		bind:this={fabEl}
+		class="map-hud-btn map-palette-fab"
+		class:map-palette-fab--open={open}
+		popovertarget="map-layers-popover"
+		aria-expanded={open}
+		aria-label="Map layers and filters"
 		title="Map layers & filters"
 	>
 		<svg width="20" height="20" viewBox="0 0 20 20" fill="none">
@@ -97,12 +143,18 @@
 		{/if}
 	</button>
 
-	{#if open}
-		<!-- svelte-ignore a11y_no_static_element_interactions -->
-		<div class="map-palette-popover" onblur={handleBlur} tabindex="-1">
+	<div
+		bind:this={popEl}
+		id="map-layers-popover"
+		class="map-palette-popover"
+		popover="auto"
+		role="dialog"
+		aria-label="Map layers"
+		ontoggle={handleToggle}
+	>
 			<div class="palette-header">
 				<span class="palette-title">Map Layers</span>
-				<button class="palette-close" onclick={() => open = false} aria-label="Close">
+				<button class="palette-close" onclick={() => popEl?.hidePopover()} aria-label="Close">
 					<svg width="14" height="14" viewBox="0 0 14 14" fill="none">
 						<path d="M3 3l8 8M11 3l-8 8" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/>
 					</svg>
@@ -327,37 +379,22 @@
 					</div>
 				</div>
 			{/if}
-		</div>
-	{/if}
+	</div>
 </div>
 
 <style>
 	.map-palette-wrapper {
-		position: absolute;
-		bottom: 30px;
-		left: calc(10px + var(--map-left-inset, 0px));
-		z-index: var(--z-toolbar);
+		display: contents;
 	}
 
+	/* Size, surface, hover and focus ring come from .map-hud-btn (app.css). */
 	.map-palette-fab {
-		width: 40px;
-		height: 40px;
-		border-radius: 8px;
-		border: 1px solid var(--color-border, rgba(255,255,255,0.12));
-		background: var(--color-surface, #1a1a2e);
-		color: var(--color-text, #eee);
-		display: flex;
-		align-items: center;
-		justify-content: center;
-		cursor: pointer;
-		box-shadow: var(--shadow-md, 0 2px 8px rgba(0,0,0,0.3));
-		transition: background 0.15s, border-color 0.15s;
 		position: relative;
 	}
 
-	.map-palette-fab:hover {
-		background: var(--color-surface-hover, #252540);
-		border-color: var(--color-primary, #6366f1);
+	.map-palette-fab--open {
+		border-color: var(--color-text-muted);
+		background: color-mix(in srgb, var(--color-text) 12%, var(--color-surface));
 	}
 
 	.indicator-dot {
@@ -371,17 +408,27 @@
 		border: 1.5px solid var(--color-surface, #1a1a2e);
 	}
 
+	/* A top-layer popover: undo the UA's centred-dialog defaults, then place
+	   it with the inline top/left/width/max-height place() computes. */
 	.map-palette-popover {
-		position: absolute;
-		bottom: 48px;
-		left: 0;
-		width: 260px;
+		position: fixed;
+		inset: auto;
+		margin: 0;
+		overflow-y: auto;
+		overscroll-behavior: contain;
 		background: var(--color-surface, #1a1a2e);
+		color: var(--color-text);
 		border: 1px solid var(--color-primary, #6366f1);
 		border-radius: var(--radius-md, 8px);
-		box-shadow: var(--shadow-md, 0 4px 16px rgba(0,0,0,0.4));
+		box-shadow: var(--shadow-lg, 0 8px 24px rgba(0,0,0,0.45));
 		padding: 0;
-		outline: none;
+	}
+
+	.map-palette-popover .palette-header {
+		position: sticky;
+		top: 0;
+		z-index: 1;
+		background: var(--color-surface, #1a1a2e);
 	}
 
 	.palette-header {

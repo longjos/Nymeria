@@ -125,6 +125,12 @@
 		font-weight: 700;
 		font-variant-numeric: tabular-nums;
 		line-height: 1.05;
+		/* overflow:hidden clips at the padding box, and a 1.05 line box is
+		   shorter than a descender — "1 waiting" rendered as "1 waitinq".
+		   The padding gives g/p/y room inside the clip; the equal negative
+		   margin keeps the 66px row contract above untouched. */
+		padding-bottom: 0.14em;
+		margin-bottom: -0.14em;
 		white-space: nowrap;
 		overflow: hidden;
 		text-overflow: ellipsis;

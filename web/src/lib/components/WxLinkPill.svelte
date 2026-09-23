@@ -1,6 +1,5 @@
 <script lang="ts">
 	import { wxLinkStatus, wxClock } from '$lib/stores/wxAlerts';
-	import { gpsStatus } from '$lib/stores/gps';
 	import { openWeather } from '$lib/stores/ui';
 	import { linkStateText } from '$lib/wxAlertTime';
 
@@ -18,14 +17,10 @@
 	let age = $derived(elapsedShort($wxLinkStatus.lastSuccessAt ?? $wxLinkStatus.lastAttemptAt, $wxClock));
 	let label = $derived(down ? `NWS DOWN ${age}` : `NWS ${age} stale`);
 	let sentence = $derived(linkStateText($wxLinkStatus, $wxClock));
-
-	// GPS pill occupies 178px..202px (24px tall) when shown; sit 4px below it,
-	// or take its slot when it isn't shown. NextStopPill starts at 226px.
-	let top = $derived($gpsStatus.enabled ? 206 : 178);
 </script>
 
 {#if visible}
-	<button class="wx-link-pill" class:down onclick={() => openWeather('alerts')} style="top: {top}px" title={sentence} aria-label={sentence}>
+	<button class="wx-link-pill" class:down onclick={() => openWeather('alerts')} title={sentence} aria-label={sentence}>
 		<span class="wx-link-dot" aria-hidden="true"></span>
 		{label}
 	</button>
@@ -33,9 +28,6 @@
 
 <style>
 	.wx-link-pill {
-		position: absolute;
-		left: calc(10px + var(--map-left-inset, 0px));
-		z-index: var(--z-toolbar);
 		height: 24px;
 		display: inline-flex;
 		align-items: center;

@@ -426,8 +426,8 @@
 	 * The sheet number is the same `half` snap the sheet itself uses.
 	 */
 	/** Width the SAG dock takes out of the map's left edge right now; 0 when
-	 *  no dock is shown. The one number the fit padding, the dock's own box
-	 *  and every left-edge map control all read, so they cannot disagree. */
+	 *  no dock is shown. The one number the fit padding and the dock's own
+	 *  slot in the map HUD both read, so they cannot disagree. */
 	let sagDockWidth = $derived(
 		!(isDesktop && $sagDockActive)
 			? 0
@@ -437,28 +437,32 @@
 	);
 
 	/**
-	 * Publish the dock's footprint as --map-left-inset on :root.
+	 * The map HUD's bottom edge, published as --map-hud-bottom on :root.
 	 *
-	 * The dock is a fixed column over the map's left edge, and that edge is
-	 * where every hand-placed map control lives at `left: 10px` — Leaflet's
-	 * zoom, GPS follow, the GPS fix pill, the next-stop pill, the weather link
-	 * pill and the layers button. At the same z-index and later in the DOM,
-	 * the dock won every click: the layers button became unclickable and the
-	 * dock sat on top of the "No fix" pill. Each of those controls now adds
-	 * this inset to its left edge, so they step aside as one column instead of
-	 * each being nudged separately. It is :root rather than a wrapper because
-	 * the controls are page-level siblings of the dock, not its children.
+	 * The map's own "click the map to place …" hints sit top-centre. On a
+	 * phone the HUD column spans most of that width, and the hints — inside
+	 * the map layer, beneath the HUD — were hidden behind the GPS chip and the
+	 * next-stop readout at exactly the moment the operator needed to read
+	 * them. Map.svelte drops them below this edge on narrow screens.
 	 */
+	let hudEl = $state<HTMLDivElement>();
 	$effect(() => {
+		const el = hudEl;
+		if (!el) return;
 		const root = document.documentElement;
-		// The dock sits at left: --space-sm (8px); step past it with the same gap.
-		root.style.setProperty('--map-left-inset', sagDockWidth > 0 ? `${sagDockWidth + 8}px` : '0px');
-		return () => root.style.removeProperty('--map-left-inset');
+		const publish = () => root.style.setProperty('--map-hud-bottom', `${Math.round(el.getBoundingClientRect().bottom)}px`);
+		const ro = new ResizeObserver(publish);
+		ro.observe(el);
+		publish();
+		return () => {
+			ro.disconnect();
+			root.style.removeProperty('--map-hud-bottom');
+		};
 	});
 
 	let sagFitPadding = $derived(
 		isDesktop && $sagDockActive
-			? { top: 0, right: 0, bottom: 0, left: sagDockWidth }
+			? { top: 0, right: 0, bottom: 0, left: sagDockWidth + 16 }
 			: !isDesktop && $panelMode === 'sag'
 				? { top: 0, right: 0, bottom: Math.round(window.innerHeight * 0.5), left: 0 }
 				: null
@@ -1049,49 +1053,103 @@
 		/>
 	</div>
 
-	<!-- Map layers palette (bottom-left) -->
-	<!-- rosterCount is the count the filter actually gates on, not the raw roster
-	     size: a voice-only roster has check-ins but nothing on the map, and
-	     the raw roster size there would enable a checkbox that changes nothing. -->
-	<MapPalette
-		filteredCount={stationsWithPosition.length}
-		totalCount={allStationsWithPosition.length}
-		hasActiveNet={$netIsOpen}
-		rosterCount={$rosterMappedCount}
-		nextStopEnabled={showNextStop}
-		hasCourse={routeAnnotations.length > 0}
-		onNextStopToggle={toggleNextStopPill}
-	/>
+	<!-- The map HUD: ONE column down the map's left edge.
+	     Row 1 is the map's tools (zoom, follow-me, ops view, layers); then
+	     the status chips; then the next-stop readout; then, on a bike ride,
+	     the SAG dock, which takes whatever height is left. Everything stacks
+	     VERTICALLY in normal flow, so a chip appearing, the next-stop card
+	     expanding or the dock growing moves its neighbours instead of landing
+	     on them. (These used to be hand-placed at fixed `top:` offsets, and
+	     the dock was a second column that shoved every control sideways.) -->
+	<div
+		bind:this={hudEl}
+		class="map-hud"
+		class:map-hud--dock={isDesktop && $sagDockActive}
+		style:--sag-dock-w="{sagDockWidth}px"
+	>
+		<div class="map-hud-tools" role="group" aria-label="Map tools">
+			<div class="map-hud-zoom" role="group" aria-label="Zoom">
+				<button type="button" class="map-hud-btn" onclick={() => mapRef?.zoomIn()} aria-label="Zoom in" title="Zoom in">
+					<svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" aria-hidden="true"><path d="M8 3v10M3 8h10" /></svg>
+				</button>
+				<button type="button" class="map-hud-btn" onclick={() => mapRef?.zoomOut()} aria-label="Zoom out" title="Zoom out">
+					<svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" aria-hidden="true"><path d="M3 8h10" /></svg>
+				</button>
+			</div>
 
-	<!-- Live GPS follow toggle + status -->
-	<GpsFollowControl oncenter={() => mapRef?.centerOnOwnPosition()} />
-	<GpsStatusPill />
-	<WxLinkPill />
+			<GpsFollowControl oncenter={() => mapRef?.centerOnOwnPosition()} />
 
-	<!-- Along-course distance readout (below the GPS status pill) -->
-	{#if showNextStop}
-		<NextStopPill
-			origin={effectiveDistanceOrigin}
-			{routeAnnotations}
-			{stopAnnotations}
-			activeNetId={$activeNet?.id ?? null}
-			expanded={nextStopExpanded}
-			onToggle={() => (nextStopExpanded = !nextStopExpanded)}
-			onClear={handleDistanceOriginCleared}
-			onMeasureChange={(b) => (measureBand = b)}
-		/>
-	{/if}
+			{#if $opsView && $activeNet}
+				<button type="button" class="map-hud-btn ops-view-fab" onclick={handleGoToOpsView} aria-label="Return to Ops View" title="Return to Ops View">
+					<svg width="18" height="18" viewBox="0 0 16 16" fill="none" aria-hidden="true">
+						<circle cx="8" cy="7" r="3" stroke="currentColor" stroke-width="1.5"/>
+						<path d="M8 1C4.5 1 1.5 3.5 1 7c.5 3.5 3.5 6 7 6s6.5-2.5 7-6c-.5-3.5-3.5-6-7-6z" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/>
+						<path d="M8 13v2" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/>
+					</svg>
+				</button>
+			{/if}
 
-	<!-- Floating Ops View restore button -->
-	{#if $opsView && $activeNet}
-		<button class="ops-view-fab" onclick={handleGoToOpsView} title="Return to Ops View">
-			<svg width="18" height="18" viewBox="0 0 16 16" fill="none">
-				<circle cx="8" cy="7" r="3" stroke="currentColor" stroke-width="1.5"/>
-				<path d="M8 1C4.5 1 1.5 3.5 1 7c.5 3.5 3.5 6 7 6s6.5-2.5 7-6c-.5-3.5-3.5-6-7-6z" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/>
-				<path d="M8 13v2" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/>
-			</svg>
-		</button>
-	{/if}
+			<!-- rosterCount is the count the filter actually gates on, not the raw roster
+			     size: a voice-only roster has check-ins but nothing on the map, and
+			     the raw roster size there would enable a checkbox that changes nothing. -->
+			<MapPalette
+				filteredCount={stationsWithPosition.length}
+				totalCount={allStationsWithPosition.length}
+				hasActiveNet={$netIsOpen}
+				rosterCount={$rosterMappedCount}
+				nextStopEnabled={showNextStop}
+				hasCourse={routeAnnotations.length > 0}
+				onNextStopToggle={toggleNextStopPill}
+			/>
+		</div>
+
+		<div class="map-hud-status">
+			<GpsStatusPill />
+			<WxLinkPill />
+		</div>
+
+		<!-- Along-course distance readout -->
+		{#if showNextStop}
+			<NextStopPill
+				origin={effectiveDistanceOrigin}
+				{routeAnnotations}
+				{stopAnnotations}
+				activeNetId={$activeNet?.id ?? null}
+				expanded={nextStopExpanded}
+				onToggle={() => (nextStopExpanded = !nextStopExpanded)}
+				onClear={handleDistanceOriginCleared}
+				onMeasureChange={(b) => (measureBand = b)}
+			/>
+		{/if}
+
+		<!-- Desktop: SAG dock (bike-ride nets with the overlay on), last in
+		     the column so it takes the height the rows above leave. In
+		     dispatch focus the candidate panel takes its place — same slot,
+		     same width, so the operator's eye does not have to move. -->
+		{#if isDesktop && $sagDockActive}
+			<div
+				class="sag-dock-slot"
+				class:sag-dock-slot--rail={sagDockCollapsed && $sagFocus?.mode !== 'dispatch'}
+			>
+				{#if $sagFocus?.mode === 'dispatch'}
+				<!-- Deliberately NOT gated on $sagCandidates: that store is null
+				     when the pickup itself is unplaceable, and the panel is built
+				     to work in exactly that case. Somebody is standing at the
+				     roadside whether or not we can draw them. -->
+				<SagCandidatePanel />
+			{:else}
+				<SagDock
+					onPlaceRequest={handleSagPlaceRequest}
+					onPlaceVehicle={handleSagPlaceVehicle}
+					onSagFocusPreset={toggleSagFocusPreset}
+					collapsed={sagDockCollapsed}
+					onExpand={() => (sagDockCollapsed = false)}
+					onCollapse={isTablet ? () => (sagDockCollapsed = true) : undefined}
+				/>
+			{/if}
+			</div>
+		{/if}
+	</div>
 
 	<!-- Desktop: Activity Rail (right edge) -->
 	{#if isDesktop}
@@ -1195,34 +1253,6 @@
 				<SettingsPanel />
 			{/if}
 		</SidePanel>
-	{/if}
-
-	<!-- Desktop: SAG dock, left of the map (bike-ride nets with the overlay on).
-	     In dispatch focus the candidate panel takes its place — same column,
-	     same width, so the operator's eye does not have to move. -->
-	{#if isDesktop && $sagDockActive}
-		<div
-			class="sag-dock-layer"
-			class:sag-dock-layer--rail={sagDockCollapsed && $sagFocus?.mode !== 'dispatch'}
-			style:width="{sagDockWidth}px"
-		>
-			{#if $sagFocus?.mode === 'dispatch'}
-				<!-- Deliberately NOT gated on $sagCandidates: that store is null
-				     when the pickup itself is unplaceable, and the panel is built
-				     to work in exactly that case. Somebody is standing at the
-				     roadside whether or not we can draw them. -->
-				<SagCandidatePanel />
-			{:else}
-				<SagDock
-					onPlaceRequest={handleSagPlaceRequest}
-					onPlaceVehicle={handleSagPlaceVehicle}
-					onSagFocusPreset={toggleSagFocusPreset}
-					collapsed={sagDockCollapsed}
-					onExpand={() => (sagDockCollapsed = false)}
-					onCollapse={isTablet ? () => (sagDockCollapsed = true) : undefined}
-				/>
-			{/if}
-		</div>
 	{/if}
 
 	<!-- Desktop: Ride status strip (bike-ride profile nets only) -->
@@ -1450,41 +1480,100 @@
 		z-index: var(--z-map);
 	}
 
-	/* An overlay INSIDE the map layer, like MapPalette and GpsStatusPill — not
-	   a layout sibling. Insetting the map's box instead would mean an
-	   invalidateSize() on every toggle, and spec §11 names that as the sign the
-	   dock has been built wrong. */
-	.sag-dock-layer {
-		position: fixed;
-		top: var(--space-sm);
-		left: var(--space-sm);
-		bottom: calc(var(--ride-strip-h, 0px) + var(--space-sm));
-		/* Width is set inline from sagDockWidth — the same number that insets
-		   the map controls, so the two cannot drift. */
+	/* The map HUD column (see the markup). Absolutely placed over the map's
+	   top-left corner; its rows are in normal flow, so nothing in it is ever
+	   positioned by hand again. The column itself passes pointer events
+	   through — only its controls take them — so the gaps between rows and
+	   the empty space beside short rows are still the map. */
+	.map-hud {
+		position: absolute;
+		top: 10px;
+		left: 10px;
 		z-index: var(--z-toolbar);
 		display: flex;
 		flex-direction: column;
+		align-items: flex-start;
+		gap: var(--space-sm);
+		max-width: calc(100% - 20px - var(--rail-width, 0px));
 		min-height: 0;
-		/* The layer is a full-height column but the dock inside it is usually
-		   a short panel. With pointer-events on the LAYER, the transparent
-		   space below the panel ate every map click and drag down the left
-		   edge (measured: elementFromPoint(130, 400) returned the layer, not
-		   the map). The layer passes events through; only its content takes
-		   them. */
 		pointer-events: none;
 	}
 
-	.sag-dock-layer > :global(*) {
+	.map-hud > :global(*:not(.sag-dock-slot)),
+	.map-hud-tools > :global(*),
+	.map-hud-status > :global(*) {
 		pointer-events: auto;
 	}
 
-	/* Tablet: the rail takes 44px and is bottom-anchored content rather than a
-	   full-height column, so it never looks like an empty panel. Expanded, the
-	   dock overlays the map at its normal width — it does not reflow the map,
-	   which is what keeps invalidateSize() out of this feature entirely. */
-	.sag-dock-layer--rail {
-		bottom: auto;
-		max-height: calc(100% - var(--ride-strip-h, 0px) - var(--space-sm) * 2);
+	/* With the dock the column runs to the ride strip, so the dock can take
+	   the height left under the rows above it and scroll inside that. */
+	.map-hud--dock {
+		bottom: calc(var(--ride-strip-h, 0px) + var(--space-sm));
+	}
+
+	.map-hud-tools {
+		display: flex;
+		align-items: center;
+		gap: var(--space-sm);
+		pointer-events: none;
+	}
+
+	/* Zoom in/out as one joined control, like every map the operator has used. */
+	.map-hud-zoom {
+		display: flex;
+		pointer-events: none;
+	}
+
+	.map-hud-zoom > :global(.map-hud-btn) {
+		pointer-events: auto;
+	}
+
+	.map-hud-zoom > :global(.map-hud-btn:first-child) {
+		border-top-right-radius: 0;
+		border-bottom-right-radius: 0;
+	}
+
+	.map-hud-zoom > :global(.map-hud-btn:last-child) {
+		border-top-left-radius: 0;
+		border-bottom-left-radius: 0;
+		border-left: none;
+	}
+
+	.map-hud-status {
+		display: flex;
+		flex-wrap: wrap;
+		gap: var(--space-xs);
+		pointer-events: none;
+	}
+
+	/* No GPS configured and the NWS link healthy: no empty row, no gap. */
+	.map-hud-status:empty {
+		display: none;
+	}
+
+	.ops-view-fab {
+		border-color: var(--color-success);
+		color: var(--color-success);
+	}
+
+	.sag-dock-slot {
+		flex: 1 1 auto;
+		min-height: 0;
+		width: var(--sag-dock-w);
+		display: flex;
+		flex-direction: column;
+		/* The slot is as tall as the space left; the dock inside is usually
+		   shorter. Only the dock takes clicks — the space under it is map. */
+		pointer-events: none;
+	}
+
+	.sag-dock-slot > :global(*) {
+		pointer-events: auto;
+	}
+
+	/* Tablet: the 44px rail is content-height, never a full-height column. */
+	.sag-dock-slot--rail {
+		flex: 0 1 auto;
 	}
 
 	.sheet-peek-row {
@@ -1615,30 +1704,5 @@
 	.wx-peek-chevron {
 		flex-shrink: 0;
 		color: var(--color-text-muted);
-	}
-
-	.ops-view-fab {
-		position: absolute;
-		top: 80px;
-		left: 10px;
-		z-index: var(--z-toolbar);
-		width: 40px;
-		height: 40px;
-		border-radius: 8px;
-		border: 2px solid #22c55e;
-		background: var(--color-surface);
-		background: rgba(var(--color-surface-rgb, 30, 30, 30), 0.9);
-		color: #22c55e;
-		display: flex;
-		align-items: center;
-		justify-content: center;
-		cursor: pointer;
-		box-shadow: 0 2px 8px rgba(0, 0, 0, 0.3);
-		transition: background 0.15s, border-color 0.15s;
-	}
-
-	.ops-view-fab:hover {
-		background: rgba(34, 197, 94, 0.15);
-		border-color: #4ade80;
 	}
 </style>

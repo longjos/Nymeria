@@ -270,6 +270,15 @@
 		map?.invalidateSize();
 	}
 
+	/** One zoom step, for the HUD's +/- buttons. */
+	export function zoomIn(): void {
+		map?.zoomIn();
+	}
+
+	export function zoomOut(): void {
+		map?.zoomOut();
+	}
+
 	/** Pans (without zooming) to the current own-position fix, if any. */
 	export function centerOnOwnPosition(): void {
 		if (!map || !ownPosition || ownPosition.mode < 2) return;
@@ -473,7 +482,10 @@
 	onMount(() => {
 		const saved = loadMapView();
 		map = L.map(mapEl, {
-			zoomControl: true,
+			// Zoom lives in the page's map HUD toolbar with the other map tools
+			// (routes/+page.svelte), so the left edge is one column the SAG
+			// dock can stack under — not a Leaflet corner it has to dodge.
+			zoomControl: false,
 			attributionControl: true,
 		}).setView(saved ? [saved.lat, saved.lon] : [39.8283, -98.5795], saved ? saved.zoom : 4);
 
@@ -3749,6 +3761,18 @@
 		gap: 0.75rem;
 		align-items: center;
 		box-shadow: 0 2px 8px rgba(0,0,0,0.3);
+	}
+
+	/* Phones: the page's map HUD column covers the top-centre where these
+	   hints sit, so drop them just below its bottom edge (published by
+	   routes/+page.svelte as --map-hud-bottom) and let them use the width. */
+	@media (max-width: 768px) {
+		.place-hint,
+		.draw-hint {
+			top: calc(var(--map-hud-bottom, 50px) + 8px);
+			max-width: calc(100% - 20px);
+			flex-wrap: wrap;
+		}
 	}
 
 	.draw-hint-cancel {

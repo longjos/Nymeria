@@ -289,30 +289,6 @@ a {
 	.wx-panel-header { display: none !important; }
 }
 
-/* Found while proving P0-1/P0-2 measurements: MapPalette's FAB sits at a fixed
-   bottom:30px, which on mobile lands underneath the bottom sheet's peek row
-   (the sheet's z-index is higher) — elementFromPoint on the FAB's center hit
-   the sheet's search button instead. Lift it clear of the sheet using the
-   same --sheet-peek token BottomSheet.svelte publishes at runtime, the same
-   recipe WxInterruptBanner already uses for the same problem. Global rather
-   than in MapPalette.svelte so desktop (no sheet, no --sheet-peek) is
-   untouched. */
-@media (max-width: 768px), (max-height: 499px) {
-	.map-palette-wrapper {
-		bottom: calc(var(--sheet-peek) + var(--space-md) + env(safe-area-inset-bottom)) !important;
-	}
-}
-
-/* Desktop sibling of the rule above: the ride strip lifts the FAB off the
-   bottom band exactly as the bottom sheet lifts it off the peek row on
-   mobile. --ride-strip-h defaults to 0px when the strip is not mounted, so
-   this is a no-op outside bike-ride mode. */
-@media (min-width: 769px) and (min-height: 500px) {
-	.map-palette-wrapper {
-		bottom: calc(30px + var(--ride-strip-h, 0px)) !important;
-	}
-}
-
 /* Print: hide everything except the ICS-309 panel */
 @media print {
 	.map-layer,
@@ -336,10 +312,36 @@ a {
 	}
 }
 
-/* Leaflet's top-left control column (zoom +/-) steps aside for the SAG dock
-   exactly like the app's own left-edge map controls do. --map-left-inset is
-   published on :root by routes/+page.svelte while the dock is shown and is
-   0px (or unset) everywhere else, so other maps are unaffected. */
-.leaflet-top.leaflet-left {
-	left: var(--map-left-inset, 0px);
+/* Map HUD tool buttons — zoom, follow-me, ops view, layers. One recipe so
+   the toolbar row reads as one set of controls (routes/+page.svelte lays
+   them out; each component keeps only its own state colours). Opaque, not
+   translucent: this is read over a busy map, often in sunlight. */
+.map-hud-btn {
+	width: 40px;
+	height: 40px;
+	flex-shrink: 0;
+	display: inline-flex;
+	align-items: center;
+	justify-content: center;
+	padding: 0;
+	border: 1px solid color-mix(in srgb, var(--color-text) 18%, transparent);
+	border-radius: var(--radius-md, 8px);
+	background: var(--color-surface);
+	color: var(--color-text);
+	box-shadow: var(--shadow-md, 0 2px 8px rgba(0, 0, 0, 0.3));
+	cursor: pointer;
+	transition: background var(--duration-fast, 0.15s), border-color var(--duration-fast, 0.15s);
+}
+
+.map-hud-btn:hover:not(:disabled) {
+	background: color-mix(in srgb, var(--color-text) 8%, var(--color-surface));
+	border-color: color-mix(in srgb, var(--color-text) 45%, transparent);
+}
+
+/* Touch: the 44px minimum target. */
+@media (pointer: coarse) {
+	.map-hud-btn {
+		width: 44px;
+		height: 44px;
+	}
 }
