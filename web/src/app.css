@@ -238,6 +238,15 @@
 	box-sizing: border-box;
 }
 
+/* The reset above also strips the UA's `margin: auto` from <dialog>, which is
+   what centres a modal opened with showModal() — without it every modal
+   (RideDialog's composers, the sweep picker, close-net) opened pinned to the
+   top-left corner. Components that want a different placement (RideDialog's
+   phone bottom sheet) set their own margin, which beats this. */
+dialog {
+	margin: auto;
+}
+
 body {
 	font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
 	background: var(--color-bg);

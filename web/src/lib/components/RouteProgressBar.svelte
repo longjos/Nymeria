@@ -6,6 +6,9 @@
 	import { rideRailModel } from '$lib/stores/courseRoster';
 	import { secondClock } from '$lib/stores/clock';
 	import { activeCheckIns } from '$lib/stores/netcontrol';
+	import { courseState, rideHasCourse, markSweepPassed } from '$lib/stores/ride';
+	import { courseStopMiles } from '$lib/stores/courseGeo';
+	import SweepPassedConfirm from './SweepPassedConfirm.svelte';
 
 	let {
 		onCheckpointClick,
@@ -26,6 +29,12 @@
 	}
 
 	let expandedCpId = $state<string | null>(null);
+
+	// On a phone this panel is the ONLY rail — the desktop strip is not
+	// mounted — so without this the sweep could not be marked from a phone at
+	// all. Bike-ride nets with a course only: a general checkpoint net has no
+	// sweep closure to record.
+	let showSweepConfirm = $state(false);
 
 	// Element colors by label — used only by the expanded passage detail below;
 	// the rail itself (CourseRailView) draws only LEAD and SWEEP.
@@ -64,9 +73,24 @@
 				onStopActivate={toggleDetail}
 				onRosterActivate={flyToCheckIn}
 				{onFlyTo}
+				onSweepPassed={$rideHasCourse ? () => (showSweepConfirm = true) : undefined}
 				onRosterList={() => onNavigateTab?.('roster')}
 			/>
 		</div>
+
+		{#if showSweepConfirm}
+			<SweepPassedConfirm
+				stations={$courseState?.stations ?? []}
+				defaultCheckpointId={$courseState?.sweep.nextStationId ?? ''}
+				sweepLabel={$rideRailModel.sweepLabel}
+				stopMiles={$courseStopMiles}
+				onConfirm={async (cpId) => {
+					await markSweepPassed(cpId);
+					showSweepConfirm = false;
+				}}
+				onCancel={() => (showSweepConfirm = false)}
+			/>
+		{/if}
 
 		<!-- Expanded checkpoint detail -->
 		{#if expandedCpId}

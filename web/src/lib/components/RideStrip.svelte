@@ -5,6 +5,7 @@
 	// it is a contract every phase's zone set must fit inside.
 	import CourseRailView from './CourseRailView.svelte';
 	import { rideRailModel } from '$lib/stores/courseRoster';
+	import { courseStopMiles } from '$lib/stores/courseGeo';
 	import { secondClock } from '$lib/stores/clock';
 	import RideZone from './RideZone.svelte';
 	import PhaseChip from './PhaseChip.svelte';
@@ -241,6 +242,8 @@
 		<SweepPassedConfirm
 			stations={$rideRail.stations}
 			defaultCheckpointId={$rideRail.sweepNextStationId}
+			sweepLabel={$rideRailModel.sweepLabel}
+			stopMiles={$courseStopMiles}
 			onConfirm={async (cpId) => {
 				await markSweepPassed(cpId);
 				showSweepConfirm = false;
