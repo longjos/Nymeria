@@ -155,15 +155,19 @@ export function resolveSagPoint(loc: SAGLocation, ctx: SagGeoContext): SagPlacem
 
 	// 2. An annotation reference. A dangling id falls through rather than
 	//    black-holing a request that also carries a good mile marker.
+	//    A course STOP's chainage is already known — placed on the leg its
+	//    sequence number implies — so it rides along; any other annotation
+	//    stays null for the same reason as a raw coordinate.
 	if (loc.annotationId) {
 		const ann = ctx.annotationPoints.get(loc.annotationId);
 		if (ann) {
+			const stop = ctx.stops.find((s) => s.id === loc.annotationId);
 			return {
 				placed: true,
 				lat: ann.lat,
 				lon: ann.lon,
 				via: 'annotation',
-				chainageMeters: null,
+				chainageMeters: stop ? stop.chainageMeters : null,
 				label: ann.label
 			};
 		}

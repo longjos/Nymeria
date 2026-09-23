@@ -385,8 +385,16 @@
 		{:else if result?.degraded}
 			<!-- Before any number, not after it. -->
 			<p class="cp-notice">
-				No course loaded — these are straight-line distances, not road miles.
-				<button class="cp-act" onclick={() => navigateZone('course-import')}>Import a course</button>
+				{#if $sagRoute.index}
+					<!-- A course IS loaded; it is the pickup (a dropped pin, a free
+					     coordinate) whose place along it is unknown — the projection
+					     can land on either leg of a shared road, so we do not guess. -->
+					The pickup isn't tied to a mile on the course — these are straight-line distances, not road miles.
+					Give it a mile marker or a rest stop to rank by road.
+				{:else}
+					No course loaded — these are straight-line distances, not road miles.
+					<button class="cp-act" onclick={() => navigateZone('course-import')}>Import a course</button>
+				{/if}
 			</p>
 		{/if}
 

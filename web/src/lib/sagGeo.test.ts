@@ -50,6 +50,32 @@ describe('resolveSagPoint — resolution order (spec §2)', () => {
 		expect(p.placed && p.lat).toBe(35.2);
 	});
 
+	it('rule 2: a pickup AT a course stop carries that stop\'s chainage', () => {
+		// The stop's chainage is already placed by its sequence number
+		// (courseGeo), so it is exact. Leaving it null made dispatch rank by
+		// straight line and announce "No course loaded" with a course on the map.
+		const p = resolveSagPoint(
+			loc({ annotationId: 's2' }),
+			ctx({
+				annotationPoints: new Map([['s2', { lat: 35, lon: -85.8, label: 'Eakin' }]]),
+				stops: [{ id: 's2', label: 'Eakin', chainageMeters: 20 * MI, offTrackMeters: 5 }]
+			})
+		);
+		expect(p.placed && p.via).toBe('annotation');
+		expect(p.placed && p.chainageMeters).toBe(20 * MI);
+	});
+
+	it('rule 2: any other annotation still gets no chainage (the projection is ambiguous)', () => {
+		const p = resolveSagPoint(
+			loc({ annotationId: 'a1' }),
+			ctx({
+				annotationPoints: new Map([['a1', { lat: 35, lon: -85.8, label: 'Parking' }]]),
+				stops: [{ id: 's2', label: 'Eakin', chainageMeters: 20 * MI, offTrackMeters: 5 }]
+			})
+		);
+		expect(p.placed && p.chainageMeters).toBe(null);
+	});
+
 	it('falls through to mileage when the annotation id is dangling', () => {
 		// A deleted annotation must not black-hole a request that also carries a
 		// perfectly good mile marker.
