@@ -277,7 +277,7 @@
 	}
 
 	.med-new {
-		min-height: 40px;
+		min-height: 44px;
 		padding: 0 var(--space-md);
 		background: var(--color-accent);
 		border: none;
@@ -288,20 +288,20 @@
 	}
 
 	.med-new:disabled {
-		opacity: 0.5;
+		opacity: 0.45;
 		cursor: not-allowed;
 	}
 
 	.med-empty {
 		color: var(--color-text-muted);
-		font-size: 0.82rem;
+		font-size: var(--ride-t-body);
 		padding: var(--space-sm) 0;
 	}
 
 	.med-list {
 		display: flex;
 		flex-direction: column;
-		gap: 6px;
+		gap: var(--space-xs);
 	}
 
 	.med-card {
@@ -317,11 +317,12 @@
 		display: flex;
 		align-items: center;
 		gap: var(--space-sm);
-		font-size: 0.8rem;
+		font-size: var(--ride-t-body);
+		min-height: 44px;
 	}
 
 	.med-status {
-		font-size: 0.68rem;
+		font-size: var(--ride-t-label);
 		font-weight: 700;
 		text-transform: uppercase;
 		color: var(--color-text-muted);
@@ -335,27 +336,27 @@
 
 	.med-age {
 		color: var(--color-text-muted);
-		font-size: 0.72rem;
+		font-size: var(--ride-t-label);
 		white-space: nowrap;
 	}
 
 	.med-location {
-		font-size: 0.82rem;
+		font-size: var(--ride-t-body);
 	}
 
 	.med-complaint {
-		font-size: 0.85rem;
+		font-size: var(--ride-t-body);
 		color: var(--color-text-muted);
 	}
 
 	.med-ems {
-		font-size: 0.78rem;
+		font-size: var(--ride-t-body);
 		color: var(--color-text-muted);
 		font-variant-numeric: tabular-nums;
 	}
 
 	.med-notes {
-		font-size: 0.78rem;
+		font-size: var(--ride-t-body);
 		color: var(--color-text-muted);
 		font-style: italic;
 	}
@@ -363,19 +364,18 @@
 	.med-actions {
 		display: flex;
 		flex-wrap: wrap;
-		gap: 6px;
-		margin-top: 4px;
+		gap: var(--space-sm);
 		align-items: center;
 	}
 
 	.med-btn {
-		min-height: 36px;
+		min-height: 44px;
 		padding: 0 var(--space-sm);
 		background: var(--color-bg);
 		border: 1px solid var(--color-primary);
 		border-radius: var(--radius-sm);
 		color: var(--color-text);
-		font-size: 0.75rem;
+		font-size: var(--ride-t-label);
 		font-weight: 600;
 		cursor: pointer;
 	}
@@ -393,7 +393,7 @@
 		border-radius: var(--radius-sm);
 		color: var(--color-text);
 		font: inherit;
-		font-size: 0.78rem;
+		font-size: var(--ride-t-body);
 	}
 
 	.med-input-narrow {
@@ -407,20 +407,20 @@
 		border-radius: var(--radius-sm);
 		color: var(--color-text);
 		font: inherit;
-		font-size: 0.78rem;
+		font-size: var(--ride-t-body);
 	}
 
 	.med-inline-form {
 		display: flex;
 		flex-wrap: wrap;
-		gap: 6px;
+		gap: var(--space-sm);
 		align-items: center;
 		width: 100%;
 	}
 
 	.med-inline-actions {
 		display: flex;
-		gap: 6px;
+		gap: var(--space-sm);
 	}
 
 	.med-correction {

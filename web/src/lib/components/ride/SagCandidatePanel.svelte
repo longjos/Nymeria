@@ -366,7 +366,7 @@
 	<section class="cp" aria-label="SAG candidates" style="--sag-unit: var(--color-sag-unit, #f97316); --sag-unit-soft: var(--color-sag-unit-soft, rgba(249, 115, 22, 0.14));">
 		<header class="cp-head" style={tier ? `--cp-tier: var(${tierStyle(tier).colorVar}); --cp-tier-text: var(${tierStyle(tier).textVar});` : ''}>
 			<div class="cp-head-row">
-				<span class="cp-kicker">CANDIDATES for</span>
+				<span class="cp-kicker">Candidates for</span>
 				{#if tier}<RideTierGlyph {tier} size={13} />{/if}
 				<span class="cp-name">SAG {focused.request.sequence}</span>
 			</div>
@@ -624,7 +624,7 @@
 	.cp-resort-btn {
 		margin-left: auto;
 		flex-shrink: 0;
-		padding: 2px 8px;
+		padding: 0 var(--space-sm);
 		border: 1px solid var(--color-warning);
 		border-radius: var(--radius-sm);
 		background: none;
@@ -632,6 +632,7 @@
 		font: inherit;
 		font-weight: 700;
 		cursor: pointer;
+		min-height: 36px;
 	}
 
 	.cp-resort-btn:hover {
@@ -651,7 +652,6 @@
 	}
 
 	.cp-head {
-		padding: var(--space-sm);
 		border-bottom: 1px solid var(--color-primary);
 		border-left: 3px solid var(--cp-tier, var(--color-primary));
 	}
@@ -659,25 +659,31 @@
 	.cp-head-row {
 		display: flex;
 		align-items: center;
-		gap: 5px;
+		gap: var(--space-xs);
 		font-size: var(--ride-t-body);
+		min-height: 44px;
+		padding: 0 var(--space-sm);
 	}
 
 	.cp-head-row--sub {
+		/* Below the 44px title band, not inside it: that band is what keeps the
+		   title's baseline identical whether the dock or this panel is mounted. */
+		min-height: 0;
 		font-size: var(--ride-t-label);
 		color: var(--color-text-muted);
-		margin-top: 2px;
+		padding: 0 var(--space-sm) var(--space-xs);
 	}
 
 	.cp-kicker {
 		font-size: var(--ride-t-label);
-		font-weight: 800;
-		letter-spacing: 0.08em;
+		font-weight: 700;
+		letter-spacing: var(--ride-label-tracking);
 		color: var(--color-text-muted);
+		text-transform: uppercase;
 	}
 
 	.cp-name {
-		font-weight: 800;
+		font-weight: 700;
 		color: var(--cp-tier-text, var(--color-text));
 	}
 
@@ -712,7 +718,7 @@
 	.cp-list {
 		display: flex;
 		flex-direction: column;
-		gap: 4px;
+		gap: var(--space-xs);
 		padding: var(--space-xs) var(--space-sm) var(--space-sm);
 		overflow-y: auto;
 		min-height: 0;
@@ -726,10 +732,10 @@
 	.cp-row {
 		border: 1px solid var(--color-primary);
 		border-radius: var(--radius-sm);
-		padding: 6px var(--space-sm);
+		padding: var(--space-sm);
 		display: flex;
 		flex-direction: column;
-		gap: 3px;
+		gap: var(--space-xs);
 		/* Without this the rows are flex children that shrink below their own
 		   content inside the phone sheet's constrained column, and every row's
 		   Send button renders on top of the row beneath it — the button the
@@ -752,25 +758,25 @@
 
 	/* Greyed, with a reason, never hidden. */
 	.cp-row--out {
-		opacity: 0.55;
 		border-style: dotted;
+		color: var(--color-text-muted);
 	}
 
 	.cp-row-head {
 		display: flex;
 		align-items: center;
-		gap: 6px;
+		gap: var(--space-sm);
 		font-size: var(--ride-t-body);
 		flex-wrap: wrap;
 	}
 
 	.cp-rank {
-		font-weight: 800;
+		font-weight: 700;
 		color: var(--color-text-muted);
 	}
 
 	.cp-unit {
-		font-weight: 800;
+		font-weight: 700;
 		color: var(--sag-unit);
 	}
 
@@ -826,12 +832,12 @@
 	.cp-cap {
 		display: inline-flex;
 		align-items: center;
-		gap: 5px;
+		gap: var(--space-xs);
 	}
 
 	.cp-bar {
 		display: inline-flex;
-		gap: 2px;
+		gap: var(--space-2xs);
 		align-items: center;
 	}
 
@@ -909,19 +915,18 @@
 	.cp-refusal-head,
 	.cp-overcap-head {
 		display: block;
-		font-weight: 800;
+		font-weight: 700;
 	}
 
 	.cp-acts {
 		display: flex;
 		flex-wrap: wrap;
-		gap: 4px;
-		margin-top: 2px;
+		gap: var(--space-xs);
 	}
 
 	.cp-act {
 		min-height: 30px;
-		padding: 0 10px;
+		padding: 0 var(--space-sm);
 		background: none;
 		border: 1px solid var(--color-primary);
 		border-radius: var(--radius-sm);
@@ -932,32 +937,31 @@
 
 	.cp-act--primary {
 		border-color: var(--color-accent);
-		font-weight: 800;
+		font-weight: 700;
 	}
 
 	.cp-act:disabled {
-		opacity: 0.5;
+		opacity: 0.45;
 		cursor: not-allowed;
 	}
 
 	.cp-act kbd {
-		margin-left: 4px;
+		margin-left: var(--space-xs);
 		opacity: 0.65;
 	}
 
 	.cp-chooser {
 		display: flex;
 		flex-direction: column;
-		gap: 2px;
-		padding-top: 2px;
+		gap: var(--space-2xs);
 	}
 
 	.cp-check {
 		font-size: var(--ride-t-label);
 		display: flex;
 		align-items: center;
-		gap: 5px;
-		min-height: 28px;
+		gap: var(--space-xs);
+		min-height: 44px;
 	}
 
 	.cp-rule {
@@ -975,7 +979,7 @@
 	}
 
 	.cp-foot kbd {
-		margin-right: 2px;
+		margin-right: var(--space-2xs);
 	}
 
 	.sr-only {

@@ -77,8 +77,8 @@
 
 	.ride-peek-code {
 		font-size: var(--ride-t-label);
-		font-weight: 800;
-		letter-spacing: 0.06em;
+		font-weight: 700;
+		letter-spacing: var(--ride-label-tracking);
 		color: var(--color-text-muted);
 	}
 

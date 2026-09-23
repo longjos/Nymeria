@@ -236,34 +236,34 @@
 <style>
 	.rcs-sheet { display: flex; flex-direction: column; height: 100%; min-height: 0; }
 	.rcs-header { display: flex; align-items: center; gap: var(--space-sm); padding: var(--space-sm) var(--space-md); border-bottom: 1px solid var(--color-primary); }
-	.rcs-back { background: none; border: none; color: var(--color-text-muted); font-size: 0.8rem; cursor: pointer; }
-	.rcs-h2 { font-size: 0.9rem; font-weight: 700; }
+	.rcs-back { background: none; border: none; color: var(--color-text-muted); font-size: var(--ride-t-body); min-height: 44px; cursor: pointer; }
+	.rcs-h2 { font-size: 0.95rem; font-weight: 600; }
 	.rcs-loading { padding: var(--space-md); color: var(--color-text-muted); }
 	.rcs-body { flex: 1; overflow-y: auto; padding: var(--space-sm) var(--space-md); display: flex; flex-direction: column; gap: var(--space-md); }
 	.rcs-section { display: flex; flex-direction: column; gap: 6px; }
-	.rcs-title { font-size: 0.7rem; font-weight: 700; text-transform: uppercase; letter-spacing: 0.03em; color: var(--color-text-muted); }
+	.rcs-title { font-size: var(--ride-t-label); font-weight: 700; text-transform: uppercase; letter-spacing: var(--ride-label-tracking); color: var(--color-text-muted); }
 
 	.form-row { display: flex; gap: var(--space-sm); }
 	.form-row > .form-group { flex: 1; min-width: 0; }
 	.form-group { display: flex; flex-direction: column; gap: var(--space-xs); }
-	label { font-size: 0.75rem; color: var(--color-text-muted); }
+	label { font-size: var(--ride-t-label); color: var(--color-text-muted); }
 	input, textarea {
 		min-height: 40px; background: var(--color-bg); border: 1px solid var(--color-primary); border-radius: var(--radius-sm);
-		color: var(--color-text); font: inherit; font-size: 0.85rem; padding: 0 var(--space-sm);
+		color: var(--color-text); font: inherit; font-size: var(--ride-t-body); padding: 0 var(--space-sm);
 	}
 	textarea { padding: var(--space-sm); resize: vertical; min-height: unset; }
-	.rcs-check { display: flex; align-items: center; gap: 6px; font-size: 0.82rem; color: var(--color-text); }
+	.rcs-check { display: flex; align-items: center; gap: 6px; font-size: var(--ride-t-body); color: var(--color-text); }
 
 	.rcs-route-row { display: flex; gap: 6px; align-items: center; }
 	.rcs-route-id { width: 90px; }
 	.rcs-route-name { flex: 1; min-width: 0; }
 	.rcs-route-mi { width: 90px; }
 	.rcs-route-remove {
-		width: 40px; height: 40px; background: var(--color-bg); border: 1px solid var(--color-error);
+		min-width: 44px; min-height: 44px; background: var(--color-bg); border: 1px solid var(--color-error);
 		border-radius: var(--radius-sm); color: var(--color-error-text); cursor: pointer;
 	}
 
-	.form-error { color: var(--color-error-text); font-size: 0.8rem; }
+	.form-error { color: var(--color-error-text); font-size: var(--ride-t-body); }
 
 	.rcs-footer { display: flex; justify-content: flex-end; gap: var(--space-sm); padding: var(--space-sm) var(--space-md); border-top: 1px solid var(--color-primary); }
 	.btn-secondary {
@@ -274,5 +274,5 @@
 		min-height: 44px; padding: 0 var(--space-md); background: var(--color-accent); border: none;
 		border-radius: var(--radius-sm); color: var(--color-on-accent); font-weight: 700; cursor: pointer;
 	}
-	.btn-primary:disabled, .btn-secondary:disabled { opacity: 0.5; cursor: not-allowed; }
+	.btn-primary:disabled, .btn-secondary:disabled { opacity: 0.45; cursor: not-allowed; }
 </style>

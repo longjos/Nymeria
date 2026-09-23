@@ -162,8 +162,8 @@
 	}
 
 	.rpl-title {
-		font-size: 1.05rem;
-		font-weight: 700;
+		font-size: 0.95rem;
+		font-weight: 600;
 	}
 
 	.rpl-close {
@@ -177,7 +177,7 @@
 	}
 
 	.rpl-empty {
-		font-size: 0.82rem;
+		font-size: var(--ride-t-body);
 		color: var(--color-text-muted);
 	}
 
@@ -206,11 +206,11 @@
 		display: flex;
 		flex-direction: column;
 		gap: var(--space-2xs);
-		font-size: 0.85rem;
+		font-size: var(--ride-t-body);
 	}
 
 	.rpl-row-meta {
-		font-size: 0.72rem;
+		font-size: var(--ride-t-label);
 		color: var(--color-text-muted);
 	}
 
@@ -221,13 +221,13 @@
 	}
 
 	.rpl-action {
-		min-height: 36px;
+		min-height: 44px;
 		padding: 0 var(--space-sm);
 		background: none;
 		border: 1px solid var(--color-primary);
 		border-radius: var(--radius-sm);
 		color: var(--color-text);
-		font-size: 0.75rem;
+		font-size: var(--ride-t-label);
 		font-weight: 600;
 		cursor: pointer;
 	}

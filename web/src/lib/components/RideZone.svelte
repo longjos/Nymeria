@@ -86,7 +86,7 @@
 		flex-direction: column;
 		justify-content: center;
 		gap: 0;
-		padding: 2px var(--space-sm);
+		padding: var(--space-2xs) var(--space-sm);
 		cursor: pointer;
 		border-radius: var(--radius-sm);
 		border-left: 3px solid transparent;
@@ -107,7 +107,7 @@
 		line-height: 1.15;
 		font-weight: 700;
 		text-transform: uppercase;
-		letter-spacing: 0.06em;
+		letter-spacing: var(--ride-label-tracking);
 		color: var(--color-text-muted);
 		white-space: nowrap;
 		overflow: hidden;

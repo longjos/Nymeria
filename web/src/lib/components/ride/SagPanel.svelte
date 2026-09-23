@@ -69,7 +69,7 @@
 	.sp-subnav {
 		display: flex;
 		gap: var(--space-2xs);
-		padding: var(--space-sm) var(--space-md) 0;
+		padding: 0 var(--space-xs);
 		border-bottom: 1px solid var(--color-primary);
 		flex-shrink: 0;
 	}
@@ -77,14 +77,14 @@
 	.sp-tab {
 		display: flex;
 		align-items: center;
-		gap: 6px;
-		min-height: 40px;
+		gap: var(--space-xs);
+		min-height: 44px;
 		padding: 0 var(--space-sm);
 		background: none;
 		border: none;
 		border-bottom: 2px solid transparent;
 		color: var(--color-text-muted);
-		font-size: 0.8rem;
+		font-size: var(--ride-t-body);
 		font-weight: 700;
 		cursor: pointer;
 	}
@@ -97,15 +97,17 @@
 	.sp-count {
 		min-width: 18px;
 		height: 18px;
-		padding: 0 5px;
+		padding: 0 var(--space-xs);
 		border-radius: var(--radius-full);
-		background: var(--color-bg);
+		background: var(--color-primary);
 		color: var(--color-text-muted);
-		font-size: 0.68rem;
-		font-weight: 700;
+		font-size: var(--ride-t-label);
+		font-weight: 600;
 		display: inline-flex;
 		align-items: center;
 		justify-content: center;
+		font-variant-numeric: tabular-nums;
+		line-height: 1;
 	}
 
 	.sp-count-wait {

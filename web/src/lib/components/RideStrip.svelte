@@ -356,7 +356,7 @@
 	}
 
 	.ride-ack {
-		min-height: 32px;
+		min-height: 44px;
 		padding: 0 var(--space-sm);
 		background: var(--color-ride-emergency);
 		color: var(--color-on-accent);

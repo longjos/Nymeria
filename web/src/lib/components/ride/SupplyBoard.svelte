@@ -225,7 +225,7 @@
 	}
 
 	.sup-new {
-		min-height: 40px;
+		min-height: 44px;
 		padding: 0 var(--space-md);
 		background: var(--color-accent);
 		border: none;
@@ -236,28 +236,28 @@
 	}
 
 	.sup-new:disabled {
-		opacity: 0.5;
+		opacity: 0.45;
 		cursor: not-allowed;
 	}
 
 	.sup-showall {
 		display: flex;
 		align-items: center;
-		gap: 6px;
-		font-size: 0.78rem;
+		gap: var(--space-sm);
+		font-size: var(--ride-t-body);
 		color: var(--color-text-muted);
 	}
 
 	.sup-empty {
 		color: var(--color-text-muted);
-		font-size: 0.82rem;
+		font-size: var(--ride-t-body);
 		padding: var(--space-sm) 0;
 	}
 
 	.sup-list {
 		display: flex;
 		flex-direction: column;
-		gap: 6px;
+		gap: var(--space-xs);
 	}
 
 	.sup-card {
@@ -273,11 +273,12 @@
 		display: flex;
 		align-items: center;
 		gap: var(--space-sm);
-		font-size: 0.8rem;
+		font-size: var(--ride-t-body);
+		min-height: 44px;
 	}
 
 	.sup-status {
-		font-size: 0.68rem;
+		font-size: var(--ride-t-label);
 		font-weight: 700;
 		text-transform: uppercase;
 		color: var(--color-text-muted);
@@ -308,22 +309,22 @@
 
 	.sup-age {
 		color: var(--color-text-muted);
-		font-size: 0.72rem;
+		font-size: var(--ride-t-label);
 		white-space: nowrap;
 	}
 
 	.sup-items {
-		font-size: 0.85rem;
+		font-size: var(--ride-t-body);
 	}
 
 	.sup-notes {
-		font-size: 0.78rem;
+		font-size: var(--ride-t-body);
 		color: var(--color-text-muted);
 		font-style: italic;
 	}
 
 	.sup-eta {
-		font-size: 0.78rem;
+		font-size: var(--ride-t-body);
 		color: var(--color-text-muted);
 		font-variant-numeric: tabular-nums;
 	}
@@ -335,24 +336,23 @@
 	.sup-actions {
 		display: flex;
 		flex-wrap: wrap;
-		gap: 6px;
-		margin-top: 4px;
+		gap: var(--space-sm);
 	}
 
 	.sup-btn {
-		min-height: 36px;
+		min-height: 44px;
 		padding: 0 var(--space-sm);
 		background: var(--color-bg);
 		border: 1px solid var(--color-primary);
 		border-radius: var(--radius-sm);
 		color: var(--color-text);
-		font-size: 0.75rem;
+		font-size: var(--ride-t-label);
 		font-weight: 600;
 		cursor: pointer;
 	}
 
 	.sup-btn:disabled {
-		opacity: 0.4;
+		opacity: 0.45;
 		cursor: not-allowed;
 	}
 
@@ -369,7 +369,7 @@
 		border-radius: var(--radius-sm);
 		color: var(--color-text);
 		font: inherit;
-		font-size: 0.78rem;
+		font-size: var(--ride-t-body);
 	}
 
 	.sup-inline-narrow {

@@ -382,7 +382,7 @@
 			onfocusin={onFocusIn}
 		>
 			{#if unplaced.length > 0}
-				<h3 class="sd-group sd-group--flag">⚑ NOT ON THE MAP <span class="sd-group-n">({unplaced.length})</span></h3>
+				<h3 class="sd-group sd-group--flag">⚑ Not on the map <span class="sd-group-n">({unplaced.length})</span></h3>
 				{#each unplaced as p (p.request.id)}
 					{@const tier = tierById($rideLadder, p.request.priority)}
 					{@const idx = items.findIndex((it) => it.id === p.request.id && it.kind === 'request')}
@@ -434,7 +434,7 @@
 			{/if}
 
 			{#if waiting.length > 0}
-				<h3 class="sd-group">⬒ WAITING <span class="sd-group-n">({waiting.length})</span></h3>
+				<h3 class="sd-group">⬒ Waiting <span class="sd-group-n">({waiting.length})</span></h3>
 				{#each waiting as p (p.request.id)}
 					{@const tier = tierById($rideLadder, p.request.priority)}
 					{@const idx = items.findIndex((it) => it.id === p.request.id && it.kind === 'request')}
@@ -481,7 +481,7 @@
 					onclick={() => (motionOpen = !motionOpen)}
 					onkeydown={() => {}}
 				>
-					<span aria-hidden="true">{motionOpen ? '▾' : '▸'}</span> in motion
+					<span aria-hidden="true">{motionOpen ? '▾' : '▸'}</span> In motion
 					<span class="sd-group-n">({inMotion.length})</span>
 				</div>
 				{#if motionOpen}
@@ -511,7 +511,7 @@
 			{/if}
 
 			{#if noPosition.length > 0}
-				<h3 class="sd-group">🚐 NO POSITION <span class="sd-group-n">({noPosition.length})</span></h3>
+				<h3 class="sd-group">🚐 No position <span class="sd-group-n">({noPosition.length})</span></h3>
 				{#each noPosition as g (g.vehicle.checkInId)}
 					{@const idx = items.findIndex((it) => it.kind === 'vehicle' && it.id === g.vehicle.checkInId)}
 					<div
@@ -581,9 +581,9 @@
 	}
 
 	.sd-rail-title {
-		font-size: 9px;
-		font-weight: 800;
-		letter-spacing: 0.08em;
+		font-size: var(--ride-t-label);
+		font-weight: 700;
+		letter-spacing: var(--ride-label-tracking);
 		color: var(--sag-unit);
 	}
 
@@ -592,7 +592,7 @@
 		flex-direction: column;
 		align-items: center;
 		width: 32px;
-		padding: 2px 0;
+		padding: var(--space-2xs) 0;
 		border-left: 3px solid var(--sd-tier, var(--color-text-muted));
 		border-radius: 2px;
 		background: var(--color-bg);
@@ -603,16 +603,16 @@
 	}
 
 	.sd-rail-code {
-		font-size: 10px;
-		font-weight: 800;
+		font-size: var(--ride-t-label);
+		font-weight: 700;
 		/* Never the raw tier colour as text: the emergency/medium tokens alias
 		   --color-error/--color-info and fail AA on --color-surface. */
 		color: var(--color-text);
 	}
 
 	.sd-rail-n {
-		font-size: 12px;
-		font-weight: 800;
+		font-size: var(--ride-t-body);
+		font-weight: 700;
 		font-variant-numeric: tabular-nums;
 		color: var(--color-text);
 	}
@@ -641,16 +641,17 @@
 
 	.sd-head {
 		display: flex;
-		align-items: baseline;
+		align-items: center;
 		gap: var(--space-sm);
-		padding: var(--space-sm) var(--space-sm) var(--space-xs);
+		padding: 0 var(--space-sm);
 		border-bottom: 1px solid var(--color-primary);
+		min-height: 44px;
 	}
 
 	.sd-title {
 		font-size: var(--ride-t-body);
-		font-weight: 800;
-		letter-spacing: 0.06em;
+		font-weight: 700;
+		letter-spacing: var(--ride-label-tracking);
 		color: var(--sag-unit);
 	}
 
@@ -662,7 +663,7 @@
 	.sd-collapse {
 		margin-left: auto;
 		min-width: 28px;
-		min-height: 28px;
+		min-height: 32px;
 		background: none;
 		border: 1px solid var(--color-primary);
 		border-radius: var(--radius-sm);
@@ -701,18 +702,18 @@
 	.sd-list {
 		display: flex;
 		flex-direction: column;
-		gap: 4px;
+		gap: var(--space-xs);
 		padding: var(--space-xs) var(--space-sm) var(--space-sm);
 		overflow-y: auto;
 		min-height: 0;
 	}
 
 	.sd-group {
-		margin-top: var(--space-xs);
 		font-size: var(--ride-t-label);
-		font-weight: 800;
-		letter-spacing: 0.08em;
+		font-weight: 700;
+		letter-spacing: var(--ride-label-tracking);
 		color: var(--color-text-muted);
+		text-transform: uppercase;
 	}
 
 	/* The only group that is never muted: it is the one nothing else renders. */
@@ -726,23 +727,21 @@
 		background: none;
 		border: none;
 		text-align: left;
-		padding: 2px 0;
 	}
 
 	.sd-group-n {
 		font-weight: 600;
-		opacity: 0.8;
 	}
 
 	.sd-card {
 		border: 1px solid var(--color-primary);
 		border-left: 3px solid var(--sd-tier, var(--color-primary));
 		border-radius: var(--radius-sm);
-		padding: 6px var(--space-sm);
+		padding: var(--space-sm);
 		cursor: pointer;
 		display: flex;
 		flex-direction: column;
-		gap: 3px;
+		gap: var(--space-xs);
 		/* A card must never shrink below its own content: inside the phone
 		   sheet's constrained column that puts each card's action button on
 		   top of the card beneath it. */
@@ -755,7 +754,7 @@
 	}
 
 	.sd-card--motion {
-		opacity: 0.75;
+		color: var(--color-text-muted);
 	}
 
 	.sd-card--unit {
@@ -775,7 +774,7 @@
 	.sd-row {
 		display: flex;
 		align-items: center;
-		gap: 5px;
+		gap: var(--space-xs);
 		font-size: var(--ride-t-body);
 		min-width: 0;
 	}
@@ -789,9 +788,10 @@
 	   --color-ride-medium alias --color-error / --color-info and fail AA on
 	   --color-surface at normal text size. */
 	.sd-code {
-		font-weight: 800;
-		letter-spacing: 0.04em;
+		font-weight: 700;
+		letter-spacing: var(--ride-label-tracking);
 		color: var(--sd-tier-text, var(--color-text));
+		font-size: var(--ride-t-label);
 	}
 
 	.sd-name {
@@ -828,7 +828,7 @@
 
 	.sd-needs {
 		font-weight: 700;
-		letter-spacing: 0.04em;
+		letter-spacing: var(--ride-label-tracking);
 		color: var(--sd-tier-text, var(--color-text-muted));
 	}
 
@@ -854,13 +854,12 @@
 	.sd-actions {
 		display: flex;
 		flex-wrap: wrap;
-		gap: 4px;
-		margin-top: 2px;
+		gap: var(--space-xs);
 	}
 
 	.sd-act {
 		min-height: 30px;
-		padding: 0 8px;
+		padding: 0 var(--space-sm);
 		background: none;
 		border: 1px solid var(--color-primary);
 		border-radius: var(--radius-sm);
@@ -875,12 +874,12 @@
 	}
 
 	.sd-act:disabled {
-		opacity: 0.5;
+		opacity: 0.45;
 		cursor: not-allowed;
 	}
 
 	.sd-act kbd {
-		margin-left: 4px;
+		margin-left: var(--space-xs);
 		opacity: 0.65;
 		font-size: 0.9em;
 	}

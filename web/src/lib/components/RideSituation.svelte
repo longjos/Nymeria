@@ -96,13 +96,13 @@
 		display: flex;
 		flex-direction: column;
 		gap: var(--space-2xs);
-		font-size: 0.8rem;
+		font-size: var(--ride-t-body);
 		min-width: 0;
 	}
 
 	.rs-emergency-where {
 		color: var(--color-text-muted);
-		font-size: 0.72rem;
+		font-size: var(--ride-t-label);
 	}
 
 	.rs-ack {
@@ -112,7 +112,7 @@
 		border: none;
 		border-radius: var(--radius-sm);
 		color: var(--color-on-accent);
-		font-weight: 800;
+		font-weight: 700;
 		cursor: pointer;
 		flex-shrink: 0;
 	}
@@ -121,14 +121,15 @@
 		display: flex;
 		align-items: center;
 		justify-content: space-between;
-		padding: 10px var(--space-md) 6px;
+		padding: 0 var(--space-md);
+		min-height: 44px;
 	}
 
 	.rs-heading {
-		font-size: 0.7rem;
+		font-size: var(--ride-t-label);
 		font-weight: 700;
 		text-transform: uppercase;
-		letter-spacing: 0.06em;
+		letter-spacing: var(--ride-label-tracking);
 		color: var(--color-text-muted);
 		margin: 0;
 	}
@@ -143,7 +144,7 @@
 		align-items: center;
 		gap: var(--space-sm);
 		min-height: 44px;
-		padding: 6px var(--space-md);
+		padding: 0 var(--space-md);
 		border-top: 1px solid var(--color-hairline);
 		cursor: pointer;
 	}
@@ -156,10 +157,11 @@
 	.rs-row-label {
 		width: 88px;
 		flex-shrink: 0;
-		font-size: 0.65rem;
+		font-size: var(--ride-t-label);
 		font-weight: 700;
 		text-transform: uppercase;
 		color: var(--color-text-muted);
+		letter-spacing: var(--ride-label-tracking);
 	}
 
 	.rs-row-value {
@@ -172,7 +174,7 @@
 	.rs-row-detail {
 		flex: 1;
 		min-width: 0;
-		font-size: 0.75rem;
+		font-size: var(--ride-t-label);
 		color: var(--color-text-muted);
 		overflow: hidden;
 		text-overflow: ellipsis;
@@ -194,7 +196,7 @@
 		background: none;
 		border: none;
 		color: var(--color-accent);
-		font-size: 0.78rem;
+		font-size: var(--ride-t-body);
 		cursor: pointer;
 		min-height: 32px;
 	}
@@ -202,22 +204,24 @@
 	.rs-closeout {
 		padding: var(--space-sm) var(--space-md);
 		border-top: 1px solid var(--color-primary);
+		gap: var(--space-xs);
 	}
 
 	.rs-closeout-heading {
-		font-size: 0.7rem;
+		font-size: var(--ride-t-label);
 		font-weight: 700;
 		text-transform: uppercase;
 		color: var(--color-text-muted);
-		margin-bottom: 6px;
+		letter-spacing: var(--ride-label-tracking);
 	}
 
 	.rs-closeout-item {
 		display: flex;
 		justify-content: space-between;
-		font-size: 0.8rem;
-		padding: 3px 0;
+		font-size: var(--ride-t-body);
+		padding: 0;
 		color: var(--color-text-muted);
+		min-height: 32px;
 	}
 
 	.rs-closeout-item.done {

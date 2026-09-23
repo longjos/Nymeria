@@ -181,6 +181,12 @@
 	--ride-t-body: 0.875rem;
 	--ride-t-label: 0.6875rem;
 
+	/* One tracking value for every small-caps label in ride mode. The family
+	   had six (0.03/0.04/0.05/0.06/0.08em) doing the same job, which is half
+	   of why the boards read as messy. Matches NetControlPanel's
+	   .summary-kicker / .summary-label / .metric-label, the house style. */
+	--ride-label-tracking: 0.05em;
+
 	/* SAG map overlay (docs/sag-map-spec.md §9). Four colour tokens and no new
 	   hues: --color-sag-unit is the value stationCategoryMeta.ts already
 	   assigns to the `sag` check-in category, promoted to a token so the map

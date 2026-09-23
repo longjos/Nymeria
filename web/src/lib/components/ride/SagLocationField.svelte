@@ -168,12 +168,12 @@
 	}
 
 	.slf-legend {
-		font-size: 0.7rem;
+		font-size: var(--ride-t-label);
 		font-weight: 700;
 		text-transform: uppercase;
-		letter-spacing: 0.04em;
+		letter-spacing: var(--ride-label-tracking);
 		color: var(--color-text-muted);
-		padding: 0 4px;
+		padding: 0 var(--space-xs);
 	}
 
 	.slf-row {
@@ -186,12 +186,15 @@
 		display: flex;
 		flex-direction: column;
 		gap: var(--space-2xs);
-		font-size: 0.8rem;
+		font-size: var(--ride-t-body);
 	}
 
 	.slf-label {
-		font-size: 0.68rem;
+		font-size: var(--ride-t-label);
 		color: var(--color-text-muted);
+		font-weight: 700;
+		text-transform: uppercase;
+		letter-spacing: var(--ride-label-tracking);
 	}
 
 	.slf-field input,
@@ -210,9 +213,9 @@
 		background: none;
 		border: none;
 		color: var(--color-accent);
-		font-size: 0.75rem;
+		font-size: var(--ride-t-label);
 		cursor: pointer;
-		padding: 4px 0;
+		padding: var(--space-xs) 0;
 		min-height: 32px;
 	}
 </style>

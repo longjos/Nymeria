@@ -876,7 +876,7 @@
 	}
 
 	.sb-new {
-		min-height: 40px;
+		min-height: 44px;
 		padding: 0 var(--space-md);
 		background: var(--color-accent);
 		border: none;
@@ -887,15 +887,15 @@
 	}
 
 	.sb-new:disabled {
-		opacity: 0.5;
+		opacity: 0.45;
 		cursor: not-allowed;
 	}
 
 	.sb-showall {
 		display: flex;
 		align-items: center;
-		gap: 6px;
-		font-size: 0.78rem;
+		gap: var(--space-sm);
+		font-size: var(--ride-t-body);
 		color: var(--color-text-muted);
 	}
 
@@ -911,15 +911,15 @@
 	.sb-vehicle {
 		display: flex;
 		align-items: center;
-		gap: 6px;
-		font-size: 0.78rem;
-		padding: 4px 8px;
+		gap: var(--space-xs);
+		font-size: var(--ride-t-body);
+		padding: var(--space-xs) var(--space-sm);
 		border-radius: var(--radius-sm);
 		background: var(--color-surface);
 	}
 
 	.sb-vehicle.released {
-		opacity: 0.5;
+		color: var(--color-text-muted);
 	}
 
 	.sb-vehicle-label {
@@ -938,10 +938,10 @@
 
 	.sb-vehicle-out,
 	.sb-vehicle-full {
-		font-size: 0.64rem;
+		font-size: var(--ride-t-label);
 		font-weight: 700;
-		letter-spacing: 0.06em;
-		padding: 2px 6px;
+		letter-spacing: var(--ride-label-tracking);
+		padding: var(--space-2xs) var(--space-sm);
 		border-radius: var(--radius-sm);
 		background: var(--color-ride-priority-soft);
 		color: var(--color-warning);
@@ -955,8 +955,8 @@
 	.sb-blocked {
 		display: flex;
 		align-items: center;
-		gap: 6px;
-		font-size: 0.85rem;
+		gap: var(--space-xs);
+		font-size: var(--ride-t-body);
 		font-weight: 700;
 		color: var(--color-warning);
 		padding: var(--space-sm);
@@ -966,11 +966,11 @@
 	}
 
 	.sb-needs {
-		font-size: 0.68rem;
+		font-size: var(--ride-t-label);
 		font-weight: 700;
-		letter-spacing: 0.04em;
+		letter-spacing: var(--ride-label-tracking);
 		white-space: nowrap;
-		padding: 2px 6px;
+		padding: var(--space-2xs) var(--space-sm);
 		border-radius: var(--radius-sm);
 		background: var(--color-ride-priority-soft);
 		color: var(--color-warning);
@@ -978,7 +978,7 @@
 	}
 
 	.sb-onveh {
-		font-size: 0.72rem;
+		font-size: var(--ride-t-label);
 		font-weight: 700;
 		color: var(--color-text);
 		white-space: nowrap;
@@ -986,7 +986,7 @@
 	}
 
 	.sb-bibs {
-		font-size: 0.75rem;
+		font-size: var(--ride-t-label);
 		font-variant-numeric: tabular-nums;
 		color: var(--color-text);
 		white-space: nowrap;
@@ -995,7 +995,7 @@
 
 	.sb-slot-bike,
 	.sb-slot-bike-ro {
-		font-size: 0.72rem;
+		font-size: var(--ride-t-label);
 		color: var(--color-text-muted);
 		white-space: nowrap;
 	}
@@ -1003,7 +1003,7 @@
 	.sb-slot-bike {
 		min-height: 32px;
 		max-width: 160px;
-		padding: 0 4px;
+		padding: 0 var(--space-xs);
 		background: var(--color-bg);
 		border: 1px solid var(--color-primary);
 		border-radius: var(--radius-sm);
@@ -1011,7 +1011,7 @@
 	}
 
 	.sb-slot-bike:disabled {
-		opacity: 0.4;
+		opacity: 0.45;
 	}
 
 	.sb-loadline {
@@ -1029,15 +1029,15 @@
 	}
 
 	.sb-attach-label {
-		font-size: 0.72rem;
+		font-size: var(--ride-t-label);
 		font-weight: 700;
 		text-transform: uppercase;
-		letter-spacing: 0.04em;
+		letter-spacing: var(--ride-label-tracking);
 		color: var(--color-text-muted);
 	}
 
 	.sb-attach-none {
-		font-size: 0.75rem;
+		font-size: var(--ride-t-label);
 		color: var(--color-text-muted);
 		margin-top: var(--space-xs);
 	}
@@ -1053,7 +1053,7 @@
 	}
 
 	.sb-vehicle-sep {
-		font-size: 0.68rem;
+		font-size: var(--ride-t-label);
 		color: var(--color-text-muted);
 	}
 
@@ -1066,7 +1066,7 @@
 		border: 1px solid var(--color-primary);
 		border-radius: var(--radius-sm);
 		color: var(--color-text-muted);
-		font-size: 0.7rem;
+		font-size: var(--ride-t-label);
 		cursor: pointer;
 	}
 
@@ -1075,7 +1075,7 @@
 	.sb-empty,
 	.sb-no-legs {
 		color: var(--color-warning);
-		font-size: 0.82rem;
+		font-size: var(--ride-t-body);
 		padding: var(--space-sm);
 		background: var(--color-ride-priority-soft);
 		border-radius: var(--radius-sm);
@@ -1091,7 +1091,7 @@
 	.sb-list {
 		display: flex;
 		flex-direction: column;
-		gap: 6px;
+		gap: var(--space-xs);
 	}
 
 	.sb-card {
@@ -1104,9 +1104,9 @@
 		display: flex;
 		align-items: center;
 		flex-wrap: wrap;
-		gap: 4px var(--space-sm);
+		gap: var(--space-xs) var(--space-sm);
 		min-height: 44px;
-		padding: 6px var(--space-sm);
+		padding: 0 var(--space-sm);
 		cursor: pointer;
 	}
 
@@ -1133,12 +1133,12 @@
 
 	.sb-seq {
 		font-weight: 700;
-		font-size: 0.82rem;
+		font-size: var(--ride-t-body);
 		flex-shrink: 0;
 	}
 
 	.sb-status {
-		font-size: 0.7rem;
+		font-size: var(--ride-t-label);
 		font-weight: 700;
 		text-transform: uppercase;
 		color: var(--color-text-muted);
@@ -1157,7 +1157,7 @@
 	.sb-riders,
 	.sb-age,
 	.sb-pickup {
-		font-size: 0.75rem;
+		font-size: var(--ride-t-label);
 		color: var(--color-text-muted);
 		white-space: nowrap;
 	}
@@ -1176,7 +1176,7 @@
 	}
 
 	.sb-detail {
-		padding: var(--space-sm) var(--space-md) var(--space-md);
+		padding: var(--space-sm);
 		border-top: 1px solid var(--color-primary);
 		display: flex;
 		flex-direction: column;
@@ -1187,7 +1187,7 @@
 		display: grid;
 		grid-template-columns: 1fr 1fr;
 		gap: var(--space-sm);
-		font-size: 0.8rem;
+		font-size: var(--ride-t-body);
 	}
 
 	.sb-detail-grid > div {
@@ -1197,14 +1197,15 @@
 	}
 
 	.sb-detail-label {
-		font-size: 0.65rem;
+		font-size: var(--ride-t-label);
 		text-transform: uppercase;
-		letter-spacing: 0.04em;
+		letter-spacing: var(--ride-label-tracking);
 		color: var(--color-text-muted);
+		font-weight: 700;
 	}
 
 	.sb-notes {
-		font-size: 0.8rem;
+		font-size: var(--ride-t-body);
 		color: var(--color-text-muted);
 		font-style: italic;
 	}
@@ -1219,14 +1220,14 @@
 	/* The code is the non-colour channel: PRIORITY and HIGH share amber and
 	   the same triangle family, so the glyph alone cannot separate them. */
 	.sb-tier-code {
-		font-size: 0.625rem;
-		font-weight: 800;
-		letter-spacing: 0.06em;
+		font-size: var(--ride-t-label);
+		font-weight: 700;
+		letter-spacing: var(--ride-label-tracking);
 		color: var(--color-text-muted);
 	}
 
 	.sb-cancel-reason {
-		font-size: 0.8rem;
+		font-size: var(--ride-t-body);
 		color: var(--color-text-muted);
 	}
 
@@ -1236,19 +1237,19 @@
 	}
 
 	.sb-action {
-		min-height: 36px;
+		min-height: 44px;
 		padding: 0 var(--space-sm);
 		background: var(--color-bg);
 		border: 1px solid var(--color-primary);
 		border-radius: var(--radius-sm);
 		color: var(--color-text);
-		font-size: 0.75rem;
+		font-size: var(--ride-t-label);
 		font-weight: 600;
 		cursor: pointer;
 	}
 
 	.sb-action:disabled {
-		opacity: 0.4;
+		opacity: 0.45;
 		cursor: not-allowed;
 	}
 
@@ -1258,12 +1259,11 @@
 	}
 
 	.sb-section-h {
-		font-size: 0.68rem;
+		font-size: var(--ride-t-label);
 		font-weight: 700;
 		text-transform: uppercase;
-		letter-spacing: 0.04em;
+		letter-spacing: var(--ride-label-tracking);
 		color: var(--color-text-muted);
-		margin: var(--space-xs) 0 0;
 	}
 
 	.sb-slots {
@@ -1276,9 +1276,9 @@
 		display: flex;
 		align-items: center;
 		flex-wrap: wrap;
-		gap: 4px var(--space-sm);
-		font-size: 0.78rem;
-		padding: 4px 0;
+		gap: var(--space-xs) var(--space-sm);
+		font-size: var(--ride-t-body);
+		padding: var(--space-xs) 0;
 	}
 
 	.sb-slot-label {
@@ -1292,7 +1292,7 @@
 	}
 
 	.sb-slot-disp {
-		font-size: 0.68rem;
+		font-size: var(--ride-t-label);
 		color: var(--color-text-muted);
 		white-space: nowrap;
 	}
@@ -1303,24 +1303,24 @@
 	}
 
 	.sb-slot-resolve {
-		min-height: 30px;
+		min-height: 36px;
 		background: var(--color-bg);
 		border: 1px solid var(--color-primary);
 		border-radius: var(--radius-sm);
 		color: var(--color-text);
-		font-size: 0.72rem;
+		font-size: var(--ride-t-label);
 	}
 
 	.sb-add-rider,
 	.sb-add-rider-btn {
 		display: flex;
-		gap: 6px;
+		gap: var(--space-sm);
 		align-items: center;
 	}
 
 	.sb-add-rider input[type='text'] {
 		min-height: 32px;
-		padding: 0 8px;
+		padding: 0 var(--space-sm);
 		background: var(--color-bg);
 		border: 1px solid var(--color-primary);
 		border-radius: var(--radius-sm);
@@ -1333,7 +1333,7 @@
 		display: flex;
 		align-items: center;
 		gap: var(--space-2xs);
-		font-size: 0.7rem;
+		font-size: var(--ride-t-label);
 		color: var(--color-text-muted);
 		white-space: nowrap;
 	}
@@ -1343,7 +1343,7 @@
 		background: none;
 		border: none;
 		color: var(--color-accent);
-		font-size: 0.78rem;
+		font-size: var(--ride-t-body);
 		cursor: pointer;
 		min-height: 32px;
 	}
@@ -1354,7 +1354,7 @@
 		padding: var(--space-sm);
 		display: flex;
 		flex-direction: column;
-		gap: 6px;
+		gap: var(--space-xs);
 	}
 
 	.sb-leg-head {
@@ -1362,7 +1362,7 @@
 		align-items: center;
 		gap: var(--space-sm);
 		flex-wrap: wrap;
-		font-size: 0.78rem;
+		font-size: var(--ride-t-body);
 	}
 
 	.sb-leg-vehicle {
@@ -1370,7 +1370,7 @@
 	}
 
 	.sb-leg-status {
-		font-size: 0.68rem;
+		font-size: var(--ride-t-label);
 		text-transform: uppercase;
 		color: var(--color-text-muted);
 	}
@@ -1381,7 +1381,7 @@
 
 	.sb-leg-over {
 		color: var(--color-error-text);
-		font-size: 0.68rem;
+		font-size: var(--ride-t-label);
 		font-weight: 700;
 	}
 
@@ -1389,7 +1389,7 @@
 		flex: 1;
 		min-width: 0;
 		color: var(--color-text-muted);
-		font-size: 0.72rem;
+		font-size: var(--ride-t-label);
 		overflow: hidden;
 		text-overflow: ellipsis;
 		white-space: nowrap;
@@ -1398,33 +1398,35 @@
 	.sb-leg-actions {
 		display: flex;
 		flex-wrap: wrap;
-		gap: 6px;
+		gap: var(--space-sm);
 	}
 
 	.sb-inline-form {
 		display: flex;
 		flex-direction: column;
-		gap: 6px;
+		gap: var(--space-sm);
 		padding: var(--space-sm);
 		background: var(--color-bg);
 		border-radius: var(--radius-sm);
 	}
 
 	.sb-inline-label {
-		font-size: 0.68rem;
+		font-size: var(--ride-t-label);
 		text-transform: uppercase;
 		color: var(--color-text-muted);
+		font-weight: 700;
+		letter-spacing: var(--ride-label-tracking);
 	}
 
 	.sb-checkline {
 		display: flex;
 		align-items: center;
-		gap: 6px;
-		font-size: 0.78rem;
+		gap: var(--space-sm);
+		font-size: var(--ride-t-body);
 	}
 
 	.sb-dest-select {
-		min-height: 34px;
+		min-height: 36px;
 		background: var(--color-surface);
 		border: 1px solid var(--color-primary);
 		border-radius: var(--radius-sm);
@@ -1434,14 +1436,13 @@
 
 	.sb-inline-actions {
 		display: flex;
-		gap: 6px;
-		margin-top: 4px;
+		gap: var(--space-sm);
 	}
 
 	/* A QUESTION the operator may answer yes to: amber, the same tone as every
 	   other "are you sure" on this board. */
 	.sb-overcap {
-		font-size: 0.78rem;
+		font-size: var(--ride-t-body);
 		color: var(--color-warning);
 		padding: var(--space-sm);
 		border-left: 3px solid var(--color-warning);
@@ -1454,7 +1455,7 @@
 	   --color-error-text, never --color-error: the latter is 4.16:1 on
 	   --color-surface and fails AA at body size (strip spec section 3). */
 	.sb-refusal {
-		font-size: 0.78rem;
+		font-size: var(--ride-t-body);
 		color: var(--color-error-text);
 		padding: var(--space-sm);
 		border: 1px solid var(--color-error-text);
@@ -1466,18 +1467,18 @@
 	.sb-overcap-head {
 		display: block;
 		font-weight: 700;
-		letter-spacing: 0.03em;
+		letter-spacing: var(--ride-label-tracking);
 	}
 
 	.sb-dispatch-btn {
 		align-self: flex-start;
-		min-height: 36px;
+		min-height: 44px;
 		padding: 0 var(--space-sm);
 		background: var(--color-ride-priority-soft);
 		border: 1px solid var(--color-warning);
 		border-radius: var(--radius-sm);
 		color: var(--color-text);
-		font-size: 0.78rem;
+		font-size: var(--ride-t-body);
 		font-weight: 600;
 		cursor: pointer;
 	}
