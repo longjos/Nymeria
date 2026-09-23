@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { buildRailAxis, edgePositions, type EdgePassage } from './courseRail';
+import { buildRailAxis, edgePositions, dodgeStops, clusterPips, type EdgePassage } from './courseRail';
 import { buildRouteIndex } from './routeDistance';
 
 const MI = 1609.344;
@@ -182,5 +182,90 @@ describe('edgePositions', () => {
 		});
 		expect(e.lead).toMatchObject({ mile: null, checkpointId: 'cp2', seq: 2 });
 		expect(e.spreadMiles).toBeNull();
+	});
+});
+
+// --- dodgeStops -----------------------------------------------------------------
+
+describe('dodgeStops', () => {
+	it('leaves well-separated stops exactly where they are', () => {
+		const got = dodgeStops([{ id: 'a', px: 100 }, { id: 'b', px: 300 }], 800, 18);
+		expect(got.map((s) => s.drawPx)).toEqual([100, 300]);
+		expect(got.every((s) => s.dodged === false)).toBe(true);
+	});
+
+	it('B10: spreads close stops to the minimum spacing, keeping order and their true x', () => {
+		// The 100-miler's 30.4 / 31.2 mi pair is 6 px apart at 800 px.
+		const got = dodgeStops([{ id: 's4', px: 300 }, { id: 's5', px: 306 }], 800, 18);
+		const [a, b] = got;
+		expect(b.drawPx - a.drawPx).toBeCloseTo(18, 6);
+		expect(a.drawPx).toBeLessThan(b.drawPx); // order preserved
+		expect((a.drawPx + b.drawPx) / 2).toBeCloseTo(303, 6); // centred on their mean
+		expect(a.truePx).toBe(300); // the leader tick still points at the truth
+		expect(a.dodged && b.dodged).toBe(true);
+	});
+
+	it('merges cascading groups: dodging one pair can push into a third stop', () => {
+		const got = dodgeStops(
+			[{ id: 'a', px: 100 }, { id: 'b', px: 104 }, { id: 'c', px: 125 }],
+			800,
+			18
+		);
+		for (let i = 1; i < got.length; i++) {
+			expect(got[i].drawPx - got[i - 1].drawPx).toBeGreaterThanOrEqual(18 - 1e-9);
+		}
+	});
+
+	it('never pushes a stop off either end of the track', () => {
+		const got = dodgeStops([{ id: 'a', px: 0 }, { id: 'b', px: 2 }, { id: 'c', px: 4 }], 800, 18);
+		expect(got[0].drawPx).toBeGreaterThanOrEqual(0);
+		const end = dodgeStops([{ id: 'x', px: 796 }, { id: 'y', px: 800 }], 800, 18);
+		expect(end[1].drawPx).toBeLessThanOrEqual(800);
+		expect(end[1].drawPx - end[0].drawPx).toBeCloseTo(18, 6);
+	});
+
+	it('sorts by position whatever order it is given', () => {
+		const got = dodgeStops([{ id: 'late', px: 500 }, { id: 'early', px: 50 }], 800, 18);
+		expect(got.map((s) => s.id)).toEqual(['early', 'late']);
+	});
+});
+
+// --- clusterPips ----------------------------------------------------------------
+
+describe('clusterPips', () => {
+	it('acceptance 9: fifteen members within one mile at 1400 px are ONE badge', () => {
+		// Day 1 is 47.25 mi, so one mile is ~29.6 px at 1400 px.
+		const pxPerMile = 1400 / 47.25;
+		const pips = Array.from({ length: 15 }, (_, i) => ({ id: `m${i}`, px: 400 + (i / 14) * pxPerMile, rank: i }));
+		const got = clusterPips(pips, 10);
+		expect(got).toHaveLength(1);
+		expect(got[0].members).toHaveLength(15);
+	});
+
+	it('keeps members that are further apart than the merge distance separate', () => {
+		const got = clusterPips([{ id: 'a', px: 100, rank: 0 }, { id: 'b', px: 140, rank: 0 }], 10);
+		expect(got).toHaveLength(2);
+		expect(got.map((c) => c.members.length)).toEqual([1, 1]);
+	});
+
+	it('lists a cluster\'s members by rank (medical and SAG first, then fresher)', () => {
+		const got = clusterPips(
+			[
+				{ id: 'gen', px: 100, rank: 7 },
+				{ id: 'med', px: 102, rank: 0 },
+				{ id: 'sag', px: 104, rank: 1 }
+			],
+			10
+		);
+		expect(got[0].members).toEqual(['med', 'sag', 'gen']);
+	});
+
+	it('pushes a pip off a stop glyph, to the side it is already on', () => {
+		// A pip this close to a stop is > 150 m from it (or it would have been
+		// folded into the stop), so it must not sit ON the glyph.
+		const got = clusterPips([{ id: 'p', px: 203, rank: 0 }], 10, [200], 9);
+		expect(got[0].px).toBeGreaterThanOrEqual(209);
+		const left = clusterPips([{ id: 'q', px: 197, rank: 0 }], 10, [200], 9);
+		expect(left[0].px).toBeLessThanOrEqual(191);
 	});
 });

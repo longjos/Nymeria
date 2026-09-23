@@ -168,3 +168,124 @@ export function edgePositions(input: {
 	}
 	return { lead, sweep, inverted, spreadMiles };
 }
+
+// --- layout: pixels, run at the rail's real width --------------------------------
+
+export interface StopPx {
+	id: string;
+	px: number;
+}
+
+export interface DodgedStop {
+	id: string;
+	/** Where the stop really is on the line — the leader tick points here. */
+	truePx: number;
+	/** Where its glyph is drawn, at least `minPx` from its neighbours. */
+	drawPx: number;
+	dodged: boolean;
+}
+
+/**
+ * Spread stops that are too close to read, without hiding or reordering any.
+ *
+ * B10: nothing kept stops apart, so on a long course two stops 0.8 mi apart
+ * were drawn 6 px apart at tablet width — one glyph printed over the other,
+ * and the LEAD/SWEEP chevron appeared to sit on the wrong stop. Close stops
+ * are laid out at `minPx` spacing centred on their mean; a stop moved off its
+ * true position keeps a leader tick back to it. Groups that collide after
+ * spreading are merged and re-spread, and a group is shifted, not squashed,
+ * to stay on the track.
+ */
+export function dodgeStops(stops: StopPx[], widthPx: number, minPx: number): DodgedStop[] {
+	const sorted = stops.slice().sort((a, b) => a.px - b.px);
+	type Group = { members: StopPx[]; start: number };
+	const layout = (g: Group) => {
+		const n = g.members.length;
+		const mean = g.members.reduce((s, m) => s + m.px, 0) / n;
+		let start = mean - ((n - 1) * minPx) / 2;
+		// Shift, don't squash, to keep the whole group on the track.
+		start = Math.max(0, Math.min(start, widthPx - (n - 1) * minPx));
+		g.start = start;
+	};
+	const groups: Group[] = [];
+	for (const s of sorted) {
+		const g: Group = { members: [s], start: s.px };
+		layout(g);
+		groups.push(g);
+		// Merge backwards while this group now collides with the previous one.
+		while (groups.length > 1) {
+			const cur = groups[groups.length - 1];
+			const prev = groups[groups.length - 2];
+			const prevEnd = prev.start + (prev.members.length - 1) * minPx;
+			if (cur.start - prevEnd >= minPx - 1e-9) break;
+			prev.members.push(...cur.members);
+			layout(prev);
+			groups.pop();
+		}
+	}
+	const out: DodgedStop[] = [];
+	for (const g of groups) {
+		g.members.forEach((m, i) => {
+			const drawPx = g.members.length === 1 ? m.px : g.start + i * minPx;
+			out.push({ id: m.id, truePx: m.px, drawPx, dodged: Math.abs(drawPx - m.px) > 1e-9 });
+		});
+	}
+	return out;
+}
+
+export interface PipPx {
+	id: string;
+	px: number;
+	/** Reveal order inside a cluster: lower first (category, then freshness). */
+	rank: number;
+}
+
+export interface PipCluster {
+	/** Where the pip or badge is drawn. */
+	px: number;
+	/** Member ids, in reveal order. One member = a plain pip. */
+	members: string[];
+	/** The span of true positions the badge covers, for its label. */
+	fromPx: number;
+	toPx: number;
+}
+
+/**
+ * Merge roster pips closer than `mergePx` into count badges (spec R13).
+ * Clustering is in PIXELS at the rail's real width, not in miles: the rail
+ * is an overview and the map is the zoom, so fifteen people inside a mile is
+ * rightly one badge at 1400 px and may span two miles at 800 px.
+ *
+ * A pip is never drawn ON a stop glyph (within `stopRadiusPx` of a stop
+ * centre): it is >150 m from that stop or it would have been folded into it,
+ * so it is pushed just clear, on the side it is already on.
+ */
+export function clusterPips(
+	pips: PipPx[],
+	mergePx: number,
+	stopCentresPx: number[] = [],
+	stopRadiusPx = 0
+): PipCluster[] {
+	const sorted = pips.slice().sort((a, b) => a.px - b.px);
+	const clusters: PipPx[][] = [];
+	for (const p of sorted) {
+		const last = clusters[clusters.length - 1];
+		if (last && p.px - last[last.length - 1].px < mergePx) last.push(p);
+		else clusters.push([p]);
+	}
+	return clusters.map((members) => {
+		let px = members.reduce((s, m) => s + m.px, 0) / members.length;
+		for (const c of stopCentresPx) {
+			if (Math.abs(px - c) < stopRadiusPx) px = px >= c ? c + stopRadiusPx : c - stopRadiusPx;
+		}
+		return {
+			px,
+			members: members
+				.slice()
+				.sort((a, b) => a.rank - b.rank)
+				.map((m) => m.id),
+			fromPx: members[0].px,
+			toPx: members[members.length - 1].px
+		};
+	});
+}
