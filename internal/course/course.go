@@ -279,6 +279,21 @@ func (m *Manager) emitCourseState(netID string) {
 	m.emit(Event{Type: EventCourseState, Data: state})
 }
 
+// RefreshState re-broadcasts a net's course state without mutating anything.
+//
+// The course accumulator is derived from the net's sequenced stops, but it is
+// only ever emitted after a COURSE mutation (a closure, a sweep report, a
+// shutoff). Giving a stop its first sequence number is a checkpoint mutation,
+// not a course one, so nothing re-broadcast: the newly built course existed
+// server-side but no open client learned of it until a hard reload. The
+// checkpoint bridge calls this so numbering a stop lights up the rail at once.
+func (m *Manager) RefreshState(netID string) {
+	if netID == "" {
+		return
+	}
+	m.emitCourseState(netID)
+}
+
 // logTimeline writes a NetEvent the same fire-and-forget way
 // checkpoint.LogPassage does (errors are not actionable here — the request
 // already succeeded).

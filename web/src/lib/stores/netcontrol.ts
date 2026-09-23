@@ -1,4 +1,4 @@
-import { writable, derived } from 'svelte/store';
+import { writable, derived, get } from 'svelte/store';
 import type { Net, NetCheckIn, NetMission, NetEvent, NetNote, StationCategory, Annotation, CheckpointWithPassages, CheckpointPassage } from '$lib/types';
 import { api } from '$lib/api';
 import { wsClient } from './stations';
@@ -462,12 +462,25 @@ export function initNetControlStore(): void {
 	wsClient.on('checkpoint_meta_updated', (msg) => {
 		const meta = msg.data as any;
 		if (!meta) return;
-		checkpoints.update((list) =>
-			list.map((cp) => {
-				if (cp.meta.annotationId !== meta.annotationId) return cp;
-				return { ...cp, meta: { ...cp.meta, ...meta } };
-			})
-		);
+		checkpoints.update((list) => {
+			const known = list.some((cp) => cp.meta.annotationId === meta.annotationId);
+			if (known) {
+				return list.map((cp) =>
+					cp.meta.annotationId === meta.annotationId
+						? { ...cp, meta: { ...cp.meta, ...meta } }
+						: cp
+				);
+			}
+			// FIRST sequence number on a stop that was not a checkpoint yet.
+			// A map alone silently dropped it — the stop stayed absent from
+			// `checkpoints`, so hasCheckpoints stayed false and the course rail
+			// and ride strip kept saying there was no course until a hard
+			// reload. Numbering a stop is precisely how a course is built, so
+			// this is the common path, not an edge case.
+			const annotation = get(annotationList).find((a) => a.id === meta.annotationId);
+			if (!annotation) return list;
+			return [...list, { annotation, meta, passages: [], passageCount: 0 }];
+		});
 	});
 
 	wsClient.on('net_timeline_entry', (msg) => {

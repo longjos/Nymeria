@@ -663,6 +663,15 @@ func (s *Server) bridgeCheckpointEvents() {
 			continue
 		}
 		s.hub.Broadcast(data)
+
+		// Numbering a stop BUILDS the course, so the derived course state has
+		// to be recomputed and re-sent. Nothing else does it: course state is
+		// emitted after course mutations, and this is a checkpoint mutation.
+		if evt.Type == checkpoint.EventCheckpointMetaUpdate && s.courseMgr != nil {
+			if meta, ok := evt.Data.(store.CheckpointMeta); ok {
+				s.courseMgr.RefreshState(meta.NetID)
+			}
+		}
 	}
 }
 

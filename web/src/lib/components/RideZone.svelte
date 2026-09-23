@@ -84,7 +84,12 @@
 		min-height: 0;
 		display: flex;
 		flex-direction: column;
-		justify-content: center;
+		/* flex-start, NOT center. Centring a stack of 1, 2 and 3 lines puts
+		   each tile's LABEL at a different height — measured NET 23.1px,
+		   CHECKED IN 16.5px, STOPS 10.0px in one 66px row, which is what made
+		   the strip read as ragged. Anchoring the top makes every label, and
+		   every value line under it, share a baseline across the whole row. */
+		justify-content: flex-start;
 		gap: 0;
 		padding: var(--space-2xs) var(--space-sm);
 		cursor: pointer;
@@ -103,6 +108,7 @@
 	}
 
 	.ride-zone-label {
+		flex: 0 0 auto;
 		font-size: var(--ride-t-label);
 		line-height: 1.15;
 		font-weight: 700;

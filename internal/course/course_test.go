@@ -1125,3 +1125,52 @@ func TestDeletedAnnotationDroppedFromView(t *testing.T) {
 		t.Errorf("Stations len = %d, want 2 (deleted annotation dropped)", len(state.Stations))
 	}
 }
+
+// Numbering a stop builds the course, but that is a CHECKPOINT mutation, so
+// nothing in this package re-emitted the derived course state: the rail and
+// ride strip kept reporting no course until the operator hard-reloaded.
+// RefreshState is what the checkpoint bridge calls to close that gap.
+func TestRefreshState_EmitsCourseState(t *testing.T) {
+	m, cpMgr, annMgr, _ := newTestManager(t)
+	seedStations(t, cpMgr, annMgr, 3)
+	drainCourseEvents(m)
+
+	m.RefreshState("net-1")
+
+	select {
+	case evt := <-m.Events():
+		if evt.Type != EventCourseState {
+			t.Fatalf("event type = %q, want %q", evt.Type, EventCourseState)
+		}
+		state, ok := evt.Data.(*CourseState)
+		if !ok {
+			t.Fatalf("event data = %T, want CourseState", evt.Data)
+		}
+		// The point of the refresh: the freshly numbered stops are present,
+		// which is exactly what rideHasCourse checks on the client.
+		if len(state.Stations) != 3 {
+			t.Errorf("stations = %d, want 3", len(state.Stations))
+		}
+	default:
+		t.Fatal("RefreshState emitted no course_state event")
+	}
+
+	// An empty net id is a no-op, never a panic or a stray broadcast.
+	drainCourseEvents(m)
+	m.RefreshState("")
+	select {
+	case evt := <-m.Events():
+		t.Fatalf("RefreshState(\"\") emitted %q, want nothing", evt.Type)
+	default:
+	}
+}
+
+func drainCourseEvents(m *Manager) {
+	for {
+		select {
+		case <-m.Events():
+		default:
+			return
+		}
+	}
+}
