@@ -386,7 +386,11 @@ func (s *Server) bridgeTrackerEvents() {
 				if err := s.store.SaveStation(evt.Station); err != nil {
 					log.Printf("[server] save station: %v", err)
 				}
-				if len(evt.Station.Track) > 0 {
+				// Only when THIS event appended a point. Saving Track[len-1] on
+				// every update re-wrote the previous point as a duplicate row
+				// whenever an update carried no usable position (a no-fix 0,0
+				// beacon now updates the station without extending its track).
+				if evt.TrackAppended && len(evt.Station.Track) > 0 {
 					tp := evt.Station.Track[len(evt.Station.Track)-1]
 					key := aprs.Address{Call: evt.Station.Callsign, SSID: evt.Station.SSID}.String()
 					if err := s.store.SaveTrackPoint(key, tp); err != nil {

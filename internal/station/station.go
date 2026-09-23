@@ -60,4 +60,9 @@ const (
 type Event struct {
 	Type    EventType `json:"type"`
 	Station Station   `json:"station"`
+	// TrackAppended is true only when this event added a point to
+	// Station.Track. Persistence saves Track[len-1] on that signal alone: an
+	// update that carried no usable position (a no-fix 0,0 beacon) must not
+	// re-save the previous point as a duplicate row.
+	TrackAppended bool `json:"-"`
 }

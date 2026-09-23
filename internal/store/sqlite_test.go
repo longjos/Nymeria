@@ -6348,3 +6348,66 @@ func TestRidePhaseRoundTrip(t *testing.T) {
 		t.Errorf("net-1 phase = %q after saving net-2, want unaffected pre-start", got1.Phase)
 	}
 }
+
+// History written before the tracker learned to reject no-fix beacons still
+// holds 0,0 rows (7,175 of them in one operator's database). Loading must not
+// hand them back: a stored 0,0 track point draws a line from the station's
+// real position to Null Island, and a station last saved at 0,0 is drawn in
+// the Gulf of Guinea. Filtering at load is non-destructive — the rows stay.
+func TestLoadSkipsNullIsland(t *testing.T) {
+	s, _ := newTestStore(t)
+
+	now := time.Now().UTC()
+	for i, p := range []station.TrackPoint{
+		{Lat: 36.546, Lon: -87.327, Time: now.Add(-3 * time.Minute)},
+		{Lat: 0, Lon: 0, Time: now.Add(-2 * time.Minute)}, // no-fix beacon
+		{Lat: 36.547, Lon: -87.326, Time: now.Add(-1 * time.Minute)},
+	} {
+		if err := s.SaveTrackPoint("KO4LFZ-9", p); err != nil {
+			t.Fatalf("SaveTrackPoint %d: %v", i, err)
+		}
+	}
+	pts, err := s.LoadTrackPoints("KO4LFZ-9", 10)
+	if err != nil {
+		t.Fatalf("LoadTrackPoints: %v", err)
+	}
+	if len(pts) != 2 {
+		t.Fatalf("loaded %d points, want 2 (the 0,0 row skipped)", len(pts))
+	}
+	for _, p := range pts {
+		if station.IsNullIsland(p.Lat, p.Lon) {
+			t.Errorf("a 0,0 point was loaded: %+v", p)
+		}
+	}
+
+	// LIMIT counts real points only: asking for 2 returns the 2 real ones,
+	// not "the newest 2 rows, one of which is then discarded".
+	pts, _ = s.LoadTrackPoints("KO4LFZ-9", 2)
+	if len(pts) != 2 {
+		t.Errorf("limit 2 returned %d points, want 2 real points", len(pts))
+	}
+
+	// A station whose last saved position is 0,0 loads with no position.
+	if err := s.SaveStation(station.Station{
+		Callsign: "KD9BNL", SSID: 1, LastHeard: now,
+		Position: &station.Position{Lat: 0, Lon: 0},
+	}); err != nil {
+		t.Fatalf("SaveStation: %v", err)
+	}
+	sts, err := s.LoadStations()
+	if err != nil {
+		t.Fatalf("LoadStations: %v", err)
+	}
+	found := false
+	for _, st := range sts {
+		if st.Callsign == "KD9BNL" {
+			found = true
+			if st.Position != nil {
+				t.Errorf("station saved at 0,0 loaded with position %+v, want nil", st.Position)
+			}
+		}
+	}
+	if !found {
+		t.Error("the station itself must still load — only its position is dropped")
+	}
+}

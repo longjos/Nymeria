@@ -704,3 +704,65 @@ func TestUpdateConfigDedupWindow(t *testing.T) {
 		t.Errorf("track len after disabling dedup = %d, want 2", len(s.Track))
 	}
 }
+
+// A tracker with no GPS lock beacons "0000.00N/00000.00E". APRS101 has no
+// "no fix" position, so it is syntactically valid, but 0°N 0°E is open ocean
+// in the Gulf of Guinea and no station is ever really there. Storing it as a
+// position plotted the station at Null Island and drew its track as a line
+// from its real position across the Atlantic — 7,175 such points had
+// accumulated across 10 stations in one operator's database.
+//
+// The packet is still HEARD: last-heard, symbol, comment and any weather must
+// update, because a station with no fix is on the air and may be reporting.
+// Only the position and the track are left alone.
+func TestHandlePacketNullIslandIsNoFix(t *testing.T) {
+	tr := NewMemoryTracker(testConfig())
+
+	// A real fix first.
+	tr.HandlePacket(positionPacket("KO4LFZ", 9, 36.546, -87.327, "rolling"), "APRS-IS")
+	before, _ := tr.Get("KO4LFZ-9")
+	if before.Position == nil || len(before.Track) != 1 {
+		t.Fatalf("setup: want one real fix, got pos=%v track=%d", before.Position, len(before.Track))
+	}
+
+	// Then the GPS loses lock and the tracker beacons 0,0.
+	tr.HandlePacket(positionPacket("KO4LFZ", 9, 0, 0, "no lock"), "APRS-IS")
+
+	s, ok := tr.Get("KO4LFZ-9")
+	if !ok {
+		t.Fatal("station vanished after a 0,0 packet")
+	}
+	if s.Position == nil || s.Position.Lat != 36.546 || s.Position.Lon != -87.327 {
+		t.Errorf("position = %+v, want the last REAL fix (36.546, -87.327) kept", s.Position)
+	}
+	if len(s.Track) != 1 {
+		t.Errorf("track length = %d, want 1 — a 0,0 point must not be appended", len(s.Track))
+	}
+	// Still heard: the packet is real, only its position is not.
+	if s.Comment != "no lock" {
+		t.Errorf("comment = %q, want %q (the packet was still heard)", s.Comment, "no lock")
+	}
+	if !s.LastHeard.After(before.LastHeard) && !s.LastHeard.Equal(before.LastHeard) {
+		t.Errorf("lastHeard went backwards")
+	}
+
+	// A station whose FIRST packet is 0,0 is known but has no position, so it
+	// is never drawn at all.
+	tr.HandlePacket(positionPacket("KD9BNL", 1, 0, 0, "cold start"), "APRS-IS")
+	fresh, ok := tr.Get("KD9BNL-1")
+	if !ok {
+		t.Fatal("a station heard only at 0,0 should still be known (it is on the air)")
+	}
+	if fresh.Position != nil {
+		t.Errorf("position = %+v, want nil for a station never heard with a real fix", fresh.Position)
+	}
+	if len(fresh.Track) != 0 {
+		t.Errorf("track length = %d, want 0", len(fresh.Track))
+	}
+
+	// Near-zero but real (a station just off the equator/meridian) is kept.
+	tr.HandlePacket(positionPacket("5N0XX", 0, 0.5, 0.3, "Gulf of Guinea buoy"), "APRS-IS")
+	if b, _ := tr.Get("5N0XX"); b.Position == nil || b.Position.Lat != 0.5 {
+		t.Errorf("a real near-zero fix was dropped: %+v", b.Position)
+	}
+}

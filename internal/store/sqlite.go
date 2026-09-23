@@ -406,7 +406,9 @@ func (s *SQLiteStore) LoadStations() ([]station.Station, error) {
 			}
 		}
 
-		if lat.Valid && lon.Valid {
+		// A position saved at 0,0 is a no-fix beacon from before the tracker
+		// rejected them; the station is real, its position is not.
+		if lat.Valid && lon.Valid && !station.IsNullIsland(lat.Float64, lon.Float64) {
 			st.Position = &station.Position{
 				Lat: lat.Float64,
 				Lon: lon.Float64,
@@ -534,6 +536,10 @@ func (s *SQLiteStore) LoadTrackPoints(callsign string, limit int) ([]station.Tra
 			SELECT lat, lon, time, speed, course
 			FROM tracks
 			WHERE callsign = ?
+			  -- Skip no-fix 0,0 beacons written before the tracker rejected
+			  -- them (station.IsNullIsland; same 1e-6 tolerance). Filtered
+			  -- here, before LIMIT, so the limit counts real points only.
+			  AND NOT (ABS(lat) < 0.000001 AND ABS(lon) < 0.000001)
 			ORDER BY time DESC
 			LIMIT ?
 		) sub

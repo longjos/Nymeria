@@ -3,6 +3,7 @@ package station
 import (
 	"context"
 	"hash/fnv"
+	"math"
 	"sort"
 	"strings"
 	"sync"
@@ -81,6 +82,18 @@ func (t *MemoryTracker) Events() <-chan Event {
 	return t.events
 }
 
+// IsNullIsland reports whether a position is the 0°N 0°E placeholder a GPS
+// tracker beacons when it has no lock ("0000.00N/00000.00E"). APRS101 has no
+// "no fix" position, so the packet is syntactically valid; but 0,0 is open
+// ocean in the Gulf of Guinea and no APRS station is ever really there, so it
+// is treated as "no position". The tolerance is tighter than APRS's own
+// 0.01-minute resolution (~0.00017°), so only an exact zero pair matches — a
+// real station a few hundred metres off either line is kept.
+func IsNullIsland(lat, lon float64) bool {
+	const eps = 1e-6
+	return math.Abs(lat) < eps && math.Abs(lon) < eps
+}
+
 // HandlePacket processes a parsed APRS packet into station state.
 func (t *MemoryTracker) HandlePacket(pkt *aprs.Packet, source string) {
 	// Handle telemetry data (T# packets) — no position, updates existing station only
@@ -124,12 +137,18 @@ func (t *MemoryTracker) HandlePacket(pkt *aprs.Packet, source string) {
 	}
 
 	s.LastHeard = now
-	s.Position = &Position{
-		Lat:      pos.Lat,
-		Lon:      pos.Lon,
-		Altitude: pos.Altitude,
-		Speed:    pos.Speed,
-		Course:   pos.Course,
+	// A no-fix beacon (0,0) is still a real packet — the station is on the
+	// air, and its symbol, comment and weather are current — but its position
+	// is not. Keep the last real fix (or none) and add nothing to the track.
+	hasFix := !IsNullIsland(pos.Lat, pos.Lon)
+	if hasFix {
+		s.Position = &Position{
+			Lat:      pos.Lat,
+			Lon:      pos.Lon,
+			Altitude: pos.Altitude,
+			Speed:    pos.Speed,
+			Course:   pos.Course,
+		}
 	}
 	s.Symbol = pos.Symbol
 	s.Comment = pos.Comment
@@ -141,17 +160,18 @@ func (t *MemoryTracker) HandlePacket(pkt *aprs.Packet, source string) {
 		s.DF = pkt.DF
 	}
 
-	// Append track point
-	s.Track = append(s.Track, TrackPoint{
-		Lat:    pos.Lat,
-		Lon:    pos.Lon,
-		Time:   now,
-		Speed:  pos.Speed,
-		Course: pos.Course,
-	})
-	// Cap at TrackMaxPoints (drop oldest)
-	if max := t.cfg.TrackMaxPoints; max > 0 && len(s.Track) > max {
-		s.Track = s.Track[len(s.Track)-max:]
+	if hasFix {
+		s.Track = append(s.Track, TrackPoint{
+			Lat:    pos.Lat,
+			Lon:    pos.Lon,
+			Time:   now,
+			Speed:  pos.Speed,
+			Course: pos.Course,
+		})
+		// Cap at TrackMaxPoints (drop oldest)
+		if max := t.cfg.TrackMaxPoints; max > 0 && len(s.Track) > max {
+			s.Track = s.Track[len(s.Track)-max:]
+		}
 	}
 
 	t.stations[key] = s
@@ -159,9 +179,9 @@ func (t *MemoryTracker) HandlePacket(pkt *aprs.Packet, source string) {
 
 	// Emit event
 	if exists {
-		t.emit(Event{Type: EventStationUpdate, Station: s})
+		t.emit(Event{Type: EventStationUpdate, Station: s, TrackAppended: hasFix})
 	} else {
-		t.emit(Event{Type: EventNewStation, Station: s})
+		t.emit(Event{Type: EventNewStation, Station: s, TrackAppended: hasFix})
 	}
 }
 
