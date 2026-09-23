@@ -425,14 +425,40 @@
 	 * the map's box hides the pickup behind the very panel that asked for it.
 	 * The sheet number is the same `half` snap the sheet itself uses.
 	 */
+	/** Width the SAG dock takes out of the map's left edge right now; 0 when
+	 *  no dock is shown. The one number the fit padding, the dock's own box
+	 *  and every left-edge map control all read, so they cannot disagree. */
+	let sagDockWidth = $derived(
+		!(isDesktop && $sagDockActive)
+			? 0
+			: sagDockCollapsed && $sagFocus?.mode !== 'dispatch'
+				? SAG_RAIL_W
+				: SAG_DOCK_W
+	);
+
+	/**
+	 * Publish the dock's footprint as --map-left-inset on :root.
+	 *
+	 * The dock is a fixed column over the map's left edge, and that edge is
+	 * where every hand-placed map control lives at `left: 10px` — Leaflet's
+	 * zoom, GPS follow, the GPS fix pill, the next-stop pill, the weather link
+	 * pill and the layers button. At the same z-index and later in the DOM,
+	 * the dock won every click: the layers button became unclickable and the
+	 * dock sat on top of the "No fix" pill. Each of those controls now adds
+	 * this inset to its left edge, so they step aside as one column instead of
+	 * each being nudged separately. It is :root rather than a wrapper because
+	 * the controls are page-level siblings of the dock, not its children.
+	 */
+	$effect(() => {
+		const root = document.documentElement;
+		// The dock sits at left: --space-sm (8px); step past it with the same gap.
+		root.style.setProperty('--map-left-inset', sagDockWidth > 0 ? `${sagDockWidth + 8}px` : '0px');
+		return () => root.style.removeProperty('--map-left-inset');
+	});
+
 	let sagFitPadding = $derived(
 		isDesktop && $sagDockActive
-			? {
-					top: 0,
-					right: 0,
-					bottom: 0,
-					left: sagDockCollapsed && $sagFocus?.mode !== 'dispatch' ? SAG_RAIL_W : SAG_DOCK_W
-				}
+			? { top: 0, right: 0, bottom: 0, left: sagDockWidth }
 			: !isDesktop && $panelMode === 'sag'
 				? { top: 0, right: 0, bottom: Math.round(window.innerHeight * 0.5), left: 0 }
 				: null
@@ -1175,7 +1201,11 @@
 	     In dispatch focus the candidate panel takes its place — same column,
 	     same width, so the operator's eye does not have to move. -->
 	{#if isDesktop && $sagDockActive}
-		<div class="sag-dock-layer" class:sag-dock-layer--rail={sagDockCollapsed && $sagFocus?.mode !== 'dispatch'}>
+		<div
+			class="sag-dock-layer"
+			class:sag-dock-layer--rail={sagDockCollapsed && $sagFocus?.mode !== 'dispatch'}
+			style:width="{sagDockWidth}px"
+		>
 			{#if $sagFocus?.mode === 'dispatch'}
 				<!-- Deliberately NOT gated on $sagCandidates: that store is null
 				     when the pickup itself is unplaceable, and the panel is built
@@ -1429,11 +1459,22 @@
 		top: var(--space-sm);
 		left: var(--space-sm);
 		bottom: calc(var(--ride-strip-h, 0px) + var(--space-sm));
-		width: 260px;
+		/* Width is set inline from sagDockWidth — the same number that insets
+		   the map controls, so the two cannot drift. */
 		z-index: var(--z-toolbar);
 		display: flex;
 		flex-direction: column;
 		min-height: 0;
+		/* The layer is a full-height column but the dock inside it is usually
+		   a short panel. With pointer-events on the LAYER, the transparent
+		   space below the panel ate every map click and drag down the left
+		   edge (measured: elementFromPoint(130, 400) returned the layer, not
+		   the map). The layer passes events through; only its content takes
+		   them. */
+		pointer-events: none;
+	}
+
+	.sag-dock-layer > :global(*) {
 		pointer-events: auto;
 	}
 
@@ -1442,7 +1483,6 @@
 	   dock overlays the map at its normal width — it does not reflow the map,
 	   which is what keeps invalidateSize() out of this feature entirely. */
 	.sag-dock-layer--rail {
-		width: 44px;
 		bottom: auto;
 		max-height: calc(100% - var(--ride-strip-h, 0px) - var(--space-sm) * 2);
 	}

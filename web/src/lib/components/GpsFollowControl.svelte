@@ -39,7 +39,7 @@
 	.gps-follow-btn {
 		position: absolute;
 		top: 130px;
-		left: 10px;
+		left: calc(10px + var(--map-left-inset, 0px));
 		z-index: var(--z-toolbar);
 		width: 40px;
 		height: 40px;

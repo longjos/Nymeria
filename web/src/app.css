@@ -327,3 +327,11 @@ a {
 		height: auto !important;
 	}
 }
+
+/* Leaflet's top-left control column (zoom +/-) steps aside for the SAG dock
+   exactly like the app's own left-edge map controls do. --map-left-inset is
+   published on :root by routes/+page.svelte while the dock is shown and is
+   0px (or unset) everywhere else, so other maps are unaffected. */
+.leaflet-top.leaflet-left {
+	left: var(--map-left-inset, 0px);
+}

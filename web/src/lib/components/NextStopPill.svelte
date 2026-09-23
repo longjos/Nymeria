@@ -789,7 +789,7 @@
 		/* Next free slot in the hand-placed left map-chip column, below the
 		   GPS status pill at 178px. */
 		top: 226px;
-		left: 10px;
+		left: calc(10px + var(--map-left-inset, 0px));
 		z-index: var(--z-toolbar);
 		max-width: 300px;
 	}

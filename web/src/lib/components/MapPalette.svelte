@@ -335,7 +335,7 @@
 	.map-palette-wrapper {
 		position: absolute;
 		bottom: 30px;
-		left: 10px;
+		left: calc(10px + var(--map-left-inset, 0px));
 		z-index: var(--z-toolbar);
 	}
 

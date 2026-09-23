@@ -48,7 +48,7 @@
 	.gps-status-pill {
 		position: absolute;
 		top: 178px;
-		left: 10px;
+		left: calc(10px + var(--map-left-inset, 0px));
 		z-index: var(--z-toolbar);
 		height: 24px;
 		display: inline-flex;
