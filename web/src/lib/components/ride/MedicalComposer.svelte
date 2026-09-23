@@ -16,6 +16,7 @@
 	import { activeCheckIns } from '$lib/stores/netcontrol';
 	import { currentUser } from '$lib/stores/session';
 	import RideTierGlyph from '../RideTierGlyph.svelte';
+	import RideDialog from './RideDialog.svelte';
 
 	let { netId, onClose }: { netId: string; onClose: () => void } = $props();
 
@@ -115,27 +116,20 @@
 		}
 	}
 
-	let dialogEl = $state<HTMLElement | null>(null);
+	/** The form wrapper inside RideDialog's body. The dialog element itself
+	 *  belongs to RideDialog; Escape and the Tab trap come from showModal(). */
+	let formEl = $state<HTMLElement | null>(null);
 	$effect(() => {
-		dialogEl?.querySelector<HTMLElement>('input, select, button, textarea')?.focus();
+		formEl?.querySelector<HTMLElement>('input, select, button, textarea')?.focus();
 	});
-
-	function handleKeydown(e: KeyboardEvent): void {
-		if (e.key === 'Escape') onClose();
-	}
 
 	let checkInSuggestions = $derived(Array.from(new Set($activeCheckIns.map((c) => c.tacticalCall || c.callsign).filter(Boolean))));
 </script>
 
-<svelte:window onkeydown={handleKeydown} />
-
-<!-- svelte-ignore a11y_no_static_element_interactions, a11y_click_events_have_key_events -->
-<div class="mec-backdrop" role="presentation" onclick={onClose}>
-	<div class="mec" bind:this={dialogEl} role="dialog" tabindex="-1" aria-modal="true" aria-labelledby="mec-title" onclick={(e) => e.stopPropagation()}>
-		<h2 id="mec-title" class="mec-title">Medical notification</h2>
-
-		{#if step === 'fields'}
-			<div class="mec-body">
+<RideDialog title="Medical notification" titleId="mec-title" {onClose} closeDisabled={submitting}>
+	{#snippet children()}
+		<div class="mec-form" bind:this={formEl}>
+			{#if step === 'fields'}
 				<label class="mec-field" for="mec-bib">
 					<span class="mec-label">1. Bib</span>
 					<input id="mec-bib" type="text" bind:value={bib} placeholder="optional / unknown" />
@@ -205,15 +199,7 @@
 					<span class="mec-label">Notes</span>
 					<textarea id="mec-notes" rows="2" bind:value={notes}></textarea>
 				</label>
-			</div>
-
-			{#if error}<p class="mec-error">{error}</p>{/if}
-			<div class="mec-actions">
-				<button class="mec-btn mec-cancel" onclick={onClose}>Cancel</button>
-				<button class="mec-btn mec-submit" disabled={!canSubmit} aria-busy={submitting} onclick={submitCreate}>{submitting ? 'Sending…' : 'Continue to read-back'}</button>
-			</div>
-		{:else if step === 'readback' && created}
-			<div class="mec-readback">
+			{:else if step === 'readback' && created}
 				<p class="mec-readback-intro">6. Read back to <strong>{created.reportedByCall || 'the reporting station'}</strong>:</p>
 				<p class="mec-readback-text">
 					{created.bibWithheld ? 'bib withheld' : created.bib ? `bib ${created.bib}` : 'bib not given'},
@@ -226,55 +212,33 @@
 						<span class="mec-label">What did they correct?</span>
 						<textarea id="mec-correction" rows="2" bind:value={correction}></textarea>
 					</label>
-					<div class="mec-actions">
-						<button class="mec-btn mec-cancel" onclick={() => (correcting = false)}>Back</button>
-						<button class="mec-btn mec-submit" disabled={submitting} aria-busy={submitting} onclick={submitCorrection}>{submitting ? 'Logging…' : 'Log correction'}</button>
-					</div>
-				{:else}
-					{#if error}<p class="mec-error">{error}</p>{/if}
-					<div class="mec-actions">
-						<button class="mec-btn mec-cancel" onclick={() => (correcting = true)}>They corrected something</button>
-						<button class="mec-btn mec-submit" disabled={submitting} aria-busy={submitting} onclick={confirmReadback}>{submitting ? 'Transmitting…' : 'Confirmed — transmit'}</button>
-					</div>
 				{/if}
-			</div>
+			{/if}
+		</div>
+	{/snippet}
+
+	{#snippet footer()}
+		<!-- Pinned outside the scroller: the read-back is the step that must be
+		     committed, and it is at the bottom of the longest form in ride mode. -->
+		{#if error}<p class="mec-error mec-error-inline">{error}</p>{/if}
+		{#if step === 'fields'}
+			<button class="mec-btn mec-cancel" onclick={onClose}>Cancel</button>
+			<button class="mec-btn mec-submit" disabled={!canSubmit} aria-busy={submitting} onclick={submitCreate}>{submitting ? 'Sending…' : 'Continue to read-back'}</button>
+		{:else if step === 'readback' && created}
+			{#if correcting}
+				<button class="mec-btn mec-cancel" onclick={() => (correcting = false)}>Back</button>
+				<button class="mec-btn mec-submit" disabled={submitting} aria-busy={submitting} onclick={submitCorrection}>{submitting ? 'Logging…' : 'Log correction'}</button>
+			{:else}
+				<button class="mec-btn mec-cancel" onclick={() => (correcting = true)}>They corrected something</button>
+				<button class="mec-btn mec-submit" disabled={submitting} aria-busy={submitting} onclick={confirmReadback}>{submitting ? 'Transmitting…' : 'Confirmed — transmit'}</button>
+			{/if}
 		{/if}
-	</div>
-</div>
+	{/snippet}
+</RideDialog>
 
 <style>
-	.mec-backdrop {
-		position: fixed;
-		inset: 0;
-		z-index: var(--z-overlay);
-		background: var(--color-scrim);
-		display: flex;
-		align-items: center;
-		justify-content: center;
-		padding: var(--space-md);
-	}
-
-	.mec {
-		width: 100%;
-		max-width: 480px;
-		max-height: 92vh;
-		overflow-y: auto;
-		background: var(--color-surface);
-		border: 1px solid var(--color-primary);
-		border-radius: var(--radius-lg);
-		box-shadow: var(--shadow-lg);
-		padding: var(--space-md);
-		display: flex;
-		flex-direction: column;
-		gap: var(--space-sm);
-	}
-
-	.mec-title {
-		font-size: 1.05rem;
-		font-weight: 700;
-	}
-
-	.mec-body {
+	/* The box, the title, the backdrop and the scroll belong to RideDialog. */
+	.mec-form {
 		display: flex;
 		flex-direction: column;
 		gap: var(--space-md);
@@ -287,10 +251,10 @@
 	}
 
 	.mec-label {
-		font-size: 0.7rem;
+		font-size: var(--ride-t-label);
 		font-weight: 700;
 		text-transform: uppercase;
-		letter-spacing: 0.04em;
+		letter-spacing: var(--ride-label-tracking);
 		color: var(--color-text-muted);
 	}
 
@@ -313,20 +277,20 @@
 	.mec-choices {
 		display: flex;
 		flex-wrap: wrap;
-		gap: 6px;
+		gap: var(--space-sm);
 	}
 
 	.mec-chip {
 		display: inline-flex;
 		align-items: center;
-		gap: 5px;
+		gap: var(--space-xs);
 		min-height: 36px;
 		padding: 0 var(--space-sm);
 		background: var(--color-bg);
 		border: 1px solid var(--color-primary);
 		border-radius: var(--radius-full);
 		color: var(--color-text);
-		font-size: 0.78rem;
+		font-size: var(--ride-t-body);
 		font-weight: 600;
 		cursor: pointer;
 	}
@@ -337,18 +301,12 @@
 	}
 
 	.mec-hint {
-		font-size: 0.7rem;
+		font-size: var(--ride-t-label);
 		color: var(--color-warning);
 	}
 
-	.mec-readback {
-		display: flex;
-		flex-direction: column;
-		gap: var(--space-sm);
-	}
-
 	.mec-readback-intro {
-		font-size: 0.85rem;
+		font-size: var(--ride-t-body);
 		color: var(--color-text-muted);
 	}
 
@@ -361,14 +319,13 @@
 
 	.mec-error {
 		color: var(--color-error-text);
-		font-size: 0.8rem;
+		font-size: var(--ride-t-body);
 	}
 
-	.mec-actions {
-		display: flex;
-		gap: var(--space-sm);
-		justify-content: flex-end;
-		margin-top: var(--space-xs);
+	/* Keeps a failed submit on the same line as the buttons, at the left. */
+	.mec-error-inline {
+		margin-right: auto;
+		flex: 1 1 12ch;
 	}
 
 	.mec-btn {
@@ -392,7 +349,7 @@
 	}
 
 	.mec-submit:disabled {
-		opacity: 0.5;
+		opacity: 0.45;
 		cursor: not-allowed;
 	}
 </style>

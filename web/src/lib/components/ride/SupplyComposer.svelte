@@ -13,6 +13,7 @@
 	import { tierById } from '$lib/rideMeta';
 	import { showToast } from '$lib/stores/toast';
 	import RideTierGlyph from '../RideTierGlyph.svelte';
+	import RideDialog from './RideDialog.svelte';
 
 	let { netId, onClose }: { netId: string; onClose: () => void } = $props();
 
@@ -163,14 +164,12 @@
 		}
 	}
 
-	let dialogEl = $state<HTMLElement | null>(null);
+	/** The form wrapper inside RideDialog's body. The dialog element itself
+	 *  belongs to RideDialog; Escape and the Tab trap come from showModal(). */
+	let formEl = $state<HTMLElement | null>(null);
 	$effect(() => {
-		dialogEl?.querySelector<HTMLElement>('input, select, button, textarea')?.focus();
+		formEl?.querySelector<HTMLElement>('input, select, button, textarea')?.focus();
 	});
-
-	function handleKeydown(e: KeyboardEvent): void {
-		if (e.key === 'Escape') onClose();
-	}
 
 	let checkInSuggestions = $derived(Array.from(new Set($activeCheckIns.map((c) => c.tacticalCall || c.callsign).filter(Boolean))));
 
@@ -180,15 +179,10 @@
 	}
 </script>
 
-<svelte:window onkeydown={handleKeydown} />
-
-<!-- svelte-ignore a11y_no_static_element_interactions, a11y_click_events_have_key_events -->
-<div class="suc-backdrop" role="presentation" onclick={onClose}>
-	<div class="suc" bind:this={dialogEl} role="dialog" tabindex="-1" aria-modal="true" aria-labelledby="suc-title" onclick={(e) => e.stopPropagation()}>
-		<h2 id="suc-title" class="suc-title">Supply request</h2>
-
-		{#if step === 'items'}
-			<div class="suc-body">
+<RideDialog title="Supply request" titleId="suc-title" {onClose} closeDisabled={submitting}>
+	{#snippet children()}
+		<div class="suc-form" bind:this={formEl}>
+			{#if step === 'items'}
 				<label class="suc-field" for="suc-location">
 					<span class="suc-label">Location</span>
 					<input id="suc-location" type="text" bind:value={location} placeholder="Rest Stop 3 / Nicasio" />
@@ -242,17 +236,7 @@
 					<span class="suc-label">Notes</span>
 					<textarea id="suc-notes" rows="2" bind:value={notes}></textarea>
 				</label>
-			</div>
-
-			{#if error}<p class="suc-error">{error}</p>{/if}
-			<div class="suc-actions">
-				<button class="suc-btn suc-cancel" onclick={onClose}>Cancel</button>
-				<button class="suc-btn suc-submit" disabled={!canSubmitItems} aria-busy={submitting} onclick={submitCreate}>
-					{submitting ? 'Sending…' : 'Continue to read-back'}
-				</button>
-			</div>
-		{:else if step === 'append' && created}
-			<div class="suc-body">
+			{:else if step === 'append' && created}
 				<p class="suc-readback-intro">Already on this request: {created.items.map(formatItem).join(', ') || '—'}</p>
 				<fieldset class="suc-items">
 					<legend class="suc-legend">Anything else?</legend>
@@ -267,16 +251,7 @@
 					{/each}
 					<button type="button" class="suc-add-item" onclick={() => addItem(false)}>+ Another item</button>
 				</fieldset>
-			</div>
-			{#if error}<p class="suc-error">{error}</p>{/if}
-			<div class="suc-actions">
-				<button class="suc-btn suc-cancel" onclick={onClose}>Close</button>
-				<button class="suc-btn suc-submit" disabled={submitting} aria-busy={submitting} onclick={continueFromAppend}>
-					{submitting ? 'Saving…' : 'Read back again'}
-				</button>
-			</div>
-		{:else if step === 'readback' && created}
-			<div class="suc-readback">
+			{:else if step === 'readback' && created}
 				<p class="suc-readback-intro">Read back to <strong>{created.requestedByCall}</strong>:</p>
 				<p class="suc-readback-text">
 					{created.items.map(formatItem).join(', ')} — {created.location}
@@ -289,55 +264,41 @@
 						<span class="suc-label">What did they correct?</span>
 						<textarea id="suc-correction" rows="2" bind:value={correction}></textarea>
 					</label>
-					<div class="suc-actions">
-						<button class="suc-btn suc-cancel" onclick={() => (correcting = false)}>Back</button>
-						<button class="suc-btn suc-submit" disabled={submitting} aria-busy={submitting} onclick={submitCorrection}>{submitting ? 'Logging…' : 'Log correction'}</button>
-					</div>
-				{:else}
-					{#if error}<p class="suc-error">{error}</p>{/if}
-					<div class="suc-actions">
-						<button class="suc-btn suc-cancel" onclick={() => (correcting = true)}>They corrected something</button>
-						<button class="suc-btn suc-submit" disabled={submitting} aria-busy={submitting} onclick={confirmReadback}>{submitting ? 'Transmitting…' : 'Confirmed — transmit'}</button>
-					</div>
 				{/if}
-			</div>
+			{/if}
+		</div>
+	{/snippet}
+
+	{#snippet footer()}
+		<!-- One footer for all three steps. It is pinned outside the scroller, so
+		     a long item list can never push the commit button out of reach — the
+		     failure the operator hit when the whole dialog was the scroller. -->
+		{#if error}<p class="suc-error suc-error-inline">{error}</p>{/if}
+		{#if step === 'items'}
+			<button class="suc-btn suc-cancel" onclick={onClose}>Cancel</button>
+			<button class="suc-btn suc-submit" disabled={!canSubmitItems} aria-busy={submitting} onclick={submitCreate}>
+				{submitting ? 'Sending…' : 'Continue to read-back'}
+			</button>
+		{:else if step === 'append' && created}
+			<button class="suc-btn suc-cancel" onclick={onClose}>Close</button>
+			<button class="suc-btn suc-submit" disabled={submitting} aria-busy={submitting} onclick={continueFromAppend}>
+				{submitting ? 'Saving…' : 'Read back again'}
+			</button>
+		{:else if step === 'readback' && created}
+			{#if correcting}
+				<button class="suc-btn suc-cancel" onclick={() => (correcting = false)}>Back</button>
+				<button class="suc-btn suc-submit" disabled={submitting} aria-busy={submitting} onclick={submitCorrection}>{submitting ? 'Logging…' : 'Log correction'}</button>
+			{:else}
+				<button class="suc-btn suc-cancel" onclick={() => (correcting = true)}>They corrected something</button>
+				<button class="suc-btn suc-submit" disabled={submitting} aria-busy={submitting} onclick={confirmReadback}>{submitting ? 'Transmitting…' : 'Confirmed — transmit'}</button>
+			{/if}
 		{/if}
-	</div>
-</div>
+	{/snippet}
+</RideDialog>
 
 <style>
-	.suc-backdrop {
-		position: fixed;
-		inset: 0;
-		z-index: var(--z-overlay);
-		background: var(--color-scrim);
-		display: flex;
-		align-items: center;
-		justify-content: center;
-		padding: var(--space-md);
-	}
-
-	.suc {
-		width: 100%;
-		max-width: 480px;
-		max-height: 92vh;
-		overflow-y: auto;
-		background: var(--color-surface);
-		border: 1px solid var(--color-primary);
-		border-radius: var(--radius-lg);
-		box-shadow: var(--shadow-lg);
-		padding: var(--space-md);
-		display: flex;
-		flex-direction: column;
-		gap: var(--space-sm);
-	}
-
-	.suc-title {
-		font-size: 1.05rem;
-		font-weight: 700;
-	}
-
-	.suc-body {
+	/* The box, the title, the backdrop and the scroll belong to RideDialog. */
+	.suc-form {
 		display: flex;
 		flex-direction: column;
 		gap: var(--space-md);
@@ -350,10 +311,10 @@
 	}
 
 	.suc-label {
-		font-size: 0.7rem;
+		font-size: var(--ride-t-label);
 		font-weight: 700;
 		text-transform: uppercase;
-		letter-spacing: 0.04em;
+		letter-spacing: var(--ride-label-tracking);
 		color: var(--color-text-muted);
 	}
 
@@ -376,20 +337,20 @@
 	.suc-tiers {
 		display: flex;
 		flex-wrap: wrap;
-		gap: 6px;
+		gap: var(--space-sm);
 	}
 
 	.suc-tier-chip {
 		display: inline-flex;
 		align-items: center;
-		gap: 5px;
+		gap: var(--space-xs);
 		min-height: 36px;
 		padding: 0 var(--space-sm);
 		background: var(--color-bg);
 		border: 1px solid var(--color-primary);
 		border-radius: var(--radius-full);
 		color: var(--color-text);
-		font-size: 0.78rem;
+		font-size: var(--ride-t-body);
 		font-weight: 600;
 		cursor: pointer;
 	}
@@ -410,18 +371,18 @@
 	}
 
 	.suc-legend {
-		font-size: 0.7rem;
+		font-size: var(--ride-t-label);
 		font-weight: 700;
 		text-transform: uppercase;
-		letter-spacing: 0.04em;
+		letter-spacing: var(--ride-label-tracking);
 		color: var(--color-text-muted);
-		padding: 0 4px;
+		padding: 0 var(--space-xs);
 	}
 
 	.suc-item-row {
 		display: grid;
 		grid-template-columns: 2fr 1fr 1fr 2fr auto;
-		gap: 6px;
+		gap: var(--space-sm);
 	}
 
 	.suc-item-row input {
@@ -446,7 +407,7 @@
 	}
 
 	.suc-item-remove:disabled {
-		opacity: 0.3;
+		opacity: 0.45;
 		cursor: not-allowed;
 	}
 
@@ -464,7 +425,7 @@
 		background: none;
 		border: none;
 		color: var(--color-accent);
-		font-size: 0.78rem;
+		font-size: var(--ride-t-body);
 		cursor: pointer;
 		min-height: 32px;
 	}
@@ -473,18 +434,12 @@
 		display: flex;
 		align-items: center;
 		gap: var(--space-xs);
-		font-size: 0.72rem;
+		font-size: var(--ride-t-label);
 		color: var(--color-text-muted);
 	}
 
-	.suc-readback {
-		display: flex;
-		flex-direction: column;
-		gap: var(--space-sm);
-	}
-
 	.suc-readback-intro {
-		font-size: 0.85rem;
+		font-size: var(--ride-t-body);
 		color: var(--color-text-muted);
 	}
 
@@ -497,14 +452,13 @@
 
 	.suc-error {
 		color: var(--color-error-text);
-		font-size: 0.8rem;
+		font-size: var(--ride-t-body);
 	}
 
-	.suc-actions {
-		display: flex;
-		gap: var(--space-sm);
-		justify-content: flex-end;
-		margin-top: var(--space-xs);
+	/* Keeps a failed submit on the same line as the buttons, at the left. */
+	.suc-error-inline {
+		margin-right: auto;
+		flex: 1 1 12ch;
 	}
 
 	.suc-btn {
@@ -528,7 +482,7 @@
 	}
 
 	.suc-submit:disabled {
-		opacity: 0.5;
+		opacity: 0.45;
 		cursor: not-allowed;
 	}
 </style>

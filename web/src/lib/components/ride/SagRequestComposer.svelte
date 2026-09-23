@@ -12,6 +12,7 @@
 	import { tierById, SAG_BIKE_LABELS, SAG_BIKE_GLYPHS, SAG_REASON_LABELS, enumLabel, BIKE_ORDER } from '$lib/rideMeta';
 	import { showToast } from '$lib/stores/toast';
 	import RideTierGlyph from '../RideTierGlyph.svelte';
+	import RideDialog from './RideDialog.svelte';
 	import SagLocationField from './SagLocationField.svelte';
 
 	let {
@@ -83,7 +84,7 @@
 		// Bibs arrive at pencil speed, one after another: "334, 335, and 512."
 		// Typing the next one must never need the mouse.
 		queueMicrotask(() => {
-			const inputs = dialogEl?.querySelectorAll<HTMLInputElement>('.src-slot-row input[type="text"]');
+			const inputs = formEl?.querySelectorAll<HTMLInputElement>('.src-slot-row input[type="text"]');
 			inputs?.[(slots.length - 1) * 3]?.focus();
 		});
 	}
@@ -129,7 +130,9 @@
 		}
 	}
 
-	let dialogEl = $state<HTMLElement | null>(null);
+	/** The form wrapper inside RideDialog's body — the scope for the focus
+	 *  query below. The dialog element itself belongs to RideDialog. */
+	let formEl = $state<HTMLElement | null>(null);
 	/**
 	 * Focus the FIRST BIB, once the body actually exists. The old version ran
 	 * while `config` was still null — the only focusable thing in the dialog
@@ -138,13 +141,13 @@
 	 */
 	let focused = $state(false);
 	$effect(() => {
-		if (!dialogEl || !config || focused) return;
+		if (!formEl || !config || focused) return;
 		const target =
 			(focusField === 'pickupMile'
-				? dialogEl.querySelector<HTMLElement>('#src-pickup-mile')
+				? formEl.querySelector<HTMLElement>('#src-pickup-mile')
 				: null) ??
-			dialogEl.querySelector<HTMLElement>('.src-slot-row input[type="text"]') ??
-			dialogEl.querySelector<HTMLElement>('input, select, textarea');
+			formEl.querySelector<HTMLElement>('.src-slot-row input[type="text"]') ??
+			formEl.querySelector<HTMLElement>('input, select, textarea');
 		target?.focus();
 		// The dock opens this straight off a radio call, so the operator types a
 		// number immediately — select what is there rather than making them
@@ -153,52 +156,27 @@
 		focused = true;
 	});
 
-	function trapTab(e: KeyboardEvent): void {
-		if (e.key !== 'Tab' || !dialogEl) return;
-		const focusable = Array.from(dialogEl.querySelectorAll<HTMLElement>('input, select, textarea, button:not([disabled])'));
-		if (focusable.length === 0) return;
-		const first = focusable[0];
-		const last = focusable[focusable.length - 1];
-		if (e.shiftKey && document.activeElement === first) {
-			e.preventDefault();
-			last.focus();
-		} else if (!e.shiftKey && document.activeElement === last) {
-			e.preventDefault();
-			first.focus();
-		}
-	}
-
-	function handleKeydown(e: KeyboardEvent): void {
-		if (e.key === 'Escape') onClose();
-		else trapTab(e);
-	}
+	// No Tab trap and no Escape handler here: RideDialog opens a native modal
+	// with showModal(), which supplies both, plus inertness and the scroll lock.
 
 	let checkInSuggestions = $derived(
 		Array.from(new Set($activeCheckIns.map((c) => c.tacticalCall || c.callsign).filter(Boolean)))
 	);
 </script>
 
-<svelte:window onkeydown={handleKeydown} />
-
-<!-- svelte-ignore a11y_no_static_element_interactions, a11y_click_events_have_key_events -->
-<div class="src-backdrop" role="presentation" onclick={onClose}>
-	<div
-		class="src"
-		bind:this={dialogEl}
-		role="dialog"
-		tabindex="-1"
-		aria-modal="true"
-		aria-labelledby="src-title"
-		onclick={(e) => e.stopPropagation()}
-	>
-		<h2 id="src-title" class="src-title">{editing ? `Edit SAG ${editing.sequence}` : 'New SAG request'}</h2>
-
-		{#if configError}
-			<p class="src-error">{configError}</p>
-		{:else if !config}
-			<p class="src-loading">Loading…</p>
-		{:else}
-			<div class="src-body">
+<RideDialog
+	title={editing ? `Edit SAG ${editing.sequence}` : 'New SAG request'}
+	titleId="src-title"
+	{onClose}
+	closeDisabled={submitting}
+>
+	{#snippet children()}
+		<div class="src-form" bind:this={formEl}>
+			{#if configError}
+				<p class="src-error">{configError}</p>
+			{:else if !config}
+				<p class="src-loading">Loading…</p>
+			{:else}
 				{#if !editing}
 					<!-- RIDERS FIRST. Bibs are passed at pencil speed, in the first
 					     breath of the call ("SAG at Maxwell, bib 334, flat"); burying
@@ -284,58 +262,31 @@
 					<span class="src-label">Notes</span>
 					<textarea id="src-notes" rows="2" bind:value={notes} placeholder="anything else NCS should know"></textarea>
 				</label>
-			</div>
-		{/if}
-
-		{#if error}<p class="src-error">{error}</p>{/if}
-
-		<div class="src-actions">
-			<button class="src-btn src-cancel" onclick={onClose}>Cancel</button>
-			<button class="src-btn src-submit" disabled={!canSubmit} onclick={submit}>
-				{submitting ? 'Saving…' : editing ? 'Save changes' : 'Request SAG'}
-			</button>
+			{/if}
 		</div>
-	</div>
-</div>
+	{/snippet}
+
+	{#snippet footer()}
+		<!-- The error lives in the footer, not at the end of the scrolling body:
+		     a submit failure on a long form would otherwise land off-screen,
+		     below the fold the operator is not looking at. -->
+		{#if error}<p class="src-error src-error-inline">{error}</p>{/if}
+		<button class="src-btn src-cancel" onclick={onClose} disabled={submitting}>Cancel</button>
+		<button class="src-btn src-submit" disabled={!canSubmit} onclick={submit}>
+			{submitting ? 'Saving…' : editing ? 'Save changes' : 'Request SAG'}
+		</button>
+	{/snippet}
+</RideDialog>
 
 <style>
-	.src-backdrop {
-		position: fixed;
-		inset: 0;
-		z-index: var(--z-overlay);
-		background: var(--color-scrim);
-		display: flex;
-		align-items: center;
-		justify-content: center;
-		padding: var(--space-md);
-	}
-
-	.src {
-		width: 100%;
-		max-width: 480px;
-		max-height: 92vh;
-		overflow-y: auto;
-		background: var(--color-surface);
-		border: 1px solid var(--color-primary);
-		border-radius: var(--radius-lg);
-		box-shadow: var(--shadow-lg);
-		padding: var(--space-md);
-		display: flex;
-		flex-direction: column;
-		gap: var(--space-sm);
-	}
-
-	.src-title {
-		font-size: 1.05rem;
-		font-weight: 700;
-	}
-
+	/* The box, the title, the backdrop and the scroll now belong to
+	   RideDialog. What is left here is only this form's own content. */
 	.src-loading {
 		color: var(--color-text-muted);
-		font-size: 0.85rem;
+		font-size: var(--ride-t-body);
 	}
 
-	.src-body {
+	.src-form {
 		display: flex;
 		flex-direction: column;
 		gap: var(--space-md);
@@ -348,10 +299,10 @@
 	}
 
 	.src-label {
-		font-size: 0.7rem;
+		font-size: var(--ride-t-label);
 		font-weight: 700;
 		text-transform: uppercase;
-		letter-spacing: 0.04em;
+		letter-spacing: var(--ride-label-tracking);
 		color: var(--color-text-muted);
 	}
 
@@ -374,20 +325,20 @@
 	.src-tiers {
 		display: flex;
 		flex-wrap: wrap;
-		gap: 6px;
+		gap: var(--space-sm);
 	}
 
 	.src-tier-chip {
 		display: inline-flex;
 		align-items: center;
-		gap: 5px;
+		gap: var(--space-xs);
 		min-height: 36px;
 		padding: 0 var(--space-sm);
 		background: var(--color-bg);
 		border: 1px solid var(--color-primary);
 		border-radius: var(--radius-full);
 		color: var(--color-text);
-		font-size: 0.78rem;
+		font-size: var(--ride-t-body);
 		font-weight: 600;
 		cursor: pointer;
 	}
@@ -408,30 +359,30 @@
 	}
 
 	.src-legend {
-		font-size: 0.7rem;
+		font-size: var(--ride-t-label);
 		font-weight: 700;
 		text-transform: uppercase;
-		letter-spacing: 0.04em;
+		letter-spacing: var(--ride-label-tracking);
 		color: var(--color-text-muted);
-		padding: 0 4px;
+		padding: 0 var(--space-xs);
 	}
 
 	.src-slot-row {
 		display: grid;
 		grid-template-columns: 70px 1fr 1fr minmax(0, 140px) auto;
-		gap: 6px;
+		gap: var(--space-sm);
 		align-items: center;
 	}
 
 	.src-bike-select {
 		min-height: 36px;
 		min-width: 0;
-		padding: 0 4px;
+		padding: 0 var(--space-xs);
 		background: var(--color-bg);
 		border: 1px solid var(--color-primary);
 		border-radius: var(--radius-sm);
 		color: var(--color-text);
-		font-size: 0.72rem;
+		font-size: var(--ride-t-label);
 	}
 
 	.src-slot-row input[type='text'] {
@@ -456,7 +407,7 @@
 	}
 
 	.src-slot-remove:disabled {
-		opacity: 0.3;
+		opacity: 0.45;
 		cursor: not-allowed;
 	}
 
@@ -465,26 +416,26 @@
 		background: none;
 		border: none;
 		color: var(--color-accent);
-		font-size: 0.8rem;
+		font-size: var(--ride-t-body);
 		cursor: pointer;
 		min-height: 32px;
 	}
 
 	.src-hint {
-		font-size: 0.78rem;
+		font-size: var(--ride-t-body);
 		color: var(--color-text-muted);
 	}
 
 	.src-error {
 		color: var(--color-error-text);
-		font-size: 0.8rem;
+		font-size: var(--ride-t-body);
 	}
 
-	.src-actions {
-		display: flex;
-		gap: var(--space-sm);
-		justify-content: flex-end;
-		margin-top: var(--space-xs);
+	/* Pushes the buttons to the right edge and keeps the message on the left,
+	   on the one line, where a failed submit is impossible to miss. */
+	.src-error-inline {
+		margin-right: auto;
+		flex: 1 1 12ch;
 	}
 
 	.src-btn {
@@ -508,7 +459,7 @@
 	}
 
 	.src-submit:disabled {
-		opacity: 0.5;
+		opacity: 0.45;
 		cursor: not-allowed;
 	}
 </style>
