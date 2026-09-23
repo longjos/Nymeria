@@ -93,6 +93,7 @@
 		sagCandidates, sagLegLines, sagFocusedVehicleId, sagVehicleGeo,
 		focusSagRequest, focusSagVehicle, startDispatchFocus, clearSagFocus
 	} from '$lib/stores/sagMap';
+	import { padSinglePoint } from '$lib/sagDockModel';
 
 	/** The desktop SAG dock's width, and the tablet rail's. Shared with the
 	 *  map-fit padding so a `flyToBounds` can never put a pickup behind it. */
@@ -416,6 +417,20 @@
 	function handleFlyToBounds(coords: Array<{ lat: number; lon: number }>) {
 		flyToBounds = coords;
 		setTimeout(() => { flyToBounds = null; }, 100);
+	}
+
+	/**
+	 * The SAG dock's zoom-to-extent (sag-dock-design.md S5): a job, a vehicle,
+	 * or all SAG. Goes through the same bounds fit + `sagFitPadding` as
+	 * dispatch focus, so the targets land clear of the dock, rail or sheet. A
+	 * lone point is padded to a small box so the map does not slam to max
+	 * zoom. On a phone a full-height sheet would hide the answer, so it drops
+	 * to `half` — the snap the fit padding assumes.
+	 */
+	function handleSagFit(pts: Array<{ lat: number; lon: number }>) {
+		if (pts.length === 0) return;
+		if (!isDesktop && get(sheetState) === 'full') sheetState.set('half');
+		handleFlyToBounds(padSinglePoint(pts));
 	}
 
 	/**
@@ -1142,6 +1157,7 @@
 					onPlaceRequest={handleSagPlaceRequest}
 					onPlaceVehicle={handleSagPlaceVehicle}
 					onSagFocusPreset={toggleSagFocusPreset}
+					onFitPoints={handleSagFit}
 					collapsed={sagDockCollapsed}
 					onExpand={() => (sagDockCollapsed = false)}
 					onCollapse={isTablet ? () => (sagDockCollapsed = true) : undefined}
@@ -1419,6 +1435,7 @@
 						onPlaceRequest={handleSagPlaceRequest}
 						onPlaceVehicle={handleSagPlaceVehicle}
 						onSagFocusPreset={toggleSagFocusPreset}
+						onFitPoints={handleSagFit}
 					/>
 				{/if}
 			{/if}
