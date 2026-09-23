@@ -187,6 +187,14 @@
 	   .summary-kicker / .summary-label / .metric-label, the house style. */
 	--ride-label-tracking: 0.05em;
 
+	/* Course rail lanes (docs/course-rail-spec.md §B1). The four lanes sum to
+	   the 60px rail row RideStrip already reserves — 12 + 20 + 12 + 16 — so
+	   changing one means changing another, never growing the strip. */
+	--ride-rail-lane-edge: 12px;     /* LEAD lane and SWEEP lane, each */
+	--ride-rail-lane-course: 20px;   /* stops, roster pips, gates; line at its centre */
+	--ride-rail-lane-readout: 16px;
+	--ride-rail-pip: 6px;            /* roster pip diameter */
+
 	/* SAG map overlay (docs/sag-map-spec.md §9). Four colour tokens and no new
 	   hues: --color-sag-unit is the value stationCategoryMeta.ts already
 	   assigns to the `sag` check-in category, promoted to a token so the map

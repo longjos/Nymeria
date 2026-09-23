@@ -444,6 +444,9 @@ export const rideRail = derived(
 		const edges = edgePositions({
 			passages,
 			sweepReport: latest ? { mile: latest.routeMile ?? null, at: latest.reportedAt } : null,
+			sweepPassed: (c?.stations ?? [])
+				.filter((st) => !!st.closure.sweepPassedAt)
+				.map((st) => ({ checkpointId: st.checkpointId, seq: st.sequenceNumber, at: st.closure.sweepPassedAt as string })),
 			stopMiles: liveStopMiles,
 			leadLabel,
 			sweepLabel

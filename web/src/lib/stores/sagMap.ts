@@ -14,13 +14,14 @@
  *     inside an `$effect` that also reads it. That is the infinite-flyTo loop.
  */
 import { derived, get, writable } from 'svelte/store';
-import { sagBoard, rideMode, rideProfile } from './ride';
+import { sagBoard, rideMode, rideProfile, rideOpenItems, medicalOpen, supplyAll } from './ride';
 import { activeCheckIns, netAnnotations } from './netcontrol';
 import { stations } from './stations';
 import { secondClock } from './clock';
 import { mapSettings } from './mapSettings';
 import type { Stop } from '$lib/routeDistance';
 import { courseRoute, courseStops } from './courseGeo';
+import { projectOnRoute, resolveCandidate } from '$lib/routeDistance';
 import {
 	resolveSagPoint,
 	courseMismatchNotice,
@@ -36,7 +37,7 @@ import {
 	type SagVehicleGeo
 } from '$lib/sagDispatch';
 import { unassignedRiders } from '$lib/rideMeta';
-import type { SAGRequest } from '$lib/types';
+import type { SAGRequest, PriorityTier } from '$lib/types';
 
 /** The course this net is running, plus enough context to tell "no course
  *  loaded" from "several courses and the request didn't say which". One
@@ -253,4 +254,71 @@ export const sagOverlayActive = derived(
 export const sagDockActive = derived(
 	[rideMode, mapSettings],
 	([isRide, s]) => isRide && s.showSagOverlay && s.showSagDock
+);
+
+
+// ---- course rail: incident pins that are really somewhere ----
+
+const METERS_PER_MILE_PIN = 1609.344;
+
+export interface RailIncidentPin {
+	id: string;
+	kind: 'sag' | 'medical' | 'supply';
+	tier: PriorityTier;
+	label: string;
+	chainageMeters: number;
+}
+
+/**
+ * Open, unacknowledged items drawn on the course rail — ONLY those we can
+ * actually place (course-rail-spec B1).
+ *
+ * The rail used to draw every pin at 50% because pins carried no location, so
+ * a SAG call at mile 40 and a supply request for ice at Rest Stop 3 both
+ * landed on top of Rest Stop 2 and read as "trouble at Eakin Elementary". A
+ * fake location is worse than none: an item we cannot place is simply not on
+ * the rail; it is still in the TRAFFIC tile and the SAG dock.
+ *
+ * SAG pickups: the resolver leaves chainage null for coordinate and annotation
+ * placements, on purpose — it will not guess through the ambiguous
+ * point->mile projection. The rail can still place two of those honestly:
+ *   - a pickup AT a numbered stop takes that stop's sequence-aware mile, which
+ *     is exact (this is the common case: "SAG at Maxwell Chapel");
+ *   - raw coordinates take the projected mile ONLY when it is unambiguous —
+ *     the same rule the roster lane uses. A shared road is left off the rail.
+ * Mileage placements already carry their chainage. Medical and supply
+ * carry an on-air "miles to go", which becomes a chainage against the course
+ * line's measured length — the same conversion the SAG resolver uses.
+ */
+export const railIncidentPins = derived(
+	[rideOpenItems, sagPlaced, medicalOpen, supplyAll, courseRoute, courseStops],
+	([items, placed, med, sup, route, stops]): RailIncidentPin[] => {
+		const total = route.index?.totalMeters ?? null;
+		const pickupAt = new Map<string, number>();
+		for (const p of placed) {
+			const pk = p.pickup;
+			if (!pk.placed) continue;
+			let m: number | null = pk.chainageMeters;
+			if (m == null && p.request.pickup.annotationId) m = stops.get(p.request.pickup.annotationId)?.chainageMeters ?? null;
+			if (m == null && pk.via === 'coordinate' && route.index) {
+				const res = resolveCandidate(projectOnRoute(route.index, pk.lat, pk.lon), {}, route.index);
+				if (!res.ambiguous && res.candidate) m = res.candidate.chainageMeters;
+			}
+			if (m != null) pickupAt.set(p.request.id, m);
+		}
+		const toGo = new Map<string, number>();
+		for (const m of med) if (m.milesRemaining != null) toGo.set(m.id, m.milesRemaining);
+		for (const x of sup) if (x.milesRemaining != null) toGo.set(x.id, x.milesRemaining);
+
+		const out: RailIncidentPin[] = [];
+		for (const i of items) {
+			if (i.acked) continue;
+			let chainage: number | null = null;
+			if (i.kind === 'sag') chainage = pickupAt.get(i.id) ?? null;
+			else if (total != null && toGo.has(i.id)) chainage = total - toGo.get(i.id)! * METERS_PER_MILE_PIN;
+			if (chainage == null || total == null || chainage < 0 || chainage > total) continue;
+			out.push({ id: i.id, kind: i.kind, tier: i.tier, label: `${i.summary} · ${i.where}`, chainageMeters: chainage });
+		}
+		return out;
+	}
 );

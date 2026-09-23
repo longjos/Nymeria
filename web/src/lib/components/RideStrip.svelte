@@ -3,17 +3,42 @@
 	// below the map on desktop bike-ride nets. Row A is the course rail
 	// (the map's x-axis); Row B is eight zone tiles. The height NEVER grows —
 	// it is a contract every phase's zone set must fit inside.
-	import CourseRail from './CourseRail.svelte';
+	import StripRail from './StripRail.svelte';
 	import RideZone from './RideZone.svelte';
 	import PhaseChip from './PhaseChip.svelte';
 	import PhaseChangeDialog from './PhaseChangeDialog.svelte';
 	import SweepPassedConfirm from './SweepPassedConfirm.svelte';
 	import {
-		rideZones, rideRail, ridePhase, rideEmergency, rideHasCourse, rideCourseGap, rideAnnouncement,
+		rideZones, rideRail, ridePhase, rideEmergency, rideHasCourse, rideCourseGap, rideAnnouncement, courseState,
 		navigateZone, ackEmergency, markSweepPassed, registerRideFlyTo, rideViewportClass, zoneSpanSum
 	} from '$lib/stores/ride';
 	import { wxIsNcs } from '$lib/stores/wxAlerts';
 	import { openAnnotations } from '$lib/stores/ui';
+	import { activeCheckIns } from '$lib/stores/netcontrol';
+
+	/** A roster member on the rail -> the map. The rail's pips carry no
+	 *  coordinates of their own; the check-in is the one source. */
+	function flyToCheckIn(checkInId: string) {
+		const ci = $activeCheckIns.find((c) => c.id === checkInId);
+		if (ci?.lat != null && ci?.lon != null) onFlyTo(ci.lat, ci.lon, 15);
+	}
+
+	/** RECONCILE: the rail's 20px row is a sentence, not a crushed rail (B9). */
+	let reconcileLine = $derived.by(() => {
+		const c = $courseState;
+		const total = (c?.stationsOpen ?? 0) + (c?.stationsClosed ?? 0);
+		const sweepAt = $rideRail.edges.sweep?.at;
+		const sweepTime = sweepAt
+			? new Date(sweepAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
+			: null;
+		return [
+			c?.allStationsClosed ? 'Course clear' : `${c?.stationsOpen ?? 0} stop${c?.stationsOpen === 1 ? '' : 's'} still open`,
+			sweepTime ? `sweep last reported ${sweepTime}` : 'sweep not reported',
+			total > 0 ? `${c?.stationsClosed ?? 0} of ${total} stops closed` : ''
+		]
+			.filter(Boolean)
+			.join(' · ');
+	});
 
 	let {
 		isDesktop,
@@ -150,27 +175,17 @@
 		</div>
 	{:else}
 		<div class="ride-rail">
-			<CourseRail
-				density="strip"
-				scale={$rideRail.stopMiles ? 'mile' : 'index'}
-				checkpoints={$rideRail.checkpoints}
-				elements={$rideRail.elements}
-				shutoffs={$rideRail.shutoffs}
-				closures={$rideRail.closures}
-				outOfOrder={$rideRail.outOfOrder}
-				stopMiles={$rideRail.stopMiles}
-				incidentPins={$rideRail.incidentPins}
-				leadLabel={$rideRail.leadLabel}
-				sweepLabel={$rideRail.sweepLabel}
-				focusable
-				onStopActivate={(cpId) => navigateZone('stop', cpId)}
-				onSweepMarkerActivate={() => (showSweepConfirm = true)}
-			/>
-			<div class="ride-rail-readout" aria-hidden="true">
-				<span class="ride-lead">▼ {$rideRail.leadRead}</span>
-				<span class="ride-sweep">▲ {$rideRail.sweepRead}</span>
-				{#if $rideRail.gapText}<span class="ride-gap">gap {$rideRail.gapText}</span>{/if}
-			</div>
+			{#if $ridePhase?.phase === 'reconcile'}
+				<p class="ride-reconcile-line">{reconcileLine}</p>
+			{:else}
+				<StripRail
+					onStopActivate={(cpId) => navigateZone('stop', cpId)}
+					onRosterActivate={flyToCheckIn}
+					onFlyTo={(lat, lon) => onFlyTo(lat, lon, 14)}
+					onSweepPassed={() => (showSweepConfirm = true)}
+					onRosterList={() => navigateZone('checkedIn')}
+				/>
+			{/if}
 		</div>
 
 		<!-- svelte-ignore a11y_no_noninteractive_element_interactions -->
@@ -305,34 +320,17 @@
 		overflow: hidden;
 	}
 
-	/* Sweep position is the spec's rank-2 fact and the single most-asked
-	   question on the radio; at 0.6rem it was the smallest type on a strip
-	   whose rank-6 net clock was 1.375rem. */
-	.ride-rail-readout {
-		position: absolute;
-		left: var(--space-md);
-		right: var(--space-md);
-		bottom: 1px;
-		display: flex;
-		gap: var(--space-md);
-		font-size: var(--ride-t-body);
+	.ride-reconcile-line {
+		margin: 0;
+		font-size: var(--ride-t-label);
 		font-weight: 700;
-		font-variant-numeric: tabular-nums;
+		letter-spacing: var(--ride-label-tracking);
+		text-transform: uppercase;
+		color: var(--color-text-muted);
+		line-height: 20px;
 		white-space: nowrap;
 		overflow: hidden;
-		pointer-events: none;
-	}
-
-	.ride-lead {
-		color: var(--color-ride-lead);
-	}
-
-	.ride-sweep {
-		color: var(--color-ride-sweep);
-	}
-
-	.ride-gap {
-		color: var(--color-text-muted);
+		text-overflow: ellipsis;
 	}
 
 	/* The zone SET is phase-dependent (5 zones in PRE-START, 8 in MID-RIDE,

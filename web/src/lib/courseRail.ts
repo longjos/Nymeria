@@ -86,7 +86,7 @@ export interface EdgePosition {
 	/** Null when the edge is at a stop that is not on the course line. */
 	mile: number | null;
 	at: string;
-	source: 'passage' | 'report';
+	source: 'passage' | 'report' | 'sweep-passed';
 	checkpointId?: string;
 	seq?: number;
 }
@@ -128,6 +128,9 @@ const t = (iso: string) => {
 export function edgePositions(input: {
 	passages: EdgePassage[];
 	sweepReport: EdgeReport | null;
+	/** Stops an operator MARKED sweep-passed (the Sweep passed… action). That
+	 *  is a human report of where sweep was, even with no passage logged. */
+	sweepPassed?: { checkpointId: string; seq: number; at: string }[];
 	stopMiles: Map<string, number>;
 	leadLabel?: string;
 	sweepLabel?: string;
@@ -153,6 +156,17 @@ export function edgePositions(input: {
 
 	const lead = newestPassage(leadKey);
 	let sweep = newestPassage(sweepKey);
+	for (const m of input.sweepPassed ?? []) {
+		if (!sweep || t(m.at) > t(sweep.at)) {
+			sweep = {
+				mile: input.stopMiles.get(m.checkpointId) ?? null,
+				at: m.at,
+				source: 'sweep-passed',
+				checkpointId: m.checkpointId,
+				seq: m.seq
+			};
+		}
+	}
 	const r = input.sweepReport;
 	// A report with no mile cannot place sweep, so it never displaces a
 	// passage that can.

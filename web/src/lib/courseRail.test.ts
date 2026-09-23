@@ -174,6 +174,32 @@ describe('edgePositions', () => {
 		expect(e.spreadMiles).toBeNull();
 	});
 
+	it('a stop MARKED sweep-passed is a reported sweep position', () => {
+		// Found on the live net: stop 1 marked "sweep passed" at 01:47 with no
+		// SWEEP passage logged, and the rail said "SWEEP not reported" beside a
+		// stop reading "sweep passed". Marking a stop is a human report.
+		const e = edgePositions({
+			passages: [],
+			sweepReport: { mile: null, at: '2026-09-23T01:51:17Z' }, // real: a report naming no mile
+			sweepPassed: [{ checkpointId: 'cp1', seq: 1, at: '2026-09-23T01:47:26Z' }],
+			stopMiles: miles
+		});
+		expect(e.sweep).toMatchObject({ mile: 13.2, checkpointId: 'cp1', source: 'sweep-passed' });
+	});
+
+	it('the newest of passage, mark and report wins', () => {
+		const e = edgePositions({
+			passages: [pass('SWEEP', 'cp1', '2026-09-23T09:00:00Z')],
+			sweepReport: { mile: 20, at: '2026-09-23T09:30:00Z' },
+			sweepPassed: [
+				{ checkpointId: 'cp2', seq: 2, at: '2026-09-23T10:00:00Z' },
+				{ checkpointId: 'cp1', seq: 1, at: '2026-09-23T08:00:00Z' }
+			],
+			stopMiles: miles
+		});
+		expect(e.sweep).toMatchObject({ checkpointId: 'cp2', source: 'sweep-passed' });
+	});
+
 	it('a passage at a stop that is not on the course keeps its stop, with no mile', () => {
 		const e = edgePositions({
 			passages: [pass('LEAD', 'cp2', '2026-09-23T10:00:00Z')],

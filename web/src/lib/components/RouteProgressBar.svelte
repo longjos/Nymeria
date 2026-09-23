@@ -3,6 +3,7 @@
 	import { statusColor } from '$lib/annotationMeta';
 	import { timeAgo } from '$lib/utils';
 	import { wxInAreaAlerts } from '$lib/stores/wxAlerts';
+	import { courseState } from '$lib/stores/ride';
 	import CourseRail from './CourseRail.svelte';
 
 	let {
@@ -47,6 +48,8 @@
 				checkpoints={$orderedCheckpoints}
 				elements={$progressElements}
 				wxAlerts={$wxInAreaAlerts}
+				leadLabel={$courseState?.config.leadLabel || 'LEAD'}
+				sweepLabel={$courseState?.config.sweepLabel || 'SWEEP'}
 				onStopActivate={toggleDetail}
 			/>
 		</div>
