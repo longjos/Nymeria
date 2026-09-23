@@ -3,7 +3,9 @@
 	// below the map on desktop bike-ride nets. Row A is the course rail
 	// (the map's x-axis); Row B is eight zone tiles. The height NEVER grows —
 	// it is a contract every phase's zone set must fit inside.
-	import StripRail from './StripRail.svelte';
+	import CourseRailView from './CourseRailView.svelte';
+	import { rideRailModel } from '$lib/stores/courseRoster';
+	import { secondClock } from '$lib/stores/clock';
 	import RideZone from './RideZone.svelte';
 	import PhaseChip from './PhaseChip.svelte';
 	import PhaseChangeDialog from './PhaseChangeDialog.svelte';
@@ -178,7 +180,10 @@
 			{#if $ridePhase?.phase === 'reconcile'}
 				<p class="ride-reconcile-line">{reconcileLine}</p>
 			{:else}
-				<StripRail
+				<CourseRailView
+					model={$rideRailModel}
+					now={$secondClock}
+					density="strip"
 					onStopActivate={(cpId) => navigateZone('stop', cpId)}
 					onRosterActivate={flyToCheckIn}
 					onFlyTo={(lat, lon) => onFlyTo(lat, lon, 14)}

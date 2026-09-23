@@ -2,20 +2,33 @@
 	import { orderedCheckpoints, progressElements, hasCheckpoints } from '$lib/stores/netcontrol';
 	import { statusColor } from '$lib/annotationMeta';
 	import { timeAgo } from '$lib/utils';
-	import { wxInAreaAlerts } from '$lib/stores/wxAlerts';
-	import { courseState } from '$lib/stores/ride';
-	import CourseRail from './CourseRail.svelte';
+	import CourseRailView from './CourseRailView.svelte';
+	import { rideRailModel } from '$lib/stores/courseRoster';
+	import { secondClock } from '$lib/stores/clock';
+	import { activeCheckIns } from '$lib/stores/netcontrol';
 
 	let {
 		onCheckpointClick,
+		onFlyTo,
+		onNavigateTab
 	}: {
 		onCheckpointClick?: (cpId: string) => void;
+		/** Fly the map — a roster member, LEAD, SWEEP, a gate, an incident. */
+		onFlyTo?: (lat: number, lon: number) => void;
+		onNavigateTab?: (tab: 'roster') => void;
 	} = $props();
+
+	/** A roster member on the rail -> the map. The rail carries no coordinates
+	 *  of its own; the check-in is the one source. */
+	function flyToCheckIn(checkInId: string) {
+		const ci = $activeCheckIns.find((c) => c.id === checkInId);
+		if (ci?.lat != null && ci?.lon != null) onFlyTo?.(ci.lat, ci.lon);
+	}
 
 	let expandedCpId = $state<string | null>(null);
 
 	// Element colors by label — used only by the expanded passage detail below;
-	// the rail itself (CourseRail) owns the canonical copy of this table.
+	// the rail itself (CourseRailView) draws only LEAD and SWEEP.
 	const elementColors: Record<string, string> = {
 		lead: 'var(--color-ride-lead)',
 		sweep: 'var(--color-ride-sweep)',
@@ -44,13 +57,14 @@
 
 		<!-- Progress bar visualization -->
 		<div class="rp-bar-container">
-			<CourseRail
-				checkpoints={$orderedCheckpoints}
-				elements={$progressElements}
-				wxAlerts={$wxInAreaAlerts}
-				leadLabel={$courseState?.config.leadLabel || 'LEAD'}
-				sweepLabel={$courseState?.config.sweepLabel || 'SWEEP'}
+			<CourseRailView
+				model={$rideRailModel}
+				now={$secondClock}
+				density="panel"
 				onStopActivate={toggleDetail}
+				onRosterActivate={flyToCheckIn}
+				{onFlyTo}
+				onRosterList={() => onNavigateTab?.('roster')}
 			/>
 		</div>
 

@@ -199,7 +199,7 @@
 
 	<!-- ROUTE PROGRESS -->
 	{#if $hasCheckpoints && !($rideMode && isDesktop)}
-		<RouteProgressBar />
+		<RouteProgressBar {onFlyTo} onNavigateTab={() => onNavigateTab('roster')} />
 	{/if}
 
 	<!-- ACTIVE MISSIONS -->

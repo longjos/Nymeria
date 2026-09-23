@@ -110,7 +110,7 @@ export function highestTier(ladder: PriorityTier[], ids: string[]): PriorityTier
 }
 
 /**
- * The ONE rest-stop glyph table — the ride strip's B4 zone, CourseRail's stop
+ * The ONE rest-stop glyph table — the ride strip's B4 zone, CourseRailView's stop
  * nodes and the course panel's rest-stop board all read it, so a stop can
  * never be drawn with two different marks on two surfaces.
  *

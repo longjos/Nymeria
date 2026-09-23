@@ -10,7 +10,7 @@
 	} from '$lib/stores/session';
 	import type {
 		Net, NetCheckIn, NetMission, NetEvent, Annotation,
-		CheckpointWithPassages, CheckpointPassage, ProgressElement, WxSnapshot
+		CheckpointWithPassages, CheckpointPassage, WxSnapshot, CourseState, RidePhaseID, RidePhaseStatus
 	} from '$lib/types';
 	import DashboardLogin from '$lib/components/dashboard/DashboardLogin.svelte';
 	import AgencyHeader from '$lib/components/dashboard/AgencyHeader.svelte';
@@ -35,6 +35,12 @@
 	// own auth) so it cannot reuse stores/wxAlerts.ts — it keeps its own tiny
 	// snapshot instead, refreshed by the initial fetch and the wx_alerts WS event.
 	let wxSnapshot = $state<WxSnapshot | null>(null);
+	// Bike-ride nets only: the course rail's closures, shutoffs and sweep
+	// reports, and the ride phase — the same inputs the main app's rail uses.
+	let courseState = $state<CourseState | null>(null);
+	let ridePhase = $state<RidePhaseID | null>(null);
+	/** Ages on the rail ("sweep 22m") tick without a data change. */
+	let nowMs = $state(Date.now());
 
 	let ws: WSClient | null = null;
 
@@ -76,32 +82,6 @@
 		[...checkpoints].sort((a, b) => a.meta.sequenceNumber - b.meta.sequenceNumber)
 	);
 
-	let progressElements = $derived.by((): ProgressElement[] => {
-		const seqMap = new Map<string, number>();
-		for (const cp of checkpoints) {
-			seqMap.set(cp.meta.annotationId, cp.meta.sequenceNumber);
-		}
-
-		const elemMap = new Map<string, ProgressElement>();
-		for (const cp of checkpoints) {
-			for (const p of cp.passages ?? []) {
-				const seq = seqMap.get(p.checkpointId);
-				if (seq == null) continue;
-				const existing = elemMap.get(p.label);
-				if (!existing || seq > existing.lastCheckpointSeq) {
-					elemMap.set(p.label, {
-						label: p.label,
-						lastCheckpointId: p.checkpointId,
-						lastCheckpointSeq: seq,
-						lastPassageTime: p.passageTime,
-					});
-				}
-			}
-		}
-
-		return [...elemMap.values()].sort((a, b) => b.lastCheckpointSeq - a.lastCheckpointSeq);
-	});
-
 	// Highest-sorted active warning-tier IN alert — the only case the
 	// dashboard banner renders for (observers get no ack controls).
 	let wxActiveWarningIn = $derived(
@@ -118,7 +98,10 @@
 			sessionReady = true;
 		})();
 
+		const tick = setInterval(() => (nowMs = Date.now()), 15_000);
+
 		return () => {
+			clearInterval(tick);
 			ws?.disconnect();
 			ws = null;
 		};
@@ -161,6 +144,22 @@
 				checkpoints = await api.getCheckpoints(netId);
 			} catch {
 				checkpoints = [];
+			}
+
+			// Course state and phase — bike-ride nets only; absent otherwise.
+			courseState = null;
+			ridePhase = null;
+			if (net?.profile === 'bike-ride') {
+				try {
+					courseState = await api.courseState(netId);
+				} catch {
+					courseState = null;
+				}
+				try {
+					ridePhase = (await api.ridePhase(netId))?.phase ?? null;
+				} catch {
+					ridePhase = null;
+				}
 			}
 
 			// NWS Alerts — absent (503) when the server has no wx manager configured.
@@ -244,11 +243,29 @@
 		ws.on('checkpoint_meta_updated', (msg) => {
 			const meta = msg.data as any;
 			if (!meta) return;
-			checkpoints = checkpoints.map(cp => {
-				if (cp.meta.annotationId !== meta.annotationId) return cp;
-				return { ...cp, meta: { ...cp.meta, ...meta } };
-			});
+			if (checkpoints.some((cp) => cp.meta.annotationId === meta.annotationId)) {
+				checkpoints = checkpoints.map(cp => {
+					if (cp.meta.annotationId !== meta.annotationId) return cp;
+					return { ...cp, meta: { ...cp.meta, ...meta } };
+				});
+			} else {
+				// A stop's FIRST sequence number. A map alone dropped it, so a
+				// newly numbered stop never appeared until a reload — the same
+				// bug the main app's store had.
+				const annotation = dashAnnotations.find((a) => a.id === meta.annotationId);
+				if (annotation) checkpoints = [...checkpoints, { annotation, meta, passages: [], passageCount: 0 }];
+			}
 			lastUpdated = new Date();
+		});
+
+		ws.on('course_state', (msg) => {
+			const c = msg.data as CourseState;
+			if (c && c.netId === net?.id) courseState = c;
+		});
+
+		ws.on('ride_phase_updated', (msg) => {
+			const st = msg.data as RidePhaseStatus;
+			if (st && st.netId === net?.id) ridePhase = st.phase;
 		});
 
 		ws.on('annotation_created', (msg) => {
@@ -341,7 +358,11 @@
 				{#if orderedCheckpoints.length > 0}
 					<EventProgress
 						checkpoints={orderedCheckpoints}
-						elements={progressElements}
+						annotations={dashAnnotations}
+						{checkIns}
+						{courseState}
+						phase={ridePhase}
+						now={nowMs}
 						wxAlerts={(wxSnapshot?.alerts ?? []).filter((a) => a.state === 'active' && a.proximity === 'in')}
 						{presentationMode}
 					/>

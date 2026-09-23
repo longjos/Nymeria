@@ -1,49 +1,55 @@
 <script lang="ts">
 	/**
-	 * The ride strip's course rail (docs/course-rail-spec.md). It answers one
-	 * question — "where is it ALONG THE COURSE, in the miles we speak on the
-	 * air?" — and the map answers every other one.
+	 * The course rail (docs/course-rail-spec.md), drawn from a RailModel. It
+	 * answers one question — "where is it ALONG THE COURSE, in the miles we
+	 * speak on the air?" — and the map answers every other one.
 	 *
-	 * Four lanes in the strip's existing 60px row, top to bottom:
-	 *   LEAD     12px  ▾ LEAD marker, placed incident glyphs
-	 *   COURSE   20px  the line (with the field band), stops, gates, roster
-	 *   SWEEP    12px  ▴ SWEEP marker
-	 *   READOUT  16px  the sentence you read on the air
-	 * Every x on every lane goes through ONE axis on ONE track element (B4:
-	 * the old rail drew the line, the stops and the markers in three
-	 * coordinate systems, up to 12px apart, which put the chevron on the
-	 * neighbouring stop).
+	 * Presentational only: the model (railModel.buildRailModel) holds every
+	 * decision, so the three rails — the ride strip, the SituationBoard panel
+	 * and the agency dashboard, which keeps its own data — show one course one
+	 * way. This component only lays it out in pixels and draws it.
+	 *
+	 * Lanes, top to bottom: [WX brackets, panel only] · LEAD · COURSE · SWEEP ·
+	 * [stop names, panel only] · READOUT. At strip density the four core lanes
+	 * are exactly the strip's 60px row. Every x on every lane goes through ONE
+	 * axis on ONE track element (B4).
 	 *
 	 * LEAD and SWEEP are REPORTED positions only. The user's rule: "We'd always
-	 * take the reported sweep over the GPS." A sweep van's live fix appears on
-	 * the course lane as an ordinary roster pip and nothing more.
-	 *
-	 * This is the strip density only. The SituationBoard and dashboard panels
-	 * still use CourseRail.
+	 * take the reported sweep over the GPS." A sweep van's live fix is an
+	 * ordinary roster pip and nothing more.
 	 */
-	import { statusColor } from '$lib/annotationMeta';
 	import { pointAtChainage } from '$lib/routeDistance';
 	import { STOP_GLYPHS, ageState, ageText } from '$lib/rideMeta';
 	import { stationCategoryMeta } from '$lib/stationCategoryMeta';
 	import { dodgeStops, clusterPips, type PipCluster } from '$lib/courseRail';
+	import type { RailModel, RailStopModel } from '$lib/railModel';
 	import type { RosterOnCourse } from '$lib/rosterCourse';
-	import type { AnnotationCategory, StationCategory } from '$lib/types';
-	import { rideRail, ridePhase } from '$lib/stores/ride';
-	import { courseRoute, courseStops } from '$lib/stores/courseGeo';
-	import { rideRosterOnCourse, rideStopStaffing, rideRosterUnplaced } from '$lib/stores/courseRoster';
-	import { railIncidentPins } from '$lib/stores/sagMap';
-	import { secondClock } from '$lib/stores/clock';
+	import type { StationCategory } from '$lib/types';
 	import RideTierGlyph from './RideTierGlyph.svelte';
+	import WxTierGlyph from './WxTierGlyph.svelte';
 
 	let {
+		model,
+		now,
+		density = 'strip',
+		presentation = false,
 		onStopActivate,
 		onRosterActivate,
 		onFlyTo,
 		onSweepPassed,
 		onRosterList
 	}: {
-		onStopActivate: (annotationId: string) => void;
-		onRosterActivate: (checkInId: string) => void;
+		model: RailModel;
+		/** ms epoch; ages are computed against it. */
+		now: number;
+		/** 'strip': the ride strip's fixed 60px row. 'panel': taller, with stop
+		 *  names and weather brackets — SituationBoard and the dashboard. */
+		density?: 'strip' | 'panel';
+		/** The dashboard's large-screen mode: bigger type, same layout. */
+		presentation?: boolean;
+		onStopActivate?: (annotationId: string) => void;
+		/** A roster member was chosen. Without it, pips are still listed. */
+		onRosterActivate?: (checkInId: string) => void;
 		/** Fly the map to a point — LEAD, SWEEP, a gate or an incident. */
 		onFlyTo?: (lat: number, lon: number) => void;
 		onSweepPassed?: () => void;
@@ -52,22 +58,24 @@
 	} = $props();
 
 	const MI = 1609.344;
+	let panel = $derived(density === 'panel');
 	/** Minimum centre spacing before stops are spread apart (spec §B3). */
-	const STOP_MIN_PX = 18;
+	let STOP_MIN_PX = $derived(panel ? 22 : 18);
 	/** Roster pips closer than this become one count badge (spec R13). */
 	const PIP_MERGE_PX = 10;
 	/** A pip never sits on a stop glyph: pushed this far from a stop centre. */
-	const STOP_CLEAR_PX = 9;
+	let STOP_CLEAR_PX = $derived(panel ? 11 : 9);
 	/** One tap, never a precision tap: a 44px window on the course lane (R16). */
 	const TOUCH_HALF_PX = 22;
+	/** A stop's name is printed under it only when it has this much room. */
+	const NAME_ROOM_PX = 76;
 	const CATEGORY_ORDER: StationCategory[] = ['medical', 'sag', 'marshal', 'mobile', 'tactical', 'command', 'fixed', 'general'];
 
 	let trackW = $state(0);
 
-	let axis = $derived($rideRail.axis);
-	let edges = $derived($rideRail.edges);
-	let phase = $derived($ridePhase?.phase ?? null);
-	let now = $derived($secondClock);
+	let axis = $derived(model.axis);
+	let edges = $derived(model.edges);
+	let phase = $derived(model.phase);
 
 	const px = (pct: number | null) => (pct == null ? null : (pct / 100) * trackW);
 	const pctOfMile = (mile: number | null | undefined) => (mile == null ? null : axis.pct(mile * MI));
@@ -75,7 +83,7 @@
 	/** Chainage -> the map. pointAtChainage is the EXACT direction of the
 	 *  projection (mile -> point), so this never lands on the wrong leg. */
 	function flyToChainage(m: number | null | undefined) {
-		const idx = $courseRoute.index;
+		const idx = model.routeIndex;
 		if (m == null || !idx || !onFlyTo) return;
 		const p = pointAtChainage(idx, m);
 		if (p) onFlyTo(p.lat, p.lon);
@@ -84,7 +92,7 @@
 	function flyToEdge(e: typeof edges.lead) {
 		if (!e) return;
 		if (e.mile != null) flyToMile(e.mile);
-		else if (e.checkpointId) onStopActivate(e.checkpointId);
+		else if (e.checkpointId) onStopActivate?.(e.checkpointId);
 	}
 	const enterActivates = (fn: () => void) => (e: KeyboardEvent) => {
 		if (e.key === 'Enter' || e.key === ' ') {
@@ -93,84 +101,93 @@
 		}
 	};
 
-	/** An edge's x: its mile on a mile axis; its stop on an index axis. */
-	function edgePct(e: typeof edges.lead): number | null {
-		if (!e) return null;
-		const byMile = pctOfMile(e.mile);
-		if (byMile != null) return byMile;
-		return e.checkpointId ? axis.pctForStop(e.checkpointId) : null;
-	}
-
 	// ---- stops ----
 
-	interface StopView {
-		id: string;
-		seq: number;
-		label: string;
-		mile: number | null;
+	interface StopView extends RailStopModel {
 		truePx: number;
 		drawPx: number;
 		dodged: boolean;
-		glyph: string;
-		state: string;
-		color: string;
-		outOfOrder: boolean;
-		staffed: number;
+		showName: boolean;
+		/** The name as printed: shortName, or the label minus a prefix every
+		 *  stop shares ("Rest Stop Maxwell Chapel" -> "Maxwell Chapel"). */
+		name: string;
+		nameMaxPx: number;
+		nameAlign: 'start' | 'middle' | 'end';
 	}
 
-	function stopState(annotationId: string, liveStatus: string): { glyph: string; state: string } {
-		const closure = $rideRail.closures.get(annotationId);
-		if (closure === 'closed') return { glyph: STOP_GLYPHS.closed, state: 'closed' };
-		if (closure === 'sweep_passed') return { glyph: STOP_GLYPHS.readyToClose, state: 'sweep passed, ready to close' };
-		if (closure === 'riders_clear') return { glyph: STOP_GLYPHS.awaitingSweep, state: 'awaiting sweep' };
-		if (liveStatus === 'at-capacity') return { glyph: STOP_GLYPHS.atCapacity, state: 'at capacity' };
-		if (liveStatus === 'open' || liveStatus === 'active') return { glyph: STOP_GLYPHS.open, state: 'open' };
-		if (liveStatus === 'closed') return { glyph: STOP_GLYPHS.closed, state: 'closed' };
-		return { glyph: STOP_GLYPHS.planned, state: 'planned' };
+	/** A leading run of words EVERY named stop shares, e.g. "Rest Stop ". It is
+	 *  the least informative part of each name and the first to be cut, so a
+	 *  truncated "Rest Stop M…" hid exactly what told the stops apart. */
+	function sharedPrefix(labels: string[]): string {
+		if (labels.length < 2) return '';
+		const words = labels.map((l) => l.trim().split(/\s+/));
+		const out: string[] = [];
+		for (let i = 0; ; i++) {
+			const w = words[0][i];
+			if (w == null || !words.every((ws) => ws[i] === w && ws.length > i + 1)) break;
+			out.push(w);
+		}
+		return out.length ? out.join(' ') + ' ' : '';
 	}
 
 	let stops = $derived.by((): StopView[] => {
 		if (trackW <= 0) return [];
 		const raw: { id: string; px: number }[] = [];
-		for (const cp of $rideRail.checkpoints) {
-			const p = px(axis.pctForStop(cp.meta.annotationId));
-			if (p != null) raw.push({ id: cp.meta.annotationId, px: p });
+		for (const s of model.stops) {
+			const p = px(s.pct);
+			if (p != null) raw.push({ id: s.id, px: p });
 		}
 		const dodged = new Map(dodgeStops(raw, trackW, STOP_MIN_PX).map((d) => [d.id, d]));
 		const out: StopView[] = [];
-		for (const cp of $rideRail.checkpoints) {
-			const d = dodged.get(cp.meta.annotationId);
-			if (!d) continue;
-			// The LIVE annotation (B5): a stop set At capacity, or moved, shows it now.
-			const live = $courseStops.get(cp.meta.annotationId)?.annotation ?? cp.annotation;
-			const st = stopState(cp.meta.annotationId, live.status);
-			out.push({
-				id: cp.meta.annotationId,
-				seq: cp.meta.sequenceNumber,
-				label: live.label,
-				mile: $rideRail.stopMiles?.get(cp.meta.annotationId) ?? null,
-				truePx: d.truePx,
-				drawPx: d.drawPx,
-				dodged: d.dodged,
-				glyph: st.glyph,
-				state: st.state,
-				// B6: each stop in ITS OWN category's palette. The checkpoint
-				// palette paints "active" amber, so a healthy course of aid
-				// stations used to look like a row of warnings.
-				color: statusColor(live.category as AnnotationCategory, live.status),
-				outOfOrder:
-					($rideRail.outOfOrder.get(cp.meta.annotationId) ?? false) ||
-					($courseStops.get(cp.meta.annotationId)?.outOfSequence ?? false),
-				staffed: $rideStopStaffing.get(cp.meta.annotationId) ?? 0
-			});
+		for (const s of model.stops) {
+			const d = dodged.get(s.id);
+			if (d) out.push({ ...s, truePx: d.truePx, drawPx: d.drawPx, dodged: d.dodged, showName: false, name: s.label, nameMaxPx: 0, nameAlign: 'middle' });
 		}
+		out.sort((a, b) => a.drawPx - b.drawPx);
+		// A name is printed only where it has room; otherwise it is in the
+		// title and the accessible name, never overprinted (B10's panel half).
+		// Among stops that share a leading phrase, only those that share it
+		// lose it — the finish keeps "Finish".
+		// The largest group of named stops sharing a first word ("Rest …"), so a
+		// Start or Finish anywhere in the list cannot stop it being found.
+		const groups = new Map<string, string[]>();
+		for (const st of out) {
+			if (st.shortName) continue;
+			const w = st.label.trim().split(/\s+/)[0] ?? '';
+			groups.set(w, [...(groups.get(w) ?? []), st.label]);
+		}
+		const biggest = Array.from(groups.values()).sort((x, y) => y.length - x.length)[0] ?? [];
+		const prefix = sharedPrefix(biggest);
+		out.forEach((s, i) => {
+			const left = i > 0 ? s.drawPx - out[i - 1].drawPx : Infinity;
+			const right = i < out.length - 1 ? out[i + 1].drawPx - s.drawPx : Infinity;
+			// Each gap is split evenly between the two names that border it, so
+			// no two names can meet. A centred name takes the smaller half on
+			// both sides; an end name anchors inward and takes its one half.
+			const halfL = left / 2 - 4;
+			const halfR = right / 2 - 4;
+			const nameAlign: StopView['nameAlign'] = s.drawPx < 50 ? 'start' : s.drawPx > trackW - 50 ? 'end' : 'middle';
+			const room = nameAlign === 'start' ? halfR + 6 : nameAlign === 'end' ? halfL + 6 : 2 * Math.min(halfL, halfR);
+			s.nameMaxPx = Math.min(160, room);
+			s.nameAlign = nameAlign;
+			s.name = (s.shortName || (prefix && s.label.startsWith(prefix) ? s.label.slice(prefix.length) : s.label)).replace(/\s+/g, ' ');
+			s.showName = panel && s.nameMaxPx >= NAME_ROOM_PX / 2;
+		});
 		return out;
 	});
 
+	let wx = $derived(
+		panel
+			? model.wx
+					.map((w) => ({ w, from: px(w.fromPct), to: px(w.toPct) }))
+					.filter((b): b is { w: typeof b.w; from: number; to: number } => b.from != null && b.to != null)
+			: []
+	);
+
 	// ---- lead / sweep ----
 
-	let leadPx = $derived(px(edgePct(edges.lead)));
-	let sweepPx = $derived(px(edgePct(edges.sweep)));
+	let leadPx = $derived(px(model.leadPct));
+	let sweepPx = $derived(px(model.sweepPct));
 	let leadAge = $derived(edges.lead ? ageState(edges.lead.at, now) : 'never');
 	let sweepAge = $derived(edges.sweep ? ageState(edges.sweep.at, now) : 'never');
 	let leadAgeText = $derived(edges.lead ? ageText(edges.lead.at, now) : '');
@@ -180,16 +197,20 @@
 	 *  AT the marker's x; the label sits beside it — right by default, left
 	 *  near the right end so it never runs off the track. One row, because the
 	 *  edge lanes are 12px and a stacked label spilled into the readout. */
-	function anchor(x: number | null, labelChars = 10, avoid: number[] = []): 'after' | 'before' {
+	function anchor(x: number | null, labelChars = 10, avoid: number[] = []): 'after' | 'before' | 'bare' {
 		if (x == null) return 'after';
 		// ~7px per 11px-bold character, plus the chevron and gap.
 		const w = labelChars * 7 + 14;
 		const hits = (from: number, to: number) => avoid.some((a) => a >= from - 6 && a <= to + 6);
-		if (x > trackW - w) return 'before';
-		// Yield to an incident glyph in the same lane (spec §B3): flip sides if
-		// that clears it and the other side fits.
-		if (hits(x, x + w) && !hits(x - w, x) && x - w >= 0) return 'before';
-		return 'after';
+		const afterOk = x + w <= trackW && !hits(x, x + w);
+		const beforeOk = x - w >= 0 && !hits(x - w, x);
+		// Yield to an incident glyph in the same lane (spec §B3).
+		if (afterOk) return 'after';
+		if (beforeOk) return 'before';
+		// Neither side is clear (a narrow panel): drop the text, keep the
+		// chevron. The position is still in the readout, the title and the
+		// accessible name — only the overprint is lost.
+		return 'bare';
 	}
 
 	// ---- field band: swept / riders on course / not yet reached ----
@@ -211,12 +232,12 @@
 		return (c < 0 ? CATEGORY_ORDER.length : c) * 10 + a;
 	}
 
-	let rosterById = $derived(new Map($rideRosterOnCourse.map((r) => [r.checkInId, r])));
+	let rosterById = $derived(new Map(model.roster.map((r) => [r.checkInId, r])));
 
 	let clusters = $derived.by((): PipCluster[] => {
 		if (trackW <= 0) return [];
 		const pips: { id: string; px: number; rank: number }[] = [];
-		for (const r of $rideRosterOnCourse) {
+		for (const r of model.roster) {
 			if (r.state === 'on-course' && r.chainageMeters != null) {
 				const p = px(axis.pct(r.chainageMeters));
 				if (p != null) pips.push({ id: r.checkInId, px: p, rank: rank(r) });
@@ -270,15 +291,10 @@
 	// ---- shutoffs and incidents: drawn only where they really are ----
 
 	let gates = $derived(
-		$rideRail.shutoffs
-			.filter((s) => s.status !== 'cancelled' && s.routeMile != null)
-			.map((s) => ({ s, x: px(pctOfMile(s.routeMile)) }))
-			.filter((g): g is { s: typeof g.s; x: number } => g.x != null)
+		model.gates.map((s) => ({ s, x: px(s.pct) })).filter((g): g is { s: typeof g.s; x: number } => g.x != null)
 	);
 	let incidents = $derived(
-		$railIncidentPins
-			.map((p) => ({ p, x: px(axis.pct(p.chainageMeters)) }))
-			.filter((i): i is { p: typeof i.p; x: number } => i.x != null)
+		model.incidents.map((p) => ({ p, x: px(p.pct) })).filter((i): i is { p: typeof i.p; x: number } => i.x != null)
 	);
 
 	// ---- readout ----
@@ -288,17 +304,25 @@
 		const where = e.mile != null ? `mi ${e.mile.toFixed(1)}` : e.seq != null ? `stop ${e.seq}` : '—';
 		return `${label} ${where} · ${st === 'stale' ? `stale ${ageTxt}` : ageTxt}`;
 	};
-	let leadRead = $derived(edgeRead(edges.lead, $rideRail.leadLabel, leadAgeText, leadAge));
-	let sweepRead = $derived(edgeRead(edges.sweep, $rideRail.sweepLabel, sweepAgeText, sweepAge));
+	let leadRead = $derived(edgeRead(edges.lead, model.leadLabel, leadAgeText, leadAge));
+	let sweepRead = $derived(edgeRead(edges.sweep, model.sweepLabel, sweepAgeText, sweepAge));
 	let spreadRead = $derived(
 		edges.inverted ? 'order?' : edges.spreadMiles != null ? `spread ${edges.spreadMiles.toFixed(1)} mi` : ''
 	);
 	let scaleRead = $derived(
 		axis.mode === 'mile' && axis.totalMiles != null ? `course ${axis.totalMiles.toFixed(1)} mi` : 'stops evenly spaced — not to scale'
 	);
-	let notNear = $derived($rideRosterUnplaced.offCourse);
-	let placedCount = $derived($rideRosterOnCourse.filter((r) => r.state === 'on-course' || r.state === 'ambiguous').length);
-	let atStopCount = $derived($rideRosterOnCourse.filter((r) => r.state === 'at-stop').length);
+	let notNear = $derived(model.unplaced.offCourse);
+	let placedCount = $derived(model.roster.filter((r) => r.state === 'on-course' || r.state === 'ambiguous').length);
+	let atStopCount = $derived(model.roster.filter((r) => r.state === 'at-stop').length);
+	/** The spread's time, as what it actually is (spec §A3.6). */
+	let spreadTitle = $derived(
+		edges.inverted
+			? 'Sweep is reported ahead of lead — check the last passages'
+			: edges.spreadMiles != null && model.sweepSpeedMph && model.sweepSpeedMph > 0
+				? `At its reported ${model.sweepSpeedMph.toFixed(0)} mph, sweep is about ${Math.round((edges.spreadMiles / model.sweepSpeedMph) * 60)} min behind lead's position`
+				: 'Miles between lead and sweep'
+	);
 
 	/** Spoken summary for the rail group (spec §B5) — not a live region. */
 	let summary = $derived(
@@ -389,7 +413,7 @@
 
 	function activateCluster(c: PipCluster, el: Element, key: string) {
 		const ids = membersOf(c);
-		if (ids.length === 1) onRosterActivate(ids[0]);
+		if (ids.length === 1 && onRosterActivate) onRosterActivate(ids[0]);
 		else openMembers(ids, el, key);
 	}
 
@@ -400,8 +424,8 @@
 		const x = e.clientX - lane.getBoundingClientRect().left;
 		const near = clusters.filter((c) => Math.abs(c.px - x) <= TOUCH_HALF_PX);
 		const ids = Array.from(new Set(near.flatMap(membersOf)));
-		if (ids.length === 1) onRosterActivate(ids[0]);
-		else if (ids.length > 1) {
+		if (ids.length === 1 && onRosterActivate) onRosterActivate(ids[0]);
+		else if (ids.length > 0) {
 			popover = { kind: 'members', ids, x: e.clientX, y: lane.getBoundingClientRect().top, returnKey: null };
 		}
 	}
@@ -446,10 +470,27 @@
 </script>
 
 <!-- svelte-ignore a11y_no_noninteractive_element_interactions -->
-<div class="sr" role="group" aria-label="Course rail" aria-describedby={summaryId} onkeydown={onRailKey}>
+<div class="sr" class:sr--panel={panel} class:sr--presentation={presentation} role="group" aria-label="Course rail" aria-describedby={summaryId} onkeydown={onRailKey}>
 	<p id={summaryId} class="sr-only">{summary}</p>
 
-	<div class="sr-track" bind:clientWidth={trackW}>
+	<div class="sr-track" class:sr-track--wx={wx.length > 0} bind:clientWidth={trackW}>
+		{#if wx.length > 0}
+			<!-- Weather brackets over the stops an alert affects, on the SAME
+			     axis as everything else (they used to be index-spaced). -->
+			<div class="sr-lane sr-wx-lane">
+				{#each wx as b (b.w.id)}
+					<span
+						class="sr-wx"
+						style:left="{b.from}px"
+						style:width="{Math.max(b.to - b.from, 8)}px"
+						style:--wx="var(--color-wx-{b.w.tier})"
+						title="{b.w.event}: stops {b.w.fromSeq}–{b.w.toSeq}"
+					>
+						<span class="sr-wx-label"><WxTierGlyph tier={b.w.tier as never} size={10} /> {b.w.shortCode}</span>
+					</span>
+				{/each}
+			</div>
+		{/if}
 		<!-- LEAD lane -->
 		<div class="sr-lane sr-lead-lane">
 			{#each incidents as i (i.p.id)}
@@ -470,7 +511,7 @@
 			{/each}
 			{#if leadPx != null}
 				<span
-					class="sr-edge sr-edge--lead sr-anchor-{anchor(leadPx, ($rideRail.leadLabel + ' ' + leadAgeText).length, incidents.map((i) => i.x))}"
+					class="sr-edge sr-edge--lead sr-anchor-{anchor(leadPx, (model.leadLabel + ' ' + leadAgeText).length, incidents.map((i) => i.x))}"
 					class:sr-edge--stale={leadAge === 'stale'}
 					style:left="{leadPx}px"
 					role="button"
@@ -480,10 +521,10 @@
 					bind:this={refs['lead']}
 					onfocus={() => (focusKey = 'lead')}
 					title={leadRead}
-					aria-label="{$rideRail.leadLabel} at {edges.lead?.mile != null ? `mile ${edges.lead.mile.toFixed(1)}` : `stop ${edges.lead?.seq}`}, reported {leadAgeText} ago"
+					aria-label="{model.leadLabel} at {edges.lead?.mile != null ? `mile ${edges.lead.mile.toFixed(1)}` : `stop ${edges.lead?.seq}`}, reported {leadAgeText} ago"
 				>
 					<span class="sr-chev sr-chev--down" aria-hidden="true"></span>
-					<span class="sr-edge-text">{$rideRail.leadLabel}{leadAge === 'aging' || leadAge === 'stale' ? ` ${leadAgeText}` : ''}</span>
+					<span class="sr-edge-text">{model.leadLabel}{leadAge === 'aging' || leadAge === 'stale' ? ` ${leadAgeText}` : ''}</span>
 				</span>
 			{/if}
 		</div>
@@ -509,13 +550,13 @@
 					class:sr-gate--fired={g.s.status === 'fired'}
 					style:left="{g.x}px"
 					role="button"
-					onclick={() => flyToMile(g.s.routeMile)}
-					onkeydown={enterActivates(() => flyToMile(g.s.routeMile))}
+					onclick={() => flyToMile(g.s.mile)}
+					onkeydown={enterActivates(() => flyToMile(g.s.mile))}
 					tabindex={tabKey === `g:${g.s.id}` ? 0 : -1}
 					bind:this={refs[`g:${g.s.id}`]}
 					onfocus={() => (focusKey = `g:${g.s.id}`)}
 					title="Shutoff {g.s.name} — {g.s.status === 'fired' ? 'FIRED' : 'armed'}"
-					aria-label="Shutoff {g.s.name}, mile {g.s.routeMile?.toFixed(1)}, {g.s.status}">╫</span
+					aria-label="Shutoff {g.s.name}, mile {g.s.mile?.toFixed(1)}, {g.s.status}">╫</span
 				>
 			{/each}
 
@@ -531,11 +572,11 @@
 					tabindex={tabKey === `s:${s.id}` ? 0 : -1}
 					bind:this={refs[`s:${s.id}`]}
 					onfocus={() => (focusKey = `s:${s.id}`)}
-					onclick={() => onStopActivate(s.id)}
+					onclick={() => onStopActivate?.(s.id)}
 					onkeydown={(e) => {
 						if (e.key === 'Enter' || e.key === ' ') {
 							e.preventDefault();
-							onStopActivate(s.id);
+							onStopActivate?.(s.id);
 						}
 					}}
 					title="{s.label} — stop {s.seq}{s.mile != null ? `, mile ${s.mile.toFixed(1)}` : ''} — {s.state}{s.staffed ? ` — ${s.staffed} at stop` : ''}{s.outOfOrder ? ' — out of order' : ''}"
@@ -559,7 +600,7 @@
 							tabindex={tabKey === key ? 0 : -1}
 							bind:this={refs[key]}
 							onfocus={() => (focusKey = key)}
-							onclick={() => onRosterActivate(r.checkInId)}
+							onclick={() => onRosterActivate?.(r.checkInId)}
 							title={memberText(r)}
 							aria-label="{r.tacticalCall || r.callsign}, {stationCategoryMeta[r.category as StationCategory]?.label ?? r.category}, {whereText(r)}{r.handPlaced ? ', position set by hand' : `, position ${ageText(r.positionAt, now)} old`}{r.age === 'stale' ? ', stale' : ''}{r.isSweepUnit ? ', sweep unit' : ''}"
 						></button>
@@ -583,7 +624,7 @@
 		<div class="sr-lane sr-sweep-lane">
 			{#if sweepPx != null}
 				<span
-					class="sr-edge sr-edge--sweep sr-anchor-{anchor(sweepPx, ($rideRail.sweepLabel + ' ' + sweepAgeText).length)}"
+					class="sr-edge sr-edge--sweep sr-anchor-{anchor(sweepPx, (model.sweepLabel + ' ' + sweepAgeText).length)}"
 					class:sr-edge--stale={sweepAge === 'stale'}
 					style:left="{sweepPx}px"
 					role="button"
@@ -593,13 +634,25 @@
 					bind:this={refs['sweep']}
 					onfocus={() => (focusKey = 'sweep')}
 					title={sweepRead}
-					aria-label="{$rideRail.sweepLabel} at {edges.sweep?.mile != null ? `mile ${edges.sweep.mile.toFixed(1)}` : `stop ${edges.sweep?.seq}`}, reported {sweepAgeText} ago"
+					aria-label="{model.sweepLabel} at {edges.sweep?.mile != null ? `mile ${edges.sweep.mile.toFixed(1)}` : `stop ${edges.sweep?.seq}`}, reported {sweepAgeText} ago"
 				>
 					<span class="sr-chev sr-chev--up" aria-hidden="true"></span>
-					<span class="sr-edge-text">{$rideRail.sweepLabel} {sweepAgeText}</span>
+					<span class="sr-edge-text">{model.sweepLabel} {sweepAgeText}</span>
 				</span>
 			{/if}
 		</div>
+
+		{#if panel}
+			<!-- Stop names, where they fit. Where they don't, the name is in the
+			     stop's title and accessible name — never overprinted. -->
+			<div class="sr-lane sr-names-lane" aria-hidden="true">
+				{#each stops as s (s.id)}
+					{#if s.showName}
+						<span class="sr-name sr-name--{s.nameAlign}" style:left="{s.drawPx}px" style:max-width="{s.nameMaxPx}px">{s.name}</span>
+					{/if}
+				{/each}
+			</div>
+		{/if}
 	</div>
 
 	<!-- READOUT lane: the sentence you read on the air -->
@@ -614,11 +667,7 @@
 			<span
 				class="sr-read sr-read--muted"
 				class:sr-read--warn={edges.inverted}
-				title={edges.inverted
-					? 'Sweep is reported ahead of lead — check the last passages'
-					: $rideRail.gapText.includes('~')
-						? `Sweep is about ${$rideRail.gapText.split('~')[1]} behind lead's position at its reported speed`
-						: 'Miles between lead and sweep'}
+				title={spreadTitle}
 				aria-hidden="true">{spreadRead}</span
 			>
 		{/if}
@@ -638,7 +687,7 @@
 			<!-- B7: a text button in the readout, not a lone ▲ glyph sitting on
 			     top of the finish — it used to swallow clicks on the finish stop
 			     and read as "sweep is at the finish". -->
-			<button class="sr-sweep-btn" onclick={onSweepPassed}>{$rideRail.sweepLabel.charAt(0) + $rideRail.sweepLabel.slice(1).toLowerCase()} passed…</button>
+			<button class="sr-sweep-btn" onclick={onSweepPassed}>{model.sweepLabel.charAt(0) + model.sweepLabel.slice(1).toLowerCase()} passed…</button>
 		{/if}
 	</div>
 </div>
@@ -650,7 +699,7 @@
 				{@const r = rosterById.get(id)}
 				{#if r}
 					<li>
-						<button class="sr-pop-row" onclick={() => { closePopover(); onRosterActivate(id); }}>
+						<button class="sr-pop-row" onclick={() => { closePopover(); onRosterActivate?.(id); }}>
 							<span class="sr-pop-dot {pipClass(r)}" style:--pip={catColor(r.category)} aria-hidden="true"></span>
 							<span class="sr-pop-text">{memberText(r)}</span>
 						</button>
@@ -667,8 +716,8 @@
 		<h3 class="sr-legend-h">Course rail</h3>
 		<p class="sr-legend-p">Everything is placed along the course, in miles. {axis.mode === 'mile' ? `The rail is to scale: ${axis.totalMiles?.toFixed(1)} mi end to end.` : 'No course line is loaded, so stops are evenly spaced — not to scale.'}</p>
 		<dl class="sr-legend-dl">
-			<dt><span class="sr-chev sr-chev--down sr-lg-lead"></span></dt><dd>{$rideRail.leadLabel} — the front of the ride, from the last reported passage</dd>
-			<dt><span class="sr-chev sr-chev--up sr-lg-sweep"></span></dt><dd>{$rideRail.sweepLabel} — the back of the ride, from the last report or passage. Never from GPS.</dd>
+			<dt><span class="sr-chev sr-chev--down sr-lg-lead"></span></dt><dd>{model.leadLabel} — the front of the ride, from the last reported passage</dd>
+			<dt><span class="sr-chev sr-chev--up sr-lg-sweep"></span></dt><dd>{model.sweepLabel} — the back of the ride, from the last report or passage. Never from GPS.</dd>
 			<dt><span class="sr-lg-line sr-lg-line--field"></span></dt><dd>Between sweep and lead: where riders are</dd>
 			<dt><span class="sr-lg-line sr-lg-line--swept"></span></dt><dd>Behind sweep: clear</dd>
 			<dt><span class="sr-lg-line sr-lg-line--ahead"></span></dt><dd>Ahead of lead: not reached yet</dd>
@@ -716,6 +765,117 @@
 	.sr-lane {
 		position: relative;
 		min-width: 0;
+	}
+
+	/* --- panel density: the same lanes, taller, with names and weather --- */
+	.sr--panel {
+		--ride-rail-lane-edge: 16px;
+		--ride-rail-lane-course: 28px;
+		--ride-rail-lane-readout: 20px;
+		--ride-rail-pip: 7px;
+		min-width: 0;
+		gap: var(--space-xs);
+	}
+
+	/* The panel has no strip padding around it: inset the track so an end
+	   stop's number and name stay inside the rail. */
+	.sr--panel {
+		grid-template-rows: auto auto;
+	}
+
+	.sr--panel .sr-track {
+		margin-inline: var(--space-md);
+		grid-template-rows: var(--ride-rail-lane-edge) var(--ride-rail-lane-course) var(--ride-rail-lane-edge) 16px;
+	}
+
+	.sr--panel .sr-track.sr-track--wx {
+		grid-template-rows: 18px var(--ride-rail-lane-edge) var(--ride-rail-lane-course) var(--ride-rail-lane-edge) 16px;
+	}
+
+	.sr--panel .sr-stop-glyph {
+		font-size: 15px;
+	}
+
+	/* The panel's readout may take a second line; its row is sized to fit,
+	   or the wrapped half (the roster count, the legend) was clipped away. */
+	/* The panel readout WRAPS, text and all: at phone width the text group
+	   refused to wrap and the sweep reading was clipped mid-number. */
+	.sr--panel .sr-reads {
+		flex-wrap: wrap;
+		row-gap: 0;
+		overflow: visible;
+		white-space: normal;
+	}
+
+	.sr--panel .sr-read {
+		white-space: nowrap;
+	}
+
+	.sr--panel .sr-readout {
+		flex-wrap: wrap;
+		row-gap: 0;
+		white-space: normal;
+		overflow: visible;
+		padding-inline: var(--space-md);
+	}
+
+	.sr--presentation {
+		--ride-t-body: 1rem;
+		--ride-t-label: 0.8125rem;
+		--ride-rail-lane-edge: 20px;
+		--ride-rail-lane-course: 34px;
+		--ride-rail-lane-readout: 24px;
+		--ride-rail-pip: 9px;
+	}
+
+	.sr--presentation .sr-stop-glyph {
+		font-size: 19px;
+	}
+
+	.sr-wx {
+		position: absolute;
+		bottom: 0;
+		height: 7px;
+		border: 2px solid var(--wx);
+		border-bottom: none;
+		border-radius: 3px 3px 0 0;
+	}
+
+	.sr-wx-label {
+		position: absolute;
+		bottom: 7px;
+		left: 0;
+		display: inline-flex;
+		align-items: center;
+		gap: var(--space-2xs);
+		font-size: var(--ride-t-label);
+		font-weight: 700;
+		line-height: 1;
+		color: var(--wx);
+		white-space: nowrap;
+	}
+
+	.sr-name {
+		position: absolute;
+		top: 1px;
+		transform: translateX(-50%);
+		overflow: hidden;
+		text-overflow: ellipsis;
+		white-space: nowrap;
+		text-align: center;
+		font-size: var(--ride-t-label);
+		line-height: 14px;
+		color: var(--color-text-muted);
+	}
+
+	.sr-name--start {
+		transform: translateX(-6px);
+		text-align: left;
+	}
+
+	.sr-name--end {
+		transform: translateX(calc(-100% + 6px));
+		text-align: right;
 	}
 
 	/* --- line + field band --- */
@@ -923,6 +1083,10 @@
 	.sr-anchor-before {
 		flex-direction: row-reverse;
 		transform: translateX(calc(-100% + 5px));
+	}
+
+	.sr-anchor-bare .sr-edge-text {
+		display: none;
 	}
 
 	.sr-edge--lead {

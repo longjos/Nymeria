@@ -164,7 +164,7 @@ export const statusMeta: Record<AnnotationCategory, StatusMeta[]> = {
 		{ label: 'Open', color: '#2a9d8f' },
 		{ label: 'Active', color: '#f59e0b' },
 		// Bike-ride mode (internal/course): a rest stop whose riders are clear
-		// but the sweep vehicle has not yet passed it — CourseRail's ⏳ glyph.
+		// but the sweep vehicle has not yet passed it — the course rail's awaiting-sweep glyph.
 		{ label: 'Awaiting Sweep', color: '#f59e0b' },
 		{ label: 'Closed', color: '#6c757d' },
 	],
