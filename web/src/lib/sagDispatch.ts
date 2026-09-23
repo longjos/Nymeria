@@ -266,7 +266,8 @@ export function rankCandidates(vehicles: SagVehicleGeo[], ctx: RankContext): Ran
 		// ROAD as the pickup and need only turn around — while `courseDistance`
 		// insists it is thirty miles away, because that is how far a RIDER
 		// would have to travel. Ranking by road miles alone would bury the
-		// nearest vehicle on the user's own Jack-and-Back course.
+		// nearest vehicle wherever a course reuses a road (about 12% of the
+		// 100-miler does), and on any course where a side road beats the route.
 		//
 		// The straight line is never passed off as road miles: whether a
 		// connecting road exists is local knowledge the app does not have, so
