@@ -296,12 +296,26 @@ describe('joinVehiclePositions', () => {
 		const out = joinVehiclePositions(
 			[veh('ci-1')],
 			[{ id: 'ci-1', callsign: 'kg4yfa-4', lat: 35, lon: -86, lastHeard: minutesAgo(3), source: 'aprs' }],
-			new Map([['KG4YFA-4', { position: { course: 187 } }]])
+			new Map([['KG4YFA-4', { position: { course: 187, speed: 40 } }]])
 		);
 		expect(out).toHaveLength(1);
 		expect(out[0].lat).toBe(35);
 		expect(out[0].courseDeg).toBe(187);
 		expect(out[0].source).toBe('aprs');
+	});
+
+	it('drops the heading of a parked van, which is GPS noise', () => {
+		// Real beacons from the live SAG van: 0 km/h, courses 205/216/142.
+		// Passing that as bearingDeg resolved a van parked on a shared road
+		// confidently onto one leg, at random. headingHint is the one gate.
+		for (const [speed, course] of [[0, 205], [0, 142], [undefined, 187]] as const) {
+			const out = joinVehiclePositions(
+				[veh('ci-1')],
+				[{ id: 'ci-1', callsign: 'KG4YFA-4', lat: 35, lon: -86, lastHeard: minutesAgo(1), source: 'aprs' }],
+				new Map([['KG4YFA-4', { position: { course, speed } }]])
+			);
+			expect(out[0].courseDeg, `speed ${speed} course ${course}`).toBeUndefined();
+		}
 	});
 
 	it('still returns a vehicle whose check-in is missing, rather than dropping it', () => {

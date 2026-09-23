@@ -14,6 +14,8 @@ import {
 	parseLineString,
 	clearRouteIndexCache,
 	angularDiff,
+	headingHint,
+	MOVING_MIN_KMH,
 	STOP_CATEGORIES,
 	type Candidate,
 	type Stop,
@@ -668,5 +670,31 @@ describe('pointAtChainage', () => {
 			expect(haversineMeters(p.lat, p.lon, lat, lon), `${name}: off by too much`)
 				.toBeLessThanOrEqual(30);
 		}
+	});
+});
+
+// A parked GPS still reports a course, and it is noise: the live SAG van's
+// last five beacons were all 0 km/h with courses 205, 205, 216, 210, 142.
+// Heading is what resolves which leg of a shared road someone is on, so a
+// parked heading resolves it CONFIDENTLY and at random. Speed is km/h
+// (internal/aprs/position.go).
+describe('headingHint', () => {
+	it.each([
+		['parked, noisy course (real beacon)', { speed: 0, course: 205 }, undefined],
+		['parked, another real beacon', { speed: 0, course: 142 }, undefined],
+		['creeping below the gate', { speed: MOVING_MIN_KMH - 0.1, course: 90 }, undefined],
+		['exactly at the gate', { speed: MOVING_MIN_KMH, course: 90 }, 90],
+		['driving', { speed: 40, course: 270 }, 270],
+		['course 360 normalises to 0', { speed: 40, course: 360 }, 0],
+		['speed unknown: not trusted', { course: 90 }, undefined],
+		['course unknown', { speed: 40 }, undefined],
+		['non-finite course', { speed: 40, course: Number.NaN }, undefined],
+		['no position at all', undefined, undefined]
+	] as const)('%s', (_name, pos, want) => {
+		expect(headingHint(pos as { speed?: number; course?: number } | undefined)).toBe(want);
+	});
+
+	it('gates at 5 km/h — above walking pace, below any vehicle actually driving', () => {
+		expect(MOVING_MIN_KMH).toBe(5);
 	});
 });

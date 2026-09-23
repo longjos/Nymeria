@@ -52,6 +52,32 @@ const CELL_DEG_LAT = 0.005;
 
 // --- Types ---
 
+/** Below this speed a GPS course is noise, not a direction of travel. km/h,
+ *  the unit internal/aprs/position.go stores. Above walking pace, below any
+ *  vehicle that is actually driving. */
+export const MOVING_MIN_KMH = 5;
+
+/**
+ * A heading worth handing to resolveCandidate, or undefined.
+ *
+ * A parked GPS still reports a course: the live SAG van's last five beacons
+ * were all 0 km/h with courses 205, 205, 216, 210 and 142. Heading is what
+ * picks the leg of a shared road, so a parked heading picks it confidently and
+ * at random — worse than no hint, because "ambiguous" becomes a wrong answer
+ * delivered calmly. Unknown speed is treated as parked for the same reason.
+ * The one gate for every caller: SAG dispatch ranking and the course rail's
+ * roster projection must never disagree about whether a van is moving.
+ */
+export function headingHint(
+	pos: { speed?: number; course?: number } | null | undefined
+): number | undefined {
+	if (!pos) return undefined;
+	const { speed, course } = pos;
+	if (typeof speed !== 'number' || !Number.isFinite(speed) || speed < MOVING_MIN_KMH) return undefined;
+	if (typeof course !== 'number' || !Number.isFinite(course)) return undefined;
+	return ((course % 360) + 360) % 360;
+}
+
 export type DistanceKind = 'road' | 'direct';
 
 export interface RouteIndex {

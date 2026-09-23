@@ -11,6 +11,7 @@
  */
 import {
 	courseDistance,
+	headingHint,
 	projectOnRoute,
 	resolveCandidate,
 	type DistanceKind,
@@ -343,7 +344,7 @@ export interface CheckInPosition {
 
 /** Minimum station shape the join needs, for the heading hint. */
 export interface StationHeading {
-	position?: { course?: number };
+	position?: { course?: number; speed?: number };
 }
 
 /**
@@ -370,7 +371,9 @@ export function joinVehiclePositions(
 			lon: ci?.lon,
 			lastHeard: ci?.lastHeard,
 			source: ci?.source,
-			courseDeg: st?.position?.course
+			// Gated on speed: a parked van's GPS course is noise, and heading is
+			// what picks the leg of a shared road (routeDistance.headingHint).
+			courseDeg: headingHint(st?.position)
 		};
 	});
 }
