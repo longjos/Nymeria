@@ -1,5 +1,7 @@
 # Bike Ride Mode — Build Plan
 
+> **Status:** WP1-WP9 shipped; the wiki (`wiki/Home.md`, "Bike ride mode") is the source of truth for current behaviour. The unchecked boxes below were not maintained as work landed. Kept because code comments cite its doctrine (WP4).
+
 Specialty net-control mode for amateur radio volunteers supporting charity bicycle
 rides (centuries, MS150-style events, gran fondos). Implemented as a **per-net
 profile**, not a fork: one binary can run a SAR net and a ride net the same day.
@@ -99,7 +101,7 @@ the phase must be real state, not a frontend guess.
 - [ ] Phase transitions are logged NetEvents
 
 ### WP6 — Ride status strip  `frontend`
-**Full spec: `docs/ride-strip-spec.md`.** 128px persistent horizontal strip below
+**Full spec: `design/ride-strip-spec.md`.** 128px persistent horizontal strip below
 the map: course rail on top (the map's x-axis), eight zone tiles below. Separate
 component from `SituationBoard.svelte`, which becomes its detail view.
 - [ ] Extract `CourseRail.svelte` from `RouteProgressBar.svelte` (see debt below)
@@ -142,4 +144,4 @@ component from `SituationBoard.svelte`, which becomes its detail view.
 - [ ] Wiki submodule push order: `cd wiki && git push origin master` FIRST, then main repo
 
 ## Test fixtures
-`Day_1_48M_Jack_and_Back.gpx` and `docs/GR_2025_100_miler.kml` — real courses.
+A real 48-mile GPX course and `GR_2025_100_miler.kml`.

@@ -1,6 +1,6 @@
 /**
  * The course rail's view model: plain data in, everything the rail draws out
- * (docs/course-rail-spec.md). Pure — no stores, no DOM.
+ * (design/course-rail-spec.md). Pure — no stores, no DOM.
  *
  * There are three rails — the ride strip, the SituationBoard panel and the
  * agency dashboard — and the dashboard keeps its own data, deliberately

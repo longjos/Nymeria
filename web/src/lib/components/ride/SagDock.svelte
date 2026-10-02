@@ -1,5 +1,5 @@
 <script lang="ts">
-	// The SAG dock (docs/sag-map-spec.md §1, §2, §8, §10; docs/sag-dock-design.md)
+	// The SAG dock (design/sag-map-spec.md §1, §2, §8, §10; design/sag-dock-design.md)
 	// — the persistent list beside the map on desktop/tablet, and the bottom
 	// sheet's `sag` content on a phone.
 	//

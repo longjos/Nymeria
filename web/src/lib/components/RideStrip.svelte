@@ -1,5 +1,5 @@
 <script lang="ts">
-	// Ride status strip (WP6, docs/ride-strip-spec.md): 128px two-row band
+	// Ride status strip (WP6, design/ride-strip-spec.md): 128px two-row band
 	// below the map on desktop bike-ride nets. Row A is the course rail
 	// (the map's x-axis); Row B is eight zone tiles. The height NEVER grows —
 	// it is a contract every phase's zone set must fit inside.

@@ -1,5 +1,5 @@
 /**
- * Turning a SAG location into a map point — docs/sag-map-spec.md §2.
+ * Turning a SAG location into a map point — design/sag-map-spec.md §2.
  *
  * This is the highest-risk code in the SAG map feature, which is why it is
  * pure, tested first and lives outside any component. A wrong pin is worse

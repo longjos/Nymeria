@@ -1,5 +1,5 @@
 /**
- * Ranking the vehicles that could take a SAG request — docs/sag-map-spec.md §6.
+ * Ranking the vehicles that could take a SAG request — design/sag-map-spec.md §6.
  *
  * This is the product: the whole feature exists so that "which van do I send?"
  * is answered by the app instead of by the operator holding a map in their head

@@ -1,6 +1,6 @@
 /**
  * Put roster members who are near the course ON the course, as a mile —
- * the course rail's roster lane (docs/course-rail-spec.md §A4).
+ * the course rail's roster lane (design/course-rail-spec.md §A4).
  *
  * This answers "who do I have near mile X?", which nothing on the rail could
  * answer before: every marker came from logged passages. It reuses the SAG

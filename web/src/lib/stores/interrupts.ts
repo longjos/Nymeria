@@ -1,4 +1,4 @@
-// Shared interrupt-banner plumbing (spec: docs/ride-strip-spec.md §4/§0).
+// Shared interrupt-banner plumbing (spec: design/ride-strip-spec.md §4/§0).
 // The premise: the strip/panel is the Notify tier, never the interrupt — the
 // interrupt channel is a SINGLE full-width banner above the map, and there
 // must be exactly one in the app at any time. wxAlerts.ts keeps its own

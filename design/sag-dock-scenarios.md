@@ -15,7 +15,7 @@ by the deliver verb. A leg can be released with a reason. A slot can resolve
 to an exception (e.g. `self_resolved`, "fixed own flat, rode on"). Nothing moves
 backwards, so a mis-tap cannot be undone by the operator.
 
-Today, per scenario: ✗ = not possible from the dock, ◐ = possible but slow.
+At the time this was written, per scenario: ✗ = not possible from the dock, ◐ = possible but slow.
 
 ## S1 — "SAG 2, on scene at the Eakin rest stop" ✗
 The operator must move SAG 2's leg from en route to on scene **without leaving

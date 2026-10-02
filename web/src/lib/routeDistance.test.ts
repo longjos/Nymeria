@@ -480,10 +480,10 @@ describe('formatDistance', () => {
 
 // --- 14. The user's real course (skipped when the file is absent) -----------
 
-const gpxPath = fileURLToPath(new URL('../../../Day_1_48M_Jack_and_Back.gpx', import.meta.url));
+const gpxPath = fileURLToPath(new URL('../../../day1-48mi.gpx', import.meta.url));
 const haveGpx = existsSync(gpxPath);
 
-describe('real course: Day 1 48M Jack and Back', () => {
+describe('real course: Day 1 48M', () => {
 	it.skipIf(!haveGpx)('reproduces the measured total and the four rest-stop chainages', () => {
 		const xml = readFileSync(gpxPath, 'utf8');
 		const coords: [number, number][] = [];
@@ -516,7 +516,7 @@ describe('real course: Day 1 48M Jack and Back', () => {
 });
 
 describe('segment bearings are robust to near-duplicate vertices', () => {
-	// Real coordinates lifted from Day_1_48M_Jack_and_Back.gpx around chainage
+	// Real coordinates lifted from day1-48mi.gpx around chainage
 	// 30,770 m. The file is written to 5 decimal places (~1 m), so consecutive
 	// points can differ in ONE coordinate only, making that segment's raw
 	// bearing exactly 90/180 degrees — pure rounding noise, not a direction of
@@ -563,7 +563,7 @@ describe('segment bearings are robust to near-duplicate vertices', () => {
 
 // --- pointAtChainage --------------------------------------------------------
 // The inverse of Candidate.chainageMeters, and the function every SAG pickup
-// pin on the map depends on (docs/sag-map-spec.md §2). A wrong point here is
+// pin on the map depends on (design/sag-map-spec.md §2). A wrong point here is
 // worse than no point: net control will believe it and send a van there.
 
 describe('pointAtChainage', () => {

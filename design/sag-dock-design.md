@@ -1,8 +1,8 @@
 # SAG dock — actions & zoom design note
 
-Acceptance spec: `docs/sag-dock-scenarios.md` (S1–S10). Original dock spec:
-`docs/sag-map-spec.md` §1/§2/§8/§11. Visual recipes:
-`docs/ride-dashboard-design-pass.md` §3. This note records, per scenario, the
+Acceptance spec: `design/sag-dock-scenarios.md` (S1–S10). Original dock spec:
+`design/sag-map-spec.md` §1/§2/§8/§11. Visual recipes:
+`design/ride-dashboard-design-pass.md` §3. This note records, per scenario, the
 gap in the dock as it stood and the design answer that shipped.
 
 ## The interaction model in one paragraph

@@ -1,5 +1,5 @@
 <script lang="ts">
-	// Supply request composer. Published doctrine (docs/ride-mode-plan.md WP4):
+	// Supply request composer. Published doctrine (design/ride-mode-plan.md WP4):
 	// ask what ELSE they're running low on and combine into one request, then
 	// hold a read-back confirmation before anything counts as transmitted.
 	// CreateSupplyRequest always lands as a draft (internal/ride/supply.go) —

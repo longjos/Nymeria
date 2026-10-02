@@ -3867,7 +3867,7 @@ func TestSaveLoadAnnotationBatchFields(t *testing.T) {
 		Category:   "resource",
 		Status:     "active",
 		BatchID:    "batch-abc-123",
-		BatchLabel: "Day_1_48M_Jack_and_Back.gpx",
+		BatchLabel: "day1-48mi.gpx",
 	}
 
 	if err := s.SaveAnnotation(ann); err != nil {
@@ -3885,8 +3885,8 @@ func TestSaveLoadAnnotationBatchFields(t *testing.T) {
 	if got.BatchID != "batch-abc-123" {
 		t.Errorf("batchId: got %q, want %q", got.BatchID, "batch-abc-123")
 	}
-	if got.BatchLabel != "Day_1_48M_Jack_and_Back.gpx" {
-		t.Errorf("batchLabel: got %q, want %q", got.BatchLabel, "Day_1_48M_Jack_and_Back.gpx")
+	if got.BatchLabel != "day1-48mi.gpx" {
+		t.Errorf("batchLabel: got %q, want %q", got.BatchLabel, "day1-48mi.gpx")
 	}
 
 	// An annotation created without batch fields round-trips to empty strings,
@@ -4009,7 +4009,7 @@ func TestUpdateAnnotationBatchLabel(t *testing.T) {
 	}
 
 	updatedAt := time.Now().Truncate(time.Second).UTC()
-	count, err := s.UpdateAnnotationBatchLabel("batch-rename", "Day 1 — Jack and Back", updatedAt)
+	count, err := s.UpdateAnnotationBatchLabel("batch-rename", "Day 1 Route", updatedAt)
 	if err != nil {
 		t.Fatalf("UpdateAnnotationBatchLabel failed: %v", err)
 	}
@@ -4031,8 +4031,8 @@ func TestUpdateAnnotationBatchLabel(t *testing.T) {
 		if !ok {
 			t.Fatalf("annotation %s missing after rename", id)
 		}
-		if a.BatchLabel != "Day 1 — Jack and Back" {
-			t.Errorf("%s BatchLabel = %q, want %q", id, a.BatchLabel, "Day 1 — Jack and Back")
+		if a.BatchLabel != "Day 1 Route" {
+			t.Errorf("%s BatchLabel = %q, want %q", id, a.BatchLabel, "Day 1 Route")
 		}
 		if !a.UpdatedAt.Equal(updatedAt) {
 			t.Errorf("%s UpdatedAt = %v, want %v", id, a.UpdatedAt, updatedAt)
@@ -4681,7 +4681,7 @@ func preV25Fixture(t *testing.T) string {
 			wx_mute_advisories INTEGER NOT NULL DEFAULT 0, wx_interrupt_custom INTEGER NOT NULL DEFAULT 0,
 			wx_interrupt_events TEXT NOT NULL DEFAULT '[]'
 		)`,
-		`INSERT INTO nets (id, name) VALUES ('net-1', 'Jack and Back')`,
+		`INSERT INTO nets (id, name) VALUES ('net-1', 'Spring Ride')`,
 	}
 	for _, stmt := range stmts {
 		if _, err := db.Exec(stmt); err != nil {
@@ -4905,13 +4905,13 @@ func TestSaveAndLoadNetRideConfigRoundtrip(t *testing.T) {
 	cfg := NetRideConfig{
 		NetID:      "net-1",
 		AgencyName: "Marin Cyclists",
-		EventName:  "Jack and Back 2026",
+		EventName:  "Spring Ride 2026",
 		EventDate:  "2026-06-13",
 		Routes: []RideRoute{
 			{ID: "100", Name: "100 Mile Century", DistanceMiles: 100, StartTime: &start, CutoffAt: &cutoffAt, Division: "route-a"},
 			{ID: "75", Name: "75 Mile", DistanceMiles: 75},
 			{ID: "55", Name: "55 Mile", DistanceMiles: 55},
-			{ID: "48", Name: "48 Mile Jack and Back", DistanceMiles: 48},
+			{ID: "48", Name: "48 Mile Route", DistanceMiles: 48},
 		},
 		Cutoff: RideCutoffPolicy{
 			CourseOpensAt:            &opens,

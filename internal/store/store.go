@@ -309,7 +309,7 @@ type PriorityTier struct {
 type NetRideConfig struct {
 	NetID      string           `json:"netId"`
 	AgencyName string           `json:"agencyName"` // "Marin Cyclists", "Bike MS"
-	EventName  string           `json:"eventName"`  // "Jack and Back 2026"
+	EventName  string           `json:"eventName"`  // "Spring Ride 2026"
 	EventDate  string           `json:"eventDate"`  // "YYYY-MM-DD" or ""
 	Routes     []RideRoute      `json:"routes"`     // never nil
 	Cutoff     RideCutoffPolicy `json:"cutoff"`

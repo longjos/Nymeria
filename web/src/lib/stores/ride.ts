@@ -1,4 +1,4 @@
-// Bike-ride mode client state (WP6, docs/ride-strip-spec.md). One net at a
+// Bike-ride mode client state (WP6, design/ride-strip-spec.md). One net at a
 // time — every writable here is reset/reloaded on activeNetId identity
 // change, exactly like netcontrol.ts's `lastNetId` subscription.
 //

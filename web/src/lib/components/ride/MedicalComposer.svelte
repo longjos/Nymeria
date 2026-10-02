@@ -1,6 +1,6 @@
 <script lang="ts">
 	// Medical notification composer, in the exact COURSE-plan scripted field
-	// order (docs/ride-mode-plan.md WP4 / internal/ride/medical.go's doc
+	// order (design/ride-mode-plan.md WP4 / internal/ride/medical.go's doc
 	// comment): bib / sex / age / exact location / chief complaint / readback.
 	// ETA, on-scene and departed are separate follow-up actions on the board
 	// (MedicalBoard.svelte) — they happen over time as EMS actually responds,

@@ -66,7 +66,7 @@
 	     --color-info  #3b82f6 -> 4.32:1  FAIL
 	     --color-error-text    -> 6.10:1  pass (4.79:1 on --color-primary)
 	     --color-info-text     -> 6.25:1  pass (4.92:1 on --color-primary)
-	   Rule (docs/ride-strip-spec.md §3): the base tokens are for GLYPH FILLS,
+	   Rule (design/ride-strip-spec.md §3): the base tokens are for GLYPH FILLS,
 	   BORDERS and RULES, where >=3:1 is the bar and both pass. The moment red
 	   or blue tints a WORD or a NUMERAL — an error message, a status chip's
 	   label, a countdown — use the -text variant. Never invent a third red. */
@@ -187,7 +187,7 @@
 	   .summary-kicker / .summary-label / .metric-label, the house style. */
 	--ride-label-tracking: 0.05em;
 
-	/* Course rail lanes (docs/course-rail-spec.md §B1). The four lanes sum to
+	/* Course rail lanes (design/course-rail-spec.md §B1). The four lanes sum to
 	   the 60px rail row RideStrip already reserves — 12 + 20 + 12 + 16 — so
 	   changing one means changing another, never growing the strip. */
 	--ride-rail-lane-edge: 12px;     /* LEAD lane and SWEEP lane, each */
@@ -195,7 +195,7 @@
 	--ride-rail-lane-readout: 16px;
 	--ride-rail-pip: 6px;            /* roster pip diameter */
 
-	/* SAG map overlay (docs/sag-map-spec.md §9). Four colour tokens and no new
+	/* SAG map overlay (design/sag-map-spec.md §9). Four colour tokens and no new
 	   hues: --color-sag-unit is the value stationCategoryMeta.ts already
 	   assigns to the `sag` check-in category, promoted to a token so the map
 	   and the roster cannot drift apart.

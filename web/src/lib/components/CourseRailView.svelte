@@ -1,6 +1,6 @@
 <script lang="ts">
 	/**
-	 * The course rail (docs/course-rail-spec.md), drawn from a RailModel. It
+	 * The course rail (design/course-rail-spec.md), drawn from a RailModel. It
 	 * answers one question — "where is it ALONG THE COURSE, in the miles we
 	 * speak on the air?" — and the map answers every other one.
 	 *

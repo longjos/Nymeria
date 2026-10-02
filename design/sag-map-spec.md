@@ -13,7 +13,7 @@ Tags: **[DOM]** = established domain research · **[REF]** = external reference 
 > frontend-only feature plus one pure function in `routeDistance.ts`.** If an
 > implementer finds themselves adding a Go type, they have left the spec.
 
-> **SIBLING:** `docs/ride-strip-spec.md` owns the 128px strip below the map and
+> **SIBLING:** `design/ride-strip-spec.md` owns the 128px strip below the map and
 > the `--ride-*` token family. This spec owns the map surface above it and adds
 > exactly four tokens. Where the two disagree about a shared rule (staleness
 > words, tier colour discipline, keyboard inertness), the strip spec wins.
@@ -198,7 +198,7 @@ Binary search on `idx.cum`, lerp between `lats[i]/lons[i]` and `lats[i+1]/lons[i
 Refuses (`null`) when `meters` is outside `[0, totalMeters]` on an open course —
 which is how `off-route` is detected. Lives in `routeDistance.ts` beside
 `courseDistance`, table-driven tests against both real fixtures
-(`Day_1_48M_Jack_and_Back.gpx`, `docs/GR_2025_100_miler.kml`), including the
+(`day1-48mi.gpx`, `GR_2025_100_miler.kml`), including the
 round-trip property `projectOnRoute(pointAtChainage(idx, m))[0].chainageMeters ≈ m`.
 
 ### Which route index
@@ -980,7 +980,7 @@ takes until answered.
 
 ## Sources
 
-**Domain ground truth** (from `docs/ride-mode-plan.md`, established and not
+**Domain ground truth** (from `design/ride-mode-plan.md`, established and not
 re-litigated here): edge-based rider accounting; route-relative position as the
 primary coordinate system; agency-configurable priority vocabulary; bibs as
 labels on exceptions, never keys; privacy rules on bibs and names; SAG request
@@ -995,7 +995,7 @@ runtime-published height, `MapPalette`'s disabled-with-a-reason toggles,
 `routeDistance.ts`'s `projectOnRoute`/`resolveCandidate`/`courseDistance` and
 its documented out-and-back ambiguity, `stationCategoryMeta.ts`'s `sag` colour,
 `rideMeta.ts`'s `ageState`/`tierStyle`/`unassignedRiders`,
-`docs/ride-strip-spec.md`'s staleness vocabulary, tier-colour contrast rules,
+`design/ride-strip-spec.md`'s staleness vocabulary, tier-colour contrast rules,
 toolbar keyboard pattern and one-polite-live-region discipline.
 
 **External references:** RAG status (colour never the only channel) · Grafana's

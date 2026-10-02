@@ -1,5 +1,5 @@
 /**
- * The SAG dock's action and zoom logic (docs/sag-dock-design.md), kept out of
+ * The SAG dock's action and zoom logic (design/sag-dock-design.md), kept out of
  * the component so it can be tested against the server's rules.
  *
  * The leg ladder mirrors internal/ride/status.go: dispatched -> enroute ->

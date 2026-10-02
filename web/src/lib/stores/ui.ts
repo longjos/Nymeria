@@ -179,7 +179,7 @@ export const netControlRequestedTab = writable<'situation' | 'roster' | 'mission
 export const courseRequestedTab = writable<'stops' | 'shutoffs' | 'sweep' | 'riders' | 'closeout' | null>(null);
 
 /**
- * The phone's SAG surface (docs/sag-map-spec.md §11). There is no dock below
+ * The phone's SAG surface (design/sag-map-spec.md §11). There is no dock below
  * 769px, so the dock's content — and, in dispatch focus, the candidate list —
  * lives in the bottom sheet. `half` rather than `full`: the map has to stay
  * visible, because the spatial check is the whole point of doing this on a map.

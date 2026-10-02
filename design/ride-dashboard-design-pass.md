@@ -1,6 +1,6 @@
 # Bike-ride dashboard — design pass
 
-Status: spec only. No `.svelte` / `.ts` / `.css` file was edited to produce this.
+Status: implemented and shipped (see the bike ride mode entry in wiki/Home.md). Kept as the design record the ride code comments cite; this spec is no longer a to-do list.
 
 **The complaint being chased:** *"The titles are not vertically constant and
 generally messy looking."* §2 proves it with an inventory. §3 gives the one

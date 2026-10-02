@@ -2,7 +2,7 @@
 // piece of net-wide state the ride status strip's zone set is keyed off —
 // pre-start, launched, mid-ride, closing, collapse, reconcile.
 //
-// The governing rule (docs/ride-strip-spec.md §8): phase is ALWAYS
+// The governing rule (design/ride-strip-spec.md §8): phase is ALWAYS
 // operator-set and NEVER silently auto-switched. Silent state change is the
 // classic ICS failure of an assignment nobody logged. This package therefore
 // exposes two separate things:
@@ -29,7 +29,7 @@
 // not (the trigger that earned it is reason enough). Moving to the current
 // phase is illegal — it is a no-op with nothing to log.
 //
-// Suggestion triggers (docs/ride-strip-spec.md §8), each read fresh, only
+// Suggestion triggers (design/ride-strip-spec.md §8), each read fresh, only
 // evaluated for the CURRENT phase's own single next step:
 //
 //	pre-start -> launched:  first lead passage logged

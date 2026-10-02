@@ -1,5 +1,5 @@
 <script lang="ts">
-	// Dispatch focus (docs/sag-map-spec.md §6, §8, §10) — the ranked candidate
+	// Dispatch focus (design/sag-map-spec.md §6, §8, §10) — the ranked candidate
 	// list that replaces the dock's content while the operator is answering the
 	// one question the whole feature exists for: which van do I send, and can
 	// it carry them?

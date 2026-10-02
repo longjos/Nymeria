@@ -2219,7 +2219,7 @@ func TestRenameBatchUpdatesAllMembers(t *testing.T) {
 	other, _ := mgr.ImportAnnotations("", "b.gpx", "", batchItems("B1"))
 	drainEvents(mgr)
 
-	n, err := mgr.RenameBatch(res.BatchID, "Day 1 — Jack and Back")
+	n, err := mgr.RenameBatch(res.BatchID, "Day 1 Route")
 	if err != nil {
 		t.Fatalf("RenameBatch: %v", err)
 	}
@@ -2227,7 +2227,7 @@ func TestRenameBatchUpdatesAllMembers(t *testing.T) {
 		t.Errorf("updated: got %d, want 2", n)
 	}
 	for _, a := range mgr.BatchMembers(res.BatchID) {
-		if a.BatchLabel != "Day 1 — Jack and Back" {
+		if a.BatchLabel != "Day 1 Route" {
 			t.Errorf("%q label: got %q", a.Label, a.BatchLabel)
 		}
 	}

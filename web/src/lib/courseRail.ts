@@ -1,6 +1,6 @@
 /**
  * Pure view-model functions for the course progress rail
- * (docs/course-rail-spec.md). No stores, no DOM: everything here is unit-tested
+ * (design/course-rail-spec.md). No stores, no DOM: everything here is unit-tested
  * against fixtures and the real course, and the rail component only draws.
  *
  * The rail answers one question — "where is it ALONG THE COURSE, in the miles

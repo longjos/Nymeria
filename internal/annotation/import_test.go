@@ -677,7 +677,7 @@ const testGPXTurnCues = `<?xml version="1.0" encoding="UTF-8"?>
     <type>generic</type>
   </wpt>
   <trk>
-    <name>Day 1 48M Jack and Back</name>
+    <name>Day 1 48M</name>
     <trkseg>
       <trkpt lat="35.73864" lon="-86.64463"></trkpt>
       <trkpt lat="35.61365" lon="-86.54982"></trkpt>
@@ -780,7 +780,7 @@ func TestParseGPXUnknownVocabularyFallsThrough(t *testing.T) {
 // present in the repo root. 49 waypoints (45 of them turn cues) must reduce to
 // the 3 rest stops plus the finish, alongside the single course line.
 func TestParseGPXRealCourse(t *testing.T) {
-	f, err := os.Open("../../Day_1_48M_Jack_and_Back.gpx")
+	f, err := os.Open("../../day1-48mi.gpx")
 	if err != nil {
 		if os.IsNotExist(err) {
 			t.Skip("real course file not present")

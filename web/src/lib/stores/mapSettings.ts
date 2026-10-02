@@ -70,7 +70,7 @@ export function updateMapSetting<K extends keyof MapSettings>(key: K, value: Map
 }
 
 /**
- * The `SAG focus` preset (docs/sag-map-spec.md §4) — one button that clears the
+ * The `SAG focus` preset (design/sag-map-spec.md §4) — one button that clears the
  * map of everything a SAG decision does not need, and a second press that puts
  * it all back exactly as the operator had it.
  *

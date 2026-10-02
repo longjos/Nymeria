@@ -1,4 +1,4 @@
-// Zone-set resolution tests (finding 12, docs/ride-strip-spec.md §8/§9): the
+// Zone-set resolution tests (finding 12, design/ride-strip-spec.md §8/§9): the
 // zone SET rendered by RideStrip.svelte is a pure function of (phase,
 // viewport) — PHASE_ZONE_TEMPLATE + tabletizeZones — independent of the
 // live-data derivations the rest of ride.ts builds on top of it. Testing at

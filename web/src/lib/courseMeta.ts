@@ -3,7 +3,7 @@
 // data, no store imports — same discipline as wxAlertMeta.ts / rideMeta.ts.
 //
 // Ages reuse rideMeta.ts's ageState/ageText (identical fresh/aging/stale/
-// never thresholds — see docs/ride-strip-spec.md §6) rather than duplicating
+// never thresholds — see design/ride-strip-spec.md §6) rather than duplicating
 // them here.
 import type { StationClosureState, ShutoffStatus } from './types';
 

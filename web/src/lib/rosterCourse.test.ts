@@ -212,8 +212,8 @@ describe('projectRosterOnCourse — staleness and source (R10-R12)', () => {
 
 // --- real courses -------------------------------------------------------------
 
-const gpxPath = fileURLToPath(new URL('../../../Day_1_48M_Jack_and_Back.gpx', import.meta.url));
-const kmlPath = fileURLToPath(new URL('../../../docs/GR_2025_100_miler.kml', import.meta.url));
+const gpxPath = fileURLToPath(new URL('../../../day1-48mi.gpx', import.meta.url));
+const kmlPath = fileURLToPath(new URL('../../../GR_2025_100_miler.kml', import.meta.url));
 
 function gpxIndex(): RouteIndex {
 	const xml = readFileSync(gpxPath, 'utf8');

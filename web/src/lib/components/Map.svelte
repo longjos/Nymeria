@@ -220,7 +220,7 @@
 		wxFocusAlertId?: string | null;
 		onWxAlertClick?: (id: string) => void;
 		onWxFocusConsumed?: () => void;
-		/* ---- SAG overlay (docs/sag-map-spec.md §3-§5). Every one of these is
+		/* ---- SAG overlay (design/sag-map-spec.md §3-§5). Every one of these is
 		   optional with a safe default: the overlay simply does not mount until
 		   the page wires it, and a non-ride net never sees it. ---- */
 		/** Open SAG requests with both ends already resolved by sagGeo. An
@@ -2808,7 +2808,7 @@
 	});
 
 	// ===================================================================
-	// SAG overlay — docs/sag-map-spec.md §3 (marker language), §4 (panes and
+	// SAG overlay — design/sag-map-spec.md §3 (marker language), §4 (panes and
 	// suppression), §5 (lines).
 	//
 	// Three things, three silhouettes, and the test each has to pass is
@@ -4124,7 +4124,7 @@
 	}
 
 	/* ===================================================================
-	   SAG map overlay — docs/sag-map-spec.md §3, §4, §9.
+	   SAG map overlay — design/sag-map-spec.md §3, §4, §9.
 
 	   Every selector below is :global, and has to be. L.divIcon injects its
 	   markup OUTSIDE the Svelte component tree, so a scoped rule never reaches

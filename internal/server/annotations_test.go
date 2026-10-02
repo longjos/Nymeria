@@ -379,7 +379,7 @@ func TestRenameBatchLabel(t *testing.T) {
 		wantCode int
 		wantMsg  string
 	}{
-		{"ok", res.BatchID, "Day 1 — Jack and Back", http.StatusOK, ""},
+		{"ok", res.BatchID, "Day 1 Route", http.StatusOK, ""},
 		{"empty label", res.BatchID, "  ", http.StatusBadRequest, "batchLabel is required"},
 		{"too long", res.BatchID, strings.Repeat("x", 121), http.StatusBadRequest, "batchLabel too long"},
 		{"unknown batch", "ghost", "New", http.StatusNotFound, ""},

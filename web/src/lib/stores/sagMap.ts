@@ -1,5 +1,5 @@
 /**
- * SAG on the map — derived client state (docs/sag-map-spec.md §2, §6, §7).
+ * SAG on the map — derived client state (design/sag-map-spec.md §2, §6, §7).
  *
  * Everything here is a join of things the app already has: SAG requests and
  * vehicles from `sagBoard`, positions from the net roster, and the course from
