@@ -7,10 +7,10 @@
 	 * course the same way: to scale, with roster members on it, and LEAD and
 	 * SWEEP from reported sources only.
 	 */
-	import type { Annotation, CheckpointWithPassages, CourseState, NetCheckIn, RidePhaseID, WxAlert } from '$lib/types';
-	import { buildRouteIndex, parseLineString, type RouteIndex } from '$lib/routeDistance';
-	import { buildRailModel } from '$lib/railModel';
-	import type { RosterMemory } from '$lib/rosterCourse';
+	import type { Annotation, CheckpointWithPassages, CourseState, NetCheckIn, RidePhaseID, WxAlert } from '#lib/types.js';
+	import { buildRouteIndex, parseLineString, type RouteIndex } from '#lib/routeDistance.js';
+	import { buildRailModel } from '#lib/railModel.js';
+	import type { RosterMemory } from '#lib/rosterCourse.js';
 	import CourseRailView from '../CourseRailView.svelte';
 
 	let {

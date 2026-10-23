@@ -1,8 +1,8 @@
 <script lang="ts">
 	// The B1/NET zone's phase chip (spec §8). Phase is ALWAYS operator-set —
 	// this chip opens PhaseChangeDialog; it never switches the phase itself.
-	import type { RidePhaseStatus } from '$lib/types';
-	import { phaseLabel } from '$lib/rideMeta';
+	import type { RidePhaseStatus } from '#lib/types.js';
+	import { phaseLabel } from '#lib/rideMeta.js';
 
 	let {
 		state,

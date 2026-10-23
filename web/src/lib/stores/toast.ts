@@ -1,5 +1,5 @@
 import { writable } from 'svelte/store';
-import type { WxTier } from '$lib/types';
+import type { WxTier } from '#lib/types.js';
 
 export interface ToastAction {
 	label: string;

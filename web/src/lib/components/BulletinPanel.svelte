@@ -1,9 +1,9 @@
 <script lang="ts">
-	import { bulletinList, announcements, regularBulletins } from '$lib/stores/bulletins';
-	import { canOperate } from '$lib/stores/session';
-	import { sendMessage } from '$lib/stores/messages';
-	import { timeAgo } from '$lib/utils';
-	import { messagePath } from '$lib/stores/paths';
+	import { bulletinList, announcements, regularBulletins } from '#lib/stores/bulletins.js';
+	import { canOperate } from '#lib/stores/session.js';
+	import { sendMessage } from '#lib/stores/messages.js';
+	import { timeAgo } from '#lib/utils.js';
+	import { messagePath } from '#lib/stores/paths.js';
 	import PathSelect from './PathSelect.svelte';
 
 	let showCompose = $state(false);

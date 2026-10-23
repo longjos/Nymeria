@@ -1,6 +1,6 @@
 import { writable, derived } from 'svelte/store';
-import type { Conversation, Message } from '$lib/types';
-import { api } from '$lib/api';
+import type { Conversation, Message } from '#lib/types.js';
+import { api } from '#lib/api.js';
 import { wsClient } from './stations';
 import { showToast } from './toast';
 import { transports } from './transports';

@@ -1,6 +1,6 @@
 <script lang="ts">
-	import type { NetCheckIn } from '$lib/types';
-	import { statusColors } from '$lib/stores/commandpalette';
+	import type { NetCheckIn } from '#lib/types.js';
+	import { statusColors } from '#lib/stores/commandpalette.js';
 
 	/**
 	 * The one operator picker. Used from the mission card ("+ Assign", single

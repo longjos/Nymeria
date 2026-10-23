@@ -1,8 +1,8 @@
 <script lang="ts">
 	import StationCard from './StationCard.svelte';
-	import { getTacticalAlias } from '$lib/stores/tactical';
-	import { rosterScopedStations } from '$lib/stores/rosterScope';
-	import { stationKey } from '$lib/utils';
+	import { getTacticalAlias } from '#lib/stores/tactical.js';
+	import { rosterScopedStations } from '#lib/stores/rosterScope.js';
+	import { stationKey } from '#lib/utils.js';
 
 	let {
 		onSelect,

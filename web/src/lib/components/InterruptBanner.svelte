@@ -5,8 +5,8 @@
 	// RideInterruptBanner does the same from the ride stores. Never build a
 	// second full-width interrupt banner — this is the ONE.
 	import { fly } from 'svelte/transition';
-	import type { InterruptItem } from '$lib/stores/interrupts';
-	import { lastAudibleAt, SOUND_BUDGET_MS } from '$lib/stores/interrupts';
+	import type { InterruptItem } from '#lib/stores/interrupts.js';
+	import { lastAudibleAt, SOUND_BUDGET_MS } from '#lib/stores/interrupts.js';
 	import WxTierGlyph from './WxTierGlyph.svelte';
 	import RideTierGlyph from './RideTierGlyph.svelte';
 

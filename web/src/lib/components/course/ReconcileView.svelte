@@ -4,13 +4,13 @@
 	// (which returns the blocking items on a 409) rather than the general
 	// close-net flow, since a ride net's close is gated on this checklist.
 	import { onMount } from 'svelte';
-	import { closeout, accounting } from '$lib/stores/ride';
-	import { refreshCloseout, submitRideCloseout } from '$lib/stores/course';
-	import { isNetNcs } from '$lib/stores/netProfile';
-	import { activeNetId } from '$lib/stores/netcontrol';
-	import { api } from '$lib/api';
-	import { riderKindLabel } from '$lib/courseMeta';
-	import { clock } from '$lib/wxAlertTime';
+	import { closeout, accounting } from '#lib/stores/ride.js';
+	import { refreshCloseout, submitRideCloseout } from '#lib/stores/course.js';
+	import { isNetNcs } from '#lib/stores/netProfile.js';
+	import { activeNetId } from '#lib/stores/netcontrol.js';
+	import { api } from '#lib/api.js';
+	import { riderKindLabel } from '#lib/courseMeta.js';
+	import { clock } from '#lib/wxAlertTime.js';
 
 	onMount(() => {
 		refreshCloseout();

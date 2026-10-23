@@ -1,30 +1,30 @@
 <script lang="ts">
 	import { onMount } from 'svelte';
 	import { get } from 'svelte/store';
-	import { api } from '$lib/api';
-	import { closePanel, settingsOpenSection } from '$lib/stores/ui';
+	import { api } from '#lib/api.js';
+	import { closePanel, settingsOpenSection } from '#lib/stores/ui.js';
 	import CloseButton from './CloseButton.svelte';
-	import { weatherConfig } from '$lib/stores/weather';
-	import { loadW3WStatus } from '$lib/stores/w3w';
+	import { weatherConfig } from '#lib/stores/weather.js';
+	import { loadW3WStatus } from '#lib/stores/w3w.js';
 	import FilterBuilder from './FilterBuilder.svelte';
 	import PathSelect from './PathSelect.svelte';
 	import PendingApprovals from './PendingApprovals.svelte';
 	import SerialPortFields from './SerialPortFields.svelte';
 	import KissTcpFields from './KissTcpFields.svelte';
-	import { setPaths } from '$lib/stores/paths';
+	import { setPaths } from '#lib/stores/paths.js';
 	import PathHint from './PathHint.svelte';
-	import { transports } from '$lib/stores/transports';
-	import { serialTransportId } from '$lib/serialPorts';
-	import { kissTcpTransportId } from '$lib/kissTncs';
+	import { transports } from '#lib/stores/transports.js';
+	import { serialTransportId } from '#lib/serialPorts.js';
+	import { kissTcpTransportId } from '#lib/kissTncs.js';
 	import type {
 		SettingsResponse, StationSettings, ServerSettings, BeaconSettings,
 		SessionSettings, LoggingSettings, TransportSettings, TileCacheSettings,
 		WeatherSettings, SerialPortInfo, SerialProfile, KissTncInfo, GpsSettings,
 		WxEventType, WxZoneRef
-	} from '$lib/types';
-	import { wxLinkStatus } from '$lib/stores/wxAlerts';
-	import { FLOOR_TEXT } from '$lib/wxAlertMeta';
-	import { clockWithSeconds } from '$lib/wxAlertTime';
+	} from '#lib/types.js';
+	import { wxLinkStatus } from '#lib/stores/wxAlerts.js';
+	import { FLOOR_TEXT } from '#lib/wxAlertMeta.js';
+	import { clockWithSeconds } from '#lib/wxAlertTime.js';
 
 	let loading = $state(true);
 	let error = $state<string | null>(null);

@@ -19,25 +19,25 @@ import { activeCheckIns, netAnnotations } from './netcontrol';
 import { stations } from './stations';
 import { secondClock } from './clock';
 import { mapSettings } from './mapSettings';
-import type { Stop } from '$lib/routeDistance';
+import type { Stop } from '#lib/routeDistance.js';
 import { courseRoute, courseStops } from './courseGeo';
-import { projectOnRoute, resolveCandidate } from '$lib/routeDistance';
+import { projectOnRoute, resolveCandidate } from '#lib/routeDistance.js';
 import {
 	resolveSagPoint,
 	courseMismatchNotice,
 	type AnnotationPoint,
 	type SagGeoContext,
 	type SagPlacement
-} from '$lib/sagGeo';
+} from '#lib/sagGeo.js';
 import {
 	joinVehiclePositions,
 	rankCandidates,
 	DEFAULT_AVG_SPEED_MPH,
 	type RankResult,
 	type SagVehicleGeo
-} from '$lib/sagDispatch';
-import { unassignedRiders } from '$lib/rideMeta';
-import type { SAGRequest, PriorityTier } from '$lib/types';
+} from '#lib/sagDispatch.js';
+import { unassignedRiders } from '#lib/rideMeta.js';
+import type { SAGRequest, PriorityTier } from '#lib/types.js';
 
 /** The course this net is running, plus enough context to tell "no course
  *  loaded" from "several courses and the request didn't say which". One

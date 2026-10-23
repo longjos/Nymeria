@@ -1,8 +1,8 @@
 <script lang="ts">
 	import { onMount } from 'svelte';
-	import { api } from '$lib/api';
-	import type { ICS309Report, ICS309Row } from '$lib/types';
-	import { ics309NetId, closePanel } from '$lib/stores/ui';
+	import { api } from '#lib/api.js';
+	import type { ICS309Report, ICS309Row } from '#lib/types.js';
+	import { ics309NetId, closePanel } from '#lib/stores/ui.js';
 
 	let report = $state<ICS309Report | null>(null);
 	let loading = $state(false);

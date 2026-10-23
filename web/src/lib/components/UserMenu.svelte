@@ -1,5 +1,5 @@
 <script lang="ts">
-	import { currentUser, logout } from '$lib/stores/session';
+	import { currentUser, logout } from '#lib/stores/session.js';
 
 	let {
 		position = 'toolbar'

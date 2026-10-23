@@ -1,8 +1,8 @@
 <script lang="ts">
 	import { onMount } from 'svelte';
-	import { pendingRequests, loadPendingRequests } from '$lib/stores/session';
-	import { api } from '$lib/api';
-	import type { Role } from '$lib/types';
+	import { pendingRequests, loadPendingRequests } from '#lib/stores/session.js';
+	import { api } from '#lib/api.js';
+	import type { Role } from '#lib/types.js';
 
 	let selectedRoles = $state<Record<string, Role>>({});
 	let processing = $state<Record<string, boolean>>({});

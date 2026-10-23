@@ -1,9 +1,9 @@
 <script lang="ts">
 	import { onMount } from 'svelte';
-	import { api } from '$lib/api';
-	import { timeAgo } from '$lib/utils';
-	import type { ActivityEntry } from '$lib/types';
-	import { wsClient } from '$lib/stores/stations';
+	import { api } from '#lib/api.js';
+	import { timeAgo } from '#lib/utils.js';
+	import type { ActivityEntry } from '#lib/types.js';
+	import { wsClient } from '#lib/stores/stations.js';
 
 	let entries = $state<ActivityEntry[]>([]);
 	let loading = $state(true);

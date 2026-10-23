@@ -4,8 +4,8 @@
 	// /nets/{id}/sag/config's pickupKinds/dropoffKinds; never hardcode which
 	// subset applies here). Mile marker is the primary field, a coordinate is
 	// secondary/collapsed — the composer brief's exact ordering.
-	import type { SAGLocation, Annotation } from '$lib/types';
-	import { SAG_LOCATION_KIND_LABELS, SAG_LOCATION_KIND_ANNOTATION_CATEGORY } from '$lib/rideMeta';
+	import type { SAGLocation, Annotation } from '#lib/types.js';
+	import { SAG_LOCATION_KIND_LABELS, SAG_LOCATION_KIND_ANNOTATION_CATEGORY } from '#lib/rideMeta.js';
 
 	let {
 		value,

@@ -1,6 +1,6 @@
 import { writable, derived, get } from 'svelte/store';
-import type { RawPacket, APRSPacketType } from '$lib/types';
-import { wsClient } from '$lib/stores/stations';
+import type { RawPacket, APRSPacketType } from '#lib/types.js';
+import { wsClient } from '#lib/stores/stations.js';
 
 const MAX_PACKETS = 500;
 

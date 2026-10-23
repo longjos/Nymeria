@@ -52,18 +52,18 @@
 </script>
 
 <script lang="ts">
-	import type { Annotation } from '$lib/types';
-	import { haversineMeters, annotationPickPoint } from '$lib/geo';
-	import { formatGpsAge } from '$lib/stores/gps';
-	import { unitSystem } from '$lib/stores/units';
-	import { formatDistance, formatDistanceValue, formatDistanceSpoken } from '$lib/units';
+	import type { Annotation } from '#lib/types.js';
+	import { haversineMeters, annotationPickPoint } from '#lib/geo.js';
+	import { formatGpsAge } from '#lib/stores/gps.js';
+	import { unitSystem } from '#lib/stores/units.js';
+	import { formatDistance, formatDistanceValue, formatDistanceSpoken } from '#lib/units.js';
 	import {
 		getRouteIndex, parseLineString, projectOnRoute, resolveCandidate,
 		projectStops, nextStopsAhead, angularDiff,
 		TOL_OFF_COURSE_M, ON_COURSE_M, STOP_SNAP_M
-	} from '$lib/routeDistance';
-	import type { RouteIndex, Candidate, Stop } from '$lib/routeDistance';
-	import { wxInAreaAlerts } from '$lib/stores/wxAlerts';
+	} from '#lib/routeDistance.js';
+	import type { RouteIndex, Candidate, Stop } from '#lib/routeDistance.js';
+	import { wxInAreaAlerts } from '#lib/stores/wxAlerts.js';
 	import WxTierGlyph from './WxTierGlyph.svelte';
 
 	let {

@@ -4,7 +4,7 @@
 	// wx stores; InterruptBanner owns the actual chrome, focus, chime and Tab
 	// trap behaviour.
 	import InterruptBanner from './InterruptBanner.svelte';
-	import type { InterruptItem } from '$lib/stores/interrupts';
+	import type { InterruptItem } from '#lib/stores/interrupts.js';
 	import {
 		wxActiveInterrupt,
 		wxInterruptMore,
@@ -16,9 +16,9 @@
 		ackAlertForNet,
 		showAlertOnMap,
 		openWxAlert
-	} from '$lib/stores/wxAlerts';
-	import { tierMeta, announceSentence } from '$lib/wxAlertMeta';
-	import { clock, clockWithSeconds, countdown } from '$lib/wxAlertTime';
+	} from '#lib/stores/wxAlerts.js';
+	import { tierMeta, announceSentence } from '#lib/wxAlertMeta.js';
+	import { clock, clockWithSeconds, countdown } from '#lib/wxAlertTime.js';
 
 	let alert = $derived($wxActiveInterrupt);
 	let meta = $derived(alert ? tierMeta[alert.tier] : null);

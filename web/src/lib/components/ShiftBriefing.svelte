@@ -3,13 +3,13 @@
 	// list grouped by owner, open items by tier, and the read-back confirm
 	// ("I have the net") that is the deliberate steal from I-PASS — the
 	// incoming operator restates before taking over.
-	import { api, ApiError } from '$lib/api';
-	import { activeNetId } from '$lib/stores/netcontrol';
-	import { wxIsNcs } from '$lib/stores/wxAlerts';
-	import { canOperate, currentUser } from '$lib/stores/session';
-	import { showToast } from '$lib/stores/toast';
-	import type { ShiftBriefing as ShiftBriefingT, HandoffItem } from '$lib/types';
-	import { clock } from '$lib/wxAlertTime';
+	import { api, ApiError } from '#lib/api.js';
+	import { activeNetId } from '#lib/stores/netcontrol.js';
+	import { wxIsNcs } from '#lib/stores/wxAlerts.js';
+	import { canOperate, currentUser } from '#lib/stores/session.js';
+	import { showToast } from '#lib/stores/toast.js';
+	import type { ShiftBriefing as ShiftBriefingT, HandoffItem } from '#lib/types.js';
+	import { clock } from '#lib/wxAlertTime.js';
 
 	let { onClose }: { onClose: () => void } = $props();
 

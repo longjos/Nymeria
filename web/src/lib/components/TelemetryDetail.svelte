@@ -1,7 +1,7 @@
 <script lang="ts">
-	import type { Station, TelemetryReading } from '$lib/types';
+	import type { Station, TelemetryReading } from '#lib/types.js';
 	import { telemetryReadings, telemetryReadingsLoading, telemetryParams,
-		loadTelemetryReadings, applyEquation, channelName, channelUnit } from '$lib/stores/telemetry';
+		loadTelemetryReadings, applyEquation, channelName, channelUnit } from '#lib/stores/telemetry.js';
 	import WeatherChart from './WeatherChart.svelte';
 
 	let {

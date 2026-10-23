@@ -1,10 +1,10 @@
 <script lang="ts">
 	import { onMount, tick } from 'svelte';
-	import type { FilterRule, FilterType } from '$lib/types';
+	import type { FilterRule, FilterType } from '#lib/types.js';
 	import {
 		parseFilter, serializeFilter, validateRule, filterTypeLabel,
 		ruleSummary, createDefaultRule, filterTypeGroups
-	} from '$lib/filter-parser';
+	} from '#lib/filter-parser.js';
 	import CloseButton from './CloseButton.svelte';
 
 	let { value = $bindable(''), oninput }: { value: string; oninput?: (v: string) => void } = $props();

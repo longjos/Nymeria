@@ -1,12 +1,12 @@
 <script lang="ts">
 	// The ONLY place an individual bib belongs in this UI (governing fact 1).
 	// SAG'd / injured / DNF / unsupported records, newest first.
-	import { riderExceptions, recordRider, setRiderSupport } from '$lib/stores/course';
-	import { rideConfig } from '$lib/stores/netProfile';
-	import { canOperate } from '$lib/stores/session';
-	import { riderKindMeta, type RiderExceptionKind } from '$lib/courseMeta';
-	import { clock } from '$lib/wxAlertTime';
-	import { showToast } from '$lib/stores/toast';
+	import { riderExceptions, recordRider, setRiderSupport } from '#lib/stores/course.js';
+	import { rideConfig } from '#lib/stores/netProfile.js';
+	import { canOperate } from '#lib/stores/session.js';
+	import { riderKindMeta, type RiderExceptionKind } from '#lib/courseMeta.js';
+	import { clock } from '#lib/wxAlertTime.js';
+	import { showToast } from '#lib/stores/toast.js';
 
 	const KINDS = Object.keys(riderKindMeta) as RiderExceptionKind[];
 

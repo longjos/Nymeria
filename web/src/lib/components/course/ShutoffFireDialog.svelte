@@ -3,10 +3,10 @@
 	// consequential — a real confirm, not a bare button. Chrome copies
 	// PhaseChangeDialog.svelte's backdrop/focus-trap pattern exactly (the
 	// established precedent in this codebase for a ride-mode confirm dialog).
-	import type { ShutoffPoint } from '$lib/types';
-	import { fireShutoff } from '$lib/stores/course';
-	import { clock } from '$lib/wxAlertTime';
-	import { showToast, announce } from '$lib/stores/toast';
+	import type { ShutoffPoint } from '#lib/types.js';
+	import { fireShutoff } from '#lib/stores/course.js';
+	import { clock } from '#lib/wxAlertTime.js';
+	import { showToast, announce } from '#lib/stores/toast.js';
 
 	let { shutoff, onClose }: { shutoff: ShutoffPoint; onClose: (fired: boolean) => void } = $props();
 

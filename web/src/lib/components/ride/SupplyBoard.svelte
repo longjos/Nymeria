@@ -4,14 +4,14 @@
 	// for explicitly ("ice truck said 20 min — 34 min ago"). A lingering
 	// draft (composer closed before read-back finished) is resumable here,
 	// not stranded.
-	import { api, ApiError } from '$lib/api';
-	import type { SupplyRequest } from '$lib/types';
-	import { supplyAll, rideLadder, upsertSupply } from '$lib/stores/ride';
-	import { activeNetId } from '$lib/stores/netcontrol';
-	import { canOperate, currentUser } from '$lib/stores/session';
-	import { secondClock } from '$lib/stores/clock';
-	import { showToast } from '$lib/stores/toast';
-	import { tierById, ageText, SUPPLY_STATUS_LABELS, SUPPLY_TERMINAL_STATUSES } from '$lib/rideMeta';
+	import { api, ApiError } from '#lib/api.js';
+	import type { SupplyRequest } from '#lib/types.js';
+	import { supplyAll, rideLadder, upsertSupply } from '#lib/stores/ride.js';
+	import { activeNetId } from '#lib/stores/netcontrol.js';
+	import { canOperate, currentUser } from '#lib/stores/session.js';
+	import { secondClock } from '#lib/stores/clock.js';
+	import { showToast } from '#lib/stores/toast.js';
+	import { tierById, ageText, SUPPLY_STATUS_LABELS, SUPPLY_TERMINAL_STATUSES } from '#lib/rideMeta.js';
 	import RideTierGlyph from '../RideTierGlyph.svelte';
 	import SupplyComposer from './SupplyComposer.svelte';
 	import ReasonDialog from '../ReasonDialog.svelte';

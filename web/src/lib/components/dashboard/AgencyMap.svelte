@@ -1,10 +1,10 @@
 <script lang="ts">
 	import { onMount } from 'svelte';
-	import { browser } from '$app/environment';
-	import type { NetCheckIn, NetMission, Annotation } from '$lib/types';
-	import { categoryMeta } from '$lib/annotationMeta';
-	import { stationCategoryMeta } from '$lib/stationCategoryMeta';
-	import { humanName, priorityLabels } from '$lib/agencyTranslations';
+	import { browser } from '$app/env';
+	import type { NetCheckIn, NetMission, Annotation } from '#lib/types.js';
+	import { categoryMeta } from '#lib/annotationMeta.js';
+	import { stationCategoryMeta } from '#lib/stationCategoryMeta.js';
+	import { humanName, priorityLabels } from '#lib/agencyTranslations.js';
 
 	let {
 		operators,

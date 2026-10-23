@@ -1,10 +1,10 @@
 <script lang="ts">
-	import { activeNet, activeCheckIns } from '$lib/stores/netcontrol';
-	import { wxUnackedCount, wxActiveWarningIn } from '$lib/stores/wxAlerts';
-	import { canAdmin } from '$lib/stores/session';
-	import { visiblePanelModes } from '$lib/stores/netProfile';
-	import { panelModeVisible } from '$lib/profilePanels';
-	import type { PanelMode } from '$lib/stores/ui';
+	import { activeNet, activeCheckIns } from '#lib/stores/netcontrol.js';
+	import { wxUnackedCount, wxActiveWarningIn } from '#lib/stores/wxAlerts.js';
+	import { canAdmin } from '#lib/stores/session.js';
+	import { visiblePanelModes } from '#lib/stores/netProfile.js';
+	import { panelModeVisible } from '#lib/profilePanels.js';
+	import type { PanelMode } from '#lib/stores/ui.js';
 
 	let {
 		unreadCount = 0,

@@ -1,5 +1,5 @@
-import type { Annotation, AnnotationBatch } from '$lib/types';
-import { timeAgo } from '$lib/utils';
+import type { Annotation, AnnotationBatch } from '#lib/types.js';
+import { timeAgo } from '#lib/utils.js';
 
 /**
  * Group annotations into imported sets by their `batchId` stamp.

@@ -1,7 +1,7 @@
 <script lang="ts">
-	import { telemetryStations, selectedTelemetryStation } from '$lib/stores/telemetry';
-	import { stations } from '$lib/stores/stations';
-	import type { Station } from '$lib/types';
+	import { telemetryStations, selectedTelemetryStation } from '#lib/stores/telemetry.js';
+	import { stations } from '#lib/stores/stations.js';
+	import type { Station } from '#lib/types.js';
 	import TelemetryStationCard from './TelemetryStationCard.svelte';
 	import TelemetryDetail from './TelemetryDetail.svelte';
 

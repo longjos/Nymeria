@@ -3,8 +3,8 @@
 	// Same $rideZones store as RideStrip, but each zone is a full-width row
 	// (label · value · detail · chevron) — distinct markup from RideZone,
 	// shared stores only (spec §0).
-	import { rideZones, rideEmergency, ridePhase, handoffOpen, closeout, navigateZone, ackEmergency } from '$lib/stores/ride';
-	import { wxIsNcs } from '$lib/stores/wxAlerts';
+	import { rideZones, rideEmergency, ridePhase, handoffOpen, closeout, navigateZone, ackEmergency } from '#lib/stores/ride.js';
+	import { wxIsNcs } from '#lib/stores/wxAlerts.js';
 	import RideTierGlyph from './RideTierGlyph.svelte';
 	import PhaseChip from './PhaseChip.svelte';
 	import PhaseChangeDialog from './PhaseChangeDialog.svelte';

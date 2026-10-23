@@ -4,10 +4,10 @@
 	// is available too, with illegal targets disabled and explained. A
 	// backward move requires a reason; a forward move does not (the trigger
 	// that earned it is reason enough).
-	import type { RidePhaseStatus, RidePhaseID } from '$lib/types';
-	import { setPhase } from '$lib/stores/ride';
-	import { phaseLabel, RIDE_PHASE_ORDER } from '$lib/rideMeta';
-	import { showToast } from '$lib/stores/toast';
+	import type { RidePhaseStatus, RidePhaseID } from '#lib/types.js';
+	import { setPhase } from '#lib/stores/ride.js';
+	import { phaseLabel, RIDE_PHASE_ORDER } from '#lib/rideMeta.js';
+	import { showToast } from '#lib/stores/toast.js';
 
 	let { phaseState, onClose }: { phaseState: RidePhaseStatus | null; onClose: () => void } = $props();
 

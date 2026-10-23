@@ -5,23 +5,23 @@
 	// inline per request. Slots and legs are the backend's real model — see
 	// internal/ride/types.go — so a request with a partial pickup shows two
 	// legs, not a flattened "in progress" blob.
-	import { api, ApiError } from '$lib/api';
-	import type { SAGRequest, SAGLeg, SAGLocation, SAGVehicleStatus, OverCapacityBody } from '$lib/types';
+	import { api, ApiError } from '#lib/api.js';
+	import type { SAGRequest, SAGLeg, SAGLocation, SAGVehicleStatus, OverCapacityBody } from '#lib/types.js';
 	import {
 		sagBoard, rideLadder, rideSagSummary, sagComposerSeed, sagEditorSeed,
 		upsertSagRequest, upsertSagVehicle
-	} from '$lib/stores/ride';
-	import { activeNetId } from '$lib/stores/netcontrol';
-	import { canOperate } from '$lib/stores/session';
-	import { secondClock } from '$lib/stores/clock';
-	import { showToast } from '$lib/stores/toast';
+	} from '#lib/stores/ride.js';
+	import { activeNetId } from '#lib/stores/netcontrol.js';
+	import { canOperate } from '#lib/stores/session.js';
+	import { secondClock } from '#lib/stores/clock.js';
+	import { showToast } from '#lib/stores/toast.js';
 	import {
 		tierById, tierStyle, ageText, enumLabel,
 		SAG_STATUS_LABELS, SAG_TERMINAL_STATUSES, SAG_DISPOSITION_LABELS, SAG_LEG_STATUS_LABELS,
 		SAG_LOCATION_KIND_LABELS, SAG_REASON_LABELS,
 		SAG_BIKE_LABELS, SAG_BIKE_SHORT, SAG_BIKE_GLYPHS,
 		slotBike, unassignedRiders, activeUnloadedLegs, BIKE_ORDER
-	} from '$lib/rideMeta';
+	} from '#lib/rideMeta.js';
 	import RideTierGlyph from '../RideTierGlyph.svelte';
 	import SagRequestComposer from './SagRequestComposer.svelte';
 	import ReasonDialog from '../ReasonDialog.svelte';

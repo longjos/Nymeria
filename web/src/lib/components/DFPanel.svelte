@@ -1,6 +1,6 @@
 <script lang="ts">
-	import { dfStations } from '$lib/stores/df';
-	import type { Station } from '$lib/types';
+	import { dfStations } from '#lib/stores/df.js';
+	import type { Station } from '#lib/types.js';
 
 	let {
 		onFlyTo,

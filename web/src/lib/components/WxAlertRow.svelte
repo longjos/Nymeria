@@ -1,9 +1,9 @@
 <script lang="ts">
-	import type { WxAlert } from '$lib/types';
-	import { wxMinute, muteAlert, unmuteAlert, showAlertOnMap } from '$lib/stores/wxAlerts';
-	import { showToast } from '$lib/stores/toast';
-	import { tierMeta, severityStyle, compass, toastLine, compressAreaDesc } from '$lib/wxAlertMeta';
-	import { countdown, countdownTone, clock } from '$lib/wxAlertTime';
+	import type { WxAlert } from '#lib/types.js';
+	import { wxMinute, muteAlert, unmuteAlert, showAlertOnMap } from '#lib/stores/wxAlerts.js';
+	import { showToast } from '#lib/stores/toast.js';
+	import { tierMeta, severityStyle, compass, toastLine, compressAreaDesc } from '#lib/wxAlertMeta.js';
+	import { countdown, countdownTone, clock } from '#lib/wxAlertTime.js';
 	import WxTierGlyph from './WxTierGlyph.svelte';
 
 	let {

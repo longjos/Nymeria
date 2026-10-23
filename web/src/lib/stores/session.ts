@@ -1,6 +1,6 @@
 import { writable, derived, get } from 'svelte/store';
-import type { SessionUser, Role } from '$lib/types';
-import { api, setAuthToken, loadSavedToken } from '$lib/api';
+import type { SessionUser, Role } from '#lib/types.js';
+import { api, setAuthToken, loadSavedToken } from '#lib/api.js';
 import { setPaths } from './paths';
 
 export const currentUser = writable<SessionUser | null>(null);

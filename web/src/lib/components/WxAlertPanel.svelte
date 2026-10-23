@@ -1,5 +1,5 @@
 <script lang="ts">
-	import type { WxAlert } from '$lib/types';
+	import type { WxAlert } from '#lib/types.js';
 	import {
 		wxInAreaAlerts,
 		wxNearbyAlerts,
@@ -12,10 +12,10 @@
 		wxLinkStatus,
 		wxFootprint,
 		ackAlert
-	} from '$lib/stores/wxAlerts';
-	import { sheetState, openSettings } from '$lib/stores/ui';
-	import { userRole } from '$lib/stores/session';
-	import { clock } from '$lib/wxAlertTime';
+	} from '#lib/stores/wxAlerts.js';
+	import { sheetState, openSettings } from '#lib/stores/ui.js';
+	import { userRole } from '#lib/stores/session.js';
+	import { clock } from '#lib/wxAlertTime.js';
 	import WxProvenanceStrip from './WxProvenanceStrip.svelte';
 	import WxAlertRow from './WxAlertRow.svelte';
 	import WxAlertDetail from './WxAlertDetail.svelte';

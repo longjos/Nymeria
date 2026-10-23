@@ -10,8 +10,8 @@
 //   - Medical data may already be redacted server-side; this file never
 //     assumes PatientName/Bib survive that redaction.
 import { writable, derived, get } from 'svelte/store';
-import { browser } from '$app/environment';
-import { api, ApiError } from '$lib/api';
+import { browser } from '$app/env';
+import { api, ApiError } from '#lib/api.js';
 import { wsClient } from './stations';
 import {
 	activeNet, activeNetId, activeCheckIns, netMetrics,
@@ -30,16 +30,16 @@ import type {
 	NetProfileView, RidePhaseStatus, RidePhaseID, CourseState, SAGBoard, MedicalNotification,
 	SupplyRequest, HandoffItem, ShiftBriefing, CloseoutStatus, Accounting, PriorityTier,
 	ShutoffPoint, StationClosureState, SAGLocation
-} from '$lib/types';
+} from '#lib/types.js';
 import {
 	tierById, ageState, ageText, elapsedHM, heatIndexF, tierStyle,
 	STOP_GLYPHS, PENDING_GLYPH, SAG_REASON_LABELS, enumLabel,
 	unassignedRiders
-} from '$lib/rideMeta';
-import { countdown, clock } from '$lib/wxAlertTime';
-import { convertTemp, formatTempShort } from '$lib/units';
+} from '#lib/rideMeta.js';
+import { countdown, clock } from '#lib/wxAlertTime.js';
+import { convertTemp, formatTempShort } from '#lib/units.js';
 import { courseRoute, courseStopMiles } from './courseGeo';
-import { buildRailAxis, edgePositions, type EdgePassage } from '$lib/courseRail';
+import { buildRailAxis, edgePositions, type EdgePassage } from '#lib/courseRail.js';
 
 const ACKED_KEY = 'nymeria_ride_acked';
 

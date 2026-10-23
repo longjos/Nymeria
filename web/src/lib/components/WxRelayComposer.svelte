@@ -1,10 +1,10 @@
 <script lang="ts">
-	import type { WxAlert } from '$lib/types';
-	import { activeNet } from '$lib/stores/netcontrol';
-	import { currentUser } from '$lib/stores/session';
-	import { showToast } from '$lib/stores/toast';
-	import { api } from '$lib/api';
-	import { bulletinSummary } from '$lib/wxAlertMeta';
+	import type { WxAlert } from '#lib/types.js';
+	import { activeNet } from '#lib/stores/netcontrol.js';
+	import { currentUser } from '#lib/stores/session.js';
+	import { showToast } from '#lib/stores/toast.js';
+	import { api } from '#lib/api.js';
+	import { bulletinSummary } from '#lib/wxAlertMeta.js';
 
 	let { alert, onClose }: { alert: WxAlert; onClose: () => void } = $props();
 

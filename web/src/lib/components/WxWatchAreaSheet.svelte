@@ -1,10 +1,10 @@
 <script lang="ts">
-	import { api } from '$lib/api';
-	import { showToast } from '$lib/stores/toast';
-	import { showFootprintPreview } from '$lib/stores/wxAlerts';
-	import { FLOOR_TEXT } from '$lib/wxAlertMeta';
+	import { api } from '#lib/api.js';
+	import { showToast } from '#lib/stores/toast.js';
+	import { showFootprintPreview } from '#lib/stores/wxAlerts.js';
+	import { FLOOR_TEXT } from '#lib/wxAlertMeta.js';
 	import WxTierGlyph from './WxTierGlyph.svelte';
-	import type { WxNetWatch, WxNetWatchZones, WxFootprintSummary, WxEventType, WxZoneRef } from '$lib/types';
+	import type { WxNetWatch, WxNetWatchZones, WxFootprintSummary, WxEventType, WxZoneRef } from '#lib/types.js';
 
 	let { netId, onClose }: { netId: string; onClose: () => void } = $props();
 

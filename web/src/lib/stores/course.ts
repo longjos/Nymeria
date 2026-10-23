@@ -15,7 +15,7 @@
 //     (re-exported below) so there is exactly one implementation of the
 //     sweep-gate refusal handling.
 import { writable, derived, get } from 'svelte/store';
-import { api, ApiError } from '$lib/api';
+import { api, ApiError } from '#lib/api.js';
 import { wsClient } from './stations';
 import { activeNetId } from './netcontrol';
 import {
@@ -23,7 +23,7 @@ import {
 	closeStation as rideCloseStation, markSweepPassed as rideMarkSweepPassed
 } from './ride';
 import { showToast } from './toast';
-import type { RiderException, SweepReport, ShutoffPoint, CourseConfig } from '$lib/types';
+import type { RiderException, SweepReport, ShutoffPoint, CourseConfig } from '#lib/types.js';
 
 export const markSweepPassed = rideMarkSweepPassed;
 export const closeStation = rideCloseStation;

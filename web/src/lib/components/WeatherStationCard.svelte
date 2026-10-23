@@ -1,9 +1,9 @@
 <script lang="ts">
-	import type { Station, WeatherAlertThreshold } from '$lib/types';
-	import { isAlertTriggered, weatherUnits } from '$lib/stores/weather';
-	import { formatTempShort, formatWindSpeed, formatPressure, formatRain, pressureLabel } from '$lib/units';
-	import { wxAlertsForStation } from '$lib/stores/wxAlerts';
-	import { tierMeta } from '$lib/wxAlertMeta';
+	import type { Station, WeatherAlertThreshold } from '#lib/types.js';
+	import { isAlertTriggered, weatherUnits } from '#lib/stores/weather.js';
+	import { formatTempShort, formatWindSpeed, formatPressure, formatRain, pressureLabel } from '#lib/units.js';
+	import { wxAlertsForStation } from '#lib/stores/wxAlerts.js';
+	import { tierMeta } from '#lib/wxAlertMeta.js';
 	import WxTierGlyph from './WxTierGlyph.svelte';
 
 	let {

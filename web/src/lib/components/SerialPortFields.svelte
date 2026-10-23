@@ -1,5 +1,5 @@
 <script lang="ts">
-	import type { SerialPortInfo, SerialProfile, TransportStatus } from '$lib/types';
+	import type { SerialPortInfo, SerialProfile, TransportStatus } from '#lib/types.js';
 	import {
 		persistDevice,
 		normalizeDevice,
@@ -12,7 +12,7 @@
 		kissLinkState,
 		kissLinkLabel,
 		kissLinkHint
-	} from '$lib/serialPorts';
+	} from '#lib/serialPorts.js';
 
 	let {
 		idPrefix,

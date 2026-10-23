@@ -1,7 +1,7 @@
 <script lang="ts">
-	import { stationKey as getStationKey } from '$lib/utils';
-	import { getTacticalAlias } from '$lib/stores/tactical';
-	import { rosterScopedStations } from '$lib/stores/rosterScope';
+	import { stationKey as getStationKey } from '#lib/utils.js';
+	import { getTacticalAlias } from '#lib/stores/tactical.js';
+	import { rosterScopedStations } from '#lib/stores/rosterScope.js';
 
 	let {
 		onClose,

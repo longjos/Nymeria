@@ -1,6 +1,6 @@
 <script lang="ts">
 	import type { Snippet } from 'svelte';
-	import type { SheetState } from '$lib/stores/ui';
+	import type { SheetState } from '#lib/stores/ui.js';
 
 	// Peek height: handle 20 + peek status row 32 + nav rail 58 + 12 padding.
 	// Hoisted so the snap arithmetic and the published CSS token can never drift apart.

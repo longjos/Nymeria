@@ -1,12 +1,12 @@
 <script lang="ts">
 	import { onMount, onDestroy } from 'svelte';
-	import { transports } from '$lib/stores/transports';
-	import { wsClient } from '$lib/stores/stations';
-	import { timeAgo } from '$lib/utils';
-	import { api } from '$lib/api';
-	import type { TileCacheStatus } from '$lib/types';
-	import { kissLinkState, kissLinkLabel, kissLinkHint } from '$lib/serialPorts';
-	import { gpsStatus, gpsAgeMs, formatGpsAge } from '$lib/stores/gps';
+	import { transports } from '#lib/stores/transports.js';
+	import { wsClient } from '#lib/stores/stations.js';
+	import { timeAgo } from '#lib/utils.js';
+	import { api } from '#lib/api.js';
+	import type { TileCacheStatus } from '#lib/types.js';
+	import { kissLinkState, kissLinkLabel, kissLinkHint } from '#lib/serialPorts.js';
+	import { gpsStatus, gpsAgeMs, formatGpsAge } from '#lib/stores/gps.js';
 
 	let list = $derived($transports);
 	let connectedCount = $derived(list.filter((t) => t.connected).length);

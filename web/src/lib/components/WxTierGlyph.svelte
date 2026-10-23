@@ -1,6 +1,6 @@
 <script lang="ts">
-	import type { WxTier } from '$lib/types';
-	import { tierMeta } from '$lib/wxAlertMeta';
+	import type { WxTier } from '#lib/types.js';
+	import { tierMeta } from '#lib/wxAlertMeta.js';
 
 	let { tier, size = 16, title }: { tier: WxTier; size?: number; title?: string } = $props();
 

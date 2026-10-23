@@ -1,99 +1,99 @@
 <script lang="ts">
 	import { onMount } from 'svelte';
 	import { get } from 'svelte/store';
-	import { browser } from '$app/environment';
-	import Map from '$lib/components/Map.svelte';
-	import Toolbar from '$lib/components/Toolbar.svelte';
-	import ActivityRail from '$lib/components/ActivityRail.svelte';
-	import SidePanel from '$lib/components/SidePanel.svelte';
-	import BottomSheet from '$lib/components/BottomSheet.svelte';
-	import StationList from '$lib/components/StationList.svelte';
-	import StationDetail from '$lib/components/StationDetail.svelte';
-	import ConvoList from '$lib/components/ConvoList.svelte';
-	import TransportPanel from '$lib/components/TransportPanel.svelte';
-	import ActivityPanel from '$lib/components/ActivityPanel.svelte';
-	import AnnotationPanel from '$lib/components/AnnotationPanel.svelte';
-	import NetControlPanel from '$lib/components/NetControlPanel.svelte';
-	import BulletinPanel from '$lib/components/BulletinPanel.svelte';
-	import ICS309Panel from '$lib/components/ICS309Panel.svelte';
-	import WeatherPanel from '$lib/components/WeatherPanel.svelte';
-	import TelemetryPanel from '$lib/components/TelemetryPanel.svelte';
-	import DFPanel from '$lib/components/DFPanel.svelte';
-	import PacketInspector from '$lib/components/PacketInspector.svelte';
-	import SettingsPanel from '$lib/components/SettingsPanel.svelte';
-	import ConnectionStatus from '$lib/components/ConnectionStatus.svelte';
-	import SearchOverlay from '$lib/components/SearchOverlay.svelte';
-	import LoginOverlay from '$lib/components/LoginOverlay.svelte';
-	import SetupWizard from '$lib/components/SetupWizard.svelte';
-	import CommandPalette from '$lib/components/CommandPalette.svelte';
-	import GpsFollowControl from '$lib/components/GpsFollowControl.svelte';
-	import GpsStatusPill from '$lib/components/GpsStatusPill.svelte';
-	import WxLinkPill from '$lib/components/WxLinkPill.svelte';
-	import WxInterruptBanner from '$lib/components/WxInterruptBanner.svelte';
-	import RideInterruptBanner from '$lib/components/RideInterruptBanner.svelte';
-	import RideStrip from '$lib/components/RideStrip.svelte';
-	import SagDock from '$lib/components/ride/SagDock.svelte';
-	import SagCandidatePanel from '$lib/components/ride/SagCandidatePanel.svelte';
-	import RidePeek from '$lib/components/RidePeek.svelte';
-	import RideShortcutHelp from '$lib/components/RideShortcutHelp.svelte';
-	import RidePendingList from '$lib/components/RidePendingList.svelte';
-	import ShiftBriefing from '$lib/components/ShiftBriefing.svelte';
-	import NextStopPill from '$lib/components/NextStopPill.svelte';
-	import type { MeasureBand, DistanceOrigin } from '$lib/components/NextStopPill.svelte';
-	import { STOP_CATEGORIES } from '$lib/routeDistance';
-	import { stations, stationList, initStationStore, wsClient, connectWS } from '$lib/stores/stations';
-	import { initMessageStore, conversationList } from '$lib/stores/messages';
-	import { initTransportStore } from '$lib/stores/transports';
-	import { gpsStatus, gpsFollow, gpsAgeMs, gpsHasFix, initGpsStore } from '$lib/stores/gps';
-	import { showToast } from '$lib/stores/toast';
-	import { annotationList, initAnnotationStore } from '$lib/stores/annotations';
-	import { api, ApiError } from '$lib/api';
+	import { browser } from '$app/env';
+	import Map from '#lib/components/Map.svelte';
+	import Toolbar from '#lib/components/Toolbar.svelte';
+	import ActivityRail from '#lib/components/ActivityRail.svelte';
+	import SidePanel from '#lib/components/SidePanel.svelte';
+	import BottomSheet from '#lib/components/BottomSheet.svelte';
+	import StationList from '#lib/components/StationList.svelte';
+	import StationDetail from '#lib/components/StationDetail.svelte';
+	import ConvoList from '#lib/components/ConvoList.svelte';
+	import TransportPanel from '#lib/components/TransportPanel.svelte';
+	import ActivityPanel from '#lib/components/ActivityPanel.svelte';
+	import AnnotationPanel from '#lib/components/AnnotationPanel.svelte';
+	import NetControlPanel from '#lib/components/NetControlPanel.svelte';
+	import BulletinPanel from '#lib/components/BulletinPanel.svelte';
+	import ICS309Panel from '#lib/components/ICS309Panel.svelte';
+	import WeatherPanel from '#lib/components/WeatherPanel.svelte';
+	import TelemetryPanel from '#lib/components/TelemetryPanel.svelte';
+	import DFPanel from '#lib/components/DFPanel.svelte';
+	import PacketInspector from '#lib/components/PacketInspector.svelte';
+	import SettingsPanel from '#lib/components/SettingsPanel.svelte';
+	import ConnectionStatus from '#lib/components/ConnectionStatus.svelte';
+	import SearchOverlay from '#lib/components/SearchOverlay.svelte';
+	import LoginOverlay from '#lib/components/LoginOverlay.svelte';
+	import SetupWizard from '#lib/components/SetupWizard.svelte';
+	import CommandPalette from '#lib/components/CommandPalette.svelte';
+	import GpsFollowControl from '#lib/components/GpsFollowControl.svelte';
+	import GpsStatusPill from '#lib/components/GpsStatusPill.svelte';
+	import WxLinkPill from '#lib/components/WxLinkPill.svelte';
+	import WxInterruptBanner from '#lib/components/WxInterruptBanner.svelte';
+	import RideInterruptBanner from '#lib/components/RideInterruptBanner.svelte';
+	import RideStrip from '#lib/components/RideStrip.svelte';
+	import SagDock from '#lib/components/ride/SagDock.svelte';
+	import SagCandidatePanel from '#lib/components/ride/SagCandidatePanel.svelte';
+	import RidePeek from '#lib/components/RidePeek.svelte';
+	import RideShortcutHelp from '#lib/components/RideShortcutHelp.svelte';
+	import RidePendingList from '#lib/components/RidePendingList.svelte';
+	import ShiftBriefing from '#lib/components/ShiftBriefing.svelte';
+	import NextStopPill from '#lib/components/NextStopPill.svelte';
+	import type { MeasureBand, DistanceOrigin } from '#lib/components/NextStopPill.svelte';
+	import { STOP_CATEGORIES } from '#lib/routeDistance.js';
+	import { stations, stationList, initStationStore, wsClient, connectWS } from '#lib/stores/stations.js';
+	import { initMessageStore, conversationList } from '#lib/stores/messages.js';
+	import { initTransportStore } from '#lib/stores/transports.js';
+	import { gpsStatus, gpsFollow, gpsAgeMs, gpsHasFix, initGpsStore } from '#lib/stores/gps.js';
+	import { showToast } from '#lib/stores/toast.js';
+	import { annotationList, initAnnotationStore } from '#lib/stores/annotations.js';
+	import { api, ApiError } from '#lib/api.js';
 	import {
 		initNetControlStore,
 		activeNet, operatorsWithPosition, missionsWithPosition, assignmentLines,
 		opsView, hoveredMissionId, hoveredCheckInId,
 		netLocationAnnotations
-	} from '$lib/stores/netcontrol';
-	import { initTacticalStore } from '$lib/stores/tactical';
-	import { initBulletinStore } from '$lib/stores/bulletins';
-	import { initWeatherStore, weatherStations, selectedWeatherStation } from '$lib/stores/weather';
+	} from '#lib/stores/netcontrol.js';
+	import { initTacticalStore } from '#lib/stores/tactical.js';
+	import { initBulletinStore } from '#lib/stores/bulletins.js';
+	import { initWeatherStore, weatherStations, selectedWeatherStation } from '#lib/stores/weather.js';
 	import {
 		initWxAlertStore, wxInAreaAlerts, wxNearbyAlerts, wxZoneGeometry, wxLinkStatus,
 		wxFootprint, wxFootprintPreview, wxFocusAlertId, wxSelectedAlertId, openWxAlert, wxMinute,
 		wxAlertsById
-	} from '$lib/stores/wxAlerts';
-	import { tierMeta } from '$lib/wxAlertMeta';
-	import { countdown } from '$lib/wxAlertTime';
-	import WxTierGlyph from '$lib/components/WxTierGlyph.svelte';
-	import { dfStations } from '$lib/stores/df';
-	import { loadW3WStatus } from '$lib/stores/w3w';
-	import { initPacketStore } from '$lib/stores/packets';
-	import { initPathStore } from '$lib/stores/paths';
-	import { isLoggedIn, needsSetup, isApproved, isPending, isDenied, initSession, handleSessionEvent, currentUser, loadPendingRequests, canAdmin } from '$lib/stores/session';
-	import { mapSettings, AGE_FILTER_MS, TRACK_DURATION_MS, toggleSagFocusPreset } from '$lib/stores/mapSettings';
+	} from '#lib/stores/wxAlerts.js';
+	import { tierMeta } from '#lib/wxAlertMeta.js';
+	import { countdown } from '#lib/wxAlertTime.js';
+	import WxTierGlyph from '#lib/components/WxTierGlyph.svelte';
+	import { dfStations } from '#lib/stores/df.js';
+	import { loadW3WStatus } from '#lib/stores/w3w.js';
+	import { initPacketStore } from '#lib/stores/packets.js';
+	import { initPathStore } from '#lib/stores/paths.js';
+	import { isLoggedIn, needsSetup, isApproved, isPending, isDenied, initSession, handleSessionEvent, currentUser, loadPendingRequests, canAdmin } from '#lib/stores/session.js';
+	import { mapSettings, AGE_FILTER_MS, TRACK_DURATION_MS, toggleSagFocusPreset } from '#lib/stores/mapSettings.js';
 	import {
 		rosterCallsigns, netIsOpen, rosterMappedCount, rosterFilterActive, isRosterStation,
 		rosterScopedStations
-	} from '$lib/stores/rosterScope';
-	import MapPalette from '$lib/components/MapPalette.svelte';
+	} from '#lib/stores/rosterScope.js';
+	import MapPalette from '#lib/components/MapPalette.svelte';
 	import {
 		selectedStation, panelMode, detailTab, searchOpen, sheetState,
 		selectStation, closePanel, openStationList, openMessages, openConversation, openTransports, openActivity, openAnnotations, openNetControl, openBulletins, openICS309, openWeather, openTelemetry, openDF, openPackets, openSettings,
 		togglePanel, commandPaletteOpen, toggleCommandPalette, rideShortcutHelpOpen, openSag
-	} from '$lib/stores/ui';
-	import type { SheetState, DetailTab, PanelMode } from '$lib/stores/ui';
-	import type { Annotation } from '$lib/types';
-	import { activeInterruptSource } from '$lib/stores/interrupts';
+	} from '#lib/stores/ui.js';
+	import type { SheetState, DetailTab, PanelMode } from '#lib/stores/ui.js';
+	import type { Annotation } from '#lib/types.js';
+	import { activeInterruptSource } from '#lib/stores/interrupts.js';
 	import {
 		rideMode, initRideStore, rideEmergency, rideLadder,
 		ackEmergency, seedPalette, upsertSagRequest
-	} from '$lib/stores/ride';
+	} from '#lib/stores/ride.js';
 	import {
 		sagDockActive, sagFocus, sagOverlayActive, sagPlaced, sagVehiclesOnMap,
 		sagCandidates, sagLegLines, sagFocusedVehicleId, sagVehicleGeo,
 		focusSagRequest, focusSagVehicle, startDispatchFocus, clearSagFocus
-	} from '$lib/stores/sagMap';
-	import { padSinglePoint } from '$lib/sagDockModel';
+	} from '#lib/stores/sagMap.js';
+	import { padSinglePoint } from '#lib/sagDockModel.js';
 
 	/** The desktop SAG dock's width, and the tablet rail's. Shared with the
 	 *  map-fit padding so a `flyToBounds` can never put a pickup behind it. */
@@ -139,7 +139,7 @@
 	let showNextStop = $state(true);
 
 	// Roster membership, net-open state and the roster scope now live in
-	// $lib/stores/rosterScope — the same scope the station list, inline search and
+	// #lib/stores/rosterScope — the same scope the station list, inline search and
 	// command palette read, so a filtered map can never disagree with them (#106).
 	let allStationsWithPosition = $derived(
 		$stationList.filter((s) => s.position)

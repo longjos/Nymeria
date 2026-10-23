@@ -1,6 +1,6 @@
 <script lang="ts">
-	import type { Message } from '$lib/types';
-	import { STATE_PENDING, STATE_SENT, STATE_ACKED, STATE_REJECTED, STATE_FAILED } from '$lib/types';
+	import type { Message } from '#lib/types.js';
+	import { STATE_PENDING, STATE_SENT, STATE_ACKED, STATE_REJECTED, STATE_FAILED } from '#lib/types.js';
 
 	let { message }: { message: Message } = $props();
 

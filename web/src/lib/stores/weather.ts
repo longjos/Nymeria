@@ -1,8 +1,8 @@
 import { writable, derived } from 'svelte/store';
 import { stations } from './stations';
-import { api } from '$lib/api';
-import type { WeatherReading, WeatherConfig, WeatherAlertThreshold, Station } from '$lib/types';
-import type { UnitSystem } from '$lib/units';
+import { api } from '#lib/api.js';
+import type { WeatherReading, WeatherConfig, WeatherAlertThreshold, Station } from '#lib/types.js';
+import type { UnitSystem } from '#lib/units.js';
 
 /** Stations that have weather data, derived from the main stations store. */
 export const weatherStations = derived(stations, ($stations) => {

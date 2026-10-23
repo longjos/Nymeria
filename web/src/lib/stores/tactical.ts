@@ -1,7 +1,7 @@
 import { writable, derived } from 'svelte/store';
-import { api } from '$lib/api';
-import { wsClient } from '$lib/stores/stations';
-import type { TacticalAlias } from '$lib/types';
+import { api } from '#lib/api.js';
+import { wsClient } from '#lib/stores/stations.js';
+import type { TacticalAlias } from '#lib/types.js';
 
 // Map of callsign → TacticalAlias
 export const tacticalAliases = writable<Map<string, TacticalAlias>>(new Map());

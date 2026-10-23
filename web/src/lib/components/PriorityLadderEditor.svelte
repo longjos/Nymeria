@@ -3,7 +3,7 @@
 	// fact 5) — this is the ONLY place a custom ladder is authored. Rank is
 	// derived from row order and never typed directly, so it can never gap
 	// or repeat (internal/netprofile.ValidateTiers's exact requirement).
-	import type { PriorityTier } from '$lib/types';
+	import type { PriorityTier } from '#lib/types.js';
 
 	let {
 		tiers, shipped, onChange

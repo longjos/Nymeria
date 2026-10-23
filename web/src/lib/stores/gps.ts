@@ -1,7 +1,7 @@
 import { writable, derived } from 'svelte/store';
-import { browser } from '$app/environment';
-import type { GpsStatus } from '$lib/types';
-import { api } from '$lib/api';
+import { browser } from '$app/env';
+import type { GpsStatus } from '#lib/types.js';
+import { api } from '#lib/api.js';
 import { wsClient } from './stations';
 
 const DISABLED: GpsStatus = { enabled: false, connected: false, fix: null, ageMillis: null, stale: true };

@@ -1,4 +1,4 @@
-import type { AnnotationCategory } from '$lib/types';
+import type { AnnotationCategory } from '#lib/types.js';
 
 export interface LocationTemplate {
 	name: string;

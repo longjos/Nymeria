@@ -1,9 +1,9 @@
 <script lang="ts">
-	import type { Station } from '$lib/types';
+	import type { Station } from '#lib/types.js';
 	import APRSIcon from './APRSIcon.svelte';
-	import { timeAgo, stationDisplayName, stationKey, formatCoord, formatSpeed } from '$lib/utils';
-	import { symbolInfo } from '$lib/symbols';
-	import { getTacticalAlias } from '$lib/stores/tactical';
+	import { timeAgo, stationDisplayName, stationKey, formatCoord, formatSpeed } from '#lib/utils.js';
+	import { symbolInfo } from '#lib/symbols.js';
+	import { getTacticalAlias } from '#lib/stores/tactical.js';
 
 	let {
 		station,

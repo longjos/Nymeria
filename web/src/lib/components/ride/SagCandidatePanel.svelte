@@ -15,16 +15,16 @@
 	//   3. NOT ONE LINE OF DISPATCH LOGIC IS REIMPLEMENTED. `Send` calls the
 	//      same `api.dispatchSagLeg` with the same payload SagBoard builds, and
 	//      the 409 seats/racks branches are that file's, verbatim.
-	import { api, ApiError } from '$lib/api';
-	import type { OverCapacityBody, SAGSlot } from '$lib/types';
-	import { sagFocusedRequest, sagCandidates, sagVehicleGeo, sagRoute, sagAvgSpeedMph, focusSagRequest, clearSagFocus } from '$lib/stores/sagMap';
-	import { rankCandidates, type RankResult, type SagCandidate } from '$lib/sagDispatch';
-	import { rideLadder, navigateZone, upsertSagRequest } from '$lib/stores/ride';
-	import { activeNetId } from '$lib/stores/netcontrol';
-	import { canOperate } from '$lib/stores/session';
-	import { secondClock } from '$lib/stores/clock';
-	import { showToast } from '$lib/stores/toast';
-	import { tierById, tierStyle, ageText } from '$lib/rideMeta';
+	import { api, ApiError } from '#lib/api.js';
+	import type { OverCapacityBody, SAGSlot } from '#lib/types.js';
+	import { sagFocusedRequest, sagCandidates, sagVehicleGeo, sagRoute, sagAvgSpeedMph, focusSagRequest, clearSagFocus } from '#lib/stores/sagMap.js';
+	import { rankCandidates, type RankResult, type SagCandidate } from '#lib/sagDispatch.js';
+	import { rideLadder, navigateZone, upsertSagRequest } from '#lib/stores/ride.js';
+	import { activeNetId } from '#lib/stores/netcontrol.js';
+	import { canOperate } from '#lib/stores/session.js';
+	import { secondClock } from '#lib/stores/clock.js';
+	import { showToast } from '#lib/stores/toast.js';
+	import { tierById, tierStyle, ageText } from '#lib/rideMeta.js';
 	import RideTierGlyph from '../RideTierGlyph.svelte';
 
 	const METERS_PER_MILE = 1609.344;

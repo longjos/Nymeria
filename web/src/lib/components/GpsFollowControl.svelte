@@ -1,5 +1,5 @@
 <script lang="ts">
-	import { gpsStatus, gpsFollow, gpsHasFix } from '$lib/stores/gps';
+	import { gpsStatus, gpsFollow, gpsHasFix } from '#lib/stores/gps.js';
 
 	let { oncenter }: { oncenter?: () => void } = $props();
 

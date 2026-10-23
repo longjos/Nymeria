@@ -1,6 +1,6 @@
 <script lang="ts">
-	import type { WxAlert } from '$lib/types';
-	import { api } from '$lib/api';
+	import type { WxAlert } from '#lib/types.js';
+	import { api } from '#lib/api.js';
 	import {
 		wxClock,
 		wxMinute,
@@ -14,13 +14,13 @@
 		unmuteAlert,
 		showAlertOnMap,
 		normalizeAlert
-	} from '$lib/stores/wxAlerts';
-	import { showToast } from '$lib/stores/toast';
-	import { tierMeta, zoneLabel, toastLine, compressAreaDesc, proximityLabel, proximityNote } from '$lib/wxAlertMeta';
-	import { clock, clockWithDay, clockWithSeconds, countdown, countdownTone, progress } from '$lib/wxAlertTime';
+	} from '#lib/stores/wxAlerts.js';
+	import { showToast } from '#lib/stores/toast.js';
+	import { tierMeta, zoneLabel, toastLine, compressAreaDesc, proximityLabel, proximityNote } from '#lib/wxAlertMeta.js';
+	import { clock, clockWithDay, clockWithSeconds, countdown, countdownTone, progress } from '#lib/wxAlertTime.js';
 	import WxTierGlyph from './WxTierGlyph.svelte';
 	import WxRelayComposer from './WxRelayComposer.svelte';
-	import { nwsBlocks, previewBlocks, type WxBlock } from '$lib/wxAlertText';
+	import { nwsBlocks, previewBlocks, type WxBlock } from '#lib/wxAlertText.js';
 
 	let { alert, onBack, onFlyTo }: { alert: WxAlert; onBack: () => void; onFlyTo?: (lat: number, lon: number) => void } = $props();
 

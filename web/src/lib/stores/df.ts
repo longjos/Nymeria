@@ -1,6 +1,6 @@
 import { derived } from 'svelte/store';
 import { stations } from './stations';
-import type { Station } from '$lib/types';
+import type { Station } from '#lib/types.js';
 
 /** Stations that have DF data and a position, derived from the main stations store. */
 export const dfStations = derived(stations, ($stations) => {

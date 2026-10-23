@@ -4,12 +4,12 @@
 	// sub-nav, five self-contained boards — mirrors SagPanel.svelte, which
 	// mirrors how NetControlPanel itself hands each top-level tab to one
 	// dedicated component.
-	import { courseStations, shutoffsList, plannedShutoffCount, stationsAwaitingSweep, courseListLoad, initCourseStore } from '$lib/stores/course';
-	import { courseState } from '$lib/stores/ride';
-	import { isNetNcs } from '$lib/stores/netProfile';
-	import { canOperate } from '$lib/stores/session';
-	import { activeNet } from '$lib/stores/netcontrol';
-	import { courseRequestedTab } from '$lib/stores/ui';
+	import { courseStations, shutoffsList, plannedShutoffCount, stationsAwaitingSweep, courseListLoad, initCourseStore } from '#lib/stores/course.js';
+	import { courseState } from '#lib/stores/ride.js';
+	import { isNetNcs } from '#lib/stores/netProfile.js';
+	import { canOperate } from '#lib/stores/session.js';
+	import { activeNet } from '#lib/stores/netcontrol.js';
+	import { courseRequestedTab } from '#lib/stores/ui.js';
 	import RestStopBoard from './RestStopBoard.svelte';
 	import ShutoffBoard from './ShutoffBoard.svelte';
 	import SweepTab from './SweepTab.svelte';

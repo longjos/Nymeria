@@ -9,7 +9,7 @@ import {
 	PHASE_ZONE_TEMPLATE, RIDE_GRID_COLUMNS, zoneSpanSum, tabletizeZones,
 	type RideZoneDescriptor, type RideZoneId
 } from './ride';
-import { RIDE_PHASE_ORDER } from '$lib/rideMeta';
+import { RIDE_PHASE_ORDER } from '#lib/rideMeta.js';
 
 function zone(id: RideZoneId, opts: Partial<RideZoneDescriptor> = {}): RideZoneDescriptor {
 	return {

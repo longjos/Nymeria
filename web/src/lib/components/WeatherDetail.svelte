@@ -1,13 +1,13 @@
 <script lang="ts">
-	import type { Station, WeatherReading, WeatherConfig } from '$lib/types';
-	import { weatherReadings, weatherReadingsLoading, loadWeatherReadings, isAlertTriggered } from '$lib/stores/weather';
+	import type { Station, WeatherReading, WeatherConfig } from '#lib/types.js';
+	import { weatherReadings, weatherReadingsLoading, loadWeatherReadings, isAlertTriggered } from '#lib/stores/weather.js';
 	import { formatTemp, formatWindSpeed, formatWindSpeedValue, formatPressure, formatRain,
 		convertTemp, convertWindSpeed, convertPressure, convertRain,
-		tempUnit, windUnit, pressureUnit, pressureLabel, rainUnit } from '$lib/units';
-	import type { UnitSystem } from '$lib/units';
+		tempUnit, windUnit, pressureUnit, pressureLabel, rainUnit } from '#lib/units.js';
+	import type { UnitSystem } from '#lib/units.js';
 	import WeatherChart from './WeatherChart.svelte';
 	import WxTierGlyph from './WxTierGlyph.svelte';
-	import { wxAlertsForStation, openWxAlert } from '$lib/stores/wxAlerts';
+	import { wxAlertsForStation, openWxAlert } from '#lib/stores/wxAlerts.js';
 
 	let {
 		station,

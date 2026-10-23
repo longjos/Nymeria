@@ -2,13 +2,13 @@
 	// Sweep reporting: last supported rider bib, estimated speed, and the
 	// position the ride status strip's largest tile is built from. History
 	// below the form so a shift-change operator can see the last few calls.
-	import { sweepPositionD, sweepReports, reportSweep } from '$lib/stores/course';
-	import { rideConfig } from '$lib/stores/netProfile';
-	import { activeCheckIns } from '$lib/stores/netcontrol';
-	import { ageState, ageText } from '$lib/rideMeta';
-	import { secondClock } from '$lib/stores/clock';
-	import { clock } from '$lib/wxAlertTime';
-	import { showToast } from '$lib/stores/toast';
+	import { sweepPositionD, sweepReports, reportSweep } from '#lib/stores/course.js';
+	import { rideConfig } from '#lib/stores/netProfile.js';
+	import { activeCheckIns } from '#lib/stores/netcontrol.js';
+	import { ageState, ageText } from '#lib/rideMeta.js';
+	import { secondClock } from '#lib/stores/clock.js';
+	import { clock } from '#lib/wxAlertTime.js';
+	import { showToast } from '#lib/stores/toast.js';
 
 	let { onFlyTo }: { onFlyTo?: (lat: number, lon: number, zoom?: number) => void } = $props();
 

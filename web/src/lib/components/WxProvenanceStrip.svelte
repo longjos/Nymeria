@@ -1,10 +1,10 @@
 <script lang="ts">
-	import { wxLinkStatus, wxClock } from '$lib/stores/wxAlerts';
-	import { canOperate } from '$lib/stores/session';
-	import { openSettings } from '$lib/stores/ui';
-	import { showToast } from '$lib/stores/toast';
-	import { linkStateText, clockWithSeconds } from '$lib/wxAlertTime';
-	import { api } from '$lib/api';
+	import { wxLinkStatus, wxClock } from '#lib/stores/wxAlerts.js';
+	import { canOperate } from '#lib/stores/session.js';
+	import { openSettings } from '#lib/stores/ui.js';
+	import { showToast } from '#lib/stores/toast.js';
+	import { linkStateText, clockWithSeconds } from '#lib/wxAlertTime.js';
+	import { api } from '#lib/api.js';
 
 	let open = $state(false);
 

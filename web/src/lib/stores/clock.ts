@@ -6,7 +6,7 @@
 // apart over a multi-hour shift; a single shared store makes that
 // structurally impossible.
 import { writable, derived } from 'svelte/store';
-import { browser } from '$app/environment';
+import { browser } from '$app/env';
 
 /** 1 s tick, started by startClock(). */
 export const secondClock = writable<number>(Date.now());

@@ -1,7 +1,7 @@
 import { writable, derived } from 'svelte/store';
 import { stations } from './stations';
-import { api } from '$lib/api';
-import type { TelemetryReading, TelemetryParams, Station } from '$lib/types';
+import { api } from '#lib/api.js';
+import type { TelemetryReading, TelemetryParams, Station } from '#lib/types.js';
 
 /** Stations that have telemetry data, derived from the main stations store. */
 export const telemetryStations = derived(stations, ($stations) => {

@@ -1,5 +1,5 @@
 <script lang="ts">
-	import { connectionState } from '$lib/stores/ui';
+	import { connectionState } from '#lib/stores/ui.js';
 
 	let state = $derived($connectionState);
 

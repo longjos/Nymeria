@@ -1,6 +1,6 @@
 <script lang="ts">
-	import { messagePath, beaconPath } from '$lib/stores/paths';
-	import { formatPathDisplay } from '$lib/aprsPath';
+	import { messagePath, beaconPath } from '#lib/stores/paths.js';
+	import { formatPathDisplay } from '#lib/aprsPath.js';
 
 	let {
 		kind,

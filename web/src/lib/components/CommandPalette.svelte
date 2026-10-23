@@ -1,19 +1,19 @@
 <script lang="ts">
-	import { api } from '$lib/api';
-	import { timeAgo, formatCoord } from '$lib/utils';
-	import { activeNet, checkIns, missions, notesByCheckIn, netAnnotations } from '$lib/stores/netcontrol';
-	import { categoryMeta } from '$lib/annotationMeta';
-	import { currentUser } from '$lib/stores/session';
+	import { api } from '#lib/api.js';
+	import { timeAgo, formatCoord } from '#lib/utils.js';
+	import { activeNet, checkIns, missions, notesByCheckIn, netAnnotations } from '#lib/stores/netcontrol.js';
+	import { categoryMeta } from '#lib/annotationMeta.js';
+	import { currentUser } from '#lib/stores/session.js';
 	import {
 		paletteQuery, paletteFilter, paletteResults, recentCallsigns, emptyStateData,
 		recordInteraction, noteCategoryMeta, severityMeta, statusColors, missionPriorityColors,
 		trafficMeta, stationCategoryMeta, paletteSeed,
 		type PaletteResult, type PaletteFilter
-	} from '$lib/stores/commandpalette';
-	import { rosterFilterActive, rosterScopedStations } from '$lib/stores/rosterScope';
-	import type { NoteCategory, NoteSeverity, TrafficType, StationCategory, NetMission, NetNote, PriorityTier } from '$lib/types';
-	import { rideLadder } from '$lib/stores/ride';
-	import { tierById, tierStyle } from '$lib/rideMeta';
+	} from '#lib/stores/commandpalette.js';
+	import { rosterFilterActive, rosterScopedStations } from '#lib/stores/rosterScope.js';
+	import type { NoteCategory, NoteSeverity, TrafficType, StationCategory, NetMission, NetNote, PriorityTier } from '#lib/types.js';
+	import { rideLadder } from '#lib/stores/ride.js';
+	import { tierById, tierStyle } from '#lib/rideMeta.js';
 
 	let {
 		onFlyTo,
@@ -366,7 +366,7 @@
 		} catch { /* ignore */ }
 	}
 
-	async function setLocationFromAnnotation(ann: import('$lib/types').Annotation) {
+	async function setLocationFromAnnotation(ann: import('#lib/types.js').Annotation) {
 		if (!net || !selected?.checkIn) return;
 		try {
 			let lat = 0, lon = 0;

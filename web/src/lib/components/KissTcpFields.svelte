@@ -1,13 +1,13 @@
 <script lang="ts">
-	import type { KissTncInfo, TransportStatus } from '$lib/types';
+	import type { KissTncInfo, TransportStatus } from '#lib/types.js';
 	import {
 		mergeTncOptions,
 		persistTncValue,
 		parseTncValue,
 		tncKey,
 		MANUAL_TNC_VALUE
-	} from '$lib/kissTncs';
-	import { kissLinkState, kissLinkLabel, kissLinkHint } from '$lib/serialPorts';
+	} from '#lib/kissTncs.js';
+	import { kissLinkState, kissLinkLabel, kissLinkHint } from '#lib/serialPorts.js';
 
 	let {
 		idPrefix,

@@ -6,9 +6,9 @@
 	// each rolled their own buckets ("sweep_passed" counted as open by one
 	// and as awaiting-sweep by the other) and reported different numbers for
 	// the same net at the same instant.
-	import type { StationView, CourseConfig } from '$lib/types';
-	import { rideStops } from '$lib/stores/ride';
-	import { STOP_GLYPHS } from '$lib/rideMeta';
+	import type { StationView, CourseConfig } from '#lib/types.js';
+	import { rideStops } from '#lib/stores/ride.js';
+	import { STOP_GLYPHS } from '#lib/rideMeta.js';
 	import StationRow from './StationRow.svelte';
 
 	let {

@@ -1,7 +1,7 @@
 import { writable, derived } from 'svelte/store';
-import type { Station } from '$lib/types';
-import { api } from '$lib/api';
-import { WSClient } from '$lib/ws';
+import type { Station } from '#lib/types.js';
+import { api } from '#lib/api.js';
+import { WSClient } from '#lib/ws.js';
 
 export const stations = writable<Map<string, Station>>(new Map());
 

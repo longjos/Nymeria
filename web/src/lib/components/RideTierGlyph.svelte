@@ -2,8 +2,8 @@
 	// Near-copy of WxTierGlyph.svelte for ride priority tiers. Style is keyed
 	// by RANK POSITION (see rideMeta.ts tierStyle), never by tier id/label —
 	// the five names are agency-configurable data.
-	import type { PriorityTier } from '$lib/types';
-	import { tierStyle } from '$lib/rideMeta';
+	import type { PriorityTier } from '#lib/types.js';
+	import { tierStyle } from '#lib/rideMeta.js';
 
 	let { tier, size = 16, title }: { tier: PriorityTier; size?: number; title?: string } = $props();
 

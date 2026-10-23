@@ -1,35 +1,35 @@
 <script lang="ts">
 	import { onMount, onDestroy } from 'svelte';
-	import type { Station, Annotation, NetCheckIn, NetMission } from '$lib/types';
-	import { categoryMeta } from '$lib/annotationMeta';
-	import { symbolInfo } from '$lib/symbols';
-	import { createStationIcon } from '$lib/aprs-icons';
-	import { createOwnPositionIcon } from '$lib/gps-icons';
-	import { formatGpsAge } from '$lib/stores/gps';
-	import { isMoving, computeDRCone, DR_UPDATE_INTERVAL_MS } from '$lib/deadReckoning';
-	import { stationDisplayName } from '$lib/utils';
-	import { getTacticalAlias } from '$lib/stores/tactical';
-	import { weatherUnits } from '$lib/stores/weather';
-	import { convertTemp, convertWindSpeed } from '$lib/units';
-	import type { UnitSystem } from '$lib/units';
-	import type { GpsFix, WxAlert, WxLinkState, WxMapMode, WxPolygonGeometry } from '$lib/types';
+	import type { Station, Annotation, NetCheckIn, NetMission } from '#lib/types.js';
+	import { categoryMeta } from '#lib/annotationMeta.js';
+	import { symbolInfo } from '#lib/symbols.js';
+	import { createStationIcon } from '#lib/aprs-icons.js';
+	import { createOwnPositionIcon } from '#lib/gps-icons.js';
+	import { formatGpsAge } from '#lib/stores/gps.js';
+	import { isMoving, computeDRCone, DR_UPDATE_INTERVAL_MS } from '#lib/deadReckoning.js';
+	import { stationDisplayName } from '#lib/utils.js';
+	import { getTacticalAlias } from '#lib/stores/tactical.js';
+	import { weatherUnits } from '#lib/stores/weather.js';
+	import { convertTemp, convertWindSpeed } from '#lib/units.js';
+	import type { UnitSystem } from '#lib/units.js';
+	import type { GpsFix, WxAlert, WxLinkState, WxMapMode, WxPolygonGeometry } from '#lib/types.js';
 	import { get } from 'svelte/store';
 	import L from 'leaflet';
 	import type { MeasureBand } from './NextStopPill.svelte';
-	import { readWxTokens, pathOptions, ringsOf, nearestVertex, chipHtml, drawOrder, fallbackLayers, pointInAlert, type WxTokens } from '$lib/wxAlertMap';
-	import { tierRank, zoneLabel } from '$lib/wxAlertMeta';
-	import { clock } from '$lib/wxAlertTime';
-	import { ensureZoneGeometry } from '$lib/stores/wxAlerts';
-	import { tierById, tierStyle, ageState, ageText } from '$lib/rideMeta';
+	import { readWxTokens, pathOptions, ringsOf, nearestVertex, chipHtml, drawOrder, fallbackLayers, pointInAlert, type WxTokens } from '#lib/wxAlertMap.js';
+	import { tierRank, zoneLabel } from '#lib/wxAlertMeta.js';
+	import { clock } from '#lib/wxAlertTime.js';
+	import { ensureZoneGeometry } from '#lib/stores/wxAlerts.js';
+	import { tierById, tierStyle, ageState, ageText } from '#lib/rideMeta.js';
 	// The one store this component reads rather than receives. The SAG props
 	// below are deliberately prop-driven (the page owns the sagMap stores), but
 	// the priority ladder is agency data with no place in that contract and a
 	// pickup pin cannot be drawn without it — the tier names are configurable,
 	// so no tier may ever be hard-coded here. Same precedent as weatherUnits.
-	import { rideLadder } from '$lib/stores/ride';
-	import type { PlacedRequest } from '$lib/stores/sagMap';
-	import type { RankResult, SagCandidate, SagVehicleGeo } from '$lib/sagDispatch';
-	import type { SagLegLines } from '$lib/stores/mapSettings';
+	import { rideLadder } from '#lib/stores/ride.js';
+	import type { PlacedRequest } from '#lib/stores/sagMap.js';
+	import type { RankResult, SagCandidate, SagVehicleGeo } from '#lib/sagDispatch.js';
+	import type { SagLegLines } from '#lib/stores/mapSettings.js';
 
 	const DEFAULT_ANN_COLOR = '#e63946';
 

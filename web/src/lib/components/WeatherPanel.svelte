@@ -1,10 +1,10 @@
 <script lang="ts">
-	import { weatherStations, weatherConfig, selectedWeatherStation, initWeatherStore } from '$lib/stores/weather';
-	import { stations } from '$lib/stores/stations';
-	import { wxPanelTab } from '$lib/stores/ui';
-	import { wxUnackedCount, wxLinkStatus, wxSelectedAlertId } from '$lib/stores/wxAlerts';
-	import { profileHasPanel } from '$lib/stores/netProfile';
-	import type { Station } from '$lib/types';
+	import { weatherStations, weatherConfig, selectedWeatherStation, initWeatherStore } from '#lib/stores/weather.js';
+	import { stations } from '#lib/stores/stations.js';
+	import { wxPanelTab } from '#lib/stores/ui.js';
+	import { wxUnackedCount, wxLinkStatus, wxSelectedAlertId } from '#lib/stores/wxAlerts.js';
+	import { profileHasPanel } from '#lib/stores/netProfile.js';
+	import type { Station } from '#lib/types.js';
 	import WeatherStationCard from './WeatherStationCard.svelte';
 	import WeatherDetail from './WeatherDetail.svelte';
 	import WxAlertPanel from './WxAlertPanel.svelte';

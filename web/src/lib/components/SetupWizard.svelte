@@ -1,8 +1,8 @@
 <script lang="ts">
 	import { onMount, onDestroy } from 'svelte';
-	import { api } from '$lib/api';
-	import { needsSetup } from '$lib/stores/session';
-	import type { SetupData } from '$lib/types';
+	import { api } from '#lib/api.js';
+	import { needsSetup } from '#lib/stores/session.js';
+	import type { SetupData } from '#lib/types.js';
 	import L from 'leaflet';
 	import FilterBuilder from './FilterBuilder.svelte';
 

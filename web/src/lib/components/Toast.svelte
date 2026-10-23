@@ -1,5 +1,5 @@
 <script lang="ts">
-	import { toasts, dismissToast, pauseToast, resumeToast, liveAnnouncement } from '$lib/stores/toast';
+	import { toasts, dismissToast, pauseToast, resumeToast, liveAnnouncement } from '#lib/stores/toast.js';
 	import { fly } from 'svelte/transition';
 	import WxTierGlyph from './WxTierGlyph.svelte';
 

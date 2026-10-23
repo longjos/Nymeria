@@ -4,11 +4,11 @@
 	// even for an operator (medical data may already be redacted server-side;
 	// this component never assumes otherwise).
 	import InterruptBanner from './InterruptBanner.svelte';
-	import type { InterruptItem } from '$lib/stores/interrupts';
-	import { rideActiveInterrupt, ackEmergency } from '$lib/stores/ride';
-	import { rideInterruptQueue } from '$lib/stores/interrupts';
-	import { tierStyle } from '$lib/rideMeta';
-	import { openNetControl, netControlRequestedTab } from '$lib/stores/ui';
+	import type { InterruptItem } from '#lib/stores/interrupts.js';
+	import { rideActiveInterrupt, ackEmergency } from '#lib/stores/ride.js';
+	import { rideInterruptQueue } from '#lib/stores/interrupts.js';
+	import { tierStyle } from '#lib/rideMeta.js';
+	import { openNetControl, netControlRequestedTab } from '#lib/stores/ui.js';
 
 	let item = $derived<InterruptItem | null>(
 		$rideActiveInterrupt

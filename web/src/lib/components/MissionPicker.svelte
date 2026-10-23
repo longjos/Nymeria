@@ -1,5 +1,5 @@
 <script lang="ts">
-	import type { NetMission } from '$lib/types';
+	import type { NetMission } from '#lib/types.js';
 
 	/**
 	 * Mirror of OperatorPicker for the other direction: pick a MISSION from an

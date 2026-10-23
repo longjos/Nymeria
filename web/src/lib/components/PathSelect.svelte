@@ -1,5 +1,5 @@
 <script lang="ts">
-	import { APRS_PATH_PRESETS, presetIdFor } from '$lib/aprsPath';
+	import { APRS_PATH_PRESETS, presetIdFor } from '#lib/aprsPath.js';
 
 	let {
 		id,

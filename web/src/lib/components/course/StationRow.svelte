@@ -4,13 +4,13 @@
 	// facts, never one toggle. ErrSweepNotPassed is surfaced here as an
 	// explanation ("can't close yet — here's why, here's the NCS override"),
 	// never as a bare failure toast.
-	import type { StationView, CourseConfig } from '$lib/types';
-	import { stationLadderMeta } from '$lib/courseMeta';
-	import { reportRidersClear, markSweepPassed, closeStationChecked, reopenStation } from '$lib/stores/course';
-	import { clock } from '$lib/wxAlertTime';
-	import { showToast } from '$lib/stores/toast';
-	import { netAnnotations } from '$lib/stores/netcontrol';
-	import { annotationCentroid } from '$lib/geo';
+	import type { StationView, CourseConfig } from '#lib/types.js';
+	import { stationLadderMeta } from '#lib/courseMeta.js';
+	import { reportRidersClear, markSweepPassed, closeStationChecked, reopenStation } from '#lib/stores/course.js';
+	import { clock } from '#lib/wxAlertTime.js';
+	import { showToast } from '#lib/stores/toast.js';
+	import { netAnnotations } from '#lib/stores/netcontrol.js';
+	import { annotationCentroid } from '#lib/geo.js';
 
 	let {
 		station, config, cleared, canOperate, isNcs, ncsCallsign, onFlyTo

@@ -1,7 +1,7 @@
 <script lang="ts">
-	import { wxLinkStatus, wxClock } from '$lib/stores/wxAlerts';
-	import { openWeather } from '$lib/stores/ui';
-	import { linkStateText } from '$lib/wxAlertTime';
+	import { wxLinkStatus, wxClock } from '#lib/stores/wxAlerts.js';
+	import { openWeather } from '#lib/stores/ui.js';
+	import { linkStateText } from '#lib/wxAlertTime.js';
 
 	let visible = $derived($wxLinkStatus.state === 'stale' || $wxLinkStatus.state === 'down');
 	let down = $derived($wxLinkStatus.state === 'down');

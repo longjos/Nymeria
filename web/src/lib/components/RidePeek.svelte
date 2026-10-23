@@ -3,9 +3,9 @@
 	// NOT a strip — exactly three facts: sweep mile, next shutoff countdown,
 	// and the highest open tier + count. Everything else is one tap into the
 	// situation tab, rendered vertically by RideSituation.svelte.
-	import { rideRail, rideSweep, rideShutoffs, rideTierCounts } from '$lib/stores/ride';
-	import { openRideSituation } from '$lib/stores/ui';
-	import { tierStyle } from '$lib/rideMeta';
+	import { rideRail, rideSweep, rideShutoffs, rideTierCounts } from '#lib/stores/ride.js';
+	import { openRideSituation } from '#lib/stores/ui.js';
+	import { tierStyle } from '#lib/rideMeta.js';
 	import RideTierGlyph from './RideTierGlyph.svelte';
 
 	let topTier = $derived($rideTierCounts[0] ?? null);

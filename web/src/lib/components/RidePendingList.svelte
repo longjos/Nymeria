@@ -3,11 +3,11 @@
 	// overdue-first then createdAt; Resolve/Cancel per row; "Add" is a
 	// two-field inline form (summary, sentTo) — a pending-reply, not a
 	// multi-field record, so it is allowed here per spec §5's exception list.
-	import { api, ApiError } from '$lib/api';
-	import { activeNetId } from '$lib/stores/netcontrol';
-	import { handoffOpen } from '$lib/stores/ride';
-	import { showToast } from '$lib/stores/toast';
-	import { currentUser } from '$lib/stores/session';
+	import { api, ApiError } from '#lib/api.js';
+	import { activeNetId } from '#lib/stores/netcontrol.js';
+	import { handoffOpen } from '#lib/stores/ride.js';
+	import { showToast } from '#lib/stores/toast.js';
+	import { currentUser } from '#lib/stores/session.js';
 
 	let { onClose }: { onClose: () => void } = $props();
 

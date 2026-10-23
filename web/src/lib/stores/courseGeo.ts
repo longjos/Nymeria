@@ -24,8 +24,8 @@ import {
 	type PlacedStop,
 	type RouteIndex,
 	type SequencedStop
-} from '$lib/routeDistance';
-import type { Annotation } from '$lib/types';
+} from '#lib/routeDistance.js';
+import type { Annotation } from '#lib/types.js';
 
 const METERS_PER_MILE = 1609.344;
 const routeIndexCache = new Map<string, RouteIndex>();

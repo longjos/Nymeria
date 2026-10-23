@@ -23,27 +23,27 @@
 	// `tabindex="-1"` and are reached by named keys, with the keys named in
 	// each item's screen-reader description.
 	import { tick } from 'svelte';
-	import { sagPlaced, sagUnplaced, sagVehicleGeo, sagCourseNotice, sagRoute, sagFocus, focusSagRequest, focusSagVehicle, startDispatchFocus, type PlacedRequest } from '$lib/stores/sagMap';
-	import { sagBoard, rideLadder, navigateZone, sagEditorSeed, upsertSagRequest } from '$lib/stores/ride';
-	import { activeNetId } from '$lib/stores/netcontrol';
-	import { sagFocusPresetOn } from '$lib/stores/mapSettings';
-	import { secondClock } from '$lib/stores/clock';
-	import { canOperate } from '$lib/stores/session';
-	import { showToast } from '$lib/stores/toast';
-	import { api, ApiError } from '$lib/api';
+	import { sagPlaced, sagUnplaced, sagVehicleGeo, sagCourseNotice, sagRoute, sagFocus, focusSagRequest, focusSagVehicle, startDispatchFocus, type PlacedRequest } from '#lib/stores/sagMap.js';
+	import { sagBoard, rideLadder, navigateZone, sagEditorSeed, upsertSagRequest } from '#lib/stores/ride.js';
+	import { activeNetId } from '#lib/stores/netcontrol.js';
+	import { sagFocusPresetOn } from '#lib/stores/mapSettings.js';
+	import { secondClock } from '#lib/stores/clock.js';
+	import { canOperate } from '#lib/stores/session.js';
+	import { showToast } from '#lib/stores/toast.js';
+	import { api, ApiError } from '#lib/api.js';
 	import {
 		tierById, tierStyle, ageText, ageState, enumLabel,
 		SAG_STATUS_LABELS, SAG_LEG_STATUS_LABELS, SAG_DISPOSITION_LABELS, SAG_LOCATION_KIND_LABELS,
 		SAG_BIKE_LABELS, SAG_BIKE_GLYPHS, SAG_BIKE_SHORT, BIKE_ORDER
-	} from '$lib/rideMeta';
+	} from '#lib/rideMeta.js';
 	import {
 		nextLegAction, legSkips, legExceptions, activeLegs, legStateSince, vehicleJobs,
 		unitLabel, sortVehicles, findUnit, jobExtent, allSagExtent, vehicleExtent,
 		loadDraft, loadPlan, loadSummary, deliverDraft,
 		type LatLon, type LegAction, type LoadLine, type VehicleJob
-	} from '$lib/sagDockModel';
-	import type { SagVehicleGeo } from '$lib/sagDispatch';
-	import type { SAGLeg, SAGLocation, SAGRequest } from '$lib/types';
+	} from '#lib/sagDockModel.js';
+	import type { SagVehicleGeo } from '#lib/sagDispatch.js';
+	import type { SAGLeg, SAGLocation, SAGRequest } from '#lib/types.js';
 	import RideTierGlyph from '../RideTierGlyph.svelte';
 	import ReasonDialog from '../ReasonDialog.svelte';
 

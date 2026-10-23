@@ -1,16 +1,16 @@
 <script lang="ts">
 	import { untrack } from 'svelte';
-	import { api } from '$lib/api';
-	import type { Annotation, AnnotationBatch, AnnotationCategory, Net } from '$lib/types';
-	import { netAnnotations, orderedCheckpoints } from '$lib/stores/netcontrol';
-	import { annotations, annotationList } from '$lib/stores/annotations';
-	import { categoryMeta, isSequenceable } from '$lib/annotationMeta';
-	import { eventTemplates, type LocationTemplate } from '$lib/data/locationTemplates';
-	import { showToast } from '$lib/stores/toast';
-	import { timeAgo } from '$lib/utils';
+	import { api } from '#lib/api.js';
+	import type { Annotation, AnnotationBatch, AnnotationCategory, Net } from '#lib/types.js';
+	import { netAnnotations, orderedCheckpoints } from '#lib/stores/netcontrol.js';
+	import { annotations, annotationList } from '#lib/stores/annotations.js';
+	import { categoryMeta, isSequenceable } from '#lib/annotationMeta.js';
+	import { eventTemplates, type LocationTemplate } from '#lib/data/locationTemplates.js';
+	import { showToast } from '#lib/stores/toast.js';
+	import { timeAgo } from '#lib/utils.js';
 	import BatchRemoveDialog from './BatchRemoveDialog.svelte';
-	import { groupByBatch } from '$lib/annotationBatches';
-	import { planFocusReveal, revealAnnotation, type RevealDeps } from '$lib/annotationFocus';
+	import { groupByBatch } from '#lib/annotationBatches.js';
+	import { planFocusReveal, revealAnnotation, type RevealDeps } from '#lib/annotationFocus.js';
 
 	let {
 		net,
@@ -162,7 +162,7 @@
 	});
 
 	// Focused annotation highlight — same reveal/hold contract as
-	// AnnotationPanel, via the shared $lib/annotationFocus helper. This list
+	// AnnotationPanel, via the shared #lib/annotationFocus helper. This list
 	// has no per-row collapse and no category/batch filter of its own, so the
 	// plan is always a no-op here; the call stays for structural parity with
 	// AnnotationPanel rather than because it does anything.

@@ -1,5 +1,5 @@
 import { writable, type Readable } from 'svelte/store';
-import { api } from '$lib/api';
+import { api } from '#lib/api.js';
 
 /** Whether the server has what3words enabled and an API key configured.
  * Loaded once at boot (Observer+ endpoint, so it works for every logged-in

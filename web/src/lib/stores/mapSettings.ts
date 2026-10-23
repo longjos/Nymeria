@@ -1,6 +1,6 @@
 import { writable } from 'svelte/store';
-import { browser } from '$app/environment';
-import type { WxMapMode } from '$lib/types';
+import { browser } from '$app/env';
+import type { WxMapMode } from '#lib/types.js';
 
 export type StationAgeFilter = 'all' | '15m' | '30m' | '1h' | '2h' | '4h' | '8h';
 export type TrackDuration = '30m' | '1h' | '2h' | '5h' | '12h' | '24h' | 'all';

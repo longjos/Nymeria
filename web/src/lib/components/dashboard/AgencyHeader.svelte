@@ -1,6 +1,6 @@
 <script lang="ts">
-	import type { Net, NetCheckIn } from '$lib/types';
-	import { humanName } from '$lib/agencyTranslations';
+	import type { Net, NetCheckIn } from '#lib/types.js';
+	import { humanName } from '#lib/agencyTranslations.js';
 
 	let {
 		net,

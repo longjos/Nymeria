@@ -1,5 +1,5 @@
 <script lang="ts">
-	import { login, currentUser, isPending, isDenied, userStatus } from '$lib/stores/session';
+	import { login, currentUser, isPending, isDenied, userStatus } from '#lib/stores/session.js';
 
 	let name = $state('');
 	let error = $state('');

@@ -1,13 +1,13 @@
 <script lang="ts">
-	import { orderedCheckpoints, progressElements, hasCheckpoints } from '$lib/stores/netcontrol';
-	import { statusColor } from '$lib/annotationMeta';
-	import { timeAgo } from '$lib/utils';
+	import { orderedCheckpoints, progressElements, hasCheckpoints } from '#lib/stores/netcontrol.js';
+	import { statusColor } from '#lib/annotationMeta.js';
+	import { timeAgo } from '#lib/utils.js';
 	import CourseRailView from './CourseRailView.svelte';
-	import { rideRailModel } from '$lib/stores/courseRoster';
-	import { secondClock } from '$lib/stores/clock';
-	import { activeCheckIns } from '$lib/stores/netcontrol';
-	import { courseState, rideHasCourse, markSweepPassed } from '$lib/stores/ride';
-	import { courseStopMiles } from '$lib/stores/courseGeo';
+	import { rideRailModel } from '#lib/stores/courseRoster.js';
+	import { secondClock } from '#lib/stores/clock.js';
+	import { activeCheckIns } from '#lib/stores/netcontrol.js';
+	import { courseState, rideHasCourse, markSweepPassed } from '#lib/stores/ride.js';
+	import { courseStopMiles } from '#lib/stores/courseGeo.js';
 	import SweepPassedConfirm from './SweepPassedConfirm.svelte';
 
 	let {

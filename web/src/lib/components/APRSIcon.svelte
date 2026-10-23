@@ -1,6 +1,6 @@
 <script lang="ts">
-	import type { APRSSymbol } from '$lib/types';
-	import { symbolInfo, symbolChar } from '$lib/symbols';
+	import type { APRSSymbol } from '#lib/types.js';
+	import { symbolInfo, symbolChar } from '#lib/symbols.js';
 
 	let { symbol, size = 24 }: { symbol: APRSSymbol; size?: number } = $props();
 

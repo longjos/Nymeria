@@ -3,11 +3,11 @@
 	// privacy, the priority ladder, and course closure policy. Replaces the
 	// panel content the same way WxWatchAreaSheet.svelte does (back button,
 	// not a floating dialog) — same mount/close convention as that sheet.
-	import { api } from '$lib/api';
-	import { showToast } from '$lib/stores/toast';
-	import { saveRideConfig, effectiveTiers } from '$lib/stores/netProfile';
-	import { saveCourseConfig } from '$lib/stores/course';
-	import type { NetRideConfig, CourseConfig, RideRoute, PriorityTier } from '$lib/types';
+	import { api } from '#lib/api.js';
+	import { showToast } from '#lib/stores/toast.js';
+	import { saveRideConfig, effectiveTiers } from '#lib/stores/netProfile.js';
+	import { saveCourseConfig } from '#lib/stores/course.js';
+	import type { NetRideConfig, CourseConfig, RideRoute, PriorityTier } from '#lib/types.js';
 	import PriorityLadderEditor from './PriorityLadderEditor.svelte';
 
 	let { netId, onClose }: { netId: string; onClose: () => void } = $props();

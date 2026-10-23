@@ -1,17 +1,17 @@
 <script lang="ts">
-	import { timeAgo } from '$lib/utils';
-	import { api } from '$lib/api';
-	import type { NetCheckIn, NetMission } from '$lib/types';
+	import { timeAgo } from '#lib/utils.js';
+	import { api } from '#lib/api.js';
+	import type { NetCheckIn, NetMission } from '#lib/types.js';
 	import {
 		activeNet, checkIns,
 		attentionItems, activeMissions, recentSignificantEvents,
 		pinnedNotes, hasCheckpoints, ATTENTION_REASON_ORDER,
-	} from '$lib/stores/netcontrol';
-	import type { AttentionItem } from '$lib/stores/netcontrol';
-	import { wxInAreaAlerts, wxIsAcked, wxMuted, wxLinkStatus, wxWeatherAttentionItems, ackAlert, openWxAlert } from '$lib/stores/wxAlerts';
-	import { tierRank } from '$lib/wxAlertMeta';
-	import { clock } from '$lib/wxAlertTime';
-	import { rideMode } from '$lib/stores/ride';
+	} from '#lib/stores/netcontrol.js';
+	import type { AttentionItem } from '#lib/stores/netcontrol.js';
+	import { wxInAreaAlerts, wxIsAcked, wxMuted, wxLinkStatus, wxWeatherAttentionItems, ackAlert, openWxAlert } from '#lib/stores/wxAlerts.js';
+	import { tierRank } from '#lib/wxAlertMeta.js';
+	import { clock } from '#lib/wxAlertTime.js';
+	import { rideMode } from '#lib/stores/ride.js';
 	import RouteProgressBar from './RouteProgressBar.svelte';
 	import RideSituation from './RideSituation.svelte';
 	import WxAlertRow from './WxAlertRow.svelte';

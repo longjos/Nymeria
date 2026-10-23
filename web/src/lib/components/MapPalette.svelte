@@ -4,9 +4,9 @@
 		AGE_FILTER_LABELS, TRACK_DURATION_LABELS, WX_MAP_MODE_LABELS, SAG_LEG_LINE_LABELS,
 		sagFocusPresetOn, toggleSagFocusPreset,
 		type StationAgeFilter, type TrackDuration, type SagLegLines
-	} from '$lib/stores/mapSettings';
-	import { rideMode, sagBoard, rideSagSummary } from '$lib/stores/ride';
-	import type { WxMapMode } from '$lib/types';
+	} from '#lib/stores/mapSettings.js';
+	import { rideMode, sagBoard, rideSagSummary } from '#lib/stores/ride.js';
+	import type { WxMapMode } from '#lib/types.js';
 
 	let {
 		filteredCount = 0,

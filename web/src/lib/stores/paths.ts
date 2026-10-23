@@ -1,5 +1,5 @@
 import { writable } from 'svelte/store';
-import { api } from '$lib/api';
+import { api } from '#lib/api.js';
 import { wsClient } from './stations';
 
 const DEFAULT_PATH = 'WIDE1-1,WIDE2-1';

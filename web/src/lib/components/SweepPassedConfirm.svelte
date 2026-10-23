@@ -11,8 +11,8 @@
 	// when the stops do not all fit on this screen — a short course never
 	// shows an empty box to type into.
 	import RideDialog from './ride/RideDialog.svelte';
-	import { sweepCandidates, filterStops } from '$lib/sweepPick';
-	import type { StationView } from '$lib/types';
+	import { sweepCandidates, filterStops } from '#lib/sweepPick.js';
+	import type { StationView } from '#lib/types.js';
 
 	let {
 		stations,

@@ -3,20 +3,20 @@
 // canonical wire contract in BUILD-PLAN.md §2, not spec-frontend.md's own §1
 // (superseded field names).
 import { writable, derived, get } from 'svelte/store';
-import { browser } from '$app/environment';
-import { api } from '$lib/api';
+import { browser } from '$app/env';
+import { api } from '#lib/api.js';
 import { wsClient } from './stations';
 import { activeNet, checkIns } from './netcontrol';
 import type { AttentionItem } from './netcontrol';
 import { currentUser, canAdmin } from './session';
 import { showToast, announce } from './toast';
 import { openWeather, wxPanelTab, panelMode, sheetState } from './ui';
-import type { WxAlert, WxLinkStatus, WxFootprintSummary, WxEffectivePolicy, WxPolygonGeometry, WxNetAck, WxAffects } from '$lib/types';
-import { tierRank, toastLine, sortAlerts } from '$lib/wxAlertMeta';
-import { clock } from '$lib/wxAlertTime';
+import type { WxAlert, WxLinkStatus, WxFootprintSummary, WxEffectivePolicy, WxPolygonGeometry, WxNetAck, WxAffects } from '#lib/types.js';
+import { tierRank, toastLine, sortAlerts } from '#lib/wxAlertMeta.js';
+import { clock } from '#lib/wxAlertTime.js';
 import { secondClock, minuteClock, startClock } from './clock';
 
-// Promoted to $lib/stores/clock.ts (one ticking interval app-wide). Local
+// Promoted to #lib/stores/clock.ts (one ticking interval app-wide). Local
 // const bindings (not a bare `export { x as y }`, which creates no local
 // name) so derived stores further down this same module — wxExpiredAlerts —
 // can keep referencing `wxMinute`, while WxInterruptBanner, WxAlertPanel,

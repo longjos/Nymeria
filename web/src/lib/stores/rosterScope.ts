@@ -2,7 +2,7 @@ import { derived } from 'svelte/store';
 import { activeNet, activeCheckIns, operatorsWithPosition } from './netcontrol';
 import { stationList } from './stations';
 import { mapSettings } from './mapSettings';
-import { stationKey } from '$lib/utils';
+import { stationKey } from '#lib/utils.js';
 
 /**
  * "Roster only" is an APP-WIDE scope, not a map setting (#106). The toggle lives

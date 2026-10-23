@@ -1,11 +1,11 @@
 <script lang="ts">
 	import { onMount } from 'svelte';
-	import { api, ApiError } from '$lib/api';
-	import { timeAgo } from '$lib/utils';
-	import { openICS309, openSettings, missionDraftBackup, netControlRequestedTab, courseRequestedTab } from '$lib/stores/ui';
+	import { api, ApiError } from '#lib/api.js';
+	import { timeAgo } from '#lib/utils.js';
+	import { openICS309, openSettings, missionDraftBackup, netControlRequestedTab, courseRequestedTab } from '#lib/stores/ui.js';
 	import { get } from 'svelte/store';
-	import { canAdmin } from '$lib/stores/session';
-	import type { Net, NetCheckIn, NetMission, NetEvent, NetNote, NetSummary, OperatorStatus, TrafficType, Annotation, NoteCategory, NoteSeverity, StationCategory, W3WSuggestion } from '$lib/types';
+	import { canAdmin } from '#lib/stores/session.js';
+	import type { Net, NetCheckIn, NetMission, NetEvent, NetNote, NetSummary, OperatorStatus, TrafficType, Annotation, NoteCategory, NoteSeverity, StationCategory, W3WSuggestion } from '#lib/types.js';
 	import {
 		activeNet, checkIns, missions, timeline, notes,
 		sortedCheckIns, activeCheckIns,
@@ -18,41 +18,41 @@
 		hoveredCheckInId,
 		netAnnotations, annotationsByName, netLocationAnnotations,
 		orderedCheckpoints
-	} from '$lib/stores/netcontrol';
-	import { annotationList } from '$lib/stores/annotations';
+	} from '#lib/stores/netcontrol.js';
+	import { annotationList } from '#lib/stores/annotations.js';
 	import OperatorPicker from './OperatorPicker.svelte';
 	import MissionPicker from './MissionPicker.svelte';
 	import MissionOpChip from './MissionOpChip.svelte';
-	import { categoryMeta, isTerminalStatus } from '$lib/annotationMeta';
-	import { stationCategoryMeta } from '$lib/stationCategoryMeta';
-	import { parseCommand, getModeIndicator, getAutocompleteContext, type ParsedCommand, type AutocompleteContext } from '$lib/commandParser';
-	import { showToast } from '$lib/stores/toast';
-	import { formatCoord } from '$lib/utils';
-	import { nearestAnnotation, annotationCentroid, annotationPickPoint } from '$lib/geo';
+	import { categoryMeta, isTerminalStatus } from '#lib/annotationMeta.js';
+	import { stationCategoryMeta } from '#lib/stationCategoryMeta.js';
+	import { parseCommand, getModeIndicator, getAutocompleteContext, type ParsedCommand, type AutocompleteContext } from '#lib/commandParser.js';
+	import { showToast } from '#lib/stores/toast.js';
+	import { formatCoord } from '#lib/utils.js';
+	import { nearestAnnotation, annotationCentroid, annotationPickPoint } from '#lib/geo.js';
 	import {
 		isFullAddress, looksLikePartial, formatWords, w3wLocationLabel,
 		isW3WLocation, extractWords, w3wSuffix, cachedReverse, putReverse
-	} from '$lib/w3w';
-	import { w3wConfigured } from '$lib/stores/w3w';
+	} from '#lib/w3w.js';
+	import { w3wConfigured } from '#lib/stores/w3w.js';
 	import {
 		detectFormat, parsePlusCode, parseMGRS, isGeocodeError,
 		formatMGRSGroups, formatPlusCode, formatMGRS,
 		geocodeLocationLabel, extractGeocode,
 		type GeocodeParse, type GeocodeResult, type GeocodeErrorCode, type GeocodeFormat, type RefPoint
-	} from '$lib/geocodes';
-	import { gpsStatus } from '$lib/stores/gps';
+	} from '#lib/geocodes.js';
+	import { gpsStatus } from '#lib/stores/gps.js';
 	import LocationManager from './LocationManager.svelte';
 	import SituationBoard from './SituationBoard.svelte';
 	import SagPanel from './ride/SagPanel.svelte';
-	import { rideMode, rideOpenItems, sagComposerSeed } from '$lib/stores/ride';
+	import { rideMode, rideOpenItems, sagComposerSeed } from '#lib/stores/ride.js';
 	import WxWatchAreaSheet from './WxWatchAreaSheet.svelte';
 	import WxTierGlyph from './WxTierGlyph.svelte';
-	import { wxActiveWarningIn, wxUnackedWarningsIn, wxIsNcs, openWxAlert, weatherCheckInIds, wxClock } from '$lib/stores/wxAlerts';
-	import { clock, countdown } from '$lib/wxAlertTime';
+	import { wxActiveWarningIn, wxUnackedWarningsIn, wxIsNcs, openWxAlert, weatherCheckInIds, wxClock } from '#lib/stores/wxAlerts.js';
+	import { clock, countdown } from '#lib/wxAlertTime.js';
 	import CoursePanel from './course/CoursePanel.svelte';
 	import RideConfigSheet from './RideConfigSheet.svelte';
-	import { netProfiles, loadNetProfiles } from '$lib/stores/netProfile';
-	import { closeStationChecked, plannedShutoffCount, stationsAwaitingSweep } from '$lib/stores/course';
+	import { netProfiles, loadNetProfiles } from '#lib/stores/netProfile.js';
+	import { closeStationChecked, plannedShutoffCount, stationsAwaitingSweep } from '#lib/stores/course.js';
 
 	let {
 		onFlyTo,
@@ -150,7 +150,7 @@
 	// Command palette (enhanced quick-add)
 	let quickAddInput = $state('');
 	let quickAddRef = $state<HTMLInputElement>();
-	let searchResults = $state<import('$lib/types').Station[]>([]);
+	let searchResults = $state<import('#lib/types.js').Station[]>([]);
 	let searchTimeout: ReturnType<typeof setTimeout>;
 	let cmdParsed = $state<ParsedCommand>({ type: 'unknown', raw: '' });
 	let cmdModeLabel = $state('');

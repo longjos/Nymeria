@@ -1,6 +1,6 @@
 <script lang="ts">
-	import { packets, filteredPackets, inspectorPaused, packetTypeFilter, callsignFilter, sourceFilter, totalPacketCount, clearPackets } from '$lib/stores/packets';
-	import type { APRSPacketType, RawPacket } from '$lib/types';
+	import { packets, filteredPackets, inspectorPaused, packetTypeFilter, callsignFilter, sourceFilter, totalPacketCount, clearPackets } from '#lib/stores/packets.js';
+	import type { APRSPacketType, RawPacket } from '#lib/types.js';
 	import PacketDetail from './PacketDetail.svelte';
 
 	let expandedId = $state<string | null>(null);

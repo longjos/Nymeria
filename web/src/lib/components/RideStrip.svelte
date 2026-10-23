@@ -4,9 +4,9 @@
 	// (the map's x-axis); Row B is eight zone tiles. The height NEVER grows —
 	// it is a contract every phase's zone set must fit inside.
 	import CourseRailView from './CourseRailView.svelte';
-	import { rideRailModel } from '$lib/stores/courseRoster';
-	import { courseStopMiles } from '$lib/stores/courseGeo';
-	import { secondClock } from '$lib/stores/clock';
+	import { rideRailModel } from '#lib/stores/courseRoster.js';
+	import { courseStopMiles } from '#lib/stores/courseGeo.js';
+	import { secondClock } from '#lib/stores/clock.js';
 	import RideZone from './RideZone.svelte';
 	import PhaseChip from './PhaseChip.svelte';
 	import PhaseChangeDialog from './PhaseChangeDialog.svelte';
@@ -14,10 +14,10 @@
 	import {
 		rideZones, rideRail, ridePhase, rideEmergency, rideHasCourse, rideCourseGap, rideAnnouncement, courseState,
 		navigateZone, ackEmergency, markSweepPassed, registerRideFlyTo, rideViewportClass, zoneSpanSum
-	} from '$lib/stores/ride';
-	import { wxIsNcs } from '$lib/stores/wxAlerts';
-	import { openAnnotations } from '$lib/stores/ui';
-	import { activeCheckIns } from '$lib/stores/netcontrol';
+	} from '#lib/stores/ride.js';
+	import { wxIsNcs } from '#lib/stores/wxAlerts.js';
+	import { openAnnotations } from '#lib/stores/ui.js';
+	import { activeCheckIns } from '#lib/stores/netcontrol.js';
 
 	/** A roster member on the rail -> the map. The rail's pips carry no
 	 *  coordinates of their own; the check-in is the one source. */

@@ -4,7 +4,7 @@
 	// inner <button> via `children`, and a button inside a button is a Svelte 5
 	// build error. The whole tile is a `div role="button"` instead.
 	import type { Snippet } from 'svelte';
-	import type { ZoneLine, RideZoneId } from '$lib/stores/ride';
+	import type { ZoneLine, RideZoneId } from '#lib/stores/ride.js';
 
 	let {
 		id,

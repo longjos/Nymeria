@@ -1,6 +1,6 @@
 import { writable, derived } from 'svelte/store';
-import type { Bulletin, Message } from '$lib/types';
-import { api } from '$lib/api';
+import type { Bulletin, Message } from '#lib/types.js';
+import { api } from '#lib/api.js';
 import { wsClient } from './stations';
 
 export const bulletins = writable<Bulletin[]>([]);

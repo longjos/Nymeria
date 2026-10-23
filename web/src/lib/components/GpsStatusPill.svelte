@@ -1,5 +1,5 @@
 <script lang="ts">
-	import { gpsStatus, gpsAgeMs, formatGpsAge } from '$lib/stores/gps';
+	import { gpsStatus, gpsAgeMs, formatGpsAge } from '#lib/stores/gps.js';
 
 	let status = $derived($gpsStatus);
 	let fix = $derived(status.fix);

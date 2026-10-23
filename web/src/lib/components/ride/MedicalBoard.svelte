@@ -8,14 +8,14 @@
 	// 6 / GET ?status=open is always redacted) — PatientName is never present
 	// and Bib may be blanked. Both are handled as the normal case, not an
 	// error: a bib-less, name-less row renders exactly like any other.
-	import { api, ApiError } from '$lib/api';
-	import type { MedicalNotification } from '$lib/types';
-	import { medicalOpen, rideLadder, upsertMedical } from '$lib/stores/ride';
-	import { activeNetId } from '$lib/stores/netcontrol';
-	import { canOperate } from '$lib/stores/session';
-	import { secondClock } from '$lib/stores/clock';
-	import { showToast } from '$lib/stores/toast';
-	import { tierById, ageText, MEDICAL_STATUS_LABELS, MEDICAL_DESTINATION_LABELS } from '$lib/rideMeta';
+	import { api, ApiError } from '#lib/api.js';
+	import type { MedicalNotification } from '#lib/types.js';
+	import { medicalOpen, rideLadder, upsertMedical } from '#lib/stores/ride.js';
+	import { activeNetId } from '#lib/stores/netcontrol.js';
+	import { canOperate } from '#lib/stores/session.js';
+	import { secondClock } from '#lib/stores/clock.js';
+	import { showToast } from '#lib/stores/toast.js';
+	import { tierById, ageText, MEDICAL_STATUS_LABELS, MEDICAL_DESTINATION_LABELS } from '#lib/rideMeta.js';
 	import RideTierGlyph from '../RideTierGlyph.svelte';
 	import MedicalComposer from './MedicalComposer.svelte';
 	import ReasonDialog from '../ReasonDialog.svelte';

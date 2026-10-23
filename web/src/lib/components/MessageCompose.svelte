@@ -1,6 +1,6 @@
 <script lang="ts">
-	import { sendMessage } from '$lib/stores/messages';
-	import { messagePath } from '$lib/stores/paths';
+	import { sendMessage } from '#lib/stores/messages.js';
+	import { messagePath } from '#lib/stores/paths.js';
 	import PathSelect from './PathSelect.svelte';
 
 	let { to, onSent }: { to: string; onSent?: () => void } = $props();

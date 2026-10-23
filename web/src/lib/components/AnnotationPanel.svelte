@@ -1,25 +1,25 @@
 <script lang="ts">
 	import { untrack } from 'svelte';
-	import { api } from '$lib/api';
-	import { canPlot, canOperate } from '$lib/stores/session';
-	import { beaconPath } from '$lib/stores/paths';
-	import { formatPathDisplay } from '$lib/aprsPath';
+	import { api } from '#lib/api.js';
+	import { canPlot, canOperate } from '#lib/stores/session.js';
+	import { beaconPath } from '#lib/stores/paths.js';
+	import { formatPathDisplay } from '#lib/aprsPath.js';
 	import PathHint from './PathHint.svelte';
 	import CloseButton from './CloseButton.svelte';
-	import { annotationList, annotationBatches } from '$lib/stores/annotations';
-	import { showToast } from '$lib/stores/toast';
+	import { annotationList, annotationBatches } from '#lib/stores/annotations.js';
+	import { showToast } from '#lib/stores/toast.js';
 	import BatchRemoveDialog from './BatchRemoveDialog.svelte';
-	import { missions as netMissions, activeNet } from '$lib/stores/netcontrol';
-	import { timeAgo } from '$lib/utils';
+	import { missions as netMissions, activeNet } from '#lib/stores/netcontrol.js';
+	import { timeAgo } from '#lib/utils.js';
 	import type {
 		Annotation, AnnotationBatch, AnnotationCategory, AnnotationPriority, AnnotationTemplate,
-	} from '$lib/types';
+	} from '#lib/types.js';
 	import {
 		categoryMeta, statusMeta, priorityMeta, allCategories,
 		statusLabelToValue, statusValueToLabel, statusColor, isTerminalStatus,
 		geometryMeta, canTransmitViaAPRS, categoryCanTransmitViaAPRS,
-	} from '$lib/annotationMeta';
-	import { planFocusReveal, revealAnnotation, type RevealDeps } from '$lib/annotationFocus';
+	} from '#lib/annotationMeta.js';
+	import { planFocusReveal, revealAnnotation, type RevealDeps } from '#lib/annotationFocus.js';
 
 	let {
 		onFlyToAnnotation,
@@ -147,7 +147,7 @@
 		return rows;
 	}
 
-	// Focused annotation highlight — see $lib/annotationFocus for the shared
+	// Focused annotation highlight — see #lib/annotationFocus for the shared
 	// reveal/hold contract this and LocationManager both implement.
 	let highlightedId = $state<string | null>(null);
 	let holdTimer: ReturnType<typeof setTimeout> | null = null;

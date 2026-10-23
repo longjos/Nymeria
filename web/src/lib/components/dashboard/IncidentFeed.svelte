@@ -1,6 +1,6 @@
 <script lang="ts">
-	import type { NetMission, NetCheckIn } from '$lib/types';
-	import { priorityLabels, missionStatusLabels, humanName } from '$lib/agencyTranslations';
+	import type { NetMission, NetCheckIn } from '#lib/types.js';
+	import { priorityLabels, missionStatusLabels, humanName } from '#lib/agencyTranslations.js';
 
 	let {
 		missions,

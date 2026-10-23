@@ -11,11 +11,11 @@
 //     every consumer (RideConfigSheet, the ladder editor, the strip) sees
 //     the new effective ladder without a reload.
 import { writable, derived, get } from 'svelte/store';
-import { api } from '$lib/api';
-import type { NetProfile, NetRideConfig } from '$lib/types';
+import { api } from '#lib/api.js';
+import type { NetProfile, NetRideConfig } from '#lib/types.js';
 import { rideProfile, rideMode, rideLadder } from './ride';
 import { wxIsNcs } from './wxAlerts';
-import { hasPanel, visibleModesFor } from '$lib/profilePanels';
+import { hasPanel, visibleModesFor } from '#lib/profilePanels.js';
 
 /** GET /api/net-profiles — the whole registry, for the create-net form's
  * Profile select. Loaded lazily (once) when that form opens. */

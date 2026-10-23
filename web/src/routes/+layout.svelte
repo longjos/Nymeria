@@ -6,7 +6,7 @@
 	// with no background, padding or border at all.
 	import 'leaflet/dist/leaflet.css';
 	import '../app.css';
-	import Toast from '$lib/components/Toast.svelte';
+	import Toast from '#lib/components/Toast.svelte';
 
 	let { children } = $props();
 </script>

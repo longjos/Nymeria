@@ -1,6 +1,6 @@
 import { writable } from 'svelte/store';
-import type { TransportStatus } from '$lib/types';
-import { api } from '$lib/api';
+import type { TransportStatus } from '#lib/types.js';
+import { api } from '#lib/api.js';
 import { wsClient } from './stations';
 
 export const transports = writable<TransportStatus[]>([]);

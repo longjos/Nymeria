@@ -17,8 +17,8 @@ import { courseState, ridePhase } from './ride';
 import { courseRoute } from './courseGeo';
 import { railIncidentPins } from './sagMap';
 import { wxInAreaAlerts } from './wxAlerts';
-import { buildRailModel, type RailModel } from '$lib/railModel';
-import type { RosterMemory } from '$lib/rosterCourse';
+import { buildRailModel, type RailModel } from '#lib/railModel.js';
+import type { RosterMemory } from '#lib/rosterCourse.js';
 
 /** Last unambiguous placement per check-in. Cleared when the net changes, so
  *  one event's positions can never steer the next event's projection. */

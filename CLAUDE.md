@@ -79,13 +79,14 @@
 ## Gotchas
 - `gh issue view N` fails with GraphQL error (Projects Classic deprecation) — always use `gh issue view N --json title,body,state`
 - Port 8080 typically in use on this workstation — always test with `--listen :9090`
-- pnpm 10.x `approve-builds` warning for esbuild is benign, doesn't block builds
+- pnpm 12 fails `pnpm install` on unapproved build scripts; approvals live in `web/pnpm-workspace.yaml` (`allowBuilds`), added with `pnpm approve-builds <pkg>`. pnpm version is pinned by `packageManager` in `web/package.json` (CI and Docker corepack read it)
 - `web/build/` must exist before Go compiles (go:embed directive)
 - Wiki submodule in `wiki/` has the full project spec
 - SQLite schema version: after bumping `currentSchemaVersion` in `sqlite.go`, update ALL assertions in `sqlite_test.go` that check the version number
 - Weather data flows through existing station events — WebSocket broadcasts include it automatically, no separate weather WebSocket messages needed
 - Wiki submodule push order: push `wiki/` submodule first (`cd wiki && git push origin master`), then push main repo — `git push origin main` fails if submodule ref doesn't exist on remote
 - Svelte 5: `<button>` inside `<button>` is a build error — use `<div role="button" tabindex="0">` for outer interactive containers that need inner buttons
+- SvelteKit 3: config lives in `web/vite.config.ts` (`sveltekit({...})`), there is no `svelte.config.js`. Import lib code as `#lib/foo.js` (Node subpath import; explicit `.js` even for `.ts` files). `$lib`, `$app/environment` and `$app/stores` are gone, so use `$app/env` / `$app/state`
 - Wails v3 pinned at `v3.0.0-beta.34`; never serve the chi router through Wails `AssetOptions` — the asset-interception path cannot carry the `/ws` WebSocket upgrade; the webview must load `http://127.0.0.1:<port>` from a real listener.
 - Desktop mode stores data in the per-user dir (`%APPDATA%\Nymeria` / `~/.config/nymeria`) via `config.ResolveUserPaths`; headless keeps CWD-relative defaults — never wire `ResolveUserPaths` into `cmd/nymeria`.
 - `cmd/nymeria-desktop` builds the real app only under `GOOS=windows` (stub elsewhere); never try to build a Linux Wails target (needs CGo+GTK)

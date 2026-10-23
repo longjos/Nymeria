@@ -5,13 +5,13 @@
 	// CreateSupplyRequest always lands as a draft (internal/ride/supply.go) —
 	// the read-back step is a required second call, never implicit.
 	import { onMount } from 'svelte';
-	import { api, ApiError } from '$lib/api';
-	import type { SupplyCatalogEntry, SupplyItemInput, SupplyRequest } from '$lib/types';
-	import { rideLadder, upsertSupply } from '$lib/stores/ride';
-	import { activeCheckIns } from '$lib/stores/netcontrol';
-	import { currentUser } from '$lib/stores/session';
-	import { tierById } from '$lib/rideMeta';
-	import { showToast } from '$lib/stores/toast';
+	import { api, ApiError } from '#lib/api.js';
+	import type { SupplyCatalogEntry, SupplyItemInput, SupplyRequest } from '#lib/types.js';
+	import { rideLadder, upsertSupply } from '#lib/stores/ride.js';
+	import { activeCheckIns } from '#lib/stores/netcontrol.js';
+	import { currentUser } from '#lib/stores/session.js';
+	import { tierById } from '#lib/rideMeta.js';
+	import { showToast } from '#lib/stores/toast.js';
 	import RideTierGlyph from '../RideTierGlyph.svelte';
 	import RideDialog from './RideDialog.svelte';
 

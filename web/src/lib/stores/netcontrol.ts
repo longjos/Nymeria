@@ -1,6 +1,6 @@
 import { writable, derived, get } from 'svelte/store';
-import type { Net, NetCheckIn, NetMission, NetEvent, NetNote, StationCategory, Annotation, CheckpointWithPassages, CheckpointPassage } from '$lib/types';
-import { api } from '$lib/api';
+import type { Net, NetCheckIn, NetMission, NetEvent, NetNote, StationCategory, Annotation, CheckpointWithPassages, CheckpointPassage } from '#lib/types.js';
+import { api } from '#lib/api.js';
 import { wsClient } from './stations';
 import { annotations, annotationList } from './annotations';
 

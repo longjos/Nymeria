@@ -3,7 +3,7 @@ import { checkIns, missions, notes } from './netcontrol';
 import { stationList } from './stations';
 import { tacticalAliases } from './tactical';
 import { rosterFilterActive, rosterCallsigns, isRosterStation } from './rosterScope';
-import type { NetCheckIn, NetMission, NetNote, Station, NoteCategory, NoteSeverity } from '$lib/types';
+import type { NetCheckIn, NetMission, NetNote, Station, NoteCategory, NoteSeverity } from '#lib/types.js';
 
 // --- Types ---
 

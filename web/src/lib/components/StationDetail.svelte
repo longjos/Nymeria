@@ -3,17 +3,17 @@
 	import APRSIcon from './APRSIcon.svelte';
 	import MessageBubble from './MessageBubble.svelte';
 	import MessageCompose from './MessageCompose.svelte';
-	import { api } from '$lib/api';
-	import { stations } from '$lib/stores/stations';
-	import { conversations, loadMessages, markConversationRead } from '$lib/stores/messages';
-	import { canOperate, canPlot } from '$lib/stores/session';
-	import { getTacticalAlias, tacticalAliases } from '$lib/stores/tactical';
-	import { symbolInfo } from '$lib/symbols';
-	import { timeAgo, formatCoord, formatSpeed, formatAltitude, formatCourse, stationDisplayName } from '$lib/utils';
-	import { weatherUnits } from '$lib/stores/weather';
-	import { formatTemp as fmtTemp, formatWindSpeed as fmtWind, formatPressure as fmtPressure, formatRain as fmtRain, pressureLabel } from '$lib/units';
-	import type { Station } from '$lib/types';
-	import type { DetailTab } from '$lib/stores/ui';
+	import { api } from '#lib/api.js';
+	import { stations } from '#lib/stores/stations.js';
+	import { conversations, loadMessages, markConversationRead } from '#lib/stores/messages.js';
+	import { canOperate, canPlot } from '#lib/stores/session.js';
+	import { getTacticalAlias, tacticalAliases } from '#lib/stores/tactical.js';
+	import { symbolInfo } from '#lib/symbols.js';
+	import { timeAgo, formatCoord, formatSpeed, formatAltitude, formatCourse, stationDisplayName } from '#lib/utils.js';
+	import { weatherUnits } from '#lib/stores/weather.js';
+	import { formatTemp as fmtTemp, formatWindSpeed as fmtWind, formatPressure as fmtPressure, formatRain as fmtRain, pressureLabel } from '#lib/units.js';
+	import type { Station } from '#lib/types.js';
+	import type { DetailTab } from '#lib/stores/ui.js';
 
 	let {
 		stationKey,

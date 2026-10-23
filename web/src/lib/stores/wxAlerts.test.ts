@@ -17,8 +17,8 @@ import {
 	muteAlert
 } from './wxAlerts';
 import { toasts } from './toast';
-import type { WxAlert, WxLinkStatus, WxEffectivePolicy } from '$lib/types';
-import { wxAlertFixtureAlerts, wxAlertFixtureSnapshot } from '$lib/data/wxAlertFixture';
+import type { WxAlert, WxLinkStatus, WxEffectivePolicy } from '#lib/types.js';
+import { wxAlertFixtureAlerts, wxAlertFixtureSnapshot } from '#lib/data/wxAlertFixture.js';
 
 const STATUS: WxLinkStatus = { ...wxAlertFixtureSnapshot.status };
 const POLICY: WxEffectivePolicy = { ...wxAlertFixtureSnapshot.policy };

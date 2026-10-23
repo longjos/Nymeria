@@ -5,7 +5,7 @@
 	// three self-contained board components — mirrors how NetControlPanel
 	// itself hands each top-level tab to a single dedicated component
 	// (LocationManager, SituationBoard).
-	import { sagComposerSeed, rideSagSummary, medicalOpen, supplyAll } from '$lib/stores/ride';
+	import { sagComposerSeed, rideSagSummary, medicalOpen, supplyAll } from '#lib/stores/ride.js';
 	import SagBoard from './SagBoard.svelte';
 	import SupplyBoard from './SupplyBoard.svelte';
 	import MedicalBoard from './MedicalBoard.svelte';

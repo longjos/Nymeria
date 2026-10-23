@@ -1,9 +1,9 @@
 <script lang="ts">
-	import { conversationList } from '$lib/stores/messages';
-	import { claimConversation, unclaimConversation } from '$lib/stores/messages';
-	import { currentUser, canOperate } from '$lib/stores/session';
-	import { timeAgo } from '$lib/utils';
-	import { STATE_ACKED, STATE_FAILED, STATE_REJECTED } from '$lib/types';
+	import { conversationList } from '#lib/stores/messages.js';
+	import { claimConversation, unclaimConversation } from '#lib/stores/messages.js';
+	import { currentUser, canOperate } from '#lib/stores/session.js';
+	import { timeAgo } from '#lib/utils.js';
+	import { STATE_ACKED, STATE_FAILED, STATE_REJECTED } from '#lib/types.js';
 
 	let {
 		onSelectConvo,

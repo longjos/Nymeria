@@ -2,9 +2,9 @@
 	// Read-only NWS alert banner for the agency dashboard (observers only —
 	// no ack controls here; NCS acknowledges from the operator app). BUILD-PLAN
 	// §5 "Work packages" WP4 / spec-frontend.md §8.8.
-	import type { WxAlert } from '$lib/types';
-	import { tierMeta } from '$lib/wxAlertMeta';
-	import { clock } from '$lib/wxAlertTime';
+	import type { WxAlert } from '#lib/types.js';
+	import { tierMeta } from '#lib/wxAlertMeta.js';
+	import { clock } from '#lib/wxAlertTime.js';
 	import WxTierGlyph from '../WxTierGlyph.svelte';
 
 	let { alert, presentationMode = false }: { alert: WxAlert; presentationMode?: boolean } = $props();

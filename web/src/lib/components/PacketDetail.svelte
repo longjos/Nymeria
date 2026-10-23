@@ -1,5 +1,5 @@
 <script lang="ts">
-	import type { RawPacket } from '$lib/types';
+	import type { RawPacket } from '#lib/types.js';
 
 	let { packet }: { packet: RawPacket } = $props();
 

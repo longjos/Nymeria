@@ -18,13 +18,13 @@
 	 * take the reported sweep over the GPS." A sweep van's live fix is an
 	 * ordinary roster pip and nothing more.
 	 */
-	import { pointAtChainage } from '$lib/routeDistance';
-	import { STOP_GLYPHS, ageState, ageText } from '$lib/rideMeta';
-	import { stationCategoryMeta } from '$lib/stationCategoryMeta';
-	import { dodgeStops, clusterPips, type PipCluster } from '$lib/courseRail';
-	import type { RailModel, RailStopModel } from '$lib/railModel';
-	import type { RosterOnCourse } from '$lib/rosterCourse';
-	import type { StationCategory } from '$lib/types';
+	import { pointAtChainage } from '#lib/routeDistance.js';
+	import { STOP_GLYPHS, ageState, ageText } from '#lib/rideMeta.js';
+	import { stationCategoryMeta } from '#lib/stationCategoryMeta.js';
+	import { dodgeStops, clusterPips, type PipCluster } from '#lib/courseRail.js';
+	import type { RailModel, RailStopModel } from '#lib/railModel.js';
+	import type { RosterOnCourse } from '#lib/rosterCourse.js';
+	import type { StationCategory } from '#lib/types.js';
 	import RideTierGlyph from './RideTierGlyph.svelte';
 	import WxTierGlyph from './WxTierGlyph.svelte';
 

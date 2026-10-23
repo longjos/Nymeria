@@ -1,7 +1,7 @@
 <script lang="ts">
-	import type { NetCheckIn, StationCategory } from '$lib/types';
-	import { stationCategoryMeta } from '$lib/stationCategoryMeta';
-	import { statusLabels, humanName } from '$lib/agencyTranslations';
+	import type { NetCheckIn, StationCategory } from '#lib/types.js';
+	import { stationCategoryMeta } from '#lib/stationCategoryMeta.js';
+	import { statusLabels, humanName } from '#lib/agencyTranslations.js';
 
 	let {
 		checkIns,

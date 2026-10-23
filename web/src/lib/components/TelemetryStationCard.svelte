@@ -1,6 +1,6 @@
 <script lang="ts">
-	import type { Station } from '$lib/types';
-	import { applyEquation, channelName, channelUnit } from '$lib/stores/telemetry';
+	import type { Station } from '#lib/types.js';
+	import { applyEquation, channelName, channelUnit } from '#lib/stores/telemetry.js';
 
 	let {
 		station,

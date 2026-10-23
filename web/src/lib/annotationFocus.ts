@@ -1,4 +1,4 @@
-import type { Annotation } from '$lib/types';
+import type { Annotation } from '#lib/types.js';
 
 /**
  * Shared "reveal and hold" behaviour for a marker click that should bring an

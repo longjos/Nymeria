@@ -6,7 +6,7 @@
 // arbitration between the two, plus the one shared "how loud can the app be
 // right now" budget InterruptBanner.svelte enforces.
 import { writable, derived } from 'svelte/store';
-import type { WxTier, PriorityTier } from '$lib/types';
+import type { WxTier, PriorityTier } from '#lib/types.js';
 import { wxInterruptQueue } from './wxAlerts';
 
 export type InterruptGlyphDescriptor = { kind: 'wx'; tier: WxTier } | { kind: 'ride'; tier: PriorityTier };

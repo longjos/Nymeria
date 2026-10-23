@@ -1,15 +1,15 @@
 <script lang="ts">
-	import { stationList } from '$lib/stores/stations';
-	import { rosterScopedStations } from '$lib/stores/rosterScope';
-	import { stationKey as getStationKey } from '$lib/utils';
-	import { getTacticalAlias } from '$lib/stores/tactical';
-	import { activeNet, activeCheckIns } from '$lib/stores/netcontrol';
-	import { wxUnackedCount, wxActiveWarningIn } from '$lib/stores/wxAlerts';
-	import { connectionState } from '$lib/stores/ui';
-	import type { PanelMode } from '$lib/stores/ui';
-	import { canAdmin, pendingRequests } from '$lib/stores/session';
-	import { visiblePanelModes } from '$lib/stores/netProfile';
-	import { panelModeVisible } from '$lib/profilePanels';
+	import { stationList } from '#lib/stores/stations.js';
+	import { rosterScopedStations } from '#lib/stores/rosterScope.js';
+	import { stationKey as getStationKey } from '#lib/utils.js';
+	import { getTacticalAlias } from '#lib/stores/tactical.js';
+	import { activeNet, activeCheckIns } from '#lib/stores/netcontrol.js';
+	import { wxUnackedCount, wxActiveWarningIn } from '#lib/stores/wxAlerts.js';
+	import { connectionState } from '#lib/stores/ui.js';
+	import type { PanelMode } from '#lib/stores/ui.js';
+	import { canAdmin, pendingRequests } from '#lib/stores/session.js';
+	import { visiblePanelModes } from '#lib/stores/netProfile.js';
+	import { panelModeVisible } from '#lib/profilePanels.js';
 	import UserMenu from './UserMenu.svelte';
 
 	let {

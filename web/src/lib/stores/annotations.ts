@@ -1,7 +1,7 @@
 import { writable, derived } from 'svelte/store';
-import type { Annotation, AnnotationCategory, Operation } from '$lib/types';
-import { api } from '$lib/api';
-import { groupByBatch } from '$lib/annotationBatches';
+import type { Annotation, AnnotationCategory, Operation } from '#lib/types.js';
+import { api } from '#lib/api.js';
+import { groupByBatch } from '#lib/annotationBatches.js';
 import { wsClient } from './stations';
 
 export const annotations = writable<Map<string, Annotation>>(new Map());

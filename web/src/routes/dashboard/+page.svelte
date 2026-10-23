@@ -1,24 +1,24 @@
 <script lang="ts">
 	import { onMount } from 'svelte';
-	import { browser } from '$app/environment';
-	import { page } from '$app/stores';
-	import { api, loadSavedToken, setAuthToken } from '$lib/api';
-	import { WSClient } from '$lib/ws';
+	import { browser } from '$app/env';
+	import { page } from '$app/state';
+	import { api, loadSavedToken, setAuthToken } from '#lib/api.js';
+	import { WSClient } from '#lib/ws.js';
 	import {
 		initSession, isLoggedIn, isPending, isDenied, isApproved,
 		currentUser, handleSessionEvent
-	} from '$lib/stores/session';
+	} from '#lib/stores/session.js';
 	import type {
 		Net, NetCheckIn, NetMission, NetEvent, Annotation,
 		CheckpointWithPassages, CheckpointPassage, WxSnapshot, CourseState, RidePhaseID, RidePhaseStatus
-	} from '$lib/types';
-	import DashboardLogin from '$lib/components/dashboard/DashboardLogin.svelte';
-	import AgencyHeader from '$lib/components/dashboard/AgencyHeader.svelte';
-	import AgencyMap from '$lib/components/dashboard/AgencyMap.svelte';
-	import ResourceSummary from '$lib/components/dashboard/ResourceSummary.svelte';
-	import IncidentFeed from '$lib/components/dashboard/IncidentFeed.svelte';
-	import EventProgress from '$lib/components/dashboard/EventProgress.svelte';
-	import WxDashboardBanner from '$lib/components/dashboard/WxDashboardBanner.svelte';
+	} from '#lib/types.js';
+	import DashboardLogin from '#lib/components/dashboard/DashboardLogin.svelte';
+	import AgencyHeader from '#lib/components/dashboard/AgencyHeader.svelte';
+	import AgencyMap from '#lib/components/dashboard/AgencyMap.svelte';
+	import ResourceSummary from '#lib/components/dashboard/ResourceSummary.svelte';
+	import IncidentFeed from '#lib/components/dashboard/IncidentFeed.svelte';
+	import EventProgress from '#lib/components/dashboard/EventProgress.svelte';
+	import WxDashboardBanner from '#lib/components/dashboard/WxDashboardBanner.svelte';
 
 	// --- Local state (not shared with main app stores) ---
 	let sessionReady = $state(false);
@@ -118,7 +118,7 @@
 	async function loadDashboardData() {
 		try {
 			// Determine net ID: from URL param or auto-detect
-			const urlNetId = $page.url.searchParams.get('net');
+			const urlNetId = page.url.searchParams.get('net');
 			let netId = urlNetId;
 
 			if (!netId) {

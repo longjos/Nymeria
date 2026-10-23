@@ -4,13 +4,13 @@
 	// request) covers everything except slots — those are managed from the
 	// request's own dispatch card (add rider / resolve slot), never here.
 	import { onMount } from 'svelte';
-	import { api, ApiError } from '$lib/api';
-	import type { SAGRequest, SAGLocation, SAGConfigResponse, Annotation } from '$lib/types';
-	import { rideLadder, upsertSagRequest } from '$lib/stores/ride';
-	import { netAnnotations, activeCheckIns } from '$lib/stores/netcontrol';
-	import { currentUser } from '$lib/stores/session';
-	import { tierById, SAG_BIKE_LABELS, SAG_BIKE_GLYPHS, SAG_REASON_LABELS, enumLabel, BIKE_ORDER } from '$lib/rideMeta';
-	import { showToast } from '$lib/stores/toast';
+	import { api, ApiError } from '#lib/api.js';
+	import type { SAGRequest, SAGLocation, SAGConfigResponse, Annotation } from '#lib/types.js';
+	import { rideLadder, upsertSagRequest } from '#lib/stores/ride.js';
+	import { netAnnotations, activeCheckIns } from '#lib/stores/netcontrol.js';
+	import { currentUser } from '#lib/stores/session.js';
+	import { tierById, SAG_BIKE_LABELS, SAG_BIKE_GLYPHS, SAG_REASON_LABELS, enumLabel, BIKE_ORDER } from '#lib/rideMeta.js';
+	import { showToast } from '#lib/stores/toast.js';
 	import RideTierGlyph from '../RideTierGlyph.svelte';
 	import RideDialog from './RideDialog.svelte';
 	import SagLocationField from './SagLocationField.svelte';

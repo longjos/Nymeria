@@ -2,16 +2,16 @@
 	// Shutoff management: create/edit, cancel, reinstate, and the FIRE
 	// control (a real confirm dialog — firing reroutes every rider behind
 	// the point and is meant to feel consequential, see ShutoffFireDialog).
-	import type { ShutoffPoint } from '$lib/types';
-	import { createShutoff, updateShutoff, deleteShutoff, cancelShutoff, reinstateShutoff } from '$lib/stores/course';
-	import { isNetNcs, rideConfig } from '$lib/stores/netProfile';
-	import { canOperate } from '$lib/stores/session';
-	import { activeCheckIns, netAnnotations } from '$lib/stores/netcontrol';
-	import { shutoffStatusMeta } from '$lib/courseMeta';
-	import { clock, countdown, countdownTone } from '$lib/wxAlertTime';
-	import { secondClock } from '$lib/stores/clock';
-	import { showToast } from '$lib/stores/toast';
-	import { annotationCentroid } from '$lib/geo';
+	import type { ShutoffPoint } from '#lib/types.js';
+	import { createShutoff, updateShutoff, deleteShutoff, cancelShutoff, reinstateShutoff } from '#lib/stores/course.js';
+	import { isNetNcs, rideConfig } from '#lib/stores/netProfile.js';
+	import { canOperate } from '#lib/stores/session.js';
+	import { activeCheckIns, netAnnotations } from '#lib/stores/netcontrol.js';
+	import { shutoffStatusMeta } from '#lib/courseMeta.js';
+	import { clock, countdown, countdownTone } from '#lib/wxAlertTime.js';
+	import { secondClock } from '#lib/stores/clock.js';
+	import { showToast } from '#lib/stores/toast.js';
+	import { annotationCentroid } from '#lib/geo.js';
 	import ShutoffFireDialog from './ShutoffFireDialog.svelte';
 
 	let { shutoffs, onFlyTo }: { shutoffs: ShutoffPoint[]; onFlyTo?: (lat: number, lon: number, zoom?: number) => void } = $props();

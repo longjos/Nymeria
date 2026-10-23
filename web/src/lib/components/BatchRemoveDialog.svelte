@@ -1,10 +1,10 @@
 <script lang="ts">
-	import { api, ApiError } from '$lib/api';
-	import { canOperate } from '$lib/stores/session';
-	import { annotationBatches } from '$lib/stores/annotations';
-	import { showToast } from '$lib/stores/toast';
-	import { timeAgo } from '$lib/utils';
-	import type { AnnotationBatch, BulkDeleteResult, TransmittingMember } from '$lib/types';
+	import { api, ApiError } from '#lib/api.js';
+	import { canOperate } from '#lib/stores/session.js';
+	import { annotationBatches } from '#lib/stores/annotations.js';
+	import { showToast } from '#lib/stores/toast.js';
+	import { timeAgo } from '#lib/utils.js';
+	import type { AnnotationBatch, BulkDeleteResult, TransmittingMember } from '#lib/types.js';
 
 	let {
 		batch,

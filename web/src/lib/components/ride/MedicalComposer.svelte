@@ -10,11 +10,11 @@
 	// Medical data is notification-and-logistics only (governing fact 6):
 	// there are no clinical fields here beyond chief complaint, and there
 	// never should be.
-	import { api, ApiError } from '$lib/api';
-	import type { MedicalNotification } from '$lib/types';
-	import { rideLadder, rideProfile, upsertMedical } from '$lib/stores/ride';
-	import { activeCheckIns } from '$lib/stores/netcontrol';
-	import { currentUser } from '$lib/stores/session';
+	import { api, ApiError } from '#lib/api.js';
+	import type { MedicalNotification } from '#lib/types.js';
+	import { rideLadder, rideProfile, upsertMedical } from '#lib/stores/ride.js';
+	import { activeCheckIns } from '#lib/stores/netcontrol.js';
+	import { currentUser } from '#lib/stores/session.js';
 	import RideTierGlyph from '../RideTierGlyph.svelte';
 	import RideDialog from './RideDialog.svelte';
 
