@@ -24,7 +24,7 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
         with:
           # git-cliff needs the full history and all tags to group commits
           # per release and compute the next version.
@@ -39,19 +39,19 @@ jobs:
           tool: git-cliff@2.13.1
 
       - name: Set up pnpm
-        uses: pnpm/action-setup@v4
+        uses: pnpm/action-setup@v6
         with:
           package_json_file: web/package.json
 
       - name: Set up Node
-        uses: actions/setup-node@v4
+        uses: actions/setup-node@v7
         with:
           node-version: 24
           cache: pnpm
           cache-dependency-path: web/pnpm-lock.yaml
 
       - name: Set up Go
-        uses: actions/setup-go@v5
+        uses: actions/setup-go@v7
         with:
           go-version-file: go.mod
 
@@ -161,7 +161,7 @@ jobs:
       # dry-run is verification mode: no release, just artifacts + notes preview.
       - name: Upload build artifacts
         if: steps.version.outputs.mode == 'dry-run'
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: nymeria-${{ steps.version.outputs.version }}
           path: |
