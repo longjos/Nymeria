@@ -64,7 +64,7 @@ A modern, full-featured APRS client built with Go and SvelteKit. Nymeria runs as
 
 ### Prerequisites
 
-- Go 1.25+
+- Go 1.27+
 - Node.js 22+ with pnpm
 - Make
 
@@ -220,7 +220,7 @@ wiki/                  Project documentation (git submodule)
 
 Nymeria is a single Go binary with an embedded SvelteKit SPA:
 
-- **Backend**: Go with [chi](https://github.com/go-chi/chi) router, [nhooyr.io/websocket](https://github.com/nhooyr/websocket) for real-time updates, [modernc.org/sqlite](https://modernc.org/sqlite) for storage (pure Go, no CGO required at runtime)
+- **Backend**: Go with [chi](https://github.com/go-chi/chi) router, [coder/websocket](https://github.com/coder/websocket) for real-time updates, [modernc.org/sqlite](https://modernc.org/sqlite) for storage (pure Go, no CGO required at runtime)
 - **Frontend**: SvelteKit 5 with adapter-static, [Leaflet](https://leafletjs.com/) maps, TypeScript
 - **Build**: The frontend compiles to static files, then `go:embed` bundles them into the Go binary
 - **Transports**: Pluggable interface — APRS-IS, KISS TCP, and Serial all implement the same `Transport` interface, managed by a central `Manager` with automatic deduplication

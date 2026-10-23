@@ -7,7 +7,7 @@ import (
 	"net/http"
 	"time"
 
-	"nhooyr.io/websocket"
+	"github.com/coder/websocket"
 )
 
 // WSMessage represents a message from client to server over WebSocket.
